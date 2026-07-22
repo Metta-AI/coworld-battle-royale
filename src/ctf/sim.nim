@@ -3393,6 +3393,8 @@ proc playerResultsJson*(sim: SimServer): string =
     killsList = newJArray()
     deathsList = newJArray()
     capturesList = newJArray()
+    shotsFiredList = newJArray()
+    shotsHitList = newJArray()
     results = newJObject()
   for slotIndex in 0 ..< sim.playerResultSlotCount():
     resultSlots.add(slotIndex)
@@ -3418,6 +3420,8 @@ proc playerResultsJson*(sim: SimServer): string =
       kills = 0
       deaths = 0
       captures = 0
+      shotsFired = 0
+      shotsHit = 0
     if accountIndex >= 0:
       let account = sim.rewardAccounts[accountIndex]
       name = account.address
@@ -3436,6 +3440,10 @@ proc playerResultsJson*(sim: SimServer): string =
       playerTeam = player.team
       hasTeam = true
       playerWon = not sim.isDraw and player.team == sim.winner
+      # Accuracy counters live only on the player (analysis-only, never
+      # mirrored into reward accounts): a slot whose player left reports 0.
+      shotsFired = player.shotsFired
+      shotsHit = player.shotsHit
     if not hasTeam and slotConfig.hasTeam:
       playerTeam = slotConfig.team
       hasTeam = true
@@ -3446,6 +3454,8 @@ proc playerResultsJson*(sim: SimServer): string =
     killsList.add(%kills)
     deathsList.add(%deaths)
     capturesList.add(%captures)
+    shotsFiredList.add(%shotsFired)
+    shotsHitList.add(%shotsHit)
   results["names"] = names
   results["scores"] = scores
   results["win"] = win
@@ -3453,6 +3463,8 @@ proc playerResultsJson*(sim: SimServer): string =
   results["kills"] = killsList
   results["deaths"] = deathsList
   results["captures"] = capturesList
+  results["shotsFired"] = shotsFiredList
+  results["shotsHit"] = shotsHitList
   $results
 
 proc grenadeSpawnPoints*(): array[4, tuple[x, y: int]] =
