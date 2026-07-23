@@ -528,6 +528,8 @@ type
     Capture     ## a carrier scored the enemy flag.
     Respawn     ## a dead player came back at home.
     Heal        ## hit points restored (med kit or shield pickup).
+    PhaseChange ## the game phase moved (lobby / playing / gameover):
+                ## weapon = the new phase name, amount = its ordinal.
 
   SimEvent* = object
     ## One tier-2 analysis event; never enters gameHash (replay-safe).
@@ -536,8 +538,15 @@ type
     kind*: SimEventKind
     source*: int               ## acting player's stable join slot, -1 = n/a.
     target*: int               ## affected player's stable join slot, -1 = n/a.
-    weapon*: string            ## "gun" / "plasma" / "grenade", "" = n/a.
-    amount*: int               ## hp delta for Damage/Kill/Heal, else 0.
+    weapon*: string            ## "gun" / "plasma" / "grenade", the new phase
+                               ## name for PhaseChange, "" = n/a.
+    amount*: int               ## hp delta for Damage/Kill/Heal, the new
+                               ## phase ordinal for PhaseChange, else 0.
+    hp*: int                   ## the affected player's remaining hit points
+                               ## AFTER the event, floored at 0 (a fatal
+                               ## overkill still reads 0): the victim on
+                               ## Damage, the healed player on Heal.
+                               ## -1 on every other kind (n/a).
     x*, y*: float              ## map position where the event happened.
 
   Shout* = object
@@ -2882,6 +2891,7 @@ proc emitEvent(
   target = -1,
   weapon = "",
   amount = 0,
+  hp = -1,
   x = 0.0,
   y = 0.0
 ) {.inline.} =
@@ -2897,8 +2907,21 @@ proc emitEvent(
     target: sim.eventSlot(target),
     weapon: weapon,
     amount: amount,
+    hp: hp,
     x: x,
     y: y
+  )
+
+proc emitPhaseChange(sim: var SimServer, newPhase: GamePhase) {.inline.} =
+  ## Appends one PhaseChange analysis event for a phase about to be entered
+  ## (call BEFORE assigning sim.phase, with the phase being switched to).
+  ## A no-op unless collectEvents is on.
+  if not sim.collectEvents:
+    return
+  sim.emitEvent(
+    PhaseChange,
+    weapon = ($newPhase).toLowerAscii,
+    amount = ord(newPhase)
   )
 
 proc resetFlag*(sim: var SimServer, team: Team) =
@@ -3655,6 +3678,7 @@ proc startGame*(sim: var SimServer) =
   sim.resetGrenades()
   sim.resetShields()
   sim.resetPlasmaArcs()
+  sim.emitPhaseChange(Playing)
   sim.phase = Playing
   sim.gameStartTick = sim.tickCount
   sim.timeLimitReached = false
@@ -4075,7 +4099,8 @@ proc resolveActiveArcCones*(sim: var SimServer) =
         vy = float(sim.players[victimIndex].y + CollisionH div 2)
       sim.emitEvent(
         Damage, source = arcFire.attacker, target = victimIndex,
-        weapon = "plasma", amount = PlasmaArcDamage, x = vx, y = vy
+        weapon = "plasma", amount = PlasmaArcDamage,
+        hp = max(0, sim.players[victimIndex].hp), x = vx, y = vy
       )
       # Floating damage number for the HP loss (cosmetic, not in gameHash).
       sim.damagePops.add DamageFx(
@@ -4235,7 +4260,7 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     sim.absorbDamage(targetIndex, 1)
     sim.emitEvent(
       Damage, source = shooterIndex, target = targetIndex, weapon = "gun",
-      amount = 1,
+      amount = 1, hp = max(0, sim.players[targetIndex].hp),
       x = float(sim.players[targetIndex].x + CollisionW div 2),
       y = float(sim.players[targetIndex].y + CollisionH div 2)
     )
@@ -4414,7 +4439,8 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
     sim.absorbDamage(i, GrenadeDamage)
     sim.emitEvent(
       Damage, source = grenade.thrower, target = i, weapon = "grenade",
-      amount = GrenadeDamage, x = float(px), y = float(py)
+      amount = GrenadeDamage, hp = max(0, sim.players[i].hp),
+      x = float(px), y = float(py)
     )
     # Floating damage number for the blast's HP loss (cosmetic, not in gameHash).
     sim.damagePops.add DamageFx(
@@ -4508,7 +4534,7 @@ proc tryPickupMedKits*(sim: var SimServer, playerIndex: int) =
       sim.players[playerIndex].hp = sim.config.hitPoints
       sim.emitEvent(
         Heal, source = playerIndex, amount = healed,
-        x = float(px), y = float(py)
+        hp = sim.players[playerIndex].hp, x = float(px), y = float(py)
       )
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
@@ -4977,6 +5003,7 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
     sim.logGameEvent("draw")
   else:
     sim.logGameEvent(teamText(winner) & " win")
+  sim.emitPhaseChange(GameOver)
   sim.phase = GameOver
   sim.winner = winner
   sim.isDraw = isDraw
@@ -5241,6 +5268,8 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.lastLobbySecondsLogged = -1
 
 proc resetToLobby*(sim: var SimServer) =
+  if sim.phase != Lobby:
+    sim.emitPhaseChange(Lobby)
   sim.phase = Lobby
   sim.players = @[]
   sim.fovCaches = @[]
