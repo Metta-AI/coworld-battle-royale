@@ -2935,22 +2935,6 @@ proc emitPhaseChange(sim: var SimServer, newPhase: GamePhase) {.inline.} =
     amount = ord(newPhase)
   )
 
-proc shieldBlocked(sim: SimServer, targetIndex, amount: int): int {.inline.} =
-  ## How many of an `amount`-hp hit on `targetIndex` the victim's SHIELD soaked:
-  ## the portion of the hit that landed while the carrier still held hp ABOVE the
-  ## base cog ceiling. A shield pickup is the only thing that lifts a cog past
-  ## `config.hitPoints`, so any bonus hp at impact is shield hp, and the damage
-  ## that eats into it is "prevented" from touching the base cog. Call AFTER hp
-  ## has been decremented (`preHp = hp + amount`); returns 0 for a non-carrier or
-  ## a hit that began at/below base hp.
-  if not sim.players[targetIndex].hasShield:
-    return 0
-  let
-    base = sim.config.hitPoints
-    preHp = sim.players[targetIndex].hp + amount  # hp the instant before the hit
-    bonusBefore = max(0, preHp - base)            # shield-bonus hp at impact
-  min(amount, bonusBefore)
-
 proc resetFlag*(sim: var SimServer, team: Team) =
   ## Returns one team's flag to its home pedestal.
   # A flag leaving an enemy's back mid-game (death, disconnect — any reason
@@ -4010,12 +3994,15 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
     else:
       0
 
-proc absorbDamage*(sim: var SimServer, targetIndex: int, amount: int) =
+proc absorbDamage*(sim: var SimServer, targetIndex: int, amount: int): int {.discardable.} =
   ## Applies damage to a player: the shield layer soaks hits before base hp.
-  ## Callers keep their own death checks on the base hp that remains.
+  ## Callers keep their own death checks on the base hp that remains. Returns
+  ## how many hp the shield layer absorbed (`fromShield`) — first-hand `blocked`
+  ## for the tier-2 Damage event; callers that don't need it can ignore it.
   let fromShield = min(sim.players[targetIndex].shieldHp, amount)
   sim.players[targetIndex].shieldHp -= fromShield
   sim.players[targetIndex].hp -= amount - fromShield
+  fromShield
 
 proc canFire*(sim: SimServer, shooterIndex: int): bool =
   ## Returns whether one player is able to fire a shot right now.
@@ -4120,7 +4107,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
           continue
         sim.players[arcFire.attacker].arcHitMask =
           sim.players[arcFire.attacker].arcHitMask or bit
-      sim.absorbDamage(victimIndex, PlasmaArcDamage)
+      let blocked = sim.absorbDamage(victimIndex, PlasmaArcDamage)
       let
         vx = float(sim.players[victimIndex].x + CollisionW div 2)
         vy = float(sim.players[victimIndex].y + CollisionH div 2)
@@ -4128,7 +4115,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
         Damage, source = arcFire.attacker, target = victimIndex,
         weapon = "plasma", amount = PlasmaArcDamage,
         hp = max(0, sim.players[victimIndex].hp),
-        blocked = sim.shieldBlocked(victimIndex, PlasmaArcDamage), x = vx, y = vy
+        blocked = blocked, x = vx, y = vy
       )
       # Floating damage number for the HP loss (cosmetic, not in gameHash).
       sim.damagePops.add DamageFx(
@@ -4285,11 +4272,11 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     # unchanged.)
     let bubbleUp = sim.players[targetIndex].hasShield and
       sim.players[targetIndex].shieldHp > 0
-    sim.absorbDamage(targetIndex, 1)
+    let blocked = sim.absorbDamage(targetIndex, 1)
     sim.emitEvent(
       Damage, source = shooterIndex, target = targetIndex, weapon = "gun",
       amount = 1, hp = max(0, sim.players[targetIndex].hp),
-      blocked = sim.shieldBlocked(targetIndex, 1),
+      blocked = blocked,
       x = float(sim.players[targetIndex].x + CollisionW div 2),
       y = float(sim.players[targetIndex].y + CollisionH div 2)
     )
@@ -4465,11 +4452,11 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       py = sim.players[i].y + CollisionH div 2
     if distSq(px, py, grenade.tx, grenade.ty) > radiusSq:
       continue
-    sim.absorbDamage(i, GrenadeDamage)
+    let blocked = sim.absorbDamage(i, GrenadeDamage)
     sim.emitEvent(
       Damage, source = grenade.thrower, target = i, weapon = "grenade",
       amount = GrenadeDamage, hp = max(0, sim.players[i].hp),
-      blocked = sim.shieldBlocked(i, GrenadeDamage),
+      blocked = blocked,
       x = float(px), y = float(py)
     )
     # Floating damage number for the blast's HP loss (cosmetic, not in gameHash).

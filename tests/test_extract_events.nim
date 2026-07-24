@@ -65,8 +65,10 @@ suite "tier-2 event extraction (tools/extract_events)":
         # Shield-absorbed hp is a subset of the hit: 0 <= blocked <= amount.
         check event.blocked >= 0
         check event.blocked <= event.amount
+        # `hp` is BASE hp only; the shield layer soaks `blocked` of the hit, so
+        # base hp steps down by the part that got through (amount - blocked).
         if lastHp[event.target] >= 0:
-          check event.hp == max(0, lastHp[event.target] - event.amount)
+          check event.hp == max(0, lastHp[event.target] - (event.amount - event.blocked))
         lastHp[event.target] = event.hp
       of Heal:
         check event.source >= 0 and event.source < slotCount
