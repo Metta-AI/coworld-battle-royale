@@ -3572,8 +3572,11 @@ proc playerResultsJson*(sim: SimServer): string =
   results["kills"] = killsList
   results["deaths"] = deathsList
   results["captures"] = capturesList
-  results["shotsFired"] = shotsFiredList
-  results["shotsHit"] = shotsHitList
+  # shotsFired/shotsHit stay OUT of the results payload: the platform's
+  # episode-results schema is closed (additionalProperties: false) and the
+  # certifier rejects unknown fields, blocking every canonical upload. The
+  # counters remain on the players for replay-side analysis; re-add here
+  # only after the platform schema learns the fields.
   $results
 
 proc grenadeSpawnPoints*(): array[4, tuple[x, y: int]] =

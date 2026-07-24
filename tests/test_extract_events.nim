@@ -102,20 +102,20 @@ suite "tier-2 event extraction (tools/extract_events)":
     check sawGameOverPhase
 
     # The event stream is the counters, itemized: per-slot Kill events sum to
-    # the final results.json kills array, and Shot/Hit events sum to the new
-    # tier-1 shotsFired/shotsHit arrays.
+    # the final results.json kills array. shotsFired/shotsHit stay OUT of
+    # results.json (the platform results schema is closed and the certifier
+    # rejects unknown fields) — the accuracy counters are checked against the
+    # extraction directly instead.
     check results["kills"].len == slotCount
-    check results["shotsFired"].len == slotCount
-    check results["shotsHit"].len == slotCount
+    check "shotsFired" notin results
+    check "shotsHit" notin results
     for slot in 0 ..< slotCount:
       check results["kills"][slot].getInt == killsBySlot[slot]
-      check results["shotsFired"][slot].getInt == shotsBySlot[slot]
-      check results["shotsHit"][slot].getInt == hitsBySlot[slot]
 
-    # results.json mirrors the in-sim accuracy counters exactly.
+    # The in-sim accuracy counters mirror the event stream exactly.
     for slot in 0 ..< slotCount:
-      check results["shotsFired"][slot].getInt == extraction.slotShotsFired[slot]
-      check results["shotsHit"][slot].getInt == extraction.slotShotsHit[slot]
+      check extraction.slotShotsFired[slot] == shotsBySlot[slot]
+      check extraction.slotShotsHit[slot] == hitsBySlot[slot]
 
   test "the JSONL emitter ends with an honest summary row":
     let
