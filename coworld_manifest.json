@@ -324,15 +324,6 @@
           }
         }
       ]
-    },
-    "resources": {
-      "requests": {
-        "cpu": "2",
-        "memory": "1Gi"
-      },
-      "limits": {
-        "cpu": "4"
-      }
     }
   },
   "player": [
