@@ -100,6 +100,11 @@ const
   PlantedFlagSpriteBase = 704  ## scaled home-heart sprites: 704 red, 705 blue.
   GameOverIconSpriteBase = 706 ## compact roster-chip soldiers: 706 red, 707 blue.
   GameOverIconSize = 14        ## roster chip footprint (fits the game-over row).
+  CarryHeartSpriteBase = 708   ## carried-heart sprites, baked per team×aim so the
+                               ## held heart rotates WITH the cog: team×16 aim →
+                               ## 708..739 (red 708..723, blue 724..739).
+  CarryHeartFwdPx = 12         ## px the carried heart rides FORWARD of the body along
+                               ## the aim, so it sits between the head and the arms.
   FlagAuraSpriteBase = 702     ## carrier-glow sprites: 702 red-flag halo, 703 blue-flag halo.
   FlagAuraObjectBase = 19200   ## carrier-glow object pool (one per carried flag).
   FlagAuraSize = 26            ## px diameter of the carrier halo.
@@ -276,6 +281,29 @@ const
   KillPopSpriteBase = 31128    ## floating "KO" kill-marker sprites keyed
                                ## color×stage: 31128..31191 (above damage pops).
   KillPopRisePx = 16           ## px the kill marker floats upward over its life.
+  ## --- Articulated turret-rig sprite/object id pools (board only) ---
+  ## The cog draws as 9 z-stacked segments + a held gun, each its own board object
+  ## so the head/arms track AIM while the legs/wheels track MOVEMENT (a true turret
+  ## swivel). Sprite pools are generous and lazily baked; they start well clear of
+  ## every family above (highest was kill pops ~31191). Bake dims: head = team×16
+  ## aim; arms = team×16 aim; legs = team×16 heading×(2·swing+1)×(shorten+1);
+  ## wheels = team×16 heading×(2·caster+1).
+  RigHeadSpriteBase* = 40000   ## 40000..40031 (team×16 aim). Exported so the
+                               ## sprite-collision audit can scope skin-pool checks
+                               ## below the (skin-independent) rig pool.
+  RigArmSpriteBase = 40040     ## 40040 + team×2arms×16 aim → 40040..40103.
+  RigLegSpriteBase = 40200     ## team×3legs×16head×33swing×5shorten ≈ 15840 ids
+                               ## → 40200..56039.
+  RigWheelSpriteBase = 56100   ## team×3wheels×16head×17caster ≈ 1632 ids
+                               ## → 56100..57731.
+  RigGunSpriteBase = 57800     ## team×16 aim → 57800..57831 (held marker + glow).
+  ## Object pools sit clear of the tracer-dot pool (24000..30991) and the damage/
+  ## kill pops (31200..31215); rig objects live at 32000+ (16 players each).
+  RigHeadObjectBase = 32000    ## 1 head object per player: 32000..32015.
+  RigArmObjectBase = 32020     ## 2 arm objects per player: 32020..32051.
+  RigLegObjectBase = 32060     ## 3 leg objects per player: 32060..32107.
+  RigWheelObjectBase = 32120   ## 3 wheel objects per player: 32120..32167.
+  RigGunObjectBase = 32168     ## 1 gun object per player: 32168..32183.
   AimDotSpriteBase = 780       ## per-color aim indicator dot sprites: 780..795.
   AimDotObjectBase = 18000     ## aim dot object-id pool: 18000..18063.
   AimDotSize = 2
@@ -418,6 +446,13 @@ type
                                  ## dark / heart taken); ramped ±1 per frame.
     endzonePrewarmFrames*: int   ## frames seen since connect, used to drip the
                                  ## endzone fade crops to this viewer up front.
+    cogDrive*: array[MaxPlayers, CogDriveState]  ## per-player segmented-trike
+                                 ## animation state (body heading / turnAmt /
+                                 ## per-wheel casters), evolved once per frame
+                                 ## from velocity. Broadcast-only; see stepCogDrive.
+    cogDriveTick*: int           ## sim.tickCount at the last cogDrive step; a
+                                 ## non-sequential jump snaps the pose instead of
+                                 ## integrating across it (scrub-safe).
     spriteDefs: seq[SpriteDefinition]
 
   PlayerViewerState* = ref object
@@ -654,6 +689,7 @@ proc initGlobalViewerState*(): GlobalViewerState =
   result.replaySeekTick = -1
   result.replayCommands = @[]
   result.povSelectPending = -2   ## -2 = no request; -1 = clear; >=0 = slot.
+  result.cogDriveTick = low(int)  ## no drive step yet; the first frame snaps.
 
 proc initPlayerViewerState*(): PlayerViewerState =
   ## Returns the default state for one sprite player viewer.
@@ -751,6 +787,53 @@ proc selectedSoldierPlayerSpriteId(team: Team, skin: Skin, rot: int): int =
   ## Selected (outlined) soldier sprite id at aim rotation `rot`.
   SelectedPlayerSpriteBase + ord(skin) * SoldierSkinSpriteStride +
     ord(team) * SoldierRotations + rot
+
+# --- Articulated turret-rig sprite ids ---
+# Each family packs its dimensions into a dense range. Signed articulation steps
+# (leg swing, wheel caster) are offset to a non-negative index. ord(seg) within a
+# family: arms armL/armR = 0/1; legs FL/FR/Rear = 0/1/2; wheels L/R/Rear = 0/1/2.
+proc rigHeadSpriteId(team: Team, aimStep: int): int =
+  RigHeadSpriteBase + ord(team) * RigSteps + aimStep
+
+proc rigGunSpriteId(team: Team, aimStep: int): int =
+  RigGunSpriteBase + ord(team) * RigSteps + aimStep
+
+proc rigArmSpriteId(team: Team, seg: RigSeg, aimStep, reach: int): int =
+  ## reach 0 = tucked (idle), 1 = reaching forward (carrying).
+  let armIdx = if seg == rsArmL: 0 else: 1
+  RigArmSpriteBase + (((ord(team) * 2 + armIdx) * RigSteps + aimStep) * 2) + reach
+
+proc rigLegIdx(seg: RigSeg): int =
+  case seg
+  of rsLegFL: 0
+  of rsLegFR: 1
+  of rsLegRear: 2
+  else: 0
+
+proc rigLegSpriteId(team: Team, seg: RigSeg,
+    headStep, swingStep, shortenStep: int): int =
+  ## headStep 0..15; swingStep signed → 0..2·RigLegSwingSteps; shortenStep 0..RigShortenSteps.
+  let
+    swings = 2 * RigLegSwingSteps + 1
+    shorts = RigShortenSteps + 1
+    sw = swingStep + RigLegSwingSteps
+    idx = ((rigLegIdx(seg) * RigSteps + headStep) * swings + sw) * shorts + shortenStep
+  RigLegSpriteBase + (ord(team) * 3 * RigSteps * swings * shorts) + idx
+
+proc rigWheelIdx(seg: RigSeg): int =
+  case seg
+  of rsWheelL: 0
+  of rsWheelR: 1
+  of rsWheelRear: 2
+  else: 0
+
+proc rigWheelSpriteId(team: Team, seg: RigSeg, headStep, casterStep: int): int =
+  ## headStep 0..15; casterStep signed → 0..2·RigCasterSteps.
+  let
+    casters = 2 * RigCasterSteps + 1
+    cs = casterStep + RigCasterSteps
+    idx = (rigWheelIdx(seg) * RigSteps + headStep) * casters + cs
+  RigWheelSpriteBase + (ord(team) * 3 * RigSteps * casters) + idx
 
 proc corpseSoldierSpriteId(team: Team, skin: Skin, rot: int): int =
   ## Sprite id for a dead soldier (grey corpse) at rotation `rot` (the
@@ -2695,6 +2778,32 @@ proc buildFlagBannerSprite(team: Team): seq[uint8] {.measure.} =
   ## Rasterized from the ~450px painted master at scale× the carried footprint.
   loadHeartSprite(team, FlagBannerW * boardScale)
 
+proc buildCarryHeartSprite(team: Team, aimStep: int): seq[uint8] {.measure.} =
+  ## The carried heart RIGIDLY LOCKED to the cog's grip: rotated to the aim step so
+  ## its orientation turns WITH the cog (never floats/tumbles free), plus a fixed
+  ## PERPENDICULAR offset so the pointed end faces to the SIDE (not along the aim) —
+  ## the cog cradles it sideways in its arms out front, held. As the cog turns, the
+  ## heart turns with it, so it always reads as gripped. Baked per aim step (like the
+  ## gun) so position AND orientation track the aim together.
+  let
+    size = FlagBannerW * boardScale
+    src = loadHeartSprite(team, size)
+  var img = newImage(size, size)
+  for i in 0 ..< size * size:
+    img.data[i] = rgba(src[i*4], src[i*4+1], src[i*4+2], src[i*4+3]).rgbx()
+  # aim increases CCW (0=east); screen y is down, so rotate by -aimAngle to track it.
+  # +PI turns the point PERPENDICULAR to the aim (to the side), the cradled pose.
+  let aimAngle = float(aimStep) * 2.0 * PI / float(SoldierRotations)
+  let rotated = newImage(size, size)
+  let m = translate(vec2(float32(size) / 2, float32(size) / 2)) *
+    rotate(float32(-aimAngle + PI)) *
+    translate(vec2(float32(-size) / 2, float32(-size) / 2))
+  rotated.draw(img, m)
+  result = newSeq[uint8](size * size * 4)
+  for i in 0 ..< size * size:
+    let c = rotated.data[i].rgba()
+    result[i*4] = c.r; result[i*4+1] = c.g; result[i*4+2] = c.b; result[i*4+3] = c.a
+
 proc buildPlantedFlagSprite(team: Team): seq[uint8] {.measure.} =
   ## The HOME heart-gem, loaded NATIVELY at the big pedestal footprint (not an
   ## upscale of the tiny carried sprite) so the hand-painted facets stay crisp.
@@ -2729,6 +2838,11 @@ proc buildFlagAuraSprite(team: Team): seq[uint8] {.measure.} =
 proc flagLabel(team: Team): string =
   ## Returns the observation label for one team's flag sprite.
   teamText(team) & " flag"
+
+proc carryHeartSpriteId(team: Team, aimStep: int): int =
+  ## The carried-heart sprite id at aim step `aimStep` (cradled in the rig cog's
+  ## arms, rotating with the aim so it stays gripped).
+  CarryHeartSpriteBase + ord(team) * SoldierRotations + aimStep
 
 proc addFlagSprites(
   sim: SimServer,
@@ -2765,6 +2879,8 @@ proc addFlagSprites(
       flagLabel(team) & " carrier glow",
       native = boardScale
     )
+  # The carried heart is baked PER AIM STEP (team×16) so it rotates with the cog;
+  # defined lazily in the board flag loop (only the carrier's current aim is drawn).
 
 proc soldierOutlined(
   pixels: seq[uint8],
@@ -4829,6 +4945,125 @@ proc addEndzoneGlowFade(
       endzoneFadeSpriteId(team, stage)
     )
 
+proc rigSegLabel(seg: RigSeg, color: string): string =
+  ## The `player <color>` contract label rides on the HEAD segment (the aim-facing
+  ## piece a label scanner reads as the actor); limbs get plain tags.
+  case seg
+  of rsHead: "player " & color
+  of rsArmL, rsArmR: "cog arm " & color
+  of rsLegFL, rsLegFR, rsLegRear: "cog leg " & color
+  else: "cog wheel " & color
+
+proc addCogRigObjects(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  currentIds: var seq[int],
+  packet: var seq[uint8],
+  player: Player,
+  drive: CogDriveState,
+  carrying: bool
+) =
+  ## Places one cog's articulated TURRET trike. Every segment sprite is baked in
+  ## the same RigCanvas, HUB-centered, so all objects share ONE canvas position
+  ## and differ only by sprite id + z. Sprites are lazily defined (large pools).
+  ## Turret swivel: the HEAD (+gun) and ARMS are baked to AIM; the LEGS and WHEELS
+  ## are baked to the movement HEADING (bodyHeading) with per-leg swing + inner-leg
+  ## shorten and per-wheel caster. The base is fully decoupled from the head
+  ## (true tank); `carrying` is accepted for future carry-specific posing but the
+  ## heart itself is emitted in the flag loop.
+  ## Z (painter depth ~ map Y): rear wheel/leg < front wheels < front legs < head
+  ## < arms (arms cradle the forward heart on top).
+  let
+    color = teamText(player.team)
+    aimStep = soldierRotIndex(player.aimBrads)
+    # TRUE TANK: the leg base points exactly where the cog MOVES (fully decoupled
+    # from the head/aim — it can face 180° opposite the head when reversing). No
+    # clamp; the legs stay tucked via the art so full divergence isn't spidery.
+    baseHeading = if drive.initialized: drive.bodyHeading else: player.aimBrads
+    headStep = rigHeadingStep(baseHeading)
+    base = player.joinOrder
+    # Center the RigCanvas on the player (canvas center = hub). 1× map px.
+    rigX = player.x + CollisionW div 2 - RigCanvas div 2
+    rigY = player.y + CollisionH div 2 - RigCanvas div 2
+
+  # Precompute the movement-driven leg/wheel steps.
+  proc legSprite(seg: RigSeg): int =
+    rigLegSpriteId(player.team, seg, headStep,
+      rigLegSwingStep(seg, drive.turnAmt), rigLegShortenStep(seg, drive.turnAmt))
+  proc wheelSprite(seg: RigSeg, caster: int): int =
+    rigWheelSpriteId(player.team, seg, headStep,
+      rigCasterStep(caster, baseHeading))
+
+  # Baked-art selector for each segment (so define-on-demand rebakes the exact pose).
+  proc bakePixels(seg: RigSeg): seq[uint8] =
+    case seg
+    of rsHead: rigSegPixels(player.team, rsHead, aimStep, 0, 0, boardScale)
+    of rsArmL, rsArmR: rigSegPixels(player.team, seg, aimStep, 0, 0, boardScale)
+    of rsLegFL, rsLegFR, rsLegRear:
+      rigSegPixels(player.team, seg, headStep,
+        rigLegSwingStep(seg, drive.turnAmt),
+        rigLegShortenStep(seg, drive.turnAmt), boardScale)
+    of rsWheelL:
+      rigSegPixels(player.team, rsWheelL, headStep,
+        rigCasterStep(drive.casterFL, baseHeading), 0, boardScale)
+    of rsWheelR:
+      rigSegPixels(player.team, rsWheelR, headStep,
+        rigCasterStep(drive.casterFR, baseHeading), 0, boardScale)
+    of rsWheelRear:
+      rigSegPixels(player.team, rsWheelRear, headStep,
+        rigCasterStep(drive.casterRear, baseHeading), 0, boardScale)
+
+  var segs: seq[tuple[seg: RigSeg, objectId, spriteId, z: int]] = @[
+    (rsWheelRear, RigWheelObjectBase + base*3 + 2,
+      wheelSprite(rsWheelRear, drive.casterRear), player.y - 4),
+    (rsLegRear, RigLegObjectBase + base*3 + 2, legSprite(rsLegRear), player.y - 3),
+    (rsWheelL, RigWheelObjectBase + base*3 + 0,
+      wheelSprite(rsWheelL, drive.casterFL), player.y - 2),
+    (rsWheelR, RigWheelObjectBase + base*3 + 1,
+      wheelSprite(rsWheelR, drive.casterFR), player.y - 2),
+    (rsLegFL, RigLegObjectBase + base*3 + 0, legSprite(rsLegFL), player.y - 1),
+    (rsLegFR, RigLegObjectBase + base*3 + 1, legSprite(rsLegFR), player.y - 1),
+    (rsHead, RigHeadObjectBase + base, rigHeadSpriteId(player.team, aimStep),
+      player.y)]
+  # Arms = the cog's SHOULDER pads. They're part of the cog's fixed silhouette:
+  # always drawn, always in their natural tucked pose, rotating with the HEAD/aim
+  # (never jutting forward — the earlier "reach" pose read as weird prongs). At rest
+  # they sit just below the head z (head cube reads on top). While CARRYING, they
+  # drop to y-2 so the carried heart tucks BETWEEN them and the head: the z-sandwich
+  # is head(y) > heart(y-1) > arms(y-2) — head/face stays on top, the heart sits
+  # under the head and over the arms, so it reads as held under the chin, not over
+  # the face.
+  let armZ = if carrying: player.y - 2 else: player.y - 1
+  segs.add((rsArmL, RigArmObjectBase + base*2 + 0,
+    rigArmSpriteId(player.team, rsArmL, aimStep, 0), armZ))
+  segs.add((rsArmR, RigArmObjectBase + base*2 + 1,
+    rigArmSpriteId(player.team, rsArmR, aimStep, 0), armZ))
+
+  for s in segs:
+    if spriteDefs.spriteDefinitionIndex(s.spriteId) < 0:
+      packet.addBoardSpriteChanged(
+        spriteDefs, s.spriteId, RigCanvas, RigCanvas,
+        bakePixels(s.seg), rigSegLabel(s.seg, color), native = boardScale)
+    currentIds.add(s.objectId)
+    packet.addBoardObject(s.objectId, rigX, rigY, s.z, MapLayerId, s.spriteId)
+
+  # The held paintball MARKER: its OWN object (not baked into the head), tracking
+  # AIM, with a warm backlight glow so the dark gun pops. Drawn ABOVE the head so
+  # it always reads. `hasGun` is always true today (the gun is the base weapon);
+  # the flag is the seam to hide it if a cog is ever disarmed.
+  let hasGun = true
+  if hasGun:
+    let gunSpriteId = rigGunSpriteId(player.team, aimStep)
+    if spriteDefs.spriteDefinitionIndex(gunSpriteId) < 0:
+      packet.addBoardSpriteChanged(
+        spriteDefs, gunSpriteId, RigCanvas, RigCanvas,
+        rigGunPixels(player.team, aimStep, boardScale),
+        "cog gun " & color, native = boardScale)
+    let gunObjectId = RigGunObjectBase + base
+    currentIds.add(gunObjectId)
+    packet.addBoardObject(
+      gunObjectId, rigX, rigY, player.y + 1, MapLayerId, gunSpriteId)
+
 proc buildSpriteProtocolUpdates*(
   sim: var SimServer,
   state: GlobalViewerState,
@@ -5007,20 +5242,40 @@ proc buildSpriteProtocolUpdates*(
   sim.addHpPips(nextState.spriteDefs, currentIds, result)
   sim.addIdentityBadges(nextState.spriteDefs, currentIds, result)
 
+  # Advance the per-player segmented-trike drive animation. Only step on a NEW
+  # tick; a sequential 1..16-tick delta smooths, any other delta (scrub, pause,
+  # respawn, dead) SNAPS to a fresh rest pose so a jump never inherits a stale limb
+  # pose. Broadcast-only + deterministic given the recorded velocities, so playback
+  # stays replay-exact.
+  const MaxSmoothStepTicks = 16   ## = the top replay playback speed.
+  let neverStepped = nextState.cogDriveTick == low(int)
+  let tickDelta = if neverStepped: 0 else: sim.tickCount - nextState.cogDriveTick
+  if neverStepped or tickDelta != 0:
+    let sequential = not neverStepped and
+      tickDelta >= 1 and tickDelta <= MaxSmoothStepTicks
+    for i in 0 ..< sim.players.len:
+      let p = sim.players[i]
+      if not p.alive:
+        nextState.cogDrive[i] = initCogDriveState(p.aimBrads)
+      elif sequential and nextState.cogDrive[i].initialized:
+        nextState.cogDrive[i] = stepCogDrive(
+          nextState.cogDrive[i], p.velX, p.velY, p.aimBrads)
+      else:
+        nextState.cogDrive[i] = initCogDriveState(p.aimBrads)
+    nextState.cogDriveTick = sim.tickCount
+
   for playerIndex in 0 ..< sim.players.len:
     let player = sim.players[playerIndex]
     if not player.alive:
       continue
-    let objectId = player.spriteObjectId()
-    currentIds.add(objectId)
-    result.addBoardObject(
-      objectId,
-      player.spritePlayerX(),
-      player.spritePlayerY(),
-      player.y,
-      MapLayerId,
-      player.spriteActorSpriteId(nextState.selectedJoinOrder)
-    )
+    # The cog draws as an articulated TURRET trike (board only): head + gun + arms
+    # face AIM; 3 legs + 3 caster wheels track MOVEMENT (bodyHeading), each its own
+    # board object so aim and movement read independently. Arms appear only while
+    # carrying. All poses come from the scrub-snapped CogDriveState, so playback is
+    # replay-exact. All coords are 1× MAP px; addBoardObject applies boardScale.
+    sim.addCogRigObjects(nextState.spriteDefs, currentIds, result,
+      player, nextState.cogDrive[playerIndex],
+      carrying = sim.carriedFlagTeam(playerIndex) >= 0)
     if sim.config.showPlayerLabels:
       let flagTeamOrd = sim.carriedFlagTeam(playerIndex)
       let
@@ -5079,17 +5334,31 @@ proc buildSpriteProtocolUpdates*(
       )
     currentIds.add(objectId)
     if flag.carrier >= 0:
-      # Carried: the heart rides BEHIND the carrier (z below the player), so the
-      # runner's body stays the readable figure and the heart peeks out around
-      # them instead of covering them. Centered on the carrier; the aura +
-      # nameplate still mark WHO runs it.
+      # Carried: the rig cog CRADLES the heart in its arms out FRONT along the aim.
+      # The heart sprite is baked PER AIM STEP so it rotates WITH the cog (stays
+      # gripped, never floats/tumbles free); its position also rides forward on the
+      # aim. Z-sandwich: head(carrier.y) > heart(carrier.y-1) > arms(carrier.y-2) —
+      # the heart sits UNDER the head/face and OVER the arms, so it reads as held
+      # under the chin, never covering the face. Broadcast board only; POV unchanged.
+      let
+        carrier = sim.players[flag.carrier]
+        aimStep = soldierRotIndex(carrier.aimBrads)
+        aim = aimVector(carrier.aimBrads)
+        hx = flag.x + int(round(aim.x * float(CarryHeartFwdPx)))
+        hy = flag.y + int(round(aim.y * float(CarryHeartFwdPx)))
+        heartSpriteId = carryHeartSpriteId(team, aimStep)
+      if nextState.spriteDefs.spriteDefinitionIndex(heartSpriteId) < 0:
+        result.addBoardSpriteChanged(
+          nextState.spriteDefs, heartSpriteId, FlagBannerW, FlagBannerH,
+          buildCarryHeartSprite(team, aimStep),
+          flagLabel(team) & " carried", native = boardScale)
       result.addBoardObject(
         objectId,
-        flag.x - FlagBannerW div 2,
-        flag.y - FlagBannerH div 2,
-        flag.y - 1,
+        hx - FlagBannerW div 2,
+        hy - FlagBannerH div 2,
+        carrier.y - 1,
         MapLayerId,
-        FlagSpriteBase + ord(team)
+        heartSpriteId
       )
     else:
       # Home: the BIG planted banner, centered + bottom-anchored on the pedestal.
@@ -5228,6 +5497,15 @@ proc warmBoardRenderCaches*(sim: SimServer) =
     for team in Team:
       for rot in 0 ..< SoldierRotations:
         discard soldierRotPixels(team, skin, rot, RenderScale)
+  # The board turret-rig segments (skin-independent: they slice the DefaultSkin
+  # master). Prebake the REST pose (swing/caster/shorten 0) at every aim/heading
+  # step so a standing/straight-driving cog is hot on the first frame; maneuvering
+  # poses bake lazily.
+  for team in Team:
+    for rot in 0 ..< SoldierRotations:
+      for seg in RigSeg:
+        discard rigSegPixels(team, seg, rot, 0, 0, RenderScale)
+      discard rigGunPixels(team, rot, RenderScale)
   discard boardTypeface()
   block:
     # Encode the map-band wire messages too: they are byte-identical for

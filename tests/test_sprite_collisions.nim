@@ -121,9 +121,15 @@ proc applyDefs(
 proc actorDefinitionIds(
   messages: openArray[SpritePacketMessage]
 ): HashSet[int] =
-  ## Soldier definition ids, including live, corpse, and selected variants.
+  ## Skin-master definition ids, including live, corpse, and selected variants.
+  ## Scoped to the per-skin soldier pools (all < RigHeadSpriteBase): the board
+  ## turret-rig HEAD segment also carries the "player <color>" contract label, but
+  ## it is skin-INDEPENDENT (it slices the DefaultSkin master) and lives in its own
+  ## pool at RigHeadSpriteBase+, so it must not count toward the per-skin arithmetic.
   for message in messages:
     if message.kind != spkSprite:
+      continue
+    if message.sprite.id >= RigHeadSpriteBase:
       continue
     let label = message.sprite.label
     if label.startsWith("player ") or label.startsWith("corpse ") or
