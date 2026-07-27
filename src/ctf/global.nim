@@ -51,8 +51,9 @@ const
   ## sprite/object pools start at 100).
   MapBandSpriteBase = 30
   MapBandObjectBase = 40
-  MapBandHeight = 96          ## px rows per band — 659/96 ≈ 7 bands, each well
-                              ## under 200 KB compressed (far below the 1 MiB cap).
+  MapBandHeight = 192         ## px rows per band — 659/192 ≈ 4 bands (was 96 /
+                              ## ~7). Logical rows shrink by boardScale² so each
+                              ## band's byte size stays under the 1 MiB cap.
   ScoreboardWidth = 84
   ScoreboardHeight = 116
   ScoreboardY = 2
@@ -869,10 +870,13 @@ proc addSpriteChanged(
   defs: var seq[SpriteDefinition],
   spriteId, width, height: int,
   pixels: openArray[uint8],
-  label: string = "",
+  label: string,
   changed = false
 ) {.measure.} =
   ## Appends a sprite definition when metadata or caller dirtiness changed.
+  ## Every sprite MUST carry a non-empty label — the inspector and bot readers
+  ## both key off it, and an empty label silently re-sends forever.
+  doAssert label.len > 0, "sprite " & $spriteId & " needs a non-empty label"
   let index = defs.spriteDefinitionIndex(spriteId)
   if index >= 0:
     if defs[index].width == width and
@@ -910,7 +914,7 @@ proc addBoardSpriteChanged(
   defs: var seq[SpriteDefinition],
   spriteId, width, height: int,
   pixels: openArray[uint8],
-  label: string = "",
+  label: string,
   changed = false,
   native = 1
 ) {.measure.} =
@@ -919,6 +923,7 @@ proc addBoardSpriteChanged(
   ## scale `pixels` was rasterized at — 1 (upscaled here on emission) or
   ## boardScale (already high-res; passed through). The dedup check runs
   ## before any upscale so per-frame callers pay nothing when unchanged.
+  doAssert label.len > 0, "sprite " & $spriteId & " needs a non-empty label"
   let
     outW = width * boardScale
     outH = height * boardScale
@@ -934,23 +939,6 @@ proc addBoardSpriteChanged(
     packet.addSpriteChanged(
       defs, spriteId, outW, outH,
       scaleSpritePixels(pixels, width, height, boardScale), label, changed)
-
-proc addBoardSprite(
-  packet: var seq[uint8],
-  spriteId, width, height: int,
-  pixels: openArray[uint8],
-  label = "",
-  native = 1
-) =
-  ## Uncached addSprite for BOARD sprites (per-frame text labels): logical
-  ## dims in, boardScale× wire sprite out. See addBoardSpriteChanged.
-  if native == boardScale:
-    packet.addSprite(spriteId, width * boardScale, height * boardScale,
-      pixels, label)
-  else:
-    packet.addSprite(
-      spriteId, width * boardScale, height * boardScale,
-      scaleSpritePixels(pixels, width, height, boardScale), label)
 
 proc applyGlobalViewerMessage*(
   state: var GlobalViewerState,
@@ -2522,8 +2510,7 @@ proc addTeamScoreboard(
     red.width,
     red.height,
     red.pixels,
-    "team score " & redText,
-    changed = true
+    "team score " & redText
   )
   packet.addSpriteChanged(
     spriteDefs,
@@ -2531,8 +2518,7 @@ proc addTeamScoreboard(
     blue.width,
     blue.height,
     blue.pixels,
-    "team score " & blueText,
-    changed = true
+    "team score " & blueText
   )
   currentIds.add(TeamScoreObjectBase)
   currentIds.add(TeamScoreObjectBase + 1)
@@ -3019,9 +3005,9 @@ proc buildSpriteProtocolInit(
   result.addViewport(BottomRightLayerId, ScreenWidth, ScreenHeight)
   result.addLayer(TeamScoreLayerId, TeamScoreLayerType, UiLayerFlag)
   result.addViewport(TeamScoreLayerId, TeamScoreWidth, TextLineHeight + 2)
-  # The map rides as horizontal bands (see addMapBands): one 1.09 MB map sprite
-  # is a single message over the hosted 1 MiB WS frame cap — banding keeps every
-  # pixel while making each message a fraction of the cap.
+  # The map rides as horizontal bands (see addMapBands): one ~1.09 MB map
+  # sprite exceeds the hosted 1 MiB WS frame cap — banding keeps every pixel
+  # while making each message a fraction of the cap.
   sim.addMapBands(spriteDefs, result)
   sim.addMapMarkers(spriteDefs, result)
   sim.addFlagSprites(spriteDefs, result)
@@ -4568,8 +4554,7 @@ proc buildSpriteProtocolPlayerUpdates*(
       lives.width,
       lives.height,
       lives.pixels,
-      "lives " & livesText,
-      changed = true
+      "lives " & livesText
     )
     result.addBoardObject(
       SelectedTextObjectId,
@@ -4594,8 +4579,7 @@ proc buildSpriteProtocolPlayerUpdates*(
       weapon.width,
       weapon.height,
       weapon.pixels,
-      "weapon " & weaponText,
-      changed = true
+      "weapon " & weaponText
     )
     result.addBoardObject(
       SpritePlayerWeaponObjectId,
@@ -4849,8 +4833,7 @@ proc addReplayMismatchWarning(
     warning.width,
     warning.height,
     warning.pixels,
-    warning.label,
-    changed = true
+    warning.label
   )
   packet.addBoardObject(
     ReplayMismatchObjectId,
@@ -5279,10 +5262,26 @@ proc buildSpriteProtocolUpdates*(
     if sim.config.showPlayerLabels:
       let flagTeamOrd = sim.carriedFlagTeam(playerIndex)
       let
-        label =
+        labelSpriteId = player.spritePlayerNameSpriteId()
+        labelObjectId = player.spritePlayerNameObjectId()
+        # Stable content key: name art only changes when the name or carried
+        # flag marker changes. Skip rebuild + wire when the key already matches.
+        labelKey =
           if flagTeamOrd >= 0:
-            # This player holds a flag: name + a team-colored flag marker beside
-            # it, so it's obvious who is carrying and whose flag it is.
+            "name " & playerLabelText(player) & " flag " & $flagTeamOrd
+          else:
+            "name " & playerLabelText(player)
+        defIndex = nextState.spriteDefs.spriteDefinitionIndex(labelSpriteId)
+      var
+        labelW = 0
+        labelH = 0
+      if defIndex >= 0 and
+          nextState.spriteDefs[defIndex].label == labelKey:
+        labelW = nextState.spriteDefs[defIndex].width div max(1, boardScale)
+        labelH = nextState.spriteDefs[defIndex].height div max(1, boardScale)
+      else:
+        let label =
+          if flagTeamOrd >= 0:
             sim.buildCarrierNameSprite(player, flagTeamOrd,
               smooth = boardScale > 1)
           else:
@@ -5291,20 +5290,23 @@ proc buildSpriteProtocolUpdates*(
               PlayerNameColor,
               smooth = boardScale > 1
             )
-        labelSpriteId = player.spritePlayerNameSpriteId()
-        labelObjectId = player.spritePlayerNameObjectId()
+        labelW = label.width
+        labelH = label.height
+        result.addBoardSpriteChanged(
+          nextState.spriteDefs,
+          labelSpriteId,
+          label.width,
+          label.height,
+          label.pixels,
+          labelKey,
+          native = boardScale
+        )
+      let
         labelX = player.overheadAnchorX() +
-          (SoldierBodyPx - label.width) div 2
+          (SoldierBodyPx - labelW) div 2
         labelY = player.overheadAnchorY() - OverheadYOffset -
-          HpBarH - label.height - 1
+          HpBarH - labelH - 1
       currentIds.add(labelObjectId)
-      result.addBoardSprite(
-        labelSpriteId,
-        label.width,
-        label.height,
-        label.pixels,
-        native = boardScale
-      )
       result.addBoardObject(
         labelObjectId,
         labelX,
@@ -5434,8 +5436,7 @@ proc buildSpriteProtocolUpdates*(
       scrubber.width,
       scrubber.height,
       scrubber.pixels,
-      "replay scrubber",
-      changed = true
+      "replay scrubber " & $controlTick & "/" & $controlMaxTick
     )
     result.addBoardObject(
       ReplayScrubberObjectId,
@@ -5451,8 +5452,8 @@ proc buildSpriteProtocolUpdates*(
       controls.width,
       controls.height,
       controls.pixels,
-      "replay controls",
-      changed = true
+      "replay controls play=" & $replayPlaying &
+        " speed=" & $replaySpeed & " loop=" & $replayLooping
     )
     result.addBoardObject(
       ReplayControlsObjectId,
