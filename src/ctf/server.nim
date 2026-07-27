@@ -32,6 +32,7 @@ type
     playerAddresses: Table[WebSocket, string]
     playerSlots: Table[WebSocket, int]
     playerTokens: Table[WebSocket, string]
+    playerReady: Table[WebSocket, bool]
     globalViewers: Table[WebSocket, GlobalViewerState]
     playerViewers: Table[WebSocket, PlayerViewerState]
     rewardViewers: Table[WebSocket, bool]
@@ -89,6 +90,10 @@ const
   # Hosted replay closes any WS frame larger than 1 MiB (sends 1009). We chunk
   # outbound sprite packets under a margin below that so no single frame trips it.
   MaxWsFrameBytes = 900_000
+  # The Sprite v1 player-ready packet id (0x85). The pinned bitworld predates
+  # it (newer bitworld drops ButtonC, which the grenade input bit needs), so
+  # the id is declared here rather than imported.
+  SpriteClientReady = 0x85'u8
 
 proc liveProgressMaxTick(config: GameConfig): int =
   ## Returns the live viewer tick-bar budget.
@@ -165,6 +170,7 @@ proc initAppState() =
   appState.playerAddresses = initTable[WebSocket, string]()
   appState.playerSlots = initTable[WebSocket, int]()
   appState.playerTokens = initTable[WebSocket, string]()
+  appState.playerReady = initTable[WebSocket, bool]()
   appState.globalViewers = initTable[WebSocket, GlobalViewerState]()
   appState.playerViewers = initTable[WebSocket, PlayerViewerState]()
   appState.rewardViewers = initTable[WebSocket, bool]()
@@ -212,6 +218,11 @@ proc removePlayerWebSocketState(websocket: WebSocket): int =
   appState.playerAddresses.del(websocket)
   appState.playerSlots.del(websocket)
   appState.playerTokens.del(websocket)
+  appState.playerReady.del(websocket)
+
+proc isPlayerReadyPacket*(message: string): bool =
+  ## Returns true for the one-byte Sprite v1 player-ready packet.
+  message.len == 1 and message[0].uint8 == SpriteClientReady
 
 proc addressIsKicked(address: string): bool =
   ## Returns true when an address is blocked from this match.
@@ -242,6 +253,7 @@ proc registerPlayerWebSocket(
   appState.inputMasks[websocket] = 0
   appState.inputPressedMasks[websocket] = 0
   appState.lastAppliedMasks[websocket] = 0
+  appState.playerReady[websocket] = false
   true
 
 proc registerGlobalWebSocket(websocket: WebSocket) =
@@ -702,6 +714,7 @@ proc websocketHandler(
             appState.inputMasks[websocket] = 0
             appState.inputPressedMasks[websocket] = 0
             appState.lastAppliedMasks[websocket] = 0
+            appState.playerReady[websocket] = false
     if closeKickedSocket:
       websocket.disconnectWebSocket()
   of MessageEvent:
@@ -710,7 +723,10 @@ proc websocketHandler(
     elif message.kind == BinaryMessage:
       {.gcsafe.}:
         withLock appState.lock:
-          if websocket in appState.globalViewers:
+          if message.data.isPlayerReadyPacket() and
+              websocket in appState.playerReady:
+            appState.playerReady[websocket] = true
+          elif websocket in appState.globalViewers:
             appState.globalViewers[websocket].applyGlobalViewerMessage(
               message.data
             )
@@ -746,11 +762,54 @@ proc websocketHandler(
 proc serverThreadProc(args: ServerThreadArgs) {.thread.} =
   args.server[].serve(Port(args.port), args.address)
 
-proc runFrameLimiter(previousTick: var MonoTime) =
+proc resetPlayerReady(
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+) =
+  ## Clears readiness for active player sockets before sending one frame.
+  {.gcsafe.}:
+    withLock appState.lock:
+      for i, websocket in sockets:
+        if i < playerIndices.len and playerIndices[i] >= 0 and
+            playerIndices[i] < playerCount and
+            websocket in appState.playerReady:
+          appState.playerReady[websocket] = false
+
+proc allPlayersReady(
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+): bool =
+  ## Returns true when every active player socket sent ready.
+  var activePlayers = 0
+  {.gcsafe.}:
+    withLock appState.lock:
+      for i, websocket in sockets:
+        if i >= playerIndices.len or playerIndices[i] < 0 or
+            playerIndices[i] >= playerCount:
+          continue
+        inc activePlayers
+        if not appState.playerReady.getOrDefault(websocket, false):
+          return false
+  activePlayers > 0
+
+proc runFrameLimiter(
+  previousTick: var MonoTime,
+  fastMode: bool,
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+) =
   let frameDuration = initDuration(microseconds = 1_000_000 div TargetFps)
-  let elapsed = getMonoTime() - previousTick
-  if elapsed < frameDuration:
-    sleep(int((frameDuration - elapsed).inMilliseconds))
+  while true:
+    let elapsed = getMonoTime() - previousTick
+    if elapsed >= frameDuration:
+      break
+    if fastMode and sockets.allPlayersReady(playerIndices, playerCount):
+      break
+    let remaining = frameDuration - elapsed
+    sleep(max(1, min(2, int(remaining.inMilliseconds))))
   previousTick = getMonoTime()
 
 proc rewardAccountFor(sim: SimServer, address: string): int =
@@ -1244,6 +1303,7 @@ proc runServerLoop*(
               appState.inputMasks[join.websocket] = 0
               appState.inputPressedMasks[join.websocket] = 0
               appState.lastAppliedMasks[join.websocket] = 0
+              appState.playerReady[join.websocket] = false
               sockets.add(join.websocket)
               playerIndices.add(appState.playerIndices[join.websocket])
               appState.playerViewers[join.websocket] =
@@ -1255,6 +1315,8 @@ proc runServerLoop*(
             rewardViewers.add(websocket)
 
       let rewardPacket = sim.buildRewardPacket()
+      if config.fastMode:
+        sockets.resetPlayerReady(playerIndices, sim.players.len)
       for i in 0 ..< sockets.len:
         var nextState: PlayerViewerState
         let framePacket = sim.buildSpriteProtocolPlayerUpdates(
@@ -1270,7 +1332,13 @@ proc runServerLoop*(
           sockets[i].send(blobFromBytes(chunk), BinaryMessage)
       for websocket in rewardViewers:
         websocket.send(rewardPacket, TextMessage)
-      runFrameLimiter(lastTick)
+      runFrameLimiter(
+        lastTick,
+        config.fastMode,
+        sockets,
+        playerIndices,
+        sim.players.len
+      )
       continue
 
     var frameEvents = newJArray()
@@ -1326,6 +1394,9 @@ proc runServerLoop*(
               appState.playerIndices[websocket] = 0x7fffffff
           for websocket in appState.playerViewers.keys:
             appState.playerViewers[websocket] = initPlayerViewerState()
+
+    if not replayLoaded and config.fastMode:
+      sockets.resetPlayerReady(playerIndices, sim.players.len)
 
     for i in 0 ..< sockets.len:
       var nextState: PlayerViewerState
@@ -1427,4 +1498,10 @@ proc runServerLoop*(
       joinThread(serverThread)
       break
 
-    runFrameLimiter(lastTick)
+    runFrameLimiter(
+      lastTick,
+      not replayLoaded and config.fastMode,
+      sockets,
+      playerIndices,
+      sim.players.len
+    )
