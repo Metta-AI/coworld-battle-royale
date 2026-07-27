@@ -780,7 +780,7 @@ html, body {
   color: var(--paper-dim);
   max-width: calc(360 * var(--u));
 }
-/* win-condition chip — names HOW the match ended (flag / elimination / time) */
+/* win-condition chip — names HOW the match ended (heart / elimination / time) */
 #endcard .wincond {
   font-family: var(--pixfont);
   font-size: calc(10 * var(--u));
@@ -862,7 +862,7 @@ html, body {
   color: var(--paper-dim);
 }
 #endcard .ec-row.mvp .pname { color: var(--amber); }
-/* name cell: name ellipsizes (but keeps a readable floor), the capture flag
+/* name cell: name ellipsizes (but keeps a readable floor), the capture mark
    + honor badges ride after it; a pathological pileup clips inside the cell
    rather than bleeding into the K column */
 #endcard .ec-row .pcell {
@@ -2201,7 +2201,7 @@ body[data-embed] #board { top: 0; height: 100%; }
     if (typeof self.lives === 'number') bits.push('×' + self.lives);
     (self.items || []).forEach(function (it) { bits.push(ITEM_LABEL[it] || it.toUpperCase()); });
     var html = bits.map(function (b) { return '<span>' + b + '</span>'; }).join('');
-    if (self.carry) html += '<span class="carry">♥ FLAG</span>';
+    if (self.carry) html += '<span class="carry">♥ HEART</span>';
     gearEl.innerHTML = html;
   }
 
@@ -2386,13 +2386,13 @@ body[data-embed] #board { top: 0; height: 100%; }
   }
 
   function onSteal(e, s) {
-    var flagTeam = e.flag; // the team whose flag was TAKEN
+    var heartTeam = e.flag; // the team whose heart was TAKEN (e.flag is the legacy event field)
     var thief = shortName(rosterName(s, e.by));
-    banner((flagTeam === 'red' ? 'RED' : 'BLUE') + ' FLAG TAKEN', 'steal ' + (flagTeam + '-accent'));
+    banner((heartTeam === 'red' ? 'RED' : 'BLUE') + ' HEART TAKEN', 'steal ' + (heartTeam + '-accent'));
   }
   function onReturn(e, s) {
-    var flagTeam = e.flag;
-    banner((flagTeam === 'red' ? 'RED' : 'BLUE') + ' FLAG RETURNED', 'returned ' + (flagTeam + '-accent'));
+    var heartTeam = e.flag;
+    banner((heartTeam === 'red' ? 'RED' : 'BLUE') + ' HEART RETURNED', 'returned ' + (heartTeam + '-accent'));
   }
   function onCapture(e, s) {
     var byTeam = teamOf(s, e.by);
@@ -2599,10 +2599,10 @@ body[data-embed] #board { top: 0; height: 100%; }
     if (o.timeLimit) {
       var winL = o.winner === 'red' ? o.redLives : o.blueLives;
       var loseL = o.winner === 'red' ? o.blueLives : o.redLives;
-      return winL !== loseL ? 'TIME LIMIT — LIVES TIEBREAK' : 'TIME LIMIT — FLAG PROGRESS';
+      return winL !== loseL ? 'TIME LIMIT — LIVES TIEBREAK' : 'TIME LIMIT — HEART PROGRESS';
     }
     var loserLives = o.winner === 'red' ? o.blueLives : o.redLives;
-    return loserLives <= 0 ? 'ELIMINATION' : 'FLAG CAPTURE';
+    return loserLives <= 0 ? 'ELIMINATION' : 'HEART CAPTURE';
   }
 
   function endcardOrder(a, b) {
@@ -2708,7 +2708,7 @@ body[data-embed] #board { top: 0; height: 100%; }
       if (winL !== loseL) {
         how.textContent = 'Time expired — ' + winName + ' held more lives (' + winL + ' vs ' + loseL + ').';
       } else {
-        how.textContent = 'Time expired — lives tied; ' + winName + ' won on flag progress.';
+        how.textContent = 'Time expired — lives tied; ' + winName + ' won on heart progress.';
       }
     } else {
       var loserLives = winner === 'red' ? blueL : redL;
@@ -2716,7 +2716,7 @@ body[data-embed] #board { top: 0; height: 100%; }
         head.textContent = winName + ' WIPES OUT ' + teamName(s, winner === 'red' ? 'blue' : 'red', winner === 'red' ? 'BLUE' : 'RED');
         how.textContent = winName + ' eliminated every opposing life.';
       } else {
-        how.textContent = winName + ' captured the enemy flag.';
+        how.textContent = winName + ' captured the enemy heart.';
       }
     }
   }
