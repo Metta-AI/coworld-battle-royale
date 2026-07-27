@@ -411,6 +411,7 @@ type
     replayCommands*: seq[char]
     broadcastHud*: bool          ## viewer opted into the JSON chrome channel.
     momentumSent*: bool          ## full lives-lead series already sent to this viewer.
+    fpMapSent*: bool             ## static minimap wall silhouette already sent (EYES PiP tactical map).
     povSelectPending*: int       ## POV slot requested by a `v:<slot>` command.
     endzoneFade*: array[Team, int]  ## per-team endzone glow crossfade stage (0
                                  ## = full glow / heart home, GlowFadeStages-1 =

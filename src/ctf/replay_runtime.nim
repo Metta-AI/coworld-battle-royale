@@ -82,7 +82,9 @@ proc buildReplayViewerPacket*(
   if result.len == 0:
     return
 
-  let sendLead = not state.momentumSent
+  let
+    sendLead = not state.momentumSent
+    sendFpMap = not state.fpMapSent
   result.addSprite(
     BroadcastChromeSpriteId,
     1,
@@ -99,8 +101,11 @@ proc buildReplayViewerPacket*(
       nextState.selectedJoinOrder,
       if sendLead: replay.livesLeadSeries else: @[],
       replay.replayStartTick(),
-      replay.endHoldSecondsLeft()
+      replay.endHoldSecondsLeft(),
+      sendFpMap
     )
   )
   if sendLead:
     nextState.momentumSent = true
+  if sendFpMap:
+    nextState.fpMapSent = true
