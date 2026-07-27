@@ -2129,7 +2129,7 @@ proc addFogRuns(
         run.width * FovCellSize,
         FovCellSize,
         buildFogRunSprite(run.width),
-        "fog " & $run.width & " cells"
+        "fog"
       )
     let objectId = FogObjectBase + runIndex
     currentIds.add(objectId)
