@@ -27,5 +27,6 @@ import
   test_extract_events,
   test_windows,
   test_agent_skins,
-  test_sprite_collisions
+  test_sprite_collisions,
+  test_fast_mode
 {.warning[UnusedImport]: on.}

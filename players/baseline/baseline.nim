@@ -2134,6 +2134,7 @@ proc runBot(url: string) =
           bot.estAim + bot.rotSign * AimRate * advance, AimBrads)
         if not client.mapCameraReady:
           bot.resetTransient()             # lobby / game-over interstitial
+          ws.send(readyBlob(), BinaryMessage)
           continue
         if not bot.navBuilt and client.walkabilityReady:
           bot.buildNavGrid(client)
@@ -2153,6 +2154,9 @@ proc runBot(url: string) =
           if bot.shoutWant.len > 0:
             ws.send(chatBlob(bot.shoutWant), BinaryMessage)
             bot.shoutWant = ""
+        # Done thinking: a fastMode server advances the tick as soon as
+        # every player has sent this; older servers ignore the packet.
+        ws.send(readyBlob(), BinaryMessage)
     except Exception as e:
       if everConnected:
         # The game ended and the server went away: exit so the episode

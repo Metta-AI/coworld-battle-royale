@@ -203,6 +203,11 @@
           "type": "boolean",
           "default": true
         },
+        "fastMode": {
+          "description": "Advance frames early when all players report ready.",
+          "type": "boolean",
+          "default": true
+        },
         "mapPath": {
           "description": "Arena map identifier (procedurally generated).",
           "type": "string",

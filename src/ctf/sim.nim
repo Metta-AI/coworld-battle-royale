@@ -386,6 +386,9 @@ type
     maxTicks*: int
     maxGames*: int
     showPlayerLabels*: bool
+    fastMode*: bool           ## advance frames early when every player has
+                              ## sent the Sprite v1 ready packet; pacing only,
+                              ## never in gameHash.
     mapPath*: string
     closedRoster*: bool
     slots*: seq[PlayerSlotConfig]
@@ -2157,6 +2160,7 @@ proc defaultGameConfig*(): GameConfig =
     maxTicks: MaxTicks,
     maxGames: MaxGames,
     showPlayerLabels: true,
+    fastMode: true,
     mapPath: DefaultMapPath,
     closedRoster: false,
     slots: @[]
@@ -2511,6 +2515,7 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("maxGameTicks", config.maxTicks)
   node.readConfigInt("maxGames", config.maxGames)
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
+  node.readConfigBool("fastMode", config.fastMode)
   node.readConfigString("map", config.mapPath)
   node.readConfigString("mapPath", config.mapPath)
   ## The gun range follows the selected map unless the config sets it
@@ -2596,6 +2601,7 @@ proc configJson*(config: GameConfig): string =
     "mapPath": config.mapPath,
     "closedRoster": config.closedRoster,
     "showPlayerLabels": config.showPlayerLabels,
+    "fastMode": config.fastMode,
     "tokens": tokens,
     "slots": slots
   }
