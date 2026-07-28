@@ -1,38 +1,56 @@
 import
   std/[json, math, os, random, strutils],
-  bitworld/aseprite, bitworld/client as bitworldClient,
-  bitworld/pixelfonts, bitworld/profile, bitworld/spriteprotocol,
+  bitworld/aseprite, bitworld/pixelfonts, bitworld/profile, bitworld/spriteprotocol,
   bitworld/server,
   jsony, pixie
 
+when not defined(emscripten):
+  import bitworld/client as bitworldClient
+
 const
   GameName* = "ctf"
-  GameVersion* = "6"
+  GameVersion* = "22"  ## GV22: shield armor layer (re-land of #76).
   ReplayFps* = 24
   DefaultMapPath* = "arena"
   DarkBgPath* = "data/darkbg.aseprite"
   SpriteSheetAsepritePath = "data/spritesheet.aseprite"
-  MapWidth* = 1235
-  MapHeight* = 659
   SpriteSize* = 12
   CrewSpriteSize* = 16
   CrewSpriteVariants* = 8
-  ## HD top-down soldier: one hand-painted per-team master (soldier_red/blue.png)
-  ## rendered gun-east, pre-rotated into SoldierRotations aim steps so the held
-  ## paintball marker sweeps with the aim. The body (helmet) is sized to the
-  ## legacy 16px crew footprint; the canvas is larger only so the extended gun
-  ## never clips as it swings around. Emitted through the existing player sprite
-  ## id pool (16 ids per color) — this replaces the flat 8-variant + h-flip crew.
-  SoldierRotations* = 16      ## pre-rotated aim steps (16 brads apart).
-  SoldierCanvas* = 40         ## px square sprite canvas (fits the swinging gun).
-  SoldierBodyPx* = 16         ## helmet diameter target = legacy crew footprint.
+  ## HD top-down soldier: the real Cogs-vs-Clips cog, one tinted master per team
+  ## (soldier_red/blue.png, facing SOUTH, smile visor visible) plus the shared
+  ## paintball gun master (paintgun.png, muzzle east). Body and gun are mounted
+  ## as ONE rigid unit — the gun held in FRONT of the face, both pointing the
+  ## same way — and pre-rotated together through SoldierRotations aim steps:
+  ## the cog looks where it aims. The canvas is larger than the body only so
+  ## the extended gun never clips as the unit rotates. Emitted through the
+  ## existing player sprite id pool (16 ids per color) — this replaces the
+  ## flat 8-variant + h-flip crew.
+  SoldierRotations* = 16      ## pre-rendered aim steps (16 brads apart).
+  SoldierCanvas* = 72         ## px square sprite canvas (fits the swinging gun).
+  SoldierBodyPx* = 34         ## cog body target size on the map (full-body unit).
+  GunLengthPx* = 34           ## top-down gun master length on the map (stock-tip to
+                              ## muzzle, along the aim ray).
+  GunGripPx* = -13            ## gun stock-tip offset from the body center, along
+                              ## aim (negative = stock sits behind the hub so the
+                              ## barrel reaches out front, marker straddling the cog).
+  GunRightPx* = 10            ## the marker is held at the cog's RIGHT: barrel
+                              ## centerline offset this far off the aim ray, toward
+                              ## the head's right (screen +y when facing +x/east).
+                              ## Enough to clear the head silhouette and read as a
+                              ## distinct held object, without floating far off.
+  GunGlowRadius* = 0.6        ## px blur (master-frame): tiny, so the rim is CRISP —
+                              ## an outline stroke, not a soft glow.
+  GunGlowSpread* = 1.0        ## px the silhouette expands before blurring — this is
+                              ## the outline WIDTH that sticks out past the gun edge.
+  GunGlowAlpha* = 95'u8       ## faint warm outline (0..255), reads as a subtle stroke.
   CollisionW* = 1
   CollisionH* = 1
   PlayerHalf* = 6             ## half-extent of the solid player footprint, in px.
   SpriteDrawOffX* = 8
   SpriteDrawOffY* = 8
-  ## Draw offset for the rotated soldier: place the canvas so its center lands on
-  ## the player position (canvas center = the helmet pivot).
+  ## Draw offset for the soldier: place the canvas so its center lands on
+  ## the player position (canvas center = the body pivot).
   SoldierDrawOff* = SoldierCanvas div 2
   MotionScale* = 256
   Accel* = 76
@@ -41,6 +59,11 @@ const
   MaxSpeed* = 704
   StopThreshold* = 8
   MovementSlideMaxScan = 3
+  PlayerSolidSpan* = 2 * PlayerHalf  ## centers this close (Chebyshev) means
+                                     ## two player footprints overlap.
+  PlayerBouncePct* = 40       ## restitution of player-player collisions, in
+                              ## percent: 0 = a dead-stop shove, 100 = a
+                              ## perfectly elastic billiard bounce.
   TargetFps* = 24
   SpaceColor* = 0'u8
   MapVoidColor* = 12'u8
@@ -52,8 +75,13 @@ const
   Lives* = 3
   HitPoints* = 3              ## hits to kill: each shot removes one hit point.
   RespawnTicks* = 72          ## ~3s before respawning at home.
-  SpawnProtectTicks* = 24     ## ~1s spawn invulnerability.
-  GunRange* = 1300            ## px, effectively map-wide; LOS and aim are the real limits.
+  GunRange* = 1300            ## px, effectively map-wide on the default
+                              ## arena; LOS and aim are the real limits.
+                              ## Each map def carries its own value — see
+                              ## CtfMap.gunRange.
+  ExposureSampleStep* = 3     ## px between silhouette line-of-sight samples
+                              ## across a target's body (±PlayerHalf): only
+                              ## the exposed part of a body can be hit.
   BulletHalfWidth* = 8.0      ## the bullet corridor half-width: a shot travels
                               ## along the facing ray and hits the FIRST player
                               ## whose footprint crosses it.
@@ -61,31 +89,35 @@ const
   FireWindupTicks* = 5        ## ~0.2s from trigger pull to the shot; aim locks
                               ## at the pull, so a peeking target can duck back.
   ShotFxTicks* = 12           ## ~0.5s a shot tracer stays visible (cosmetic only).
+  HitFlashTicks* = 8          ## ~0.33s the struck-target flash rings a victim
+                              ## in the spectator view (cosmetic only).
   SplatterFxTicks* = 120      ## ~5s a death splatter stays visible (cosmetic only).
   HitFxTicks* = 34            ## ~1.4s a non-fatal hit's paint splat stays visible.
   DamageFxTicks* = 26         ## ~1.1s a floating "-1" damage pop rises and fades
                               ## after a hit (cosmetic only, never in gameHash).
+  KillFxTicks* = 44           ## ~1.8s a floating "KO" kill marker rises and fades
+                              ## after a death (cosmetic only, never in gameHash).
   CarrierSpeedPct* = 70       ## carrier moves at 70% speed.
   AimBradsTurn* = 256         ## aim angle units per full turn (binary radians).
   AimTurnRate* = 5            ## brads/tick a held rotate button turns the aim
                               ## (~7 deg/tick; a full turn takes ~2.1s).
-  VisionConeDeg* = 45         ## vision cone half-angle around the aim angle.
+  VisionConeDeg* = 60         ## vision cone half-angle around the aim angle.
   VisionBubble* = 90          ## omnidirectional vision radius in px.
 
   FovCellSize* = 8            ## fog-of-war visibility grid cell size in px.
-  FovGridW* = (MapWidth + FovCellSize - 1) div FovCellSize
-  FovGridH* = (MapHeight + FovCellSize - 1) div FovCellSize
-  FovCellCount* = FovGridW * FovGridH
 
   StartWaitTicks* = 5 * TargetFps
   GameOverTicks* = 360
-  MaxTicks* = 10_000  ## 0 = no limit.
+  MaxTicks* = 5_000  ## 0 = no limit.
   MaxGames* = 0  ## 0 = no limit.
   MaxPlayers* = 16
   MinPlayers* = 16
 
   WinReward* = 1              ## each winner scores +1 on capture or wipe.
   LossReward* = -1            ## each loser scores -1 on capture or wipe.
+  TimeoutReward* = -1         ## EVERY player scores -1 on a time-limit draw
+                              ## (GameVersion 21): stalling out the clock is
+                              ## never better than losing, for either side.
 
   FlagPickupRange* = 12       ## touch radius to steal the enemy flag.
   CaptureZoneWidth* = 40      ## width of each home-edge capture zone.
@@ -94,7 +126,6 @@ const
   GrenadeSpawnInset* = 40     ## corner grenade spawn inset from the border.
   GrenadePickupRange* = 12    ## touch radius to pick a grenade up.
   GrenadeRespawnTicks* = 5 * ReplayFps  ## a taken corner refills after 5s.
-  GrenadeMaxRange* = MapWidth div 5  ## max throw distance (full charge).
   GrenadeMinRange* = 30       ## a tap's distance: inside the blast radius,
                               ## so a panicked drop can hurt the thrower.
   GrenadeChargeTicks* = 24    ## hold this long for a full-strength throw.
@@ -103,25 +134,44 @@ const
                               ## weapon, not a mortar shell you can stroll
                               ## away from. (Was 6 px/tick of flight — a
                               ## full-range lob hung airborne ~41 ticks.)
-  GrenadeBlastRadius* = 40    ## everyone inside the blast takes damage.
+  GrenadeBlastRadius* = 52    ## everyone inside the blast takes damage
+                              ## (GameVersion 17: 40 -> 52, +30%).
   GrenadeDamage* = 2          ## hit points removed by one blast.
   BlastFxTicks* = 12          ## cosmetic blast flash duration in ticks.
 
   MedKitPickupRange* = 12     ## touch radius to pick a med kit up.
   MedKitRespawnTicks* = 30 * ReplayFps  ## a taken kit refills after 30s.
-  SwordSpawnInset* = GrenadeSpawnInset
-  SwordPickupRange* = 12
-  SwordRespawnTicks* = 30 * ReplayFps
-  SwordRange* = 26
-  SwordArcBrads* = 32
-  SwordFxTicks* = 8
+  PlasmaArcSpawnInset* = GrenadeSpawnInset
+  PlasmaArcPickupRange* = 12  ## touch radius to pick a plasma arc up.
+  PlasmaArcRespawnTicks* = 30 * ReplayFps
+  PlasmaArcSquare* = SoldierBodyPx  ## one "square": a cog body length.
+  PlasmaArcReach* = 4 * PlasmaArcSquare  ## forward cone reach: 4 squares.
+  PlasmaArcMaxWidth* = 2 * PlasmaArcSquare  ## cone width AT max reach:
+                              ## 2 squares. The cone widens linearly from the
+                              ## muzzle, so the half-angle is atan(1/4) ~ 14.0
+                              ## degrees everywhere along the reach.
+  PlasmaArcDamage* = 3        ## hit points removed by one cone touch:
+                              ## instantly lethal to a bare cog (3 hp), but a
+                              ## shield carrier (6 hp) survives the first one.
+  PlasmaArcActiveTicks* = 5   ## a fired cone stays on this many ticks,
+                              ## tracking the attacker's position and aim.
+  PlasmaArcResetTicks* = 20   ## recharge time after the cone shuts off; the
+                              ## refire cadence is ActiveTicks + ResetTicks.
+  PlasmaArcFxTicks* = 4       ## each per-tick cone snapshot fades this long
+                              ## (cosmetic only).
 
   ShieldPickupRange* = 12     ## touch radius to pick a shield up.
   ShieldRespawnTicks* = 30 * ReplayFps  ## a taken endzone shield refills after 30s.
-  ShieldHitPoints* = 6        ## hit points a shield carrier has while carrying.
+  ShieldLayerHp* = 3          ## hp in a full shield layer. Damage depletes
+                              ## the layer before base hp; a pickup refills it
+                              ## and never heals base damage.
+  ShieldFireSlowdown* = 3     ## a shield carrier's fire cooldown is this many
+                              ## times longer (3x slower fire rate).
+
+  BubbleImpactTicks* = 8      ## ~0.33s the bubble's blink/dent impact FX
+                              ## lasts (cosmetic only, like HitFlashTicks).
 
   ShoutMaxChars* = 10         ## a shout is at most this many characters.
-  ShoutRange* = MapWidth div 5  ## audible within 20% of the screen width.
   ShoutTicks* = 3 * ReplayFps ## a shout stays observable this long.
   ShoutCooldownTicks* = ReplayFps  ## at most one shout per second.
 
@@ -141,7 +191,12 @@ const
   UiLayerFlag* = 2
   PlayerSpriteBase* = 100
   FlagSpriteBase* = 700       ## team flag sprites: 700 red flag, 701 blue flag.
-  SelectedPlayerSpriteBase* = 800
+  SelectedPlayerSpriteBase* = 6000  ## outlined selected-soldier pool:
+                              ## default 6000..6031, crown 6032..6063. Moved
+                              ## from 800: that pool swallowed the hp pips
+                              ## (820..823) and the sound/impact rings
+                              ## (830/831) — same collision class as the
+                              ## 2026-07-22 unit-tag/fire-icon incident.
   SelectedTextSpriteId* = 4000
   SelectedViewportSpriteId* = 4001
   PlayerObjectBase* = 1000
@@ -209,10 +264,30 @@ const
   ReplayWebSocketPath* = "/replay"
   RewardWebSocketPath* = "/reward"
 
+## Runtime map state. The game supports multiple arenas ("arena" is the
+## default, "arena-large" the 30%-larger variant); one is selected per
+## process by loadCtfMap (driven by config.mapPath) BEFORE any sim, mask,
+## or render work happens, and never changes afterward — the render bakes
+## in global.nim rely on that per-process invariant. The values below are
+## initialized to the default arena so tools that never call loadCtfMap
+## keep working unchanged.
+var
+  MapWidth* = 1235
+  MapHeight* = 659
+  FovGridW* = (MapWidth + FovCellSize - 1) div FovCellSize
+  FovGridH* = (MapHeight + FovCellSize - 1) div FovCellSize
+  FovCellCount* = FovGridW * FovGridH
+  GrenadeMaxRange* = MapWidth div 5  ## max throw distance (full charge).
+  ShoutRange* = MapWidth div 5  ## audible within 20% of the screen width.
+
 type
   Team* = enum
     Red
     Blue
+
+  Skin* = enum
+    DefaultSkin
+    CrownSkin
 
   CtfError* = object of ValueError
 
@@ -237,7 +312,10 @@ type
   ArenaShape* = object
     ## One arena obstacle. Discs and diamonds are center + radius (L2 and L1
     ## norms); diagonals are a 45-degree wall segment of given perpendicular
-    ## thickness between two endpoints.
+    ## thickness between two endpoints. A `window` shape is glass: it blocks
+    ## movement, bullets, and plasma-arc line-of-sight exactly like stone, but
+    ## fog-of-war shadowcasting sees straight through it.
+    window*: bool
     case kind*: ArenaShapeKind
     of shapeRect:
       rect*: MapRect
@@ -256,6 +334,15 @@ type
     mapLayer*, walkLayer*, wallLayer*: int
     center*: MapPoint
     rooms*: seq[Room]
+    ## Arena layout: the open-space clearances, the map's default gun range,
+    ## and the LEFT-half obstacle set (mirrored across the vertical center
+    ## line on selection).
+    flagRing*: int             ## clear radius of the open center ring.
+    captureClear*: int         ## x-columns kept traversable for carriers.
+    spawnClearW*: int          ## half-width of the open spawn pockets.
+    spawnClearH*: int          ## half-height of the open spawn pockets.
+    gunRange*: int             ## default gun range on this map (px).
+    leftObstacles*: seq[ArenaShape]
 
   CrewSprite* = ref object
     width*, height*: int
@@ -282,6 +369,7 @@ type
     token*: string
     team*: Team
     color*: uint8
+    skin*: Skin
     hasTeam*: bool
     hasColor*: bool
 
@@ -292,12 +380,12 @@ type
     frictionDen*: int
     maxSpeed*: int
     stopThreshold*: int
+    playerBouncePct*: int
     seed*: int
     speed*: int
     lives*: int
     hitPoints*: int
     respawnTicks*: int
-    spawnProtectTicks*: int
     gunRange*: int
     fireCooldownTicks*: int
     fireWindupTicks*: int
@@ -311,6 +399,9 @@ type
     maxTicks*: int
     maxGames*: int
     showPlayerLabels*: bool
+    fastMode*: bool           ## advance frames early when every player has
+                              ## sent the Sprite v1 ready packet; pacing only,
+                              ## never in gameHash.
     mapPath*: string
     closedRoster*: bool
     slots*: seq[PlayerSlotConfig]
@@ -331,16 +422,26 @@ type
     fireCooldown*: int
     fireWindup*: int           ## ticks until a pulled trigger releases its shot.
     windupBrads*: int          ## aim angle locked at the trigger pull, -1 = none.
-    spawnProtect*: int
     carryingFlag*: bool
     hasGrenade*: bool          ## each player carries at most one grenade.
-    hasShield*: bool           ## carrying an endzone shield: 6 hp, can't shoot.
-    hasSword*: bool            ## each player carries at most one sword.
+    hasShield*: bool           ## carrying an endzone shield: 3x slower fire.
+    shieldHp*: int             ## remaining shield-layer hp (0..ShieldLayerHp);
+                               ## damage depletes it before base hp.
+    hasPlasmaArc*: bool        ## each player carries at most one plasma arc.
+    arcTicksLeft*: int         ## remaining active ticks of a fired plasma
+                               ## cone (0 = the cone is off).
+    arcHitMask*: uint32        ## players already damaged by the current
+                               ## activation: one hit per victim per firing.
     throwCharge*: int          ## ticks the throw button has been held.
     lastShoutTick*: int        ## tick of this player's latest shout, -1 = never.
+    paintHitTick*: int         ## tick of the latest PAINT hit taken (paintball
+                               ## gun or grenade only — NOT the plasma arc, which
+                               ## draws no paint). Cosmetic: drives the EYES-PiP
+                               ## paint splat; -1 = never, never enters gameHash.
     joinOrder*: int
     address*: string
     color*: uint8
+    skin*: Skin               ## cosmetic only; excluded from gameHash.
     reward*: int
     kills*: int
     deaths*: int
@@ -349,6 +450,17 @@ type
                                ## excluded from gameHash (see gameHash).
     shotsHit*: int             ## released shots that connected with an enemy;
                                ## analysis-only, excluded from gameHash.
+    multiKills2*: int          ## grenade blasts / plasma activations that
+                               ## killed exactly 2; analysis-only, excluded
+                               ## from gameHash.
+    multiKills3*: int          ## grenade blasts / plasma activations that
+                               ## killed 3 or more; analysis-only, excluded
+                               ## from gameHash.
+    teamKills*: int            ## teammates this player killed (backstabs);
+                               ## analysis-only, excluded from gameHash.
+    arcKillsThisFire*: int     ## kills scored by the current plasma
+                               ## activation; transient multi-kill
+                               ## bookkeeping, excluded from gameHash.
 
   PlayerFov* = object
     ## One player's cached fog-of-war visibility grid (FovGridW x FovGridH
@@ -363,6 +475,27 @@ type
     x0*, y0*, x1*, y1*: int
     firedTick*: int
     color*: uint8
+    hit*: bool                 ## the shot connected with a player: its tracer
+                               ## draws full-bright, a miss draws pre-faded.
+
+  HitFlashFx* = object
+    ## A cosmetic "target was struck" flash; never enters gameHash
+    ## (replay-safe). The spectator view draws a brief bright ring over the
+    ## victim (tracked by index, so the flash follows them) the instant a
+    ## bullet connects — making hits legible at a glance where the tracer
+    ## alone is ambiguous.
+    playerIndex*: int          ## the struck player; players are only appended.
+    tick*: int                 ## when the bullet connected.
+
+  BubbleImpactFx* = object
+    ## A cosmetic shield-bubble impact; never enters gameHash (replay-safe).
+    ## When a bullet lands on a carrier whose bubble is still up, the bubble
+    ## itself blinks and dents toward the shooter — replacing the struck-target
+    ## ring and body paint spark, so the hit reads as absorbed by the shield.
+    playerIndex*: int          ## the struck carrier; players are only appended.
+    tick*: int                 ## when the bullet connected.
+    angleBrads*: int           ## impact site: direction from the carrier's
+                               ## center toward the shooter, in aim brads.
 
   SplatterFx* = object
     ## A cosmetic death splatter mark; never enters gameHash (replay-safe). A
@@ -381,8 +514,8 @@ type
     color*: uint8              ## the thrower's paint color, so the landing
                                ## splat reads as that team's paint-bomb.
 
-  SwordFx* = object
-    ## A cosmetic melee swipe; never enters gameHash (replay-safe).
+  PlasmaArcFx* = object
+    ## A cosmetic plasma-arc cone flash; never enters gameHash (replay-safe).
     x*, y*: int
     aimBrads*: int
     tick*: int
@@ -396,6 +529,54 @@ type
     tick*: int                 ## when the hit landed.
     amount*: int               ## hit points lost (1 for a shot, GrenadeDamage).
     color*: uint8              ## the victim's team color, so it reads as their loss.
+    kill*: bool                ## a fatal hit: drawn as a "KO" kill marker that
+                               ## lives KillFxTicks instead of the "-N" number.
+
+  SimEventKind* = enum
+    ## Tier-2 analysis event channel (the Logs substrate). Every kind is
+    ## emitted at the exact in-sim site where the fact is known first-hand
+    ## (weapon, positions, attacker), so downstream never has to guess by
+    ## counter-diffing. Analysis-only: never enters gameHash.
+    Shot        ## a gun shot released (source = shooter).
+    Hit         ## a released shot connected with an enemy on its ray.
+    Damage      ## hit points removed (gun/plasma/grenade), amount = hp lost.
+    Kill        ## a CREDITED kill (mirrors recordKill; self-kills by own
+                ## grenade are a Death without a Kill).
+    Death       ## a player died (source = victim, target = killer).
+    FlagSteal   ## a flag left its pedestal on an enemy's back.
+    FlagReturn  ## a flag went home for any reason other than capture.
+    Capture     ## a carrier scored the enemy flag.
+    Respawn     ## a dead player came back at home.
+    Heal        ## hit points restored (med kit or shield pickup).
+    PhaseChange ## the game phase moved (lobby / playing / gameover):
+                ## weapon = the new phase name, amount = its ordinal.
+
+  SimEvent* = object
+    ## One tier-2 analysis event; never enters gameHash (replay-safe).
+    ## Collected only while collectEvents is on, so live servers pay nothing.
+    tick*: int
+    kind*: SimEventKind
+    source*: int               ## acting player's stable join slot, -1 = n/a.
+    target*: int               ## affected player's stable join slot, -1 = n/a.
+    weapon*: string            ## "gun" / "plasma" / "grenade", the new phase
+                               ## name for PhaseChange, "" = n/a.
+    amount*: int               ## hp delta for Damage/Kill/Heal, the new
+                               ## phase ordinal for PhaseChange, else 0.
+    hp*: int                   ## the affected player's remaining hit points
+                               ## AFTER the event, floored at 0 (a fatal
+                               ## overkill still reads 0): the victim on
+                               ## Damage, the healed player on Heal.
+                               ## -1 on every other kind (n/a).
+    blocked*: int              ## on a Damage event, how many of `amount`'s hit
+                               ## points the victim's SHIELD absorbed — i.e.
+                               ## damage prevented from touching the base cog.
+                               ## A shield carrier holds bonus hp above the base
+                               ## HitPoints ceiling (only a shield pickup lifts a
+                               ## cog there), so any of this hit that lands while
+                               ## the victim is above base is shield-soaked. 0
+                               ## when the victim held no shield hp, and on every
+                               ## non-Damage kind (n/a).
+    x*, y*: float              ## map position where the event happened.
 
   Shout* = object
     ## One short player message, audible within ShoutRange of where it was
@@ -448,6 +629,8 @@ type
     nextJoinOrder*: int
     tickCount*: int
     recentShots*: seq[ShotFx]  ## cosmetic shot tracers; excluded from gameHash.
+    hitFlashes*: seq[HitFlashFx]  ## cosmetic struck-target flashes; excluded from gameHash.
+    bubbleImpacts*: seq[BubbleImpactFx]  ## cosmetic shield-bubble impact blinks; excluded from gameHash.
     splatters*: seq[SplatterFx]  ## cosmetic death splatters; excluded from gameHash.
     recentBlasts*: seq[BlastFx]  ## cosmetic grenade blasts; excluded from gameHash.
     damagePops*: seq[DamageFx]  ## cosmetic floating "-N" damage numbers; excluded from gameHash.
@@ -455,9 +638,9 @@ type
     grenadeSpawns*: array[4, PickupSpawn]
     medKitSpawns*: array[2, PickupSpawn]
     shieldSpawns*: array[2, PickupSpawn]  ## one shield per team endzone.
-    swordSpawns*: array[2, PickupSpawn]
+    plasmaArcSpawns*: array[2, PickupSpawn]
     airborneGrenades*: seq[AirborneGrenade]
-    swordSwipes*: seq[SwordFx]
+    plasmaArcFlashes*: seq[PlasmaArcFx]
     gameStartTick*: int
     startWaitTimer*: int
     phase*: GamePhase
@@ -469,6 +652,10 @@ type
     isDraw*: bool
     needsReregister*: bool
     gameEventLoggingEnabled*: bool
+    collectEvents*: bool       ## tier-2 event sink switch; default off so
+                               ## live servers pay nothing (see SimEvent).
+    events*: seq[SimEvent]     ## collected tier-2 events; the extractor
+                               ## drains this every tick. Never in gameHash.
     lastLobbyPlayersLogged*: int
     lastLobbyNeededLogged*: int
     lastLobbySecondsLogged*: int
@@ -479,7 +666,10 @@ proc gameDir*(): string =
 
 proc clientDataDir*(): string =
   ## Returns the shared client data directory.
-  bitworldClient.clientDir() / "data"
+  when defined(emscripten):
+    gameDir() / "data"
+  else:
+    bitworldClient.clientDir() / "data"
 
 proc spriteSheetPath(): string =
   ## Returns the sprite sheet aseprite path.
@@ -621,97 +811,154 @@ proc loadPaintBombSprite*(size: int): seq[uint8] =
   ## pickup, the carried icon, and the in-flight projectile.
   loadRgbaSprite("data/paintbomb.png", size)
 
-## --- HD top-down soldier: pre-rotated per-team masters ---
-## Each team's master (gun pointing east = aim brads 0) is measured for its
-## helmet pivot, scaled so the helmet fills SoldierBodyPx, and pre-rotated into
-## SoldierRotations canvases. Rotations pivot on the helmet center so the body
-## spins in place and the gun sweeps — the same method David uses for HD crew,
-## but rasterized at map scale and emitted on our existing sprite ids.
+## --- HD top-down soldier: CvC cog + gun, rotated as one rigid unit ---
+## Each team's master (soldier_red/blue.png) is the canonical Cogs-vs-Clips cog
+## facing SOUTH, smile visor visible, used exactly as drawn. It is measured for
+## its body pivot (solid-pixel centroid) and scaled so the body fills
+## SoldierBodyPx. The shared gun master (paintgun.png: muzzle east, barrel
+## centerline at image mid-height) mounts GunGripPx east of the body center
+## with its barrel on the aim ray, and body + gun pre-rotate TOGETHER around
+## the body center — the cog spins with its gun, so east aim (rot 0) shows the
+## master exactly as drawn and tracers always line up with the muzzle.
+const SoldierMasterPaths: array[Skin, array[Team, string]] = [
+  DefaultSkin: [
+    Red: "data/soldier_red.png",
+    Blue: "data/soldier_blue.png"
+  ],
+  CrownSkin: [
+    Red: "data/soldier_red_crown.png",
+    Blue: "data/soldier_blue_crown.png"
+  ]
+]
+
 var
-  soldierMasters: array[Team, Image]
-  soldierPivotX, soldierPivotY: array[Team, float]
-  soldierScale: array[Team, float]
-  soldierLoaded: array[Team, bool]
-  soldierRotCache: array[Team, array[SoldierRotations, seq[uint8]]]
+  soldierMasters: array[Skin, array[Team, Image]]
+  soldierPivotX, soldierPivotY: array[Skin, array[Team, float]]
+  soldierScale: array[Skin, array[Team, float]]
+  soldierLoaded: array[Skin, array[Team, bool]]
+  soldierRotCache: array[
+    Skin,
+    array[Team, array[SoldierRotations, seq[tuple[
+      scale: int, pixels: seq[uint8]
+    ]]]]
+  ]
+  gunMaster: Image
+  gunScale: float
+  gunLoaded: bool
 
-proc soldierMasterPath(team: Team): string =
-  if team == Red: "data/soldier_red.png" else: "data/soldier_blue.png"
-
-proc measureSoldierBody(team: Team, master: Image) =
-  ## Finds the helmet pivot and the master->canvas scale. The paintball marker
-  ## is a long appendage to the east, so the body (helmet + shoulders) lives in
-  ## the left ~50% of the opaque bounding box; we pivot on that region's
-  ## centroid and size its vertical span to SoldierBodyPx.
-  var
-    minX = master.width
-    maxX = -1
-    minY = master.height
-    maxY = -1
-  for y in 0 ..< master.height:
-    for x in 0 ..< master.width:
-      if master.data[y * master.width + x].a >= 64:
-        minX = min(minX, x); maxX = max(maxX, x)
-        minY = min(minY, y); maxY = max(maxY, y)
-  if maxX < minX:
-    minX = 0; maxX = master.width - 1; minY = 0; maxY = master.height - 1
-  let limX = minX + (maxX - minX + 1) div 2   ## helmet band = left half.
+proc measureSoldierBody(skin: Skin, team: Team, master: Image) =
+  ## Finds the body pivot and the master->canvas scale: the centroid and
+  ## vertical span of the SOLID pixels (alpha >= 200 — the cog shell; the
+  ## baked-in soft drop shadow sits below that and is excluded, so the cog
+  ## itself, not its shadow, is what centers and fills SoldierBodyPx).
   var
     sumX = 0.0
     sumY = 0.0
     n = 0
-    hTop = master.height
-    hBot = -1
+    top = master.height
+    bot = -1
   for y in 0 ..< master.height:
-    for x in minX ..< limX:
-      if master.data[y * master.width + x].a >= 64:
+    for x in 0 ..< master.width:
+      if master.data[y * master.width + x].a >= 200:
         sumX += float(x); sumY += float(y); inc n
-        hTop = min(hTop, y); hBot = max(hBot, y)
+        top = min(top, y); bot = max(bot, y)
   if n == 0:
-    soldierPivotX[team] = float(minX + maxX) / 2
-    soldierPivotY[team] = float(minY + maxY) / 2
-    soldierScale[team] = float(SoldierBodyPx) / max(1.0, float(maxY - minY + 1))
+    soldierPivotX[skin][team] = float(master.width) / 2
+    soldierPivotY[skin][team] = float(master.height) / 2
+    soldierScale[skin][team] =
+      float(SoldierBodyPx) / max(1.0, float(master.height))
   else:
-    soldierPivotX[team] = sumX / float(n)
-    soldierPivotY[team] = sumY / float(n)
-    soldierScale[team] = float(SoldierBodyPx) / max(1.0, float(hBot - hTop + 1))
+    soldierPivotX[skin][team] = sumX / float(n)
+    soldierPivotY[skin][team] = sumY / float(n)
+    soldierScale[skin][team] =
+      float(SoldierBodyPx) / max(1.0, float(bot - top + 1))
 
-proc ensureSoldierLoaded(team: Team) =
-  if soldierLoaded[team]:
+proc ensureSoldierLoaded(skin: Skin, team: Team) =
+  if soldierLoaded[skin][team]:
     return
-  let master = readImage(gameDir() / soldierMasterPath(team))
-  soldierMasters[team] = master
-  measureSoldierBody(team, master)
-  soldierLoaded[team] = true
+  let master = readImage(gameDir() / SoldierMasterPaths[skin][team])
+  soldierMasters[skin][team] = master
+  measureSoldierBody(skin, team, master)
+  soldierLoaded[skin][team] = true
 
-proc soldierRotPixels*(team: Team, rot: int): seq[uint8] =
-  ## One pre-rotated soldier sprite (SoldierCanvas square, straight-alpha RGBA).
+proc ensureGunLoaded() =
+  if gunLoaded:
+    return
+  # Top-down paintball marker, muzzle east, barrel on the image mid-line. Scaled
+  # by WIDTH so GunLengthPx spans the full stock-to-muzzle length along the aim.
+  gunMaster = readImage(gameDir() / "data/paintgun_topdown.png")
+  gunScale = float(GunLengthPx) / max(1.0, float(gunMaster.width))
+  gunLoaded = true
+
+proc soldierRotPixels*(
+  team: Team,
+  skin: Skin,
+  rot: int,
+  renderScale = 1
+): seq[uint8] =
+  ## One pre-rendered soldier sprite (SoldierCanvas·renderScale square,
+  ## straight-alpha RGBA): body + gun as one rigid unit, rotated to aim step
+  ## `rot`. The master's FACE side (south) leads the aim with the gun held in
+  ## front of it — aiming south shows the master exactly as drawn. The masters
+  ## are ~120px art rendered down to a 34px body at 1×, so a renderScale > 1
+  ## raster recovers genuine painted detail, not upscaled blocks.
   let r = ((rot mod SoldierRotations) + SoldierRotations) mod SoldierRotations
-  if soldierRotCache[team][r].len > 0:
-    return soldierRotCache[team][r]
-  ensureSoldierLoaded(team)
+  for cached in soldierRotCache[skin][team][r]:
+    if cached.scale == renderScale:
+      return cached.pixels
+  ensureSoldierLoaded(skin, team)
+  ensureGunLoaded()
   let
-    master = soldierMasters[team]
+    master = soldierMasters[skin][team]
+    outCanvas = SoldierCanvas * renderScale
     # aim increases counter-clockwise on screen (0=east, 64=north); screen y is
     # down, so a positive brad step rotates the art clockwise in image space —
     # i.e. draw at angle -theta to match aimVector.
     angle = float(r) * 2.0 * PI / float(SoldierRotations)
-    s = soldierScale[team]
-  var canvas = newImage(SoldierCanvas, SoldierCanvas)
-  let mat =
-    translate(vec2(float32(SoldierCanvas) / 2, float32(SoldierCanvas) / 2)) *
-    rotate(float32(-angle)) *
-    scale(vec2(float32(s), float32(s))) *
-    translate(vec2(float32(-soldierPivotX[team]), float32(-soldierPivotY[team])))
-  canvas.draw(master, mat)
+    s = soldierScale[skin][team] * float(renderScale)
+    center = float32(outCanvas) / 2
+  var canvas = newImage(outCanvas, outCanvas)
+  let
+    unitRot =
+      translate(vec2(center, center)) *
+      rotate(float32(-angle))
+    # Unit space: +x = aim. The extra -90° turns the master so its SOUTH side
+    # (the smile visor) points along +x — the face leads the aim, right behind
+    # the gun.
+    bodyMat =
+      unitRot *
+      rotate(float32(-PI / 2)) *
+      scale(vec2(float32(s), float32(s))) *
+      translate(
+        vec2(
+          float32(-soldierPivotX[skin][team]),
+          float32(-soldierPivotY[skin][team])
+        )
+      )
+    # Gun-local (0, height/2) — the stock end of the barrel centerline — mounts
+    # GunGripPx along the aim (stock behind the hub, barrel reaching out front)
+    # and GunRightPx off the aim ray to the cog's RIGHT (+y = right when facing
+    # +x/east); it spins with the unit so the marker rides the head's right.
+    gunMat =
+      unitRot *
+      translate(vec2(
+        float32(GunGripPx * renderScale), float32(GunRightPx * renderScale))) *
+      scale(vec2(
+        float32(gunScale * float(renderScale)),
+        float32(gunScale * float(renderScale))
+      )) *
+      translate(vec2(0, float32(-gunMaster.height) / 2))
+  canvas.draw(master, bodyMat)
+  canvas.draw(gunMaster, gunMat)
   # Straight-alpha RGBA for the Sprite v1 protocol (pixie stores premultiplied).
-  var pixels = newSeq[uint8](SoldierCanvas * SoldierCanvas * 4)
-  for i in 0 ..< SoldierCanvas * SoldierCanvas:
+  var pixels = newSeq[uint8](outCanvas * outCanvas * 4)
+  for i in 0 ..< outCanvas * outCanvas:
     let c = canvas.data[i].rgba()
     pixels[i * 4] = c.r
     pixels[i * 4 + 1] = c.g
     pixels[i * 4 + 2] = c.b
     pixels[i * 4 + 3] = c.a
-  soldierRotCache[team][r] = pixels
+  soldierRotCache[skin][team][r].add((scale: renderScale, pixels: pixels))
   pixels
 
 proc soldierRotIndex*(aimBrads: int): int =
@@ -719,19 +966,264 @@ proc soldierRotIndex*(aimBrads: int): int =
   ((aimBrads + AimBradsTurn div (SoldierRotations * 2)) *
     SoldierRotations div AimBradsTurn) mod SoldierRotations
 
-proc soldierIconPixels*(team: Team, sizePx: int): seq[uint8] =
-  ## A compact roster chip: the east-facing soldier scaled so the helmet body
-  ## fills the icon (a stub of gun barrel clips at the right edge — reads as
-  ## "armed" without the full sweep-canvas footprint). Used by the game-over list.
-  ensureSoldierLoaded(team)
+## --- Articulated TURRET rig: the REAL CvC cog, segmented (broadcast board only) ---
+## The SAME real master art as soldierRotPixels, SLICED (scripts/art/build_cvc_rig.py)
+## into 9 pieces that recompose to the south master at rest but articulate like a
+## tank trike when moving:
+##   head  - cube + cyan visor + center pistons + the held GUN. Faces AIM. Drawn
+##           LAST so it covers the hub/leg-joins (no head-hole).
+##   armL/R- the two shoulder assemblies. Face AIM. TUCKED at rest; reach FORWARD
+##           to cradle the carried heart only while carrying (carry-gated caller).
+##   legFL/FR/Rear - the three leg struts (tire removed). Face the MOVEMENT heading
+##           (CogDriveState.bodyHeading), each hinged about its own hip with a
+##           differential turn swing; the INNER leg SHORTENS into a turn.
+##   wheelL/R/Rear - the three tires, cut out of the legs, each CASTERING (rotating
+##           about its axle) toward the roll direction, capped so a tall top-down
+##           tire only tilts to hint the turn (never swings fully broadside).
+## The head/arms track AIM while the legs/wheels track MOVEMENT — a true turret
+## swivel. All broadcast-only (no sim state, no GameVersion bump); POV keeps the
+## unified soldierRotPixels sprite.
+##
+## Every segment is baked in the SAME 192px master frame space through ONE code
+## path (rigSegPixels): rotate the segment about its ANCHOR by a base angle (aim
+## for head/arms, bodyHeading for legs/wheels) plus an articulation, then place the
+## HUB on the player. At rest everything rotates by the same aim delta about anchors
+## that ARE its master pixels, so the composite == the south master.
+type
+  RigSeg* = enum
+    rsHead, rsArmL, rsArmR, rsLegFL, rsLegFR, rsLegRear,
+    rsWheelL, rsWheelR, rsWheelRear
+
+const
+  RigSegCount* = 9
+  RigCanvas* = 96             ## px square rig segment canvas at 1x (fits the
+                              ## swung legs + castered wheels + reaching arms).
+  # Anchors in 192px master-frame space (scripts/art/build_cvc_rig.py anchors.json).
+  RigHub: tuple[x, y: float] = (96.0, 88.0)   ## cog rotation center (head-cube
+                              ## center); head, arms and leg-hips all measured here.
+  RigAnchor: array[RigSeg, tuple[x, y: float]] = [
+    (96.0, 88.0),     # rsHead      (== hub; head rotates about the hub to aim)
+    (70.0, 84.0),     # rsArmL      left shoulder attach
+    (120.0, 84.0),    # rsArmR      right shoulder attach
+    (72.0, 100.0),    # rsLegFL     left front hip
+    (120.0, 100.0),   # rsLegFR     right front hip
+    (96.0, 80.0),     # rsLegRear   rear hip — flipped 180° about hub to the BACK
+    # Wheels caster about their TIRE CENTROID (measured), not the axle at the top —
+    # pivoting mid-tire spins the wheel in place, not swinging the tire body out.
+    (73.5, 134.0),    # rsWheelL    left front tire centroid
+    (117.3, 132.7),   # rsWheelR    right front tire centroid
+    (94.7, 48.3)]     # rsWheelRear rear tire centroid — flipped 180° to the BACK
+  # Articulation feel (degrees). Legs differential-steer: rest tuck ± splay on the
+  # turn signal; the INNER leg shortens instead of splaying wide.
+  RigRestTuckDeg = 2.0
+  RigSplayDeg = 5.0           ## outer leg barely swings — the inner-leg SHORTEN +
+                              ## wheel caster carry the turn read; a big swing on
+                              ## the far leg reads as a splayed spider strut.
+  RigRearCounterFrac = 0.3    ## rear leg counter-swings this fraction of splay.
+  RigInnerShorten = 0.34      ## inner leg shrinks up to this fraction on a turn.
+  RigArmReachDeg = 22.0       ## arms swing forward this far to cradle a carried
+                              ## heart (art step 1); 0 at rest (tucked shoulders).
+  RigShortenSteps* = 4        ## baked leg-length steps (0 = full .. this = shortest).
+  RigSteps* = 16              ## baked steps per rotating quantity (aim / heading).
+  RigLegSwingSteps* = 16      ## baked leg swing steps across the full turn range.
+  # Wheel caster: capped TIGHT so a tall top-down tire only tilts to hint the roll
+  # direction. Expressed in brads (AimBradsTurn=256): 16 brads ≈ 22°.
+  RigCasterMaxBrads* = 16
+  RigCasterSteps* = 8         ## baked caster tilt steps across ±RigCasterMaxBrads.
+
+var
+  rigLoaded: array[Team, bool]
+  rigSegImg: array[Team, array[RigSeg, Image]]
+  rigScale: array[Team, float]   ## master-frame px -> map px (body fills body px).
+  # Bake cache keyed by (baseStep, artStep, shortenStep, scale). baseStep is the
+  # aim step (head/arms) or heading step (legs/wheels); artStep is the leg swing or
+  # wheel caster; shortenStep is the leg-length index (0 for non-legs).
+  rigSegCache: array[Team, array[RigSeg, seq[tuple[
+    baseStep, artStep, shortenStep, scale: int, pixels: seq[uint8]]]]]
+
+proc rigSegPath(seg: RigSeg): string =
+  case seg
+  of rsHead: "head"
+  of rsArmL: "arm_l"
+  of rsArmR: "arm_r"
+  of rsLegFL: "leg_fl"
+  of rsLegFR: "leg_fr"
+  of rsLegRear: "leg_rear"
+  of rsWheelL: "wheel_l"
+  of rsWheelR: "wheel_r"
+  of rsWheelRear: "wheel_rear"
+
+proc rigSegIsLeg(seg: RigSeg): bool =
+  seg in {rsLegFL, rsLegFR, rsLegRear}
+
+proc rigSegIsWheel(seg: RigSeg): bool =
+  seg in {rsWheelL, rsWheelR, rsWheelRear}
+
+proc ensureRigLoaded(team: Team) =
+  if rigLoaded[team]:
+    return
+  let dir = gameDir() / "data/rig_real" / (if team == Red: "red" else: "blue")
+  for seg in RigSeg:
+    rigSegImg[team][seg] = readImage(dir / rigSegPath(seg) & ".png")
+  # Scale the rig so its body matches the unified soldier footprint. The solid
+  # body spans ~99px in the 192px frame (y56..154); map that to SoldierBodyPx.
+  ensureSoldierLoaded(DefaultSkin, team)
+  rigScale[team] = float(SoldierBodyPx) / 99.0
+  rigLoaded[team] = true
+
+proc soldierCanvasToPixels(canvas: Image): seq[uint8] =
+  ## Straight-alpha RGBA (Sprite v1 protocol) from a pixie canvas.
+  result = newSeq[uint8](canvas.width * canvas.height * 4)
+  for i in 0 ..< canvas.width * canvas.height:
+    let c = canvas.data[i].rgba()
+    result[i * 4] = c.r
+    result[i * 4 + 1] = c.g
+    result[i * 4 + 2] = c.b
+    result[i * 4 + 3] = c.a
+
+proc rigSegPixels*(team: Team, seg: RigSeg, baseStep, artStep: int,
+    shortenStep = 0, renderScale = 1): seq[uint8] =
+  ## One rig segment baked into a RigCanvas sprite, HUB-centered.
+  ##  - baseStep: the segment's base rotation step (RigSteps) — the AIM step for
+  ##    the head/arms, the movement-HEADING step for legs/wheels. This IS the
+  ##    turret swivel: head/arms and legs get DIFFERENT baseSteps.
+  ##  - artStep: leg differential swing (signed, RigLegSwingSteps) or wheel caster
+  ##    tilt (signed, RigCasterSteps); ignored for the head.
+  ##  - shortenStep: leg-length index 0..RigShortenSteps (legs only; inner-leg
+  ##    shorten). 0 for everything else.
+  ## Each segment rotates about its ANCHOR by baseDeg + articulation, then the HUB
+  ## lands at canvas center — so at rest (all baseSteps equal, art 0) the segments
+  ## recompose to the south master exactly.
   let
-    master = soldierMasters[team]
-    s = float(sizePx) / float(SoldierBodyPx) * soldierScale[team]
+    b = ((baseStep mod RigSteps) + RigSteps) mod RigSteps
+    art = artStep
+    sh = clamp(shortenStep, 0, RigShortenSteps)
+  for cached in rigSegCache[team][seg]:
+    if cached.baseStep == b and cached.artStep == art and
+        cached.shortenStep == sh and cached.scale == renderScale:
+      return cached.pixels
+  ensureRigLoaded(team)
+  let
+    outCanvas = RigCanvas * renderScale
+    img = rigSegImg[team][seg]
+    s = rigScale[team] * float(renderScale)
+    center = float32(outCanvas) / 2
+    anchor = RigAnchor[seg]
+    hub = RigHub
+    # base delta: rot 0 = east; the master faces SOUTH so the −90° turn makes the
+    # face lead the base direction. Angle increases CCW; screen y down → rotate −.
+    baseAngle = float(b) * 2.0 * PI / float(RigSteps)
+    baseDeg = -baseAngle - PI / 2.0
+    # The gun mounts in PURE aim space (no −90° — the master-south turn is only for
+    # the body art), like soldierRotPixels: unitRot = rotate(−aimAngle).
+    unitDeg = -baseAngle
+  # Articulation about the segment's own anchor (radians, screen CCW+).
+  var artDeg = 0.0
+  if rigSegIsLeg(seg):
+    let sw = float(art) / float(RigLegSwingSteps) * RigSplayDeg  # signed swing
+    case seg
+    of rsLegFL:  artDeg = (-RigRestTuckDeg + sw) * PI / 180.0
+    of rsLegFR:  artDeg = ( RigRestTuckDeg + sw) * PI / 180.0
+    of rsLegRear: artDeg = (sw * RigRearCounterFrac) * PI / 180.0
+    else: discard
+  elif rigSegIsWheel(seg):
+    # caster tilt: art is the signed caster step; convert to a small angle.
+    let tilt = float(art) / float(RigCasterSteps) *
+      (float(RigCasterMaxBrads) * 2.0 * PI / float(AimBradsTurn))
+    artDeg = -tilt
+  elif seg in {rsArmL, rsArmR}:
+    # Arms: art 0 = tucked (rest); art 1 = REACHING forward to cradle a carried
+    # heart. The reach swings each shoulder inward-and-forward about its attach so
+    # the two arms close in front of the aim (where the heart rides).
+    if art != 0:
+      artDeg = (if seg == rsArmL: RigArmReachDeg else: -RigArmReachDeg) *
+        PI / 180.0
+  # Leg-length shorten: scale the leg toward its hip along the hip→foot (down)
+  # axis. The leg art hangs below its hip anchor, so scaling y about the anchor
+  # pulls the foot (and its wheel, placed separately) up toward the hip.
+  let shortenF = 1.0 - float(sh) / float(RigShortenSteps) * RigInnerShorten
+  var canvas = newImage(outCanvas, outCanvas)
+  let
+    toCenter = translate(vec2(center, center))
+    baseRot = rotate(float32(baseDeg))
+    scl = scale(vec2(float32(s), float32(s)))
+    hubToOrigin = translate(vec2(float32(-hub.x), float32(-hub.y)))
+    artMat =
+      translate(vec2(float32(anchor.x), float32(anchor.y))) *
+      rotate(float32(artDeg)) *
+      scale(vec2(1.0'f32, float32(shortenF))) *
+      translate(vec2(float32(-anchor.x), float32(-anchor.y)))
+    mat = toCenter * baseRot * scl * hubToOrigin * artMat
+  # NB: the held gun is NO LONGER baked into the head — it is its own board object
+  # (rigGunPixels), drawn ABOVE the head with a backlight glow so it reads clearly
+  # and can be gated off if a cog is ever disarmed. The head is a clean turret.
+  canvas.draw(img, mat)
+  let pixels = soldierCanvasToPixels(canvas)
+  rigSegCache[team][seg].add(
+    (baseStep: b, artStep: art, shortenStep: sh, scale: renderScale,
+     pixels: pixels))
+  pixels
+
+var rigGunCache: array[Team, seq[tuple[aimStep, scale: int, pixels: seq[uint8]]]]
+
+proc rigGunPixels*(team: Team, aimStep: int, renderScale = 1): seq[uint8] =
+  ## The held top-down paintball MARKER as its OWN HUB-centered rig object (not
+  ## baked into the head): mounted at the cog's RIGHT (GunRightPx off the aim ray,
+  ## stock GunGripPx along aim), barrel on +aim so tracers line up. A soft warm
+  ## backlight glow is composited BEHIND the marker so the dark gun pops off the
+  ## dark floor/legs. Team-independent shape, but cached per team for symmetry with
+  ## the other rig segments. Emitted ABOVE the head z; gate the caller on a
+  ## `hasGun` flag to hide it when a cog is disarmed.
+  let a = ((aimStep mod RigSteps) + RigSteps) mod RigSteps
+  for cached in rigGunCache[team]:
+    if cached.aimStep == a and cached.scale == renderScale:
+      return cached.pixels
+  ensureGunLoaded()
+  let
+    outCanvas = RigCanvas * renderScale
+    center = float32(outCanvas) / 2
+    baseAngle = float(a) * 2.0 * PI / float(RigSteps)
+    unitDeg = -baseAngle                 # pure aim space (muzzle on +aim)
+    gs = gunScale * float(renderScale)
+    gunMat =
+      translate(vec2(center, center)) * rotate(float32(unitDeg)) *
+      translate(vec2(
+        float32(GunGripPx * renderScale), float32(GunRightPx * renderScale))) *
+      scale(vec2(float32(gs), float32(gs))) *
+      translate(vec2(0'f32, float32(-gunMaster.height) / 2))
+  # 1) lay the gun on a transparent canvas, 2) build a warm-amber backlight from
+  # its silhouette (spread + blur), 3) draw glow THEN gun on the output.
+  var gunLayer = newImage(outCanvas, outCanvas)
+  gunLayer.draw(gunMaster, gunMat)
+  let glow = gunLayer.shadow(
+    offset = vec2(0, 0),
+    spread = float32(GunGlowSpread * float(renderScale)),
+    blur = float32(GunGlowRadius * float(renderScale)),
+    color = rgba(255, 214, 138, GunGlowAlpha).color)  # faint warm rim light
+  var canvas = newImage(outCanvas, outCanvas)
+  canvas.draw(glow)                            # subtle warm edge behind the marker
+  canvas.draw(gunLayer)
+  let pixels = soldierCanvasToPixels(canvas)
+  rigGunCache[team].add((aimStep: a, scale: renderScale, pixels: pixels))
+  pixels
+
+proc soldierIconPixels*(team: Team, sizePx: int): seq[uint8] =
+  ## A compact roster chip: the face-on cog scaled so the body fills the icon
+  ## (no gun — the smile visor IS the identity). Used by the game-over list.
+  ensureSoldierLoaded(DefaultSkin, team)
+  let
+    master = soldierMasters[DefaultSkin][team]
+    s =
+      float(sizePx) / float(SoldierBodyPx) *
+        soldierScale[DefaultSkin][team]
   var canvas = newImage(sizePx, sizePx)
   let mat =
     translate(vec2(float32(sizePx) / 2, float32(sizePx) / 2)) *
     scale(vec2(float32(s), float32(s))) *
-    translate(vec2(float32(-soldierPivotX[team]), float32(-soldierPivotY[team])))
+    translate(vec2(
+      float32(-soldierPivotX[DefaultSkin][team]),
+      float32(-soldierPivotY[DefaultSkin][team])
+    ))
   canvas.draw(master, mat)
   result = newSeq[uint8](sizePx * sizePx * 4)
   for i in 0 ..< sizePx * sizePx:
@@ -740,6 +1232,151 @@ proc soldierIconPixels*(team: Team, sizePx: int): seq[uint8] =
     result[i * 4 + 1] = c.g
     result[i * 4 + 2] = c.b
     result[i * 4 + 3] = c.a
+
+proc bradsOfVector*(dx, dy: int): int   ## fwd decl (defined near aimVector below).
+
+## --- Cog driving physics: how the segmented trike steers/turns (broadcast-only) ---
+## Ports the Maxwell-approved CogDriveState model (from maxwell/cog-base-turret-
+## split): the body heading eases slowly toward travel; each wheel casters toward
+## its foot's travel direction near-instantly (so tyres never scrape); the leg
+## splay follows a smoothed turn signal. Everything derives from the already-known
+## velocity, so it stays broadcast-only and replay-deterministic.
+const
+  CogBodyTurnRate* = 28       ## max brads/frame the body heading eases toward the
+                              ## travel direction — the base is a TRUE TANK track
+                              ## that snaps to where it rolls (fast + accurate),
+                              ## fully independent of the head/aim.
+  CogWheelTurnRate* = 48      ## brads/frame a wheel casters toward travel (even
+                              ## faster than the base, so tyres never scrape).
+  CogReverseMaxBrads* = 112   ## |heading-travel| beyond this (~158°) = reversing;
+                              ## below it the base just turns to face travel.
+  CogReverseCommitFrames* = 8   ## backward frames before committing to a U-turn.
+  CogMoveMinSpeed* = StopThreshold
+  CogTurnFullBrads* = 6       ## heading angular velocity mapped to full splay.
+  CogTurnAmtEase* = 200       ## turnAmt eases toward target this many milli/frame.
+
+type
+  CogDriveState* = object
+    ## Per-player broadcast animation state for the segmented trike. NOT in the
+    ## sim / gameHash — lives in the viewer state, evolved once per frame.
+    initialized*: bool
+    bodyHeading*: int          ## brads the chassis currently faces.
+    reverseFrames*: int        ## consecutive backward frames (commit counter).
+    turnAmt*: int              ## signed steer signal, -1000..1000 (x1000). + = left.
+    casterFL*, casterFR*, casterRear*: int  ## brads each wheel points.
+
+proc bradDiff*(a, b: int): int =
+  ## Shortest signed difference a-b wrapped to (-128, 128] brads.
+  var d = ((a - b) mod AimBradsTurn + AimBradsTurn) mod AimBradsTurn
+  if d > AimBradsTurn div 2:
+    d -= AimBradsTurn
+  d
+
+proc easeBrads*(cur, target, maxStep: int): int =
+  ## Steps `cur` toward `target` by at most `maxStep` brads along the shortest
+  ## arc, wrapping into 0..AimBradsTurn-1.
+  let d = bradDiff(target, cur)
+  let step = clamp(d, -maxStep, maxStep)
+  ((cur + step) mod AimBradsTurn + AimBradsTurn) mod AimBradsTurn
+
+proc initCogDriveState*(aimBrads: int): CogDriveState =
+  ## A freshly-spawned cog faces where it aims, wheels aligned, not reversing,
+  ## legs at rest. Reset on any scrub/respawn so a jump never inherits a stale pose.
+  CogDriveState(initialized: true, bodyHeading: aimBrads, reverseFrames: 0,
+    turnAmt: 0, casterFL: aimBrads, casterFR: aimBrads, casterRear: aimBrads)
+
+proc stepCogDrive*(state: CogDriveState, velX, velY, aimBrads: int):
+    CogDriveState =
+  ## Advances the trike's driving animation ONE frame from the current velocity.
+  ## Deterministic: same (state, vel, aim) always yields the same next state.
+  if not state.initialized:
+    return initCogDriveState(aimBrads)
+  result = state
+  let speed = abs(velX) + abs(velY)
+  if speed < CogMoveMinSpeed:
+    # Parked: hold heading, coast every caster back to the heading, relax legs.
+    result.reverseFrames = max(0, state.reverseFrames - 1)
+    result.turnAmt = state.turnAmt -
+      clamp(state.turnAmt, -CogTurnAmtEase, CogTurnAmtEase)
+    result.casterFL = easeBrads(state.casterFL, state.bodyHeading, CogWheelTurnRate)
+    result.casterFR = easeBrads(state.casterFR, state.bodyHeading, CogWheelTurnRate)
+    result.casterRear = easeBrads(state.casterRear, state.bodyHeading, CogWheelTurnRate)
+    return
+  let
+    travel = bradsOfVector(velX, velY)
+    offBody = bradDiff(travel, state.bodyHeading).abs
+    goingBackward = offBody > CogReverseMaxBrads
+  if goingBackward:
+    result.reverseFrames = min(state.reverseFrames + 1, CogReverseCommitFrames * 2)
+  else:
+    result.reverseFrames = max(0, state.reverseFrames - 2)
+  let committed = result.reverseFrames >= CogReverseCommitFrames
+  let headingTarget =
+    if goingBackward and not committed: state.bodyHeading
+    else: travel
+  # The base snaps toward travel at a FLAT fast rate (a tank track grips and
+  # turns hard) — no speed penalty, so a direction change is tracked promptly and
+  # accurately instead of lagging a quarter-second behind.
+  result.bodyHeading = easeBrads(state.bodyHeading, headingTarget, CogBodyTurnRate)
+  # turnAmt: smoothed signed heading angular velocity / CogTurnFull, ×1000.
+  let w = bradDiff(result.bodyHeading, state.bodyHeading)
+  let tInst = clamp(w * 1000 div max(1, CogTurnFullBrads), -1000, 1000)
+  let smoothed = (state.turnAmt * 7 + tInst * 3) div 10
+  result.turnAmt = state.turnAmt +
+    clamp(smoothed - state.turnAmt, -CogTurnAmtEase, CogTurnAmtEase)
+  # Each wheel casters toward the travel direction (with a small turn lean so the
+  # wheels visibly lead the arc). Rear leans opposite (pivot foot).
+  let lean = clamp(result.turnAmt * (AimBradsTurn div 8) div 1000,
+    -(AimBradsTurn div 8), AimBradsTurn div 8)
+  result.casterFL = easeBrads(state.casterFL, travel + lean, CogWheelTurnRate)
+  result.casterFR = easeBrads(state.casterFR, travel + lean, CogWheelTurnRate)
+  result.casterRear = easeBrads(state.casterRear, travel - lean, CogWheelTurnRate)
+
+proc rigHeadingStep*(headingBrads: int): int =
+  ## The base rotation step for the movement-facing legs/wheels (quantized to
+  ## RigSteps). Same quantization as soldierRotIndex, on the body heading.
+  soldierRotIndex(headingBrads)
+
+proc rigLegSwingStep*(seg: RigSeg, turnAmt: int): int =
+  ## SIGNED leg swing step (−RigLegSwingSteps..RigLegSwingSteps) from the turn
+  ## signal (turnAmt ×1000, + = LEFT/CCW). Both front legs swing together with the
+  ## turn (the outer leg widens, the inner one is SHORTENED separately); the rear
+  ## counter-swings. Non-leg segments return 0.
+  let t = clamp(turnAmt, -1000, 1000)
+  if rigSegIsLeg(seg):
+    int(round(float(t) / 1000.0 * float(RigLegSwingSteps)))
+  else: 0
+
+proc rigLegShortenStep*(seg: RigSeg, turnAmt: int): int =
+  ## Leg-length shorten step (0..RigShortenSteps) for the INNER leg of the turn.
+  ## +turnAmt = LEFT/CCW ⇒ the LEFT (inner) front leg shortens; −turnAmt ⇒ RIGHT.
+  let t = clamp(turnAmt, -1000, 1000)
+  case seg
+  of rsLegFL:  int(round(float(max(0, t)) / 1000.0 * float(RigShortenSteps)))
+  of rsLegFR:  int(round(float(max(0, -t)) / 1000.0 * float(RigShortenSteps)))
+  else: 0
+
+proc rigCasterStep*(casterBrads, headingBrads: int): int =
+  ## SIGNED wheel caster tilt step (−RigCasterSteps..RigCasterSteps): the caster
+  ## direction relative to the base HEADING (the wheel is baked rotated by the
+  ## heading, so its extra tilt is caster − heading), clamped to ±RigCasterMaxBrads
+  ## so a tall top-down tire only tilts to hint the turn.
+  let capped = clamp(bradDiff(casterBrads, headingBrads),
+    -RigCasterMaxBrads, RigCasterMaxBrads)
+  int(round(float(capped) / float(RigCasterMaxBrads) * float(RigCasterSteps)))
+
+const RigBaseMaxDivergeBrads* = 14  ## ~20°: the leg base only LEANS a little toward
+                                    ## the movement heading — it never swings far
+                                    ## sideways (the spidery look). The HEAD still
+                                    ## aims freely for the full turret swivel.
+
+proc clampBaseHeading*(headingBrads, aimBrads: int): int =
+  ## Clamps the leg-base heading to within ±RigBaseMaxDivergeBrads of the aim, so
+  ## the base only LEANS into a strafe/turn while the head swivels freely. Returns
+  ## a wrapped 0..AimBradsTurn-1 heading.
+  let d = clamp(bradDiff(headingBrads, aimBrads),
+    -RigBaseMaxDivergeBrads, RigBaseMaxDivergeBrads)
+  ((aimBrads + d) mod AimBradsTurn + AimBradsTurn) mod AimBradsTurn
 
 proc crewVariantIndex*(slotId: int): int =
   ## Returns the crew sprite variant for one player slot.
@@ -763,11 +1400,8 @@ proc validateMapPoint(name: string, point: MapPoint, width, height: int) =
 
 proc validateMap(gameMap: CtfMap) =
   ## Raises if a loaded map has invalid geometry.
-  if gameMap.width != MapWidth or gameMap.height != MapHeight:
-    raise newException(
-      CtfError,
-      "Map dimensions must be " & $MapWidth & "x" & $MapHeight & "."
-    )
+  if gameMap.width <= 0 or gameMap.height <= 0:
+    raise newException(CtfError, "Map dimensions must be positive.")
   validateMapPoint("center", gameMap.center, gameMap.width, gameMap.height)
   for i, room in gameMap.rooms:
     validateMapRect(
@@ -779,11 +1413,8 @@ proc validateMap(gameMap: CtfMap) =
 
 const
   ArenaName = "arena"
+  ArenaLargeName = "arena-large"
   ArenaBorder* = 10            ## perimeter wall thickness in px.
-  ArenaFlagRing = 70           ## clear radius of the open center ring.
-  ArenaCaptureClear = 210      ## x-columns kept traversable for carriers.
-  ArenaSpawnClearW = 70        ## half-width of the open spawn pockets.
-  ArenaSpawnClearH = 130       ## half-height of the open spawn pockets.
 
   ## Warm CRT-phosphor arena (REPLAY_DESIGN §3 art-lock): warm-dark floor,
   ## warm-stone cover, the two team colors the only saturated channels — never
@@ -800,19 +1431,26 @@ const
   ## while every corridor stays >= 26px for the 13px player footprint. The
   ## columns vary the shape per lane: border-attached rect stubs, diamonds,
   ## discs, 45-degree chevron walls angling across the old corridors, and
-  ## rect/diamond stubs flanking the flag ring. The chevron pair straddling
-  ## the horizontal midline closes the mid lane outside the flag ring; the
+  ## rect/diamond stubs flanking the flag ring. A windowed square bracket
+  ## straddling the horizontal midline closes the mid lane outside the flag
+  ## ring to movement and fire, while its glass center pane gives both teams
+  ## a fogless sightline down the center corridor (GameVersion 16); the
   ## ring itself stays an open disc for close flag fights. Shapes sit
   ## between the capture/spawn columns and the flag ring; isProtectedFloor
   ## carves them out of the ring, pockets, and capture columns.
   ArenaLeftObstacles = [
-    # Column 1 (x=268..286): rect stubs, phase 0, border-attached ends.
+    # Column 1 (x=268..286): rect stubs, phase 0, border-attached ends. The
+    # SECOND stub from the top and from the bottom are GLASS WINDOWS
+    # (GameVersion 15): solid to movement, bullets, and plasma arcs, transparent
+    # to fog-of-war.
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 10, w: 18, h: 62)),
-    ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 108, w: 18, h: 60)),
+    ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: 268, y: 108, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 204, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 300, w: 18, h: 59)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 395, w: 18, h: 60)),
-    ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 491, w: 18, h: 60)),
+    ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: 268, y: 491, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 587, w: 18, h: 62)),
     # Column 2 (x=349): diamonds, phase +48 (half period) vs column 1.
     ArenaShape(kind: shapeDiamond, cx: 349, cy: 90, radius: 28),
@@ -821,24 +1459,34 @@ const
     ArenaShape(kind: shapeDiamond, cx: 349, cy: 376, radius: 28),
     ArenaShape(kind: shapeDiamond, cx: 349, cy: 472, radius: 28),
     ArenaShape(kind: shapeDiamond, cx: 349, cy: 568, radius: 28),
-    # Column 3 (x=421): discs, phase +24.
+    # Column 3 (x=421): discs, phase +24. GameVersion 16 thinned the lane:
+    # every other disc removed (was 66/162/258/400/496/592), giving the
+    # column real gaps instead of a near-solid picket. Top/bottom mirror
+    # symmetry is intentionally traded for the lower density; team fairness
+    # only needs the x-mirror.
     ArenaShape(kind: shapeDisc, cx: 421, cy: 66, radius: 28),
-    ArenaShape(kind: shapeDisc, cx: 421, cy: 162, radius: 28),
     ArenaShape(kind: shapeDisc, cx: 421, cy: 258, radius: 28),
-    ArenaShape(kind: shapeDisc, cx: 421, cy: 400, radius: 28),
     ArenaShape(kind: shapeDisc, cx: 421, cy: 496, radius: 28),
-    ArenaShape(kind: shapeDisc, cx: 421, cy: 592, radius: 28),
-    # Column 4 (x=479..509): 45-degree chevron walls, phase +72; the pair
-    # straddling the midline forms one continuous zigzag that closes the
-    # old mid lane at mid range.
+    # Column 4 (x=479..509): 45-degree chevron walls, phase +72; the
+    # midline pair was replaced in GameVersion 16 by the windowed bracket
+    # below.
     ArenaShape(kind: shapeDiagonal, x0: 479, y0: 86, x1: 507, y1: 114, thickness: 12),
     ArenaShape(kind: shapeDiagonal, x0: 507, y0: 114, x1: 479, y1: 142, thickness: 12),
     ArenaShape(kind: shapeDiagonal, x0: 507, y0: 182, x1: 479, y1: 210, thickness: 12),
     ArenaShape(kind: shapeDiagonal, x0: 479, y0: 210, x1: 507, y1: 238, thickness: 12),
-    ArenaShape(kind: shapeDiagonal, x0: 479, y0: 276, x1: 506, y1: 303, thickness: 12),
-    ArenaShape(kind: shapeDiagonal, x0: 506, y0: 303, x1: 479, y1: 330, thickness: 12),
-    ArenaShape(kind: shapeDiagonal, x0: 479, y0: 329, x1: 506, y1: 356, thickness: 12),
-    ArenaShape(kind: shapeDiagonal, x0: 506, y0: 356, x1: 479, y1: 383, thickness: 12),
+    # GameVersion 16: the old midline chevron zigzag (the sideways "W" that
+    # closed the mid lane) is now a square bracket over the same footprint
+    # (x=479..507, y=276..383): a vertical bar on the outer side plus short
+    # arms reaching toward the flag ring — "[" here, "]" on the x-mirror.
+    # The middle of the bar, straddling the midline, is a GLASS WINDOW:
+    # the mid lane stays closed to movement, bullets, and plasma, but
+    # fog-of-war now sees straight down the center corridor through it.
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 479, y: 276, w: 28, h: 12)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 479, y: 288, w: 12, h: 24)),
+    ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: 479, y: 312, w: 12, h: 36)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 479, y: 348, w: 12, h: 23)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 479, y: 371, w: 28, h: 12)),
     ArenaShape(kind: shapeDiagonal, x0: 507, y0: 421, x1: 479, y1: 449, thickness: 12),
     ArenaShape(kind: shapeDiagonal, x0: 479, y0: 449, x1: 507, y1: 477, thickness: 12),
     ArenaShape(kind: shapeDiagonal, x0: 479, y0: 517, x1: 507, y1: 545, thickness: 12),
@@ -853,33 +1501,130 @@ const
     ArenaShape(kind: shapeRect, rect: MapRect(x: 556, y: 569, w: 18, h: 66)),
   ]
 
+  ## The arena-large layout (1606x858, 30% bigger in both axes): every
+  ## shape keeps its `arena` SIZE while its CENTER (and the layout
+  ## clearances) scale by 1.3, so the same cover sits in a roomier field
+  ## with ~30% wider corridors — and some long sightlines the dense arena
+  ## deliberately closed now survive; the field plays roomier by design.
+  ## Five staggered columns at x-centers 360/454/547/641/735 plus their
+  ## x-mirrors; border-attached stubs stay attached and the column-5 border
+  ## gaps stay < 26px (impassable) rather than scaling into new lanes.
+  ArenaLargeLeftObstacles = [
+    # Column 1 (x=351..369): rect stubs, phase 0, border-attached ends. The
+    # SECOND stub from the top and from the bottom are GLASS WINDOWS
+    # (GameVersion 15): solid to movement, bullets, and plasma arcs, transparent
+    # to fog-of-war.
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 351, y: 10, w: 18, h: 62)),
+    ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: 351, y: 149, w: 18, h: 60)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 351, y: 274, w: 18, h: 60)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 351, y: 399, w: 18, h: 59)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 351, y: 524, w: 18, h: 60)),
+    ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: 351, y: 649, w: 18, h: 60)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 351, y: 786, w: 18, h: 62)),
+    # Column 2 (x=454): diamonds, phase +48 (half period) vs column 1.
+    ArenaShape(kind: shapeDiamond, cx: 454, cy: 117, radius: 28),
+    ArenaShape(kind: shapeDiamond, cx: 454, cy: 242, radius: 28),
+    ArenaShape(kind: shapeDiamond, cx: 454, cy: 367, radius: 28),
+    ArenaShape(kind: shapeDiamond, cx: 454, cy: 491, radius: 28),
+    ArenaShape(kind: shapeDiamond, cx: 454, cy: 616, radius: 28),
+    ArenaShape(kind: shapeDiamond, cx: 454, cy: 741, radius: 28),
+    # Column 3 (x=547): discs, phase +24. GameVersion 16 thinned the lane:
+    # every other disc removed, giving the column real gaps instead of a
+    # near-solid picket. Top/bottom mirror symmetry is intentionally traded
+    # for the lower density; team fairness only needs the x-mirror.
+    ArenaShape(kind: shapeDisc, cx: 547, cy: 86, radius: 28),
+    ArenaShape(kind: shapeDisc, cx: 547, cy: 335, radius: 28),
+    ArenaShape(kind: shapeDisc, cx: 547, cy: 645, radius: 28),
+    # Column 4 (x=627..655): 45-degree chevron walls, phase +72; the
+    # midline pair was replaced in GameVersion 16 by the windowed bracket
+    # below.
+    ArenaShape(kind: shapeDiagonal, x0: 627, y0: 120, x1: 655, y1: 148, thickness: 12),
+    ArenaShape(kind: shapeDiagonal, x0: 655, y0: 148, x1: 627, y1: 176, thickness: 12),
+    ArenaShape(kind: shapeDiagonal, x0: 655, y0: 245, x1: 627, y1: 273, thickness: 12),
+    ArenaShape(kind: shapeDiagonal, x0: 627, y0: 273, x1: 655, y1: 301, thickness: 12),
+    # GameVersion 16: the old midline chevron zigzag (the sideways "W" that
+    # closed the mid lane) is now a square bracket over the same footprint
+    # (x=627..655, y=375..482): a vertical bar on the outer side plus short
+    # arms reaching toward the flag ring — "[" here, "]" on the x-mirror.
+    # The middle of the bar, straddling the midline, is a GLASS WINDOW:
+    # the mid lane stays closed to movement, bullets, and plasma, but
+    # fog-of-war now sees straight down the center corridor through it.
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 627, y: 375, w: 28, h: 12)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 627, y: 387, w: 12, h: 24)),
+    ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: 627, y: 411, w: 12, h: 36)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 627, y: 447, w: 12, h: 23)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 627, y: 470, w: 28, h: 12)),
+    ArenaShape(kind: shapeDiagonal, x0: 655, y0: 557, x1: 627, y1: 585, thickness: 12),
+    ArenaShape(kind: shapeDiagonal, x0: 627, y0: 585, x1: 655, y1: 613, thickness: 12),
+    ArenaShape(kind: shapeDiagonal, x0: 627, y0: 682, x1: 655, y1: 710, thickness: 12),
+    ArenaShape(kind: shapeDiagonal, x0: 655, y0: 710, x1: 627, y1: 738, thickness: 12),
+    # Column 5 (x=726..744): rect stubs at the borders (their border gaps
+    # stay < 26px, i.e. impassable, rather than scaling into new lanes),
+    # diamonds flanking the flag ring.
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 726, y: 31, w: 18, h: 66)),
+    ArenaShape(kind: shapeDiamond, cx: 735, cy: 203, radius: 30),
+    ArenaShape(kind: shapeDiamond, cx: 735, cy: 328, radius: 30),
+    ArenaShape(kind: shapeDiamond, cx: 735, cy: 530, radius: 30),
+    ArenaShape(kind: shapeDiamond, cx: 735, cy: 655, radius: 30),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 726, y: 761, w: 18, h: 66)),
+  ]
+
 proc arenaCtfMap(): CtfMap =
-  ## Returns the procedurally-defined symmetric arena metadata.
+  ## The default arena: the procedurally-defined symmetric 1235x659 map.
   result.name = ArenaName
   result.path = ArenaName
-  result.width = MapWidth
-  result.height = MapHeight
+  result.width = 1235
+  result.height = 659
   result.mapLayer = 0
   result.walkLayer = 1
   result.wallLayer = 2
-  result.center = MapPoint(x: MapWidth div 2, y: MapHeight div 2)
+  result.center = MapPoint(x: result.width div 2, y: result.height div 2)
+  result.flagRing = 70
+  result.captureClear = 210
+  result.spawnClearW = 70
+  result.spawnClearH = 130
+  result.gunRange = 1300
+  result.leftObstacles = @ArenaLeftObstacles
   result.rooms = @[
-    Room(name: "Center", x: MapWidth div 2 - 80, y: MapHeight div 2 - 80,
-         w: 160, h: 160),
-    Room(name: "Red Base", x: 0, y: MapHeight div 2 - 130,
-         w: ArenaCaptureClear, h: 260),
-    Room(name: "Blue Base", x: MapWidth - ArenaCaptureClear,
-         y: MapHeight div 2 - 130, w: ArenaCaptureClear, h: 260),
+    Room(name: "Center", x: result.width div 2 - 80,
+         y: result.height div 2 - 80, w: 160, h: 160),
+    Room(name: "Red Base", x: 0, y: result.height div 2 - 130,
+         w: result.captureClear, h: 260),
+    Room(name: "Blue Base", x: result.width - result.captureClear,
+         y: result.height div 2 - 130, w: result.captureClear, h: 260),
   ]
   result.validateMap()
 
-proc loadCtfMap*(path = ""): CtfMap =
-  ## Returns the procedurally-generated symmetric CTF arena.
-  arenaCtfMap()
-
-proc loadCtfMapMetadata*(path = ""): CtfMap =
-  ## Returns arena metadata (same as loadCtfMap; nothing is read from disk).
-  arenaCtfMap()
+proc arenaLargeCtfMap(): CtfMap =
+  ## The arena-large map: 1606x858 (+30% both axes). Obstacles keep their
+  ## `arena` sizes but sit spread out; the layout clearances and the gun
+  ## range scale with the field.
+  result.name = ArenaLargeName
+  result.path = ArenaLargeName
+  result.width = 1606
+  result.height = 858
+  result.mapLayer = 0
+  result.walkLayer = 1
+  result.wallLayer = 2
+  result.center = MapPoint(x: result.width div 2, y: result.height div 2)
+  result.flagRing = 91
+  result.captureClear = 273
+  result.spawnClearW = 91
+  result.spawnClearH = 169
+  result.gunRange = 1690
+  result.leftObstacles = @ArenaLargeLeftObstacles
+  result.rooms = @[
+    Room(name: "Center", x: result.width div 2 - 80,
+         y: result.height div 2 - 80, w: 160, h: 160),
+    Room(name: "Red Base", x: 0, y: result.height div 2 - 169,
+         w: result.captureClear, h: 338),
+    Room(name: "Blue Base", x: result.width - result.captureClear,
+         y: result.height div 2 - 169, w: result.captureClear, h: 338),
+  ]
+  result.validateMap()
 
 proc teamHomeX*(gameMap: CtfMap, team: Team): int =
   ## Returns the home-edge x anchor for one team's spawn strip and pedestal.
@@ -894,35 +1639,39 @@ proc flagHome*(gameMap: CtfMap, team: Team): MapPoint =
   ## team's protected spawn pocket.
   MapPoint(x: gameMap.teamHomeX(team), y: gameMap.center.y)
 
-proc mirrorX(rect: MapRect): MapRect =
-  ## Mirrors one rectangle across the vertical center line.
-  MapRect(x: MapWidth - rect.x - rect.w, y: rect.y, w: rect.w, h: rect.h)
+proc mirrorX(rect: MapRect, width: int): MapRect =
+  ## Mirrors one rectangle across the vertical center line of a width-px map.
+  MapRect(x: width - rect.x - rect.w, y: rect.y, w: rect.w, h: rect.h)
 
-proc mirrorX(shape: ArenaShape): ArenaShape =
-  ## Mirrors one arena shape across the vertical center line.
+proc mirrorX(shape: ArenaShape, width: int): ArenaShape =
+  ## Mirrors one arena shape across the vertical center line of a width-px map.
   case shape.kind
   of shapeRect:
-    ArenaShape(kind: shapeRect, rect: shape.rect.mirrorX())
+    ArenaShape(kind: shapeRect, window: shape.window,
+      rect: shape.rect.mirrorX(width))
   of shapeDisc:
     ArenaShape(
       kind: shapeDisc,
-      cx: MapWidth - 1 - shape.cx,
+      window: shape.window,
+      cx: width - 1 - shape.cx,
       cy: shape.cy,
       radius: shape.radius
     )
   of shapeDiamond:
     ArenaShape(
       kind: shapeDiamond,
-      cx: MapWidth - 1 - shape.cx,
+      window: shape.window,
+      cx: width - 1 - shape.cx,
       cy: shape.cy,
       radius: shape.radius
     )
   of shapeDiagonal:
     ArenaShape(
       kind: shapeDiagonal,
-      x0: MapWidth - 1 - shape.x0,
+      window: shape.window,
+      x0: width - 1 - shape.x0,
       y0: shape.y0,
-      x1: MapWidth - 1 - shape.x1,
+      x1: width - 1 - shape.x1,
       y1: shape.y1,
       thickness: shape.thickness
     )
@@ -970,26 +1719,76 @@ proc inShape(x, y: int, shape: ArenaShape): bool =
       dx * dx + dy * dy <=
         int64(shape.thickness) * int64(shape.thickness) * len2 * len2 div 4
 
-const ArenaObstacles* = block:
+proc buildArenaObstacles(gameMap: CtfMap): seq[ArenaShape] =
   ## The full obstacle set: every left-half shape plus its x-mirror,
-  ## precomputed once so the per-pixel wall test never re-mirrors.
-  var shapes: seq[ArenaShape]
-  for shape in ArenaLeftObstacles:
-    shapes.add shape
-    shapes.add shape.mirrorX()
-  shapes
+  ## precomputed once per map selection so the per-pixel wall test never
+  ## re-mirrors.
+  for shape in gameMap.leftObstacles:
+    result.add shape
+    result.add shape.mirrorX(gameMap.width)
 
-const AnimatedDiamonds* = block:
+proc buildAnimatedDiamonds(
+  gameMap: CtfMap, obstacles: seq[ArenaShape]
+): seq[tuple[cx, cy, radius: int]] =
   ## The eight diamonds flanking the center of the field (column 5 and its
   ## x-mirror): drawn as slowly rotating sprites instead of baked wall art.
   ## COLLISION, LOS, and the fog masks keep the exact static diamond — the
   ## spin is pure decoration and never enters gameHash.
-  var spots: seq[tuple[cx, cy, radius: int]]
-  for shape in ArenaObstacles:
+  for shape in obstacles:
     if shape.kind == shapeDiamond and
-        abs(shape.cx - MapWidth div 2) < 80:
-      spots.add((shape.cx, shape.cy, shape.radius))
-  spots
+        abs(shape.cx - gameMap.center.x) < 80:
+      result.add((shape.cx, shape.cy, shape.radius))
+
+## The SELECTED map's layout, installed once per process by loadCtfMap and
+## initialized to the default arena below so tooling that never selects a
+## map observes a complete default state, never an empty one.
+var
+  ArenaFlagRing = 70
+  ArenaCaptureClear = 210
+  ArenaSpawnClearW = 70
+  ArenaSpawnClearH = 130
+  ArenaRedHomeX = 186
+  ArenaBlueHomeX = 1049
+  ArenaObstacles*: seq[ArenaShape]
+  AnimatedDiamonds*: seq[tuple[cx, cy, radius: int]]
+
+proc selectCtfMap(gameMap: CtfMap) =
+  ## Installs one map as THE map for this process: dimensions, fog grid,
+  ## map-relative ranges, layout clearances, and the mirrored obstacle set.
+  ## Runs before any sim, mask, or render work; the render bakes in
+  ## global.nim assume the arena never changes afterward.
+  MapWidth = gameMap.width
+  MapHeight = gameMap.height
+  FovGridW = (MapWidth + FovCellSize - 1) div FovCellSize
+  FovGridH = (MapHeight + FovCellSize - 1) div FovCellSize
+  FovCellCount = FovGridW * FovGridH
+  GrenadeMaxRange = MapWidth div 5
+  ShoutRange = MapWidth div 5
+  ArenaFlagRing = gameMap.flagRing
+  ArenaCaptureClear = gameMap.captureClear
+  ArenaSpawnClearW = gameMap.spawnClearW
+  ArenaSpawnClearH = gameMap.spawnClearH
+  ArenaRedHomeX = gameMap.teamHomeX(Red)
+  ArenaBlueHomeX = gameMap.teamHomeX(Blue)
+  ArenaObstacles = buildArenaObstacles(gameMap)
+  AnimatedDiamonds = buildAnimatedDiamonds(gameMap, ArenaObstacles)
+
+selectCtfMap(arenaCtfMap())
+
+proc loadCtfMapMetadata*(path = ""): CtfMap =
+  ## Returns one map's metadata WITHOUT installing it as the process map.
+  let name = if path.len == 0: DefaultMapPath else: path
+  case name
+  of ArenaName: arenaCtfMap()
+  of ArenaLargeName: arenaLargeCtfMap()
+  else:
+    raise newException(CtfError, "Unknown map: " & name)
+
+proc loadCtfMap*(path = ""): CtfMap =
+  ## Returns the named map ("arena" is the default; "arena-large" is the
+  ## 30%-larger variant) and installs it as this process's arena.
+  result = loadCtfMapMetadata(path)
+  selectCtfMap(result)
 
 proc isAnimatedDiamondPixel*(x, y: int): bool =
   ## Returns true when (x, y) lies inside one of the rotating center
@@ -1039,7 +1838,7 @@ proc isProtectedFloor(x, y, cx, cy: int): bool =
     dy = y - cy
   if dx * dx + dy * dy <= ArenaFlagRing * ArenaFlagRing:
     return true
-  for homeX in [186, 1049]:
+  for homeX in [ArenaRedHomeX, ArenaBlueHomeX]:
     if abs(x - homeX) <= ArenaSpawnClearW and abs(y - cy) <= ArenaSpawnClearH:
       return true
   false
@@ -1056,6 +1855,17 @@ proc isArenaWall(x, y, cx, cy: int): bool =
       return true
   false
 
+proc isArenaWindowPixel*(x, y, cx, cy: int): bool =
+  ## Returns true when (x, y) is a GLASS pixel: a wall pixel that belongs to a
+  ## window shape. Glass stays in the collision/shot wall mask but is excluded
+  ## from the fog-of-war occlusion build, so vision passes through it.
+  if not isArenaWall(x, y, cx, cy):
+    return false
+  for shape in ArenaObstacles:
+    if shape.window and inShape(x, y, shape):
+      return true
+  false
+
 proc isProtectedFloorF(x, y: float, cx, cy: int): bool =
   ## Float-coordinate isProtectedFloor for the render-scale rasterizer.
   if x < float(ArenaCaptureClear) or
@@ -1066,7 +1876,7 @@ proc isProtectedFloorF(x, y: float, cx, cy: int): bool =
     dy = y - float(cy)
   if dx * dx + dy * dy <= float(ArenaFlagRing * ArenaFlagRing):
     return true
-  for homeX in [186.0, 1049.0]:
+  for homeX in [float(ArenaRedHomeX), float(ArenaBlueHomeX)]:
     if abs(x - homeX) <= float(ArenaSpawnClearW) and
         abs(y - float(cy)) <= float(ArenaSpawnClearH):
       return true
@@ -1100,6 +1910,36 @@ proc overTint(base, tint: ColorRGBA): ColorRGBA =
 proc tileSample(tex: Image, x, y: int): ColorRGBA =
   ## Samples a seamless texture tiled across the arena (opaque source).
   tex.unsafe[x mod tex.width, y mod tex.height].rgba
+
+proc tileSampleF(tex: Image, fx, fy: float): ColorRGBA =
+  ## Bilinear tile sample at a fractional map-pixel coordinate (wrapping).
+  ## The texture still tiles 1:1 with LOGICAL map pixels — a scale× renderer
+  ## passes fractional coords, so the flagstone keeps its 1× world size but
+  ## resolves smoothly between texels. At integer-center coords this returns
+  ## exactly tileSample's nearest texel.
+  let
+    sx = fx - 0.5
+    sy = fy - 0.5
+    fx0 = floor(sx)
+    fy0 = floor(sy)
+    tx = sx - fx0
+    ty = sy - fy0
+    xa = ((int(fx0) mod tex.width) + tex.width) mod tex.width
+    xb = (xa + 1) mod tex.width
+    ya = ((int(fy0) mod tex.height) + tex.height) mod tex.height
+    yb = (ya + 1) mod tex.height
+    c00 = tex.unsafe[xa, ya].rgba
+    c10 = tex.unsafe[xb, ya].rgba
+    c01 = tex.unsafe[xa, yb].rgba
+    c11 = tex.unsafe[xb, yb].rgba
+  template lerp(a, b: uint8, t: float): float =
+    a.float + (b.float - a.float) * t
+  rgba(
+    uint8(lerp(c00.r, c10.r, tx) + (lerp(c01.r, c11.r, tx) - lerp(c00.r, c10.r, tx)) * ty),
+    uint8(lerp(c00.g, c10.g, tx) + (lerp(c01.g, c11.g, tx) - lerp(c00.g, c10.g, tx)) * ty),
+    uint8(lerp(c00.b, c10.b, tx) + (lerp(c01.b, c11.b, tx) - lerp(c00.b, c10.b, tx)) * ty),
+    255
+  )
 
 const PedestalDimFactor = 0.34
   ## How dark the powered-down (cold) pedestal disc goes: each lit pixel's RGB is
@@ -1167,74 +2007,137 @@ proc floorDistDir(wall: seq[bool], w, h, x, y, dx, dy, cap: int): int =
       return step
   cap + 1
 
-proc carvedStoneColor(wall: seq[bool], w, h, x, y: int): ColorRGBA =
-  ## Shades one wall pixel as raised carved stone: a 1px ink carve line where it
+proc carvedStoneColorAt(
+  wall: seq[bool], w, h, x, y, scale: int
+): ColorRGBA =
+  ## Shades one wall pixel as raised carved stone: an ink carve line where it
   ## meets the floor, a highlight on faces toward the up-left light, a shadow on
-  ## faces toward the down-right, and a flat face deep inside the block.
+  ## faces toward the down-right, and a flat face deep inside the block. The
+  ## mask may be a `scale`× render of the arena; every band (ink line, bevel)
+  ## widens by `scale` so the material keeps its 1× proportions on screen.
   let
-    up = floorDistDir(wall, w, h, x, y, 0, -1, WallBevel)
-    left = floorDistDir(wall, w, h, x, y, -1, 0, WallBevel)
-    down = floorDistDir(wall, w, h, x, y, 0, 1, WallBevel)
-    right = floorDistDir(wall, w, h, x, y, 1, 0, WallBevel)
-  if min(min(up, down), min(left, right)) == 1:
+    bevel = WallBevel * scale
+    up = floorDistDir(wall, w, h, x, y, 0, -1, bevel)
+    left = floorDistDir(wall, w, h, x, y, -1, 0, bevel)
+    down = floorDistDir(wall, w, h, x, y, 0, 1, bevel)
+    right = floorDistDir(wall, w, h, x, y, 1, 0, bevel)
+  if min(min(up, down), min(left, right)) <= scale:
     return StoneInk                      ## touches the floor → carve outline.
   let
     topDist = min(up, left)              ## nearer the up-left (lit) rim.
     botDist = min(down, right)           ## nearer the down-right (shaded) rim.
-  if topDist <= WallBevel and topDist <= botDist:
-    ## Graded lit bevel: brightest at the rim (topDist == 2, just inside the
-    ## ink line), easing back to the flat face by WallBevel so the block reads
+  if topDist <= bevel and topDist <= botDist:
+    ## Graded lit bevel: brightest at the rim (just inside the ink line),
+    ## easing back to the flat face by the bevel width so the block reads
     ## as a rounded raised edge, not a flat painted band.
-    let t = (topDist - 2).float / max(1, WallBevel - 2).float
+    let t = (topDist - 2 * scale).float / max(1, bevel - 2 * scale).float
     mix(StoneHi, StoneFace, clamp(t, 0.0, 1.0))
-  elif botDist <= WallBevel:
-    let t = (botDist - 2).float / max(1, WallBevel - 2).float
+  elif botDist <= bevel:
+    let t = (botDist - 2 * scale).float / max(1, bevel - 2 * scale).float
     mix(StoneLo, StoneFace, clamp(t, 0.0, 1.0))
   else:
     StoneFace
+
+proc carvedStoneColor(wall: seq[bool], w, h, x, y: int): ColorRGBA =
+  ## 1× carved stone (the baked collision-resolution map and spun diamonds).
+  carvedStoneColorAt(wall, w, h, x, y, 1)
+
+const
+  ## Glass window material: a pale pane set in the same stone frame language as
+  ## the carved walls. The face targets palette index 1 (light gray) and the
+  ## sheen streaks index 2 (near-white), so windows stay legible after the
+  ## player-view palette quantization — glass must READ as see-through cover.
+  GlassFace = rgba(198, 198, 196, 255)   ## flat pane; quantizes to palette 1.
+  GlassSheen = rgba(240, 236, 226, 255)  ## diagonal streaks; quantizes to 2.
+
+proc windowGlassColorAt(
+  wall: seq[bool], w, h, x, y, scale: int
+): ColorRGBA =
+  ## Shades one glass window pixel: the same ink carve line and a thin stone
+  ## frame where the pane meets the floor (so windows sit in the wall
+  ## language), then a pale pane crossed by 45-degree sheen streaks running
+  ## down-right, perpendicular to the up-left light the stone bevels use.
+  ## Like carvedStoneColorAt, every band widens by `scale` so the material
+  ## keeps its 1× screen proportions on the render-scale board.
+  let
+    frameCap = 2 * scale
+    edge = min(
+      min(
+        floorDistDir(wall, w, h, x, y, 0, -1, frameCap),
+        floorDistDir(wall, w, h, x, y, 0, 1, frameCap)
+      ),
+      min(
+        floorDistDir(wall, w, h, x, y, -1, 0, frameCap),
+        floorDistDir(wall, w, h, x, y, 1, 0, frameCap)
+      )
+    )
+  if edge <= scale:
+    return StoneInk                      ## touches the floor → carve outline.
+  if edge <= frameCap:
+    return StoneFace                     ## thin stone frame around the pane.
+  let
+    period = 24 * scale
+    phase = ((x - y) mod period + period) mod period
+  if phase < 3 * scale or phase in 7 * scale .. 9 * scale - 1:
+    GlassSheen
+  else:
+    GlassFace
+
+proc windowGlassColor(wall: seq[bool], w, h, x, y: int): ColorRGBA =
+  ## 1× glass (the baked collision-resolution map the players observe).
+  windowGlassColorAt(wall, w, h, x, y, 1)
 
 const
   DiamondSpinFrames* = 16      ## steps across 90° (a diamond is 4-fold symmetric).
   DiamondSpinTicksPerFrame* = 4  ## ~2.7s per quarter turn at 24 ticks/s.
 
-var diamondFrameCache: array[DiamondSpinFrames, seq[uint8]]
+var diamondFrameCache: array[DiamondSpinFrames, seq[tuple[
+  scale: int, pixels: seq[uint8]]]]
 
-proc rotatingDiamondPixels*(radius, frame: int): tuple[size: int, pixels: seq[uint8]] =
+proc rotatingDiamondPixels*(
+  radius, frame: int,
+  scale = 1
+): tuple[size: int, pixels: seq[uint8]] =
   ## One pre-rotated frame of a spinning center diamond, shaded with the same
   ## carved-stone material as the baked walls: the mask is rotated, then the
   ## bevel is re-derived from it, so the light stays up-left at every angle.
-  ## Cosmetic only — collision keeps the static diamond.
+  ## Cosmetic only — collision keeps the static diamond. `size` is the LOGICAL
+  ## (map-pixel) footprint; `pixels` are rasterized at scale× that footprint —
+  ## the analytic mask is evaluated per output pixel, so a scaled frame has
+  ## genuinely smoother edges, not upscaled blocks.
   let size = 2 * radius + 8
   let index = ((frame mod DiamondSpinFrames) + DiamondSpinFrames) mod
     DiamondSpinFrames
-  if diamondFrameCache[index].len > 0:
-    return (size, diamondFrameCache[index])
+  for cached in diamondFrameCache[index]:
+    if cached.scale == scale:
+      return (size, cached.pixels)
   let
+    outSize = size * scale
     angle = float(index) / float(DiamondSpinFrames) * PI / 2.0
     ca = cos(angle)
     sa = sin(angle)
     center = float(size) / 2.0
-  var mask = newSeq[bool](size * size)
-  for y in 0 ..< size:
-    for x in 0 ..< size:
+  var mask = newSeq[bool](outSize * outSize)
+  for y in 0 ..< outSize:
+    for x in 0 ..< outSize:
       let
-        dx = float(x) + 0.5 - center
-        dy = float(y) + 0.5 - center
+        dx = (float(x) + 0.5) / float(scale) - center
+        dy = (float(y) + 0.5) / float(scale) - center
         rx = dx * ca + dy * sa
         ry = -dx * sa + dy * ca
-      mask[y * size + x] = abs(rx) + abs(ry) <= float(radius)
-  var pixels = newSeq[uint8](size * size * 4)
-  for y in 0 ..< size:
-    for x in 0 ..< size:
-      if mask[y * size + x]:
+      mask[y * outSize + x] = abs(rx) + abs(ry) <= float(radius)
+  var pixels = newSeq[uint8](outSize * outSize * 4)
+  for y in 0 ..< outSize:
+    for x in 0 ..< outSize:
+      if mask[y * outSize + x]:
         let
-          color = carvedStoneColor(mask, size, size, x, y)
-          offset = (y * size + x) * 4
+          color = carvedStoneColorAt(mask, outSize, outSize, x, y, scale)
+          offset = (y * outSize + x) * 4
         pixels[offset] = color.r
         pixels[offset + 1] = color.g
         pixels[offset + 2] = color.b
         pixels[offset + 3] = 255
-  diamondFrameCache[index] = pixels
+  diamondFrameCache[index].add((scale: scale, pixels: pixels))
   (size, pixels)
 
 ## --- Capture endzones (the floor a carrier must reach to score) ---
@@ -1304,6 +2207,196 @@ proc endzoneColorAt(base: ColorRGBA, x, redHi, blueLo, playLo, playHi: int):
   else:
     base
 
+proc shapeLogicalBounds(shape: ArenaShape): tuple[x0, y0, x1, y1: int] =
+  ## A conservative logical-pixel bounding box around one obstacle shape (the
+  ## scale× rasterizer only evaluates the float geometry inside it).
+  case shape.kind
+  of shapeRect:
+    (shape.rect.x - 1, shape.rect.y - 1,
+     shape.rect.x + shape.rect.w + 1, shape.rect.y + shape.rect.h + 1)
+  of shapeDisc, shapeDiamond:
+    (shape.cx - shape.radius - 1, shape.cy - shape.radius - 1,
+     shape.cx + shape.radius + 1, shape.cy + shape.radius + 1)
+  of shapeDiagonal:
+    (min(shape.x0, shape.x1) - shape.thickness - 1,
+     min(shape.y0, shape.y1) - shape.thickness - 1,
+     max(shape.x0, shape.x1) + shape.thickness + 1,
+     max(shape.y0, shape.y1) + shape.thickness + 1)
+
+proc renderArenaRgbaPair*(
+  gameMap: CtfMap,
+  scale: int
+): tuple[hot, cold: seq[uint8]] =
+  ## The arena VISUAL rasterized natively at `scale`× map resolution for the
+  ## spectator/replay renderer — real detail, not an upscale: wall shapes are
+  ## re-evaluated from their float geometry per output pixel (crisp diagonal
+  ## chevron/diamond edges), the carved-stone bevel grades over scale× more
+  ## steps, the flagstone floor resolves bilinearly between texels, and the
+  ## pedestal art (600px masters) rasterizes at scale× its footprint. The
+  ## endzone tint gates stay LOGICAL-column based, so the capture line and
+  ## glow columns land exactly where the 1× map puts them. Collision masks are
+  ## untouched — they come from loadMapLayers at 1× and stay byte-identical.
+  ##
+  ## Renders BOTH variants in one pass — `hot` (baked endzone glow, lit
+  ## pedestals) and `cold` (glow + capture line omitted, pedestals dimmed, for
+  ## the glow-fade overlay) — because they share the two expensive stages: the
+  ## geometry mask (rasterized per obstacle bounding box, not by testing every
+  ## shape at every output pixel) and the bilinear floor bake. The certifier
+  ## boots this on a small CI runner, so the bake must stay a startup blip,
+  ## not a first-viewer stall.
+  let
+    w = gameMap.width
+    h = gameMap.height
+    ow = w * scale
+    oh = h * scale
+    cx = gameMap.center.x
+    cy = gameMap.center.y
+    dir = gameDir()
+    floorTex = readImage(dir / "data/arena_floor.png")
+    pedRedSpr = readImage(dir / "data/ped_red.png")
+    pedBlueSpr = readImage(dir / "data/ped_blue.png")
+  # The art mask at output resolution: border + obstacle shapes from float
+  # geometry, minus the spinning center diamonds (drawn live as objects).
+  # Window pixels (glass) get their own mask in the same per-shape pass: wall
+  # points inside a window shape draw as the pale pane, not carved stone.
+  var
+    artMask = newSeq[bool](ow * oh)
+    windowMask = newSeq[bool](ow * oh)
+  let
+    bTop = ArenaBorder * scale
+    bBottom = (h - ArenaBorder) * scale
+    bLeft = ArenaBorder * scale
+    bRight = (w - ArenaBorder) * scale
+  for y in 0 ..< oh:
+    if y < bTop or y >= bBottom:
+      for x in 0 ..< ow:
+        artMask[y * ow + x] = true
+    else:
+      for x in 0 ..< bLeft:
+        artMask[y * ow + x] = true
+      for x in bRight ..< ow:
+        artMask[y * ow + x] = true
+  for shape in ArenaObstacles:
+    let
+      (sx0, sy0, sx1, sy1) = shapeLogicalBounds(shape)
+      ox0 = max(0, sx0 * scale)
+      oy0 = max(0, sy0 * scale)
+      ox1 = min(ow, sx1 * scale)
+      oy1 = min(oh, sy1 * scale)
+    for y in oy0 ..< oy1:
+      let fy = (float(y) + 0.5) / float(scale)
+      for x in ox0 ..< ox1:
+        let fx = (float(x) + 0.5) / float(scale)
+        if shapeWallAtF(fx, fy, shape, cx, cy):
+          artMask[y * ow + x] = true
+          if shape.window:
+            windowMask[y * ow + x] = true
+  for spot in AnimatedDiamonds:
+    let
+      pad = spot.radius + 2
+      ox0 = max(0, (spot.cx - pad) * scale)
+      oy0 = max(0, (spot.cy - pad) * scale)
+      ox1 = min(ow, (spot.cx + pad) * scale)
+      oy1 = min(oh, (spot.cy + pad) * scale)
+    for y in oy0 ..< oy1:
+      for x in ox0 ..< ox1:
+        let i = y * ow + x
+        if artMask[i] and isAnimatedDiamondPixel(x div scale, y div scale):
+          artMask[i] = false
+  # The flagstone tiles the board with a period of exactly texW×texH LOGICAL
+  # pixels, so the bilinear floor repeats every texW·scale × texH·scale output
+  # pixels — bake ONE tile block and index it, instead of bilinear-sampling
+  # 3.3M board pixels (this bake runs at container boot on a small contended
+  # CI runner; every pass here is on the certifier's clock).
+  let
+    tileW = floorTex.width * scale
+    tileH = floorTex.height * scale
+  var tileBlock = newSeq[ColorRGBA](tileW * tileH)
+  for y in 0 ..< tileH:
+    let fy = (float(y) + 0.5) / float(scale)
+    for x in 0 ..< tileW:
+      tileBlock[y * tileW + x] =
+        tileSampleF(floorTex, (float(x) + 0.5) / float(scale), fy)
+  let
+    redHi = gameMap.teamHomeX(Red) + CaptureZoneWidth div 2
+    blueLo = gameMap.teamHomeX(Blue) - CaptureZoneWidth div 2
+    playLo = ArenaBorder
+    playHi = w - 1 - ArenaBorder
+  # Paint straight into the output byte buffers — the pixie Image round trip
+  # (premultiply on write, un-premultiply on pack) was pure overhead for an
+  # opaque board.
+  result.hot = newSeq[uint8](ow * oh * 4)
+  result.cold = newSeq[uint8](ow * oh * 4)
+  template put(buf: seq[uint8], offset: int, c: ColorRGBA) =
+    buf[offset] = c.r
+    buf[offset + 1] = c.g
+    buf[offset + 2] = c.b
+    buf[offset + 3] = 255
+  for y in 0 ..< oh:
+    let
+      ly = y div scale
+      rowBorder = ly < ArenaBorder or ly >= h - ArenaBorder
+      tileRow = (y mod tileH) * tileW
+    for x in 0 ..< ow:
+      let
+        i = y * ow + x
+        lx = x div scale
+        onBorder = rowBorder or lx < ArenaBorder or lx >= w - ArenaBorder
+      var hotColor, coldColor: ColorRGBA
+      if artMask[i]:
+        hotColor =
+          if windowMask[i]:
+            windowGlassColorAt(artMask, ow, oh, x, y, scale)
+          else:
+            carvedStoneColorAt(artMask, ow, oh, x, y, scale)
+        coldColor = hotColor
+      else:
+        coldColor = tileBlock[tileRow + x mod tileW]
+        hotColor = endzoneColorAt(coldColor, lx, redHi, blueLo, playLo, playHi)
+      if onBorder:
+        hotColor = overTint(hotColor, ArenaBorderColor)
+        coldColor = overTint(coldColor, ArenaBorderColor)
+      put(result.hot, i * 4, hotColor)
+      put(result.cold, i * 4, coldColor)
+  # Pedestals: pixie still resizes the painted masters, but the composite onto
+  # the board is a manual straight-alpha src-over into the byte buffers.
+  for team in Team:
+    let
+      home = gameMap.flagHome(team)
+      full = if team == Red: pedRedSpr else: pedBlueSpr
+      size = PedestalCoverSize * scale
+      scaled = full.resize(size, size)
+      dimmed = scaled.pedestalDimmed()
+      px0 = home.x * scale - size div 2
+      py0 = home.y * scale - size div 2
+    for sy in 0 ..< size:
+      let dy = py0 + sy
+      if dy < 0 or dy >= oh:
+        continue
+      for sx in 0 ..< size:
+        let dx = px0 + sx
+        if dx < 0 or dx >= ow:
+          continue
+        let
+          litPx = scaled.data[sy * size + sx].rgba
+          dimPx = dimmed.data[sy * size + sx].rgba
+          offset = (dy * ow + dx) * 4
+        template blend(buf: seq[uint8], src: ColorRGBA) =
+          if src.a == 255'u8:
+            buf[offset] = src.r
+            buf[offset + 1] = src.g
+            buf[offset + 2] = src.b
+          elif src.a > 0'u8:
+            let a = src.a.int
+            buf[offset] =
+              uint8((src.r.int * a + buf[offset].int * (255 - a)) div 255)
+            buf[offset + 1] =
+              uint8((src.g.int * a + buf[offset + 1].int * (255 - a)) div 255)
+            buf[offset + 2] =
+              uint8((src.b.int * a + buf[offset + 2].int * (255 - a)) div 255)
+        blend(result.hot, litPx)
+        blend(result.cold, dimPx)
+
 proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
     tuple[mapImage, walkImage, wallImage: Image] =
   ## Builds the visual map plus the walk and wall masks for the arena. The
@@ -1366,8 +2459,10 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
           x >= w - ArenaBorder or y >= h - ArenaBorder
         wall = wallMask[y * w + x]
         artWall = artMask[y * w + x]
+        windowPixel = wall and isArenaWindowPixel(x, y, cx, cy)
       var color =
-        if artWall: carvedStoneColor(artMask, w, h, x, y)
+        if windowPixel: windowGlassColor(artMask, w, h, x, y)
+        elif artWall: carvedStoneColor(artMask, w, h, x, y)
         elif withEndzoneGlow: endzoneColorAt(tileSample(floorTex, x, y), x,
           redHi, blueLo, playLo, playHi)
         else: tileSample(floorTex, x, y)
@@ -1454,12 +2549,12 @@ proc defaultGameConfig*(): GameConfig =
     frictionDen: FrictionDen,
     maxSpeed: MaxSpeed,
     stopThreshold: StopThreshold,
+    playerBouncePct: PlayerBouncePct,
     seed: 0xA6019,
     speed: 1,
     lives: Lives,
     hitPoints: HitPoints,
     respawnTicks: RespawnTicks,
-    spawnProtectTicks: SpawnProtectTicks,
     gunRange: GunRange,
     fireCooldownTicks: FireCooldownTicks,
     fireWindupTicks: FireWindupTicks,
@@ -1473,6 +2568,7 @@ proc defaultGameConfig*(): GameConfig =
     maxTicks: MaxTicks,
     maxGames: MaxGames,
     showPlayerLabels: true,
+    fastMode: true,
     mapPath: DefaultMapPath,
     closedRoster: false,
     slots: @[]
@@ -1573,6 +2669,22 @@ proc readSlotColor(text: string, slotIndex: int): uint8 =
       "Config field slots[" & $slotIndex & "].color is unknown."
     )
 
+proc readSlotSkin(node: JsonNode, slotIndex: int): Skin =
+  ## Reads one tolerant cosmetic skin value.
+  if node.kind == JString:
+    case node.getStr()
+    of "default":
+      return DefaultSkin
+    of "crown":
+      return CrownSkin
+    else:
+      discard
+  stderr.writeLine(
+    "Warning: config slots[" & $slotIndex & "].skin value " & $node &
+      " is unrecognized; using default."
+  )
+  DefaultSkin
+
 proc readConfigSlots(node: JsonNode, slots: var seq[PlayerSlotConfig]) =
   ## Reads optional fixed player slot config entries.
   if not node.hasKey("slots"):
@@ -1613,6 +2725,8 @@ proc readConfigSlots(node: JsonNode, slots: var seq[PlayerSlotConfig]) =
         )
       slot.color = readSlotColor(color.getStr(), i)
       slot.hasColor = true
+    if item.hasKey("skin"):
+      slot.skin = readSlotSkin(item["skin"], i)
     slots.add(slot)
 
 proc readConfigPlayers(node: JsonNode, slots: var seq[PlayerSlotConfig]) =
@@ -1718,6 +2832,8 @@ proc validate(config: GameConfig) =
     raise newException(CtfError, "Config field fireWindupTicks must not be negative.")
   if config.carrierSpeedPct <= 0 or config.carrierSpeedPct > 100:
     raise newException(CtfError, "Config field carrierSpeedPct must be 1..100.")
+  if config.playerBouncePct < 0 or config.playerBouncePct > 100:
+    raise newException(CtfError, "Config field playerBouncePct must be 0..100.")
   if config.aimTurnRate < 1:
     raise newException(CtfError, "Config field aimTurnRate must be at least 1.")
   if config.visionConeDeg < 0 or config.visionConeDeg > 180:
@@ -1731,8 +2847,7 @@ proc validate(config: GameConfig) =
     )
   if config.startWaitTicks < 0:
     raise newException(CtfError, "Config field startWaitTicks must be non-negative.")
-  if config.respawnTicks < 0 or config.spawnProtectTicks < 0 or
-      config.fireCooldownTicks < 0:
+  if config.respawnTicks < 0 or config.fireCooldownTicks < 0:
     raise newException(CtfError, "Timer config fields must not be negative.")
   if config.gameOverTicks < 0 or config.maxTicks < 0 or config.maxGames < 0:
     raise newException(CtfError, "Timer config fields must not be negative.")
@@ -1787,12 +2902,12 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("frictionDen", config.frictionDen)
   node.readConfigInt("maxSpeed", config.maxSpeed)
   node.readConfigInt("stopThreshold", config.stopThreshold)
+  node.readConfigInt("playerBouncePct", config.playerBouncePct)
   node.readConfigInt("seed", config.seed)
   node.readConfigInt("speed", config.speed)
   node.readConfigInt("lives", config.lives)
   node.readConfigInt("hitPoints", config.hitPoints)
   node.readConfigInt("respawnTicks", config.respawnTicks)
-  node.readConfigInt("spawnProtectTicks", config.spawnProtectTicks)
   node.readConfigInt("gunRange", config.gunRange)
   node.readConfigInt("fireCooldownTicks", config.fireCooldownTicks)
   node.readConfigInt("fireWindupTicks", config.fireWindupTicks)
@@ -1808,8 +2923,13 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("maxGameTicks", config.maxTicks)
   node.readConfigInt("maxGames", config.maxGames)
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
+  node.readConfigBool("fastMode", config.fastMode)
   node.readConfigString("map", config.mapPath)
   node.readConfigString("mapPath", config.mapPath)
+  ## The gun range follows the selected map unless the config sets it
+  ## explicitly: each map def carries its own map-wide default.
+  if not node.hasKey("gunRange"):
+    config.gunRange = loadCtfMapMetadata(config.mapPath).gunRange
   node.readConfigSlots(config.slots)
   node.readConfigBool("closedRoster", config.closedRoster)
   node.readConfigTokens(config.slots, config.closedRoster)
@@ -1832,6 +2952,14 @@ proc slotColorText(slot: PlayerSlotConfig): string =
     return ""
   playerColorText(slot.color)
 
+proc skinText(skin: Skin): string =
+  ## Returns a JSON skin string.
+  case skin
+  of DefaultSkin:
+    "default"
+  of CrownSkin:
+    "crown"
+
 proc configJson*(config: GameConfig): string =
   ## Returns the complete replay JSON for a gameplay config.
   var
@@ -1849,6 +2977,8 @@ proc configJson*(config: GameConfig): string =
       item["team"] = %slot.slotTeamText()
     if slot.hasColor:
       item["color"] = %slot.slotColorText()
+    if slot.skin != DefaultSkin:
+      item["skin"] = %slot.skin.skinText()
     slots.add(item)
   var node = %*{
     "motionScale": config.motionScale,
@@ -1857,12 +2987,12 @@ proc configJson*(config: GameConfig): string =
     "frictionDen": config.frictionDen,
     "maxSpeed": config.maxSpeed,
     "stopThreshold": config.stopThreshold,
+    "playerBouncePct": config.playerBouncePct,
     "seed": config.seed,
     "speed": config.speed,
     "lives": config.lives,
     "hitPoints": config.hitPoints,
     "respawnTicks": config.respawnTicks,
-    "spawnProtectTicks": config.spawnProtectTicks,
     "gunRange": config.gunRange,
     "fireCooldownTicks": config.fireCooldownTicks,
     "fireWindupTicks": config.fireWindupTicks,
@@ -1879,6 +3009,7 @@ proc configJson*(config: GameConfig): string =
     "mapPath": config.mapPath,
     "closedRoster": config.closedRoster,
     "showPlayerLabels": config.showPlayerLabels,
+    "fastMode": config.fastMode,
     "tokens": tokens,
     "slots": slots
   }
@@ -1944,6 +3075,15 @@ proc aimVector*(brads: int): tuple[x, y: float] =
   ## so 64 is north (-y in map coordinates), 128 west, and 192 south.
   let angle = float(brads) * PI / float(AimBradsTurn div 2)
   (cos(angle), -sin(angle))
+
+proc bradsOfVector*(dx, dy: int): int =
+  ## Returns the aim-brads angle of a map-space vector — the inverse of
+  ## `aimVector` (screen y points down, so north is -y).
+  if dx == 0 and dy == 0:
+    return 0
+  let brads = int(round(
+    arctan2(-float(dy), float(dx)) * float(AimBradsTurn div 2) / PI))
+  ((brads mod AimBradsTurn) + AimBradsTurn) mod AimBradsTurn
 
 proc playerText(sim: SimServer, playerIndex: int): string =
   ## Returns the readable player color for one player index.
@@ -2033,15 +3173,20 @@ proc gameHash*(sim: SimServer): uint64 =
     result.mixHashInt(player.fireCooldown)
     result.mixHashInt(player.fireWindup)
     result.mixHashInt(player.windupBrads)
-    result.mixHashInt(player.spawnProtect)
     result.mixHashBool(player.carryingFlag)
     result.mixHashBool(player.hasGrenade)
     result.mixHashBool(player.hasShield)
-    result.mixHashBool(player.hasSword)
+    result.mixHashInt(player.shieldHp)
+    result.mixHashBool(player.hasPlasmaArc)
+    result.mixHashInt(player.arcTicksLeft)
+    result.mixHashInt(int(player.arcHitMask))
     result.mixHashInt(player.throwCharge)
     result.mixHashInt(player.lastShoutTick)
     result.mixHashInt(player.joinOrder)
-    result.mixHashInt(int(player.color))
+    # Color is an unsigned packed RGBA value. Converting it through `int`
+    # overflows on wasm32 for colors with the high bit set; widening directly
+    # preserves the native replay hash on both 32- and 64-bit targets.
+    result.mixHash(uint64(player.color))
     result.mixHashInt(player.reward)
     result.mixHashInt(player.kills)
     result.mixHashInt(player.deaths)
@@ -2055,7 +3200,7 @@ proc gameHash*(sim: SimServer): uint64 =
   for spawn in sim.shieldSpawns:
     result.mixHashBool(spawn.present)
     result.mixHashInt(spawn.respawnAt)
-  for spawn in sim.swordSpawns:
+  for spawn in sim.plasmaArcSpawns:
     result.mixHashBool(spawn.present)
     result.mixHashInt(spawn.respawnAt)
   result.mixHashInt(sim.airborneGrenades.len)
@@ -2155,8 +3300,67 @@ proc arrangeHomePositions*(sim: var SimServer) =
     sim.players[i].homeY = spawn.y
     sim.resetPlayerToHome(i)
 
+proc eventSlot(sim: SimServer, playerIndex: int): int {.inline.} =
+  ## Returns a player's stable join slot for the tier-2 event stream, so an
+  ## event survives roster changes; -1 for no/invalid player.
+  if playerIndex >= 0 and playerIndex < sim.players.len:
+    return sim.players[playerIndex].joinOrder
+  -1
+
+proc emitEvent(
+  sim: var SimServer,
+  kind: SimEventKind,
+  source = -1,
+  target = -1,
+  weapon = "",
+  amount = 0,
+  hp = -1,
+  blocked = 0,
+  x = 0.0,
+  y = 0.0
+) {.inline.} =
+  ## Appends one tier-2 analysis event (see SimEvent); a no-op unless
+  ## collectEvents is on, so live servers pay nothing. `source` and `target`
+  ## are PLAYER INDICES here; they are recorded as stable join slots.
+  if not sim.collectEvents:
+    return
+  sim.events.add SimEvent(
+    tick: sim.tickCount,
+    kind: kind,
+    source: sim.eventSlot(source),
+    target: sim.eventSlot(target),
+    weapon: weapon,
+    amount: amount,
+    hp: hp,
+    blocked: blocked,
+    x: x,
+    y: y
+  )
+
+proc emitPhaseChange(sim: var SimServer, newPhase: GamePhase) {.inline.} =
+  ## Appends one PhaseChange analysis event for a phase about to be entered
+  ## (call BEFORE assigning sim.phase, with the phase being switched to).
+  ## A no-op unless collectEvents is on.
+  if not sim.collectEvents:
+    return
+  sim.emitEvent(
+    PhaseChange,
+    weapon = ($newPhase).toLowerAscii,
+    amount = ord(newPhase)
+  )
+
 proc resetFlag*(sim: var SimServer, team: Team) =
   ## Returns one team's flag to its home pedestal.
+  # A flag leaving an enemy's back mid-game (death, disconnect — any reason
+  # other than capture) is a FlagReturn analysis event; the pedestal resets
+  # at game boundaries are not (phase guard).
+  if sim.collectEvents and sim.phase == Playing and sim.flags[team].carrier >= 0:
+    sim.emitEvent(
+      FlagReturn,
+      source = sim.flags[team].carrier,
+      x = float(sim.flags[team].x),
+      y = float(sim.flags[team].y)
+    )
   let home = sim.gameMap.flagHome(team)
   sim.flags[team] = FlagState(x: home.x, y: home.y, carrier: -1)
 
@@ -2179,6 +3383,21 @@ proc teamForSlot(sim: SimServer, order: int): Team =
   else:
     Blue
 
+const IdentityNames* = [
+  "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"]
+  ## Per-team player identities, assigned by slot order within the team.
+
+proc slotIdentityIndex*(sim: SimServer, order: int): int =
+  ## Returns one slot's identity index (into IdentityNames): its rank among
+  ## same-team slots. Derived from the config, not stored, so it is stable
+  ## across matches, reconnects, and replays. Wraps past theta in the
+  ## degenerate case of more than IdentityNames.len slots on one team.
+  let team = sim.teamForSlot(order)
+  for i in 0 ..< order:
+    if sim.teamForSlot(i) == team:
+      inc result
+  result = result mod IdentityNames.len
+
 proc findSpawn*(sim: SimServer): tuple[x, y: int] =
   ## Returns the next lobby spawn position.
   let order = sim.players.len
@@ -2187,6 +3406,13 @@ proc findSpawn*(sim: SimServer): tuple[x, y: int] =
 proc playerSlotLimit(config: GameConfig): int =
   ## Returns the number of slots players may occupy.
   if config.closedRoster: config.slots.len else: MaxPlayers
+
+proc usedSkins*(config: GameConfig): set[Skin] =
+  ## Returns the skins needed by slots that can join this game.
+  if config.slots.len < config.playerSlotLimit():
+    result.incl(DefaultSkin)
+  for slot in config.slots:
+    result.incl(slot.skin)
 
 proc canAddPlayer*(sim: SimServer): bool =
   ## Returns whether the game has room for another player.
@@ -2578,7 +3804,9 @@ proc addPlayer*(
     joinOrder: order,
     address: address,
     color: color,
+    skin: slot.skin,
     lastShoutTick: -1,
+    paintHitTick: -1,
     reward: sim.rewardAccounts[accountIndex].reward
   )
   sim.fovCaches.add PlayerFov(
@@ -2652,6 +3880,18 @@ proc recordKill*(sim: var SimServer, playerIndex: int) =
     inc sim.rewardAccounts[index].kills
   inc sim.players[playerIndex].kills
 
+proc recordTeamKill*(sim: var SimServer, killerIndex, victimIndex: int) =
+  ## Counts a teammate kill (the endscreen "backstab" badge). Weapon-agnostic:
+  ## bullets, grenade blasts, and plasma cones all land here.
+  if killerIndex < 0 or killerIndex >= sim.players.len:
+    return
+  if victimIndex < 0 or victimIndex >= sim.players.len:
+    return
+  if killerIndex == victimIndex:
+    return
+  if sim.players[killerIndex].team == sim.players[victimIndex].team:
+    inc sim.players[killerIndex].teamKills
+
 proc recordDeath*(sim: var SimServer, playerIndex: int) =
   ## Increments the death counter for one player.
   let index = sim.rewardAccountForPlayer(playerIndex)
@@ -2677,6 +3917,8 @@ proc playerResultsJson*(sim: SimServer): string =
     killsList = newJArray()
     deathsList = newJArray()
     capturesList = newJArray()
+    shotsFiredList = newJArray()
+    shotsHitList = newJArray()
     results = newJObject()
   for slotIndex in 0 ..< sim.playerResultSlotCount():
     resultSlots.add(slotIndex)
@@ -2702,6 +3944,8 @@ proc playerResultsJson*(sim: SimServer): string =
       kills = 0
       deaths = 0
       captures = 0
+      shotsFired = 0
+      shotsHit = 0
     if accountIndex >= 0:
       let account = sim.rewardAccounts[accountIndex]
       name = account.address
@@ -2720,6 +3964,10 @@ proc playerResultsJson*(sim: SimServer): string =
       playerTeam = player.team
       hasTeam = true
       playerWon = not sim.isDraw and player.team == sim.winner
+      # Accuracy counters live only on the player (analysis-only, never
+      # mirrored into reward accounts): a slot whose player left reports 0.
+      shotsFired = player.shotsFired
+      shotsHit = player.shotsHit
     if not hasTeam and slotConfig.hasTeam:
       playerTeam = slotConfig.team
       hasTeam = true
@@ -2730,6 +3978,8 @@ proc playerResultsJson*(sim: SimServer): string =
     killsList.add(%kills)
     deathsList.add(%deaths)
     capturesList.add(%captures)
+    shotsFiredList.add(%shotsFired)
+    shotsHitList.add(%shotsHit)
   results["names"] = names
   results["scores"] = scores
   results["win"] = win
@@ -2737,6 +3987,11 @@ proc playerResultsJson*(sim: SimServer): string =
   results["kills"] = killsList
   results["deaths"] = deathsList
   results["captures"] = capturesList
+  # shotsFired/shotsHit stay OUT of the results payload: the platform's
+  # episode-results schema is closed (additionalProperties: false) and the
+  # certifier rejects unknown fields, blocking every canonical upload. The
+  # counters remain on the players for replay-side analysis; re-add here
+  # only after the platform schema learns the fields.
   $results
 
 proc grenadeSpawnPoints*(): array[4, tuple[x, y: int]] =
@@ -2773,12 +4028,13 @@ proc resetMedKits*(sim: var SimServer) =
     )
 
 proc resetShields*(sim: var SimServer) =
-  ## Places one shield deep in each team's endzone, in the same back column as
-  ## the corner grenade pickups (centered between the two corners), nudged to
-  ## the nearest walkable floor, and refills both.
+  ## Places one shield deep in each team's endzone, in the same back column
+  ## as the corner grenade pickups but in the BOTTOM half (three quarters of
+  ## the map height down) — the plasma arcs hold the matching top-half spots —
+  ## nudged to the nearest walkable floor, and refills both.
   let
     inset = ArenaBorder + GrenadeSpawnInset
-    endzoneY = sim.gameMap.center.y
+    endzoneY = 3 * MapHeight div 4
     targets = [
       (inset, endzoneY),
       (MapWidth - inset, endzoneY)
@@ -2790,27 +4046,35 @@ proc resetShields*(sim: var SimServer) =
     )
   for i in 0 ..< sim.players.len:
     sim.players[i].hasShield = false
-proc swordSpawnPoints*(): array[2, tuple[x, y: int]] =
-  ## The two side-center sword spawn points, nudged to walkable floor.
-  let inset = ArenaBorder + SwordSpawnInset
-  [(inset, MapHeight div 2),
-    (MapWidth - inset, MapHeight div 2)]
+    sim.players[i].shieldHp = 0
+proc plasmaArcSpawnPoints*(): array[2, tuple[x, y: int]] =
+  ## The two plasma arc spawn points, nudged to walkable floor: the same side
+  ## back columns as the shields, but in the TOP half (a quarter of the map
+  ## height down) so the two pickups no longer sit on top of each other —
+  ## plasma arcs high, shields low.
+  let inset = ArenaBorder + PlasmaArcSpawnInset
+  [(inset, MapHeight div 4),
+    (MapWidth - inset, MapHeight div 4)]
 
-proc resetSwords*(sim: var SimServer) =
-  ## Refills both side-center sword pickups and clears carried swords.
-  let points = swordSpawnPoints()
-  for i in 0 ..< sim.swordSpawns.len:
+proc resetPlasmaArcs*(sim: var SimServer) =
+  ## Refills both side-center plasma arc pickups and clears carried arcs.
+  let points = plasmaArcSpawnPoints()
+  for i in 0 ..< sim.plasmaArcSpawns.len:
     let spot = sim.nearestWalkable(points[i].x, points[i].y)
-    sim.swordSpawns[i] = PickupSpawn(
+    sim.plasmaArcSpawns[i] = PickupSpawn(
       x: spot.x, y: spot.y, present: true, respawnAt: 0
     )
-  sim.swordSwipes = @[]
+  sim.plasmaArcFlashes = @[]
   for i in 0 ..< sim.players.len:
-    sim.players[i].hasSword = false
+    sim.players[i].hasPlasmaArc = false
+    sim.players[i].arcTicksLeft = 0
+    sim.players[i].arcHitMask = 0
 
 proc startGame*(sim: var SimServer) =
   sim.logGameEvent("game started: players=" & $sim.players.len)
   sim.recentShots = @[]
+  sim.hitFlashes = @[]
+  sim.bubbleImpacts = @[]
   sim.splatters = @[]
   sim.damagePops = @[]
   sim.recentShouts = @[]
@@ -2826,19 +4090,24 @@ proc startGame*(sim: var SimServer) =
     sim.players[i].windupBrads = -1
     sim.players[i].aimBrads = spawnAimBrads(sim.players[i].team)
     sim.players[i].flipH = sim.players[i].team == Blue
-    sim.players[i].spawnProtect = sim.config.spawnProtectTicks
     sim.players[i].carryingFlag = false
     sim.players[i].hasShield = false
+    sim.players[i].shieldHp = 0
     sim.players[i].kills = 0
     sim.players[i].deaths = 0
     sim.players[i].captures = 0
     sim.players[i].shotsFired = 0
     sim.players[i].shotsHit = 0
+    sim.players[i].multiKills2 = 0
+    sim.players[i].multiKills3 = 0
+    sim.players[i].teamKills = 0
+    sim.players[i].arcKillsThisFire = 0
     sim.recordGameTeamAssigned(i)
   sim.resetFlags()
   sim.resetGrenades()
   sim.resetShields()
-  sim.resetSwords()
+  sim.resetPlasmaArcs()
+  sim.emitPhaseChange(Playing)
   sim.phase = Playing
   sim.gameStartTick = sim.tickCount
   sim.timeLimitReached = false
@@ -2864,55 +4133,90 @@ proc slideScanRadius(sim: SimServer, carry, velocity: int): int =
     ) div sim.config.motionScale
   clamp(max(1, max(pending, speed)), 1, MovementSlideMaxScan)
 
+proc playersOverlapAt(sim: SimServer, movingIndex, x, y: int): bool =
+  ## True when a player footprint centered at (x, y) would overlap another
+  ## live player's footprint.
+  for i in 0 ..< sim.players.len:
+    if i == movingIndex or not sim.players[i].alive:
+      continue
+    if max(abs(x - sim.players[i].x), abs(y - sim.players[i].y)) <=
+        PlayerSolidSpan:
+      return true
+  false
+
+proc blockingPlayerAt(
+  sim: SimServer,
+  movingIndex, fromX, fromY, toX, toY: int
+): int =
+  ## Returns the index of a live player whose body blocks this step, or -1.
+  ## A step is blocked when it lands overlapping another body without
+  ## increasing the separation — moving apart is always allowed, so bodies
+  ## that start overlapped (a respawn onto an occupied home) can escape.
+  for i in 0 ..< sim.players.len:
+    if i == movingIndex or not sim.players[i].alive:
+      continue
+    let toDist =
+      max(abs(toX - sim.players[i].x), abs(toY - sim.players[i].y))
+    if toDist > PlayerSolidSpan:
+      continue
+    let fromDist =
+      max(abs(fromX - sim.players[i].x), abs(fromY - sim.players[i].y))
+    if toDist <= fromDist:
+      return i
+  -1
+
 proc canSlideHorizontal(
   sim: SimServer,
-  x, y, step, offset: int
+  movingIndex, x, y, step, offset: int
 ): bool =
   ## Returns true when a horizontal step can slide by one offset.
   if offset == 0:
     return false
   let slideStep = signOf(offset)
   for i in 1 .. abs(offset):
-    if not sim.canOccupy(x, y + slideStep * i):
+    if not sim.canOccupy(x, y + slideStep * i) or
+        sim.playersOverlapAt(movingIndex, x, y + slideStep * i):
       return false
-  sim.canOccupy(x + step, y + offset)
+  sim.canOccupy(x + step, y + offset) and
+    not sim.playersOverlapAt(movingIndex, x + step, y + offset)
 
 proc canSlideVertical(
   sim: SimServer,
-  x, y, step, offset: int
+  movingIndex, x, y, step, offset: int
 ): bool =
   ## Returns true when a vertical step can slide by one offset.
   if offset == 0:
     return false
   let slideStep = signOf(offset)
   for i in 1 .. abs(offset):
-    if not sim.canOccupy(x + slideStep * i, y):
+    if not sim.canOccupy(x + slideStep * i, y) or
+        sim.playersOverlapAt(movingIndex, x + slideStep * i, y):
       return false
-  sim.canOccupy(x + offset, y + step)
+  sim.canOccupy(x + offset, y + step) and
+    not sim.playersOverlapAt(movingIndex, x + offset, y + step)
 
 proc trySlideOffset(
-  sim: SimServer,
-  player: var Player,
-  step, offset: int,
+  sim: var SimServer,
+  movingIndex, step, offset: int,
   horizontal: bool
 ): bool =
   ## Tries one candidate slide offset for a blocked movement step.
+  template player: untyped = sim.players[movingIndex]
   if horizontal:
-    if not sim.canSlideHorizontal(player.x, player.y, step, offset):
+    if not sim.canSlideHorizontal(movingIndex, player.x, player.y, step, offset):
       return false
     player.x += step
     player.y += offset
   else:
-    if not sim.canSlideVertical(player.x, player.y, step, offset):
+    if not sim.canSlideVertical(movingIndex, player.x, player.y, step, offset):
       return false
     player.x += offset
     player.y += step
   true
 
 proc trySlideMove(
-  sim: SimServer,
-  player: var Player,
-  step, radius, preferredSlide: int,
+  sim: var SimServer,
+  movingIndex, step, radius, preferredSlide: int,
   horizontal: bool
 ): bool =
   ## Tries nearby slide offsets for one blocked movement step.
@@ -2922,41 +4226,66 @@ proc trySlideMove(
   for distance in 1 .. radius:
     if preferred != 0:
       if sim.trySlideOffset(
-        player,
+        movingIndex,
         step,
         preferred * distance,
         horizontal
       ):
         return true
       if sim.trySlideOffset(
-        player,
+        movingIndex,
         step,
         -preferred * distance,
         horizontal
       ):
         return true
     else:
-      if sim.trySlideOffset(player, step, -distance, horizontal):
+      if sim.trySlideOffset(movingIndex, step, -distance, horizontal):
         return true
-      if sim.trySlideOffset(player, step, distance, horizontal):
+      if sim.trySlideOffset(movingIndex, step, distance, horizontal):
         return true
   false
 
+proc bouncePlayers(sim: var SimServer, a, b: int, horizontal: bool) =
+  ## Applies a slightly elastic equal-mass collision response along one axis
+  ## between two touching players: the axis velocities average out (the
+  ## shove) plus playerBouncePct percent of the closing speed rebounds (the
+  ## bounce). At 100 this is a billiard-ball velocity swap, at 0 a dead-stop
+  ## push.
+  let
+    pct = sim.config.playerBouncePct
+    v1 = if horizontal: sim.players[a].velX else: sim.players[a].velY
+    v2 = if horizontal: sim.players[b].velX else: sim.players[b].velY
+    total = v1 + v2
+    rebound = (v1 - v2) * pct div 100
+  if horizontal:
+    sim.players[a].velX = (total - rebound) div 2
+    sim.players[b].velX = (total + rebound) div 2
+  else:
+    sim.players[a].velY = (total - rebound) div 2
+    sim.players[b].velY = (total + rebound) div 2
+
 proc applyMomentumAxis(
-  sim: SimServer,
-  player: var Player,
-  carry: var int,
-  velocity, preferredSlide: int,
+  sim: var SimServer,
+  playerIndex, preferredSlide: int,
   horizontal: bool
 ) =
-  ## Applies one fixed-point movement axis with collision sliding.
-  carry += velocity
+  ## Applies one fixed-point movement axis with collision sliding. Walls
+  ## absorb blocked motion; another player's body blocks the same way but
+  ## answers with a slightly elastic shove (bouncePlayers).
+  template player: untyped = sim.players[playerIndex]
+  let velocity = if horizontal: player.velX else: player.velY
+  var carry =
+    (if horizontal: player.carryX else: player.carryY) + velocity
   while abs(carry) >= sim.config.motionScale:
     let step = if carry < 0: -1 else: 1
     let
       nx = if horizontal: player.x + step else: player.x
       ny = if horizontal: player.y else: player.y + step
+    var blocker = -1
     if sim.canOccupy(nx, ny):
+      blocker = sim.blockingPlayerAt(playerIndex, player.x, player.y, nx, ny)
+    if sim.canOccupy(nx, ny) and blocker < 0:
       if horizontal:
         player.x = nx
       else:
@@ -2965,7 +4294,7 @@ proc applyMomentumAxis(
     else:
       let radius = sim.slideScanRadius(carry, velocity)
       if sim.trySlideMove(
-        player,
+        playerIndex,
         step,
         radius,
         preferredSlide,
@@ -2973,8 +4302,14 @@ proc applyMomentumAxis(
       ):
         carry -= step * sim.config.motionScale
       else:
+        if blocker >= 0:
+          sim.bouncePlayers(playerIndex, blocker, horizontal)
         carry = 0
         break
+  if horizontal:
+    player.carryX = carry
+  else:
+    player.carryY = carry
 
 proc distSq*(ax, ay, bx, by: int): int =
   let
@@ -2995,7 +4330,7 @@ proc isWall*(sim: SimServer, mx, my: int): bool =
     return true
   sim.wallMask[mapIndex(mx, my)]
 
-proc lineOfSightClear(sim: SimServer, ax, ay, bx, by: int): bool =
+proc lineOfSightClear*(sim: SimServer, ax, ay, bx, by: int): bool =
   ## Returns true when no wall blocks the segment between two map points.
   let
     dx = bx - ax
@@ -3027,7 +4362,9 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
   sim.players[targetIndex].windupBrads = -1
   sim.players[targetIndex].hasGrenade = false
   sim.players[targetIndex].hasShield = false
-  sim.players[targetIndex].hasSword = false
+  sim.players[targetIndex].shieldHp = 0
+  sim.players[targetIndex].hasPlasmaArc = false
+  sim.players[targetIndex].arcTicksLeft = 0
   sim.players[targetIndex].throwCharge = 0
   for team in Team:
     if sim.flags[team].carrier == targetIndex:
@@ -3042,12 +4379,31 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
     color: sim.players[targetIndex].color,
     hit: false
   )
+  # A floating "KO" kill marker rises and fades from the death spot — the same
+  # mechanism as the "-1" damage pops, so a kill reads at a glance in the
+  # spectator/replay view (cosmetic only, never in gameHash).
+  sim.damagePops.add DamageFx(
+    x: sim.players[targetIndex].x + CollisionW div 2,
+    y: sim.players[targetIndex].y + CollisionH div 2,
+    tick: sim.tickCount,
+    amount: 0,
+    color: sim.players[targetIndex].color,
+    kill: true
+  )
   sim.players[targetIndex].alive = false
   sim.players[targetIndex].velX = 0
   sim.players[targetIndex].velY = 0
   sim.players[targetIndex].carryX = 0
   sim.players[targetIndex].carryY = 0
   sim.recordDeath(targetIndex)
+  # Death is the victim-side record (source = victim, target = killer); the
+  # weapon-attributed Kill is emitted by each weapon's own damage site, where
+  # the weapon is known first-hand.
+  sim.emitEvent(
+    Death, source = targetIndex, target = killerIndex,
+    x = float(sim.players[targetIndex].x + CollisionW div 2),
+    y = float(sim.players[targetIndex].y + CollisionH div 2)
+  )
   if sim.players[targetIndex].lives > 0:
     dec sim.players[targetIndex].lives
   sim.players[targetIndex].respawnTimer =
@@ -3056,50 +4412,59 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
     else:
       0
 
+proc absorbDamage*(sim: var SimServer, targetIndex: int, amount: int): int {.discardable.} =
+  ## Applies damage to a player: the shield layer soaks hits before base hp.
+  ## Callers keep their own death checks on the base hp that remains. Returns
+  ## how many hp the shield layer absorbed (`fromShield`) — first-hand `blocked`
+  ## for the tier-2 Damage event; callers that don't need it can ignore it.
+  let fromShield = min(sim.players[targetIndex].shieldHp, amount)
+  sim.players[targetIndex].shieldHp -= fromShield
+  sim.players[targetIndex].hp -= amount - fromShield
+  fromShield
+
 proc canFire*(sim: SimServer, shooterIndex: int): bool =
   ## Returns whether one player is able to fire a shot right now.
   if shooterIndex < 0 or shooterIndex >= sim.players.len:
     return false
   let shooter = sim.players[shooterIndex]
-  shooter.alive and shooter.fireCooldown <= 0 and
-    not shooter.hasShield and not shooter.hasSword
+  shooter.alive and shooter.fireCooldown <= 0 and not shooter.hasPlasmaArc
 
-proc canSwing*(sim: SimServer, attackerIndex: int): bool =
-  ## Returns whether one player can perform an immediate sword swing.
+proc canFireArc*(sim: SimServer, attackerIndex: int): bool =
+  ## Returns whether one player can fire an immediate plasma arc.
   if attackerIndex < 0 or attackerIndex >= sim.players.len:
     return false
   let attacker = sim.players[attackerIndex]
-  attacker.alive and attacker.hasSword and attacker.fireCooldown <= 0
+  attacker.alive and attacker.hasPlasmaArc and attacker.fireCooldown <= 0
 
-proc selectSwingVictims(
+proc selectArcVictims(
   sim: SimServer,
   attackerIndex: int
 ): seq[int] =
-  ## Returns every living player inside the attacker's forward sword arc.
-  if not sim.canSwing(attackerIndex):
+  ## Returns every living player inside the attacker's forward plasma cone,
+  ## computed from the attacker's CURRENT position and aim: a live cone
+  ## tracks its owner across the active window.
+  if attackerIndex < 0 or attackerIndex >= sim.players.len:
     return @[]
   let
     attacker = sim.players[attackerIndex]
     ax = attacker.x + CollisionW div 2
     ay = attacker.y + CollisionH div 2
     (ux, uy) = aimVector(attacker.aimBrads)
-    maxDistance = float(SwordRange)
-    arcTan = tan(float(SwordArcBrads) * 2.0 * PI /
-      float(AimBradsTurn))
+    reach = float(PlasmaArcReach)
+    # The cone's half-width grows linearly with forward distance, hitting
+    # PlasmaArcMaxWidth / 2 exactly at the reach cap.
+    halfWidthSlope = float(PlasmaArcMaxWidth) / (2.0 * reach)
   for i in 0 ..< sim.players.len:
     if i == attackerIndex or not sim.players[i].alive:
-      continue
-    if sim.players[i].spawnProtect > 0:
       continue
     let
       vx = float(sim.players[i].x + CollisionW div 2 - ax)
       vy = float(sim.players[i].y + CollisionH div 2 - ay)
-      distanceSq = vx * vx + vy * vy
       forward = vx * ux + vy * uy
       perpendicular = abs(vx * uy - vy * ux)
-    if distanceSq > maxDistance * maxDistance or forward <= 0:
+    if forward <= 0 or forward > reach:
       continue
-    if perpendicular > forward * arcTan:
+    if perpendicular > forward * halfWidthSlope:
       continue
     if not sim.lineOfSightClear(
       ax,
@@ -3110,38 +4475,101 @@ proc selectSwingVictims(
       continue
     result.add(i)
 
-proc applySwing(
-  sim: var SimServer,
-  attackerIndex: int,
-  victims: openArray[int]
-) =
-  ## Applies one immediate sword swing and records its cosmetic swipe.
-  if attackerIndex < 0 or attackerIndex >= sim.players.len:
+proc startArcFire*(sim: var SimServer, attackerIndex: int) =
+  ## Ignites one player's plasma cone: it stays on for PlasmaArcActiveTicks
+  ## and the weapon then needs PlasmaArcResetTicks to recharge before the
+  ## next firing. Damage is dealt by resolveActiveArcCones each active tick.
+  if not sim.canFireArc(attackerIndex):
     return
-  let attacker = sim.players[attackerIndex]
-  sim.players[attackerIndex].fireCooldown = sim.config.fireCooldownTicks
-  sim.swordSwipes.add SwordFx(
-    x: attacker.x + CollisionW div 2,
-    y: attacker.y + CollisionH div 2,
-    aimBrads: attacker.aimBrads,
-    tick: sim.tickCount,
-    color: teamColor(attacker.team)
+  sim.players[attackerIndex].fireCooldown =
+    PlasmaArcActiveTicks + PlasmaArcResetTicks
+  sim.players[attackerIndex].arcTicksLeft = PlasmaArcActiveTicks
+  sim.players[attackerIndex].arcHitMask = 0
+  sim.players[attackerIndex].arcKillsThisFire = 0
+  sim.logGameEvent(
+    playerColorText(sim.players[attackerIndex].color) & " fired a plasma arc"
   )
-  sim.logGameEvent(playerColorText(attacker.color) & " swung a sword")
-  for victimIndex in victims:
-    if victimIndex < 0 or victimIndex >= sim.players.len:
-      continue
-    if sim.players[victimIndex].alive:
-      sim.killPlayer(victimIndex, attackerIndex)
-      if victimIndex != attackerIndex:
-        sim.recordKill(attackerIndex)
 
-proc trySwing*(sim: var SimServer, attackerIndex: int) =
-  ## Performs one sword swing immediately for direct callers and tests.
-  if not sim.canSwing(attackerIndex):
+proc resolveActiveArcCones*(sim: var SimServer) =
+  ## Advances every live plasma cone one tick: all cones are resolved
+  ## against the same snapshot (no processing-order advantage), each victim
+  ## is damaged at most once per activation, and every live cone leaves a
+  ## cosmetic flash at its owner's current position and aim. A touch removes
+  ## PlasmaArcDamage hit points — lethal to a bare cog, survivable once by a
+  ## shield carrier. A dead owner's cone shuts off.
+  var arcFires: seq[tuple[attacker: int, victims: seq[int]]] = @[]
+  for attackerIndex in 0 ..< sim.players.len:
+    if sim.players[attackerIndex].arcTicksLeft <= 0:
+      continue
+    if not sim.players[attackerIndex].alive:
+      sim.players[attackerIndex].arcTicksLeft = 0
+      continue
+    arcFires.add((attackerIndex, sim.selectArcVictims(attackerIndex)))
+  for arcFire in arcFires:
+    let attacker = sim.players[arcFire.attacker]
+    sim.plasmaArcFlashes.add PlasmaArcFx(
+      x: attacker.x + CollisionW div 2,
+      y: attacker.y + CollisionH div 2,
+      aimBrads: attacker.aimBrads,
+      tick: sim.tickCount,
+      color: teamColor(attacker.team)
+    )
+    for victimIndex in arcFire.victims:
+      if victimIndex < 0 or victimIndex >= sim.players.len:
+        continue
+      if not sim.players[victimIndex].alive:
+        continue
+      if victimIndex < 32:
+        let bit = 1'u32 shl victimIndex
+        if (sim.players[arcFire.attacker].arcHitMask and bit) != 0:
+          continue
+        sim.players[arcFire.attacker].arcHitMask =
+          sim.players[arcFire.attacker].arcHitMask or bit
+      let blocked = sim.absorbDamage(victimIndex, PlasmaArcDamage)
+      let
+        vx = float(sim.players[victimIndex].x + CollisionW div 2)
+        vy = float(sim.players[victimIndex].y + CollisionH div 2)
+      sim.emitEvent(
+        Damage, source = arcFire.attacker, target = victimIndex,
+        weapon = "plasma", amount = PlasmaArcDamage,
+        hp = max(0, sim.players[victimIndex].hp),
+        blocked = blocked, x = vx, y = vy
+      )
+      # Floating damage number for the HP loss (cosmetic, not in gameHash).
+      sim.damagePops.add DamageFx(
+        x: sim.players[victimIndex].x + CollisionW div 2,
+        y: sim.players[victimIndex].y + CollisionH div 2,
+        tick: sim.tickCount,
+        amount: PlasmaArcDamage, color: sim.players[victimIndex].color
+      )
+      if sim.players[victimIndex].hp <= 0:
+        sim.killPlayer(victimIndex, arcFire.attacker)
+        if victimIndex != arcFire.attacker:
+          sim.recordKill(arcFire.attacker)
+          sim.recordTeamKill(arcFire.attacker, victimIndex)
+          sim.emitEvent(
+            Kill, source = arcFire.attacker, target = victimIndex,
+            weapon = "plasma", amount = PlasmaArcDamage, x = vx, y = vy
+          )
+          # Multi-kill accounting per ACTIVATION (not per tick): the second
+          # kill of one firing mints a double, the third upgrades it to a
+          # triple; a fourth+ stays inside the already-counted triple.
+          inc sim.players[arcFire.attacker].arcKillsThisFire
+          if sim.players[arcFire.attacker].arcKillsThisFire == 2:
+            inc sim.players[arcFire.attacker].multiKills2
+          elif sim.players[arcFire.attacker].arcKillsThisFire == 3:
+            dec sim.players[arcFire.attacker].multiKills2
+            inc sim.players[arcFire.attacker].multiKills3
+    if sim.players[arcFire.attacker].arcTicksLeft > 0:
+      dec sim.players[arcFire.attacker].arcTicksLeft
+
+proc tryFireArc*(sim: var SimServer, attackerIndex: int) =
+  ## Fires one plasma arc immediately for direct callers and tests: ignites
+  ## the cone and resolves its first tick (other live cones also advance).
+  if not sim.canFireArc(attackerIndex):
     return
-  let victims = sim.selectSwingVictims(attackerIndex)
-  sim.applySwing(attackerIndex, victims)
+  sim.startArcFire(attackerIndex)
+  sim.resolveActiveArcCones()
 
 proc fireDirection(sim: SimServer, shooterIndex: int): tuple[x, y: float] =
   ## Returns the unit shot direction: the aim angle locked at the trigger
@@ -3154,8 +4582,15 @@ proc fireDirection(sim: SimServer, shooterIndex: int): tuple[x, y: float] =
 
 proc selectFireTarget(sim: SimServer, shooterIndex: int): int =
   ## Returns the FIRST player along the shot ray — the bullet travels down
-  ## the locked aim direction and stops at the first footprint it crosses
+  ## the locked aim direction and stops at the first body it crosses
   ## (friendly fire on) or the first wall — or -1 for a miss.
+  ##
+  ## A target's body is sampled across its silhouette (perpendicular to the
+  ## ray, ±PlayerHalf): a sample connects only when the bullet corridor
+  ## covers it AND the shooter has line of sight TO THAT SAMPLE. Cover is
+  ## therefore partial, not binary — a corner-hugger can only be hit on the
+  ## sliver of body it actually shows, and a fully exposed body presents the
+  ## same effective width as the old center-only corridor check.
   result = -1
   let
     shooter = sim.players[shooterIndex]
@@ -3163,31 +4598,30 @@ proc selectFireTarget(sim: SimServer, shooterIndex: int): int =
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
     maxRange = float(sim.config.gunRange)
-    corridor = BulletHalfWidth + float(PlayerHalf)
   var bestT = maxRange + 1.0
   for i in 0 ..< sim.players.len:
     if i == shooterIndex or not sim.players[i].alive:
       continue
-    if sim.players[i].spawnProtect > 0:
-      continue
     let
-      vx = float(sim.players[i].x + CollisionW div 2 - sx)
-      vy = float(sim.players[i].y + CollisionH div 2 - sy)
-      t = vx * ux + vy * uy            # distance along the ray
-    if t <= 0 or t > maxRange:
-      continue
-    let perp = abs(vx * uy - vy * ux)  # distance off the ray
-    if perp > corridor:
-      continue
-    if not sim.lineOfSightClear(
-      sx, sy,
-      sim.players[i].x + CollisionW div 2,
-      sim.players[i].y + CollisionH div 2
-    ):
-      continue
-    if t < bestT:
-      bestT = t
-      result = i
+      tx = float(sim.players[i].x + CollisionW div 2)
+      ty = float(sim.players[i].y + CollisionH div 2)
+    for off in countup(-PlayerHalf, PlayerHalf, ExposureSampleStep):
+      let
+        px = tx - float(off) * uy      # silhouette sample: the body span
+        py = ty + float(off) * ux      # perpendicular to the shot ray
+        vx = px - float(sx)
+        vy = py - float(sy)
+        t = vx * ux + vy * uy          # distance along the ray
+      if t <= 0 or t > maxRange:
+        continue
+      if abs(vx * uy - vy * ux) > BulletHalfWidth:
+        continue
+      if not sim.lineOfSightClear(sx, sy, int(round(px)), int(round(py))):
+        continue
+      if t < bestT:
+        bestT = t
+        result = i
+      break
 
 proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
   ## Applies one selected shot: cooldown, tracer, and the kill. The target
@@ -3198,13 +4632,20 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     (ux, uy) = sim.fireDirection(shooterIndex)
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
-  sim.players[shooterIndex].fireCooldown = sim.config.fireCooldownTicks
+  sim.players[shooterIndex].fireCooldown =
+    if shooter.hasShield:
+      sim.config.fireCooldownTicks * ShieldFireSlowdown
+    else:
+      sim.config.fireCooldownTicks
   sim.players[shooterIndex].windupBrads = -1
   # Accuracy bookkeeping (analysis-only, excluded from gameHash): every call
   # here is one released shot; a shot that locked onto a live enemy on the ray
   # (targetIndex >= 0) is on-target, so it counts as a hit even in the rare
   # tick where the victim already died to a simultaneous shot.
   inc sim.players[shooterIndex].shotsFired
+  sim.emitEvent(
+    Shot, source = shooterIndex, weapon = "gun", x = float(sx), y = float(sy)
+  )
   # Record a cosmetic tracer for the shot (never enters gameHash). It ends at
   # the victim, so a bullet visibly never travels past its first hit.
   var
@@ -3214,6 +4655,10 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     inc sim.players[shooterIndex].shotsHit
     ex = sim.players[targetIndex].x + CollisionW div 2
     ey = sim.players[targetIndex].y + CollisionH div 2
+    sim.emitEvent(
+      Hit, source = shooterIndex, target = targetIndex, weapon = "gun",
+      x = float(ex), y = float(ey)
+    )
   else:
     # March along the unit aim to the last wall-free pixel or max range
     # (checking each sampled pixel keeps this O(range) at 1300px).
@@ -3234,10 +4679,43 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     x1: ex,
     y1: ey,
     firedTick: sim.tickCount,
-    color: shooter.color
+    color: shooter.color,
+    hit: targetIndex >= 0
   )
   if targetIndex >= 0 and sim.players[targetIndex].alive:
-    dec sim.players[targetIndex].hp
+    # A carrier whose shield layer is still up at impact absorbs the hit
+    # VISUALS on the bubble: it blinks and dents toward the shooter instead of
+    # showing the inner struck-target ring and body paint spark. The "-1" pop
+    # still reads the hp loss. (Cosmetic only — the damage itself is
+    # unchanged.)
+    let bubbleUp = sim.players[targetIndex].hasShield and
+      sim.players[targetIndex].shieldHp > 0
+    let blocked = sim.absorbDamage(targetIndex, 1)
+    # Paintball paint marks the body only when the shield bubble ISN'T eating it
+    # (a bubble dent draws no body paint). Stamp so the EYES-PiP visor splat
+    # fires for THIS paint hit — and only for paint (gun/grenade), never plasma.
+    if not bubbleUp:
+      sim.players[targetIndex].paintHitTick = sim.tickCount
+    sim.emitEvent(
+      Damage, source = shooterIndex, target = targetIndex, weapon = "gun",
+      amount = 1, hp = max(0, sim.players[targetIndex].hp),
+      blocked = blocked,
+      x = float(sim.players[targetIndex].x + CollisionW div 2),
+      y = float(sim.players[targetIndex].y + CollisionH div 2)
+    )
+    if bubbleUp:
+      sim.bubbleImpacts.add BubbleImpactFx(
+        playerIndex: targetIndex,
+        tick: sim.tickCount,
+        angleBrads: bradsOfVector(sx - ex, sy - ey)
+      )
+    else:
+      # A spectator-view flash rings the struck target the moment the bullet
+      # connects, so hits read at a glance (cosmetic only, never in gameHash).
+      sim.hitFlashes.add HitFlashFx(
+        playerIndex: targetIndex,
+        tick: sim.tickCount
+      )
     # A floating "-1" rises and fades from the victim so a lost health bar
     # reads at a glance (cosmetic only, never in gameHash).
     sim.damagePops.add DamageFx(
@@ -3250,20 +4728,29 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     if sim.players[targetIndex].hp <= 0:
       sim.killPlayer(targetIndex, shooterIndex)
       sim.recordKill(shooterIndex)
-    else:
-      # A non-fatal hit leaves a small, short-lived paint spark in the
-      # shooter's color on the target (cosmetic only, never in gameHash).
-      sim.splatters.add SplatterFx(
-        x: sim.players[targetIndex].x,
-        y: sim.players[targetIndex].y,
-        tick: sim.tickCount,
-        color: shooter.color,
-        hit: true
+      sim.recordTeamKill(shooterIndex, targetIndex)
+      sim.emitEvent(
+        Kill, source = shooterIndex, target = targetIndex, weapon = "gun",
+        amount = 1,
+        x = float(sim.players[targetIndex].x + CollisionW div 2),
+        y = float(sim.players[targetIndex].y + CollisionH div 2)
       )
+    else:
+      if not bubbleUp:
+        # A non-fatal hit leaves a small, short-lived paint spark in the
+        # shooter's color on the target (cosmetic only, never in gameHash).
+        sim.splatters.add SplatterFx(
+          x: sim.players[targetIndex].x,
+          y: sim.players[targetIndex].y,
+          tick: sim.tickCount,
+          color: shooter.color,
+          hit: true
+        )
       sim.logGameEvent(
         playerColorText(sim.players[targetIndex].color) &
           " hit by " & sim.playerText(shooterIndex) &
-          " (" & $sim.players[targetIndex].hp & " hp left)"
+          " (" & $(sim.players[targetIndex].hp +
+            sim.players[targetIndex].shieldHp) & " hp left)"
       )
 
 proc tryFire*(sim: var SimServer, shooterIndex: int) =
@@ -3365,8 +4852,7 @@ proc applyGrenadeInput(
 proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
   ## Applies one landing: a cosmetic blast flash (which views also use for
   ## the audible landing's sound ring) plus blast damage to EVERYONE inside
-  ## the radius — teammates and the thrower included; spawn protection
-  ## still shields.
+  ## the radius — teammates and the thrower included.
   # Color the splat by the thrower's TEAM (not their individual slot color), so
   # a landing reads as that team's paint-bomb — and the sprite id stays within
   # the two team-color slots, never colliding with the tracer pool.
@@ -3380,15 +4866,25 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
   )
   sim.logGameEvent("grenade landed")
   let radiusSq = GrenadeBlastRadius * GrenadeBlastRadius
+  var blastKills = 0
   for i in 0 ..< sim.players.len:
-    if not sim.players[i].alive or sim.players[i].spawnProtect > 0:
+    if not sim.players[i].alive:
       continue
     let
       px = sim.players[i].x + CollisionW div 2
       py = sim.players[i].y + CollisionH div 2
     if distSq(px, py, grenade.tx, grenade.ty) > radiusSq:
       continue
-    sim.players[i].hp -= GrenadeDamage
+    let blocked = sim.absorbDamage(i, GrenadeDamage)
+    # A paint-bomb blast marks everyone caught in it — stamp so the EYES-PiP
+    # visor splat fires for this paint hit (paint only: gun/grenade, not plasma).
+    sim.players[i].paintHitTick = sim.tickCount
+    sim.emitEvent(
+      Damage, source = grenade.thrower, target = i, weapon = "grenade",
+      amount = GrenadeDamage, hp = max(0, sim.players[i].hp),
+      blocked = blocked,
+      x = float(px), y = float(py)
+    )
     # Floating damage number for the blast's HP loss (cosmetic, not in gameHash).
     sim.damagePops.add DamageFx(
       x: px, y: py, tick: sim.tickCount,
@@ -3398,6 +4894,19 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       sim.killPlayer(i, grenade.thrower)
       if grenade.thrower != i:
         sim.recordKill(grenade.thrower)
+        sim.recordTeamKill(grenade.thrower, i)
+        sim.emitEvent(
+          Kill, source = grenade.thrower, target = i, weapon = "grenade",
+          amount = GrenadeDamage, x = float(px), y = float(py)
+        )
+        inc blastKills
+  # Multi-kill accounting per BLAST: one landing that kills 2 mints a double,
+  # 3+ a triple (a self-kill in the blast never counts toward either).
+  if grenade.thrower >= 0 and grenade.thrower < sim.players.len:
+    if blastKills >= 3:
+      inc sim.players[grenade.thrower].multiKills3
+    elif blastKills == 2:
+      inc sim.players[grenade.thrower].multiKills2
 
 proc updateGrenades(sim: var SimServer) =
   ## Refills corner pickups whose timer elapsed and lands due grenades.
@@ -3442,9 +4951,9 @@ proc updateMedKits*(sim: var SimServer) =
     if not spawn.present and sim.tickCount >= spawn.respawnAt:
       spawn.present = true
 
-proc updateSwords*(sim: var SimServer) =
-  ## Refills side-center sword pickups whose respawn timer elapsed.
-  for spawn in sim.swordSpawns.mitems:
+proc updatePlasmaArcs*(sim: var SimServer) =
+  ## Refills side-center plasma arc pickups whose respawn timer elapsed.
+  for spawn in sim.plasmaArcSpawns.mitems:
     if not spawn.present and sim.tickCount >= spawn.respawnAt:
       spawn.present = true
 
@@ -3464,7 +4973,12 @@ proc tryPickupMedKits*(sim: var SimServer, playerIndex: int) =
     if spawn.present and distSq(px, py, spawn.x, spawn.y) <= rangeSq:
       spawn.present = false
       spawn.respawnAt = sim.tickCount + MedKitRespawnTicks
+      let healed = sim.config.hitPoints - sim.players[playerIndex].hp
       sim.players[playerIndex].hp = sim.config.hitPoints
+      sim.emitEvent(
+        Heal, source = playerIndex, amount = healed,
+        hp = sim.players[playerIndex].hp, x = float(px), y = float(py)
+      )
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
           " picked up a med kit"
@@ -3478,11 +4992,17 @@ proc updateShields*(sim: var SimServer) =
       spawn.present = true
 
 proc tryPickupShields*(sim: var SimServer, playerIndex: int) =
-  ## Lets a living player pick up an endzone shield by touch (one carried
-  ## shield max; either team may take either endzone's shield). Carrying a
-  ## shield raises the player to ShieldHitPoints but bars them from shooting;
-  ## a taken shield refills after ShieldRespawnTicks.
-  if not sim.players[playerIndex].alive or sim.players[playerIndex].hasShield:
+  ## Lets a living player pick up an endzone shield by touch (either team may
+  ## take either endzone's shield). A pickup grants the shield and refills the
+  ## ShieldLayerHp-strong shield layer that damage depletes before base hp —
+  ## it never heals base damage (that is the med kits' job), so a worn carrier
+  ## may take another shield to restore the layer, while a carrier whose layer
+  ## is intact leaves the spawn untouched for a teammate. Carrying a shield
+  ## slows fire ShieldFireSlowdown times; a taken shield refills after
+  ## ShieldRespawnTicks.
+  if not sim.players[playerIndex].alive:
+    return
+  if sim.players[playerIndex].shieldHp >= ShieldLayerHp:
     return
   let
     px = sim.players[playerIndex].x + CollisionW div 2
@@ -3493,31 +5013,31 @@ proc tryPickupShields*(sim: var SimServer, playerIndex: int) =
       spawn.present = false
       spawn.respawnAt = sim.tickCount + ShieldRespawnTicks
       sim.players[playerIndex].hasShield = true
-      sim.players[playerIndex].hp = ShieldHitPoints
+      sim.players[playerIndex].shieldHp = ShieldLayerHp
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
           " picked up a shield"
       )
       return
 
-proc tryPickupSwords*(sim: var SimServer, playerIndex: int) =
-  ## Lets a living player pick up one side-center sword by touch.
-  if not sim.players[playerIndex].alive or sim.players[playerIndex].hasSword:
+proc tryPickupPlasmaArcs*(sim: var SimServer, playerIndex: int) =
+  ## Lets a living player pick up one side-center plasma arc by touch.
+  if not sim.players[playerIndex].alive or sim.players[playerIndex].hasPlasmaArc:
     return
   let
     px = sim.players[playerIndex].x + CollisionW div 2
     py = sim.players[playerIndex].y + CollisionH div 2
-    rangeSq = SwordPickupRange * SwordPickupRange
-  for spawn in sim.swordSpawns.mitems:
+    rangeSq = PlasmaArcPickupRange * PlasmaArcPickupRange
+  for spawn in sim.plasmaArcSpawns.mitems:
     if spawn.present and distSq(px, py, spawn.x, spawn.y) <= rangeSq:
       spawn.present = false
-      spawn.respawnAt = sim.tickCount + SwordRespawnTicks
-      sim.players[playerIndex].hasSword = true
+      spawn.respawnAt = sim.tickCount + PlasmaArcRespawnTicks
+      sim.players[playerIndex].hasPlasmaArc = true
       sim.players[playerIndex].fireWindup = 0
       sim.players[playerIndex].windupBrads = -1
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
-          " picked up a sword"
+          " picked up a plasma arc"
       )
       return
 
@@ -3590,19 +5110,6 @@ proc resolveSimultaneousFire*(sim: var SimServer, shooters: openArray[int]) =
   for shot in shots:
     sim.applyFire(shot.shooter, shot.target)
 
-proc resolveSimultaneousSwings*(
-  sim: var SimServer,
-  attackers: openArray[int]
-) =
-  ## Resolves every sword swing this tick against the same post-movement
-  ## snapshot, so mutual melee kills have no input-order advantage.
-  var swings: seq[tuple[attacker: int, victims: seq[int]]] = @[]
-  for attackerIndex in attackers:
-    if sim.canSwing(attackerIndex):
-      swings.add((attackerIndex, sim.selectSwingVictims(attackerIndex)))
-  for swing in swings:
-    sim.applySwing(swing.attacker, swing.victims)
-
 proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
   ## Lets a living player steal the ENEMY team's flag off its pedestal by
   ## touch. A player's own flag cannot be interacted with by their own team.
@@ -3618,6 +5125,10 @@ proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
   if distSq(px, py, sim.flags[flagTeam].x, sim.flags[flagTeam].y) <= rangeSq:
     sim.flags[flagTeam].carrier = playerIndex
     sim.players[playerIndex].carryingFlag = true
+    sim.emitEvent(
+      FlagSteal, source = playerIndex,
+      x = float(sim.flags[flagTeam].x), y = float(sim.flags[flagTeam].y)
+    )
     sim.logGameEvent(
       teamText(sim.players[playerIndex].team) & " stole the " &
         teamText(flagTeam) & " heart"
@@ -3718,20 +5229,8 @@ proc applyInput*(
         inputX
       else:
         signOf(player.velX)
-  sim.applyMomentumAxis(
-    player,
-    player.carryX,
-    player.velX,
-    preferredSlideY,
-    true
-  )
-  sim.applyMomentumAxis(
-    player,
-    player.carryY,
-    player.velY,
-    preferredSlideX,
-    false
-  )
+  sim.applyMomentumAxis(playerIndex, preferredSlideY, true)
+  sim.applyMomentumAxis(playerIndex, preferredSlideX, false)
 
 proc fovCellIndex*(cx, cy: int): int {.inline.} =
   ## Returns the flat index of one fog-of-war grid cell.
@@ -3947,12 +5446,31 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
     sim.logGameEvent("draw")
   else:
     sim.logGameEvent(teamText(winner) & " win")
+  sim.emitPhaseChange(GameOver)
   sim.phase = GameOver
   sim.winner = winner
   sim.isDraw = isDraw
   sim.gameOverTimer = sim.config.gameOverTicks
   sim.timeLimitReached = timeLimitReached
   if isDraw:
+    if timeLimitReached:
+      # A time-limit draw is a lose-lose: every player on both teams takes
+      # TimeoutReward so running out the clock is never better than losing.
+      # A mutual-wipe draw stays 0/0 — both sides at least fought to the end.
+      var penalizedAccounts = newSeq[bool](sim.rewardAccounts.len)
+      for i in 0 ..< sim.players.len:
+        let accountIndex = sim.rewardAccountForPlayer(i)
+        if penalizedAccounts.len < sim.rewardAccounts.len:
+          penalizedAccounts.setLen(sim.rewardAccounts.len)
+        if accountIndex >= 0 and accountIndex < penalizedAccounts.len:
+          penalizedAccounts[accountIndex] = true
+        sim.addReward(i, TimeoutReward)
+      for i in 0 ..< sim.rewardAccounts.len:
+        if i < penalizedAccounts.len and penalizedAccounts[i]:
+          continue
+        if not sim.rewardAccounts[i].hasTeam:
+          continue
+        sim.rewardAccounts[i].reward += TimeoutReward
     return
   var awardedAccounts = newSeq[bool](sim.rewardAccounts.len)
   for i in 0 ..< sim.players.len:
@@ -4048,6 +5566,10 @@ proc checkWinCondition*(sim: var SimServer) {.measure.} =
       cx = carrier.x + CollisionW div 2
     if cx >= zone.lo and cx <= zone.hi:
       sim.recordCapture(carrierIndex)
+      sim.emitEvent(
+        Capture, source = carrierIndex,
+        x = float(cx), y = float(carrier.y + CollisionH div 2)
+      )
       sim.logGameEvent(
         teamText(carrier.team) & " captured the " & teamText(flagTeam) & " heart"
       )
@@ -4159,7 +5681,20 @@ proc initSimServer*(config: GameConfig): SimServer =
       let pixel = wallImage[x, y]
       result.wallMask[mapIndex(x, y)] = pixel.a > 0
 
-  result.fovBlocked = buildFovBlocked(result.wallMask)
+  ## The fog occlusion grid builds from the OPAQUE walls only: glass window
+  ## pixels stay in wallMask (movement/bullets/plasma arcs) but drop out here, so
+  ## shadowcasting sees straight through every window.
+  var opaqueMask = result.wallMask
+  block:
+    let
+      cx = result.gameMap.center.x
+      cy = result.gameMap.center.y
+    for y in 0 ..< MapHeight:
+      for x in 0 ..< MapWidth:
+        let index = mapIndex(x, y)
+        if opaqueMask[index] and isArenaWindowPixel(x, y, cx, cy):
+          opaqueMask[index] = false
+  result.fovBlocked = buildFovBlocked(opaqueMask)
   result.fovCaches = @[]
   result.players = @[]
   result.nextJoinOrder = 0
@@ -4170,23 +5705,27 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.resetGrenades()
   result.resetMedKits()
   result.resetShields()
-  result.resetSwords()
+  result.resetPlasmaArcs()
   result.lastLobbyPlayersLogged = -1
   result.lastLobbyNeededLogged = -1
   result.lastLobbySecondsLogged = -1
 
 proc resetToLobby*(sim: var SimServer) =
+  if sim.phase != Lobby:
+    sim.emitPhaseChange(Lobby)
   sim.phase = Lobby
   sim.players = @[]
   sim.fovCaches = @[]
   sim.resetGrenades()
   sim.resetMedKits()
   sim.resetShields()
-  sim.resetSwords()
+  sim.resetPlasmaArcs()
   sim.recentBlasts = @[]
-  sim.swordSwipes = @[]
+  sim.plasmaArcFlashes = @[]
   sim.recentShouts = @[]
   sim.recentShots = @[]
+  sim.hitFlashes = @[]
+  sim.bubbleImpacts = @[]
   sim.splatters = @[]
   sim.damagePops = @[]
   sim.nextJoinOrder = 0
@@ -4226,8 +5765,6 @@ proc respawnPlayers(sim: var SimServer) =
   ## Ticks respawn timers and brings dead players back at home.
   for i in 0 ..< sim.players.len:
     if sim.players[i].alive:
-      if sim.players[i].spawnProtect > 0:
-        dec sim.players[i].spawnProtect
       continue
     if sim.players[i].lives <= 0:
       continue
@@ -4237,9 +5774,13 @@ proc respawnPlayers(sim: var SimServer) =
         sim.resetPlayerToHome(i)
         sim.players[i].alive = true
         sim.players[i].hp = sim.config.hitPoints
-        sim.players[i].spawnProtect = sim.config.spawnProtectTicks
         sim.players[i].aimBrads = spawnAimBrads(sim.players[i].team)
         sim.players[i].flipH = sim.players[i].team == Blue
+        sim.emitEvent(
+          Respawn, source = i,
+          x = float(sim.players[i].x + CollisionW div 2),
+          y = float(sim.players[i].y + CollisionH div 2)
+        )
 
 proc step*(
   sim: var SimServer,
@@ -4274,7 +5815,7 @@ proc step*(
   # position, so a target that ducks back behind cover survives the shot.
   var
     firing: seq[int] = @[]
-    swinging: seq[int] = @[]
+    arcFiring: seq[int] = @[]
   for playerIndex in 0 ..< sim.players.len:
     if sim.players[playerIndex].fireCooldown > 0:
       dec sim.players[playerIndex].fireCooldown
@@ -4291,9 +5832,9 @@ proc step*(
     sim.applyInput(playerIndex, input)
     sim.applyGrenadeInput(playerIndex, input, prev)
     if input.attack and not prev.attack:
-      if sim.players[playerIndex].hasSword:
-        if sim.canSwing(playerIndex):
-          swinging.add(playerIndex)
+      if sim.players[playerIndex].hasPlasmaArc:
+        if sim.canFireArc(playerIndex):
+          arcFiring.add(playerIndex)
       else:
         if sim.config.fireWindupTicks <= 0:
           if sim.canFire(playerIndex) and sim.players[playerIndex].fireWindup == 0:
@@ -4301,18 +5842,20 @@ proc step*(
         else:
           sim.startFireWindup(playerIndex)
   sim.resolveSimultaneousFire(firing)
-  sim.resolveSimultaneousSwings(swinging)
+  for playerIndex in arcFiring:
+    sim.startArcFire(playerIndex)
+  sim.resolveActiveArcCones()
   sim.updateGrenades()
   sim.updateMedKits()
   sim.updateShields()
-  sim.updateSwords()
+  sim.updatePlasmaArcs()
 
   for playerIndex in 0 ..< sim.players.len:
     sim.tryPickupFlags(playerIndex)
     sim.tryPickupGrenades(playerIndex)
     sim.tryPickupMedKits(playerIndex)
     sim.tryPickupShields(playerIndex)
-    sim.tryPickupSwords(playerIndex)
+    sim.tryPickupPlasmaArcs(playerIndex)
   sim.updateFlags()
   sim.respawnPlayers()
 
@@ -4326,16 +5869,26 @@ proc step*(
     if sim.tickCount - shot.firedTick < ShotFxTicks:
       kept.add shot
   sim.recentShots = kept
+  var keptFlashes: seq[HitFlashFx] = @[]
+  for flash in sim.hitFlashes:
+    if sim.tickCount - flash.tick < HitFlashTicks:
+      keptFlashes.add flash
+  sim.hitFlashes = keptFlashes
+  var keptImpacts: seq[BubbleImpactFx] = @[]
+  for impact in sim.bubbleImpacts:
+    if sim.tickCount - impact.tick < BubbleImpactTicks:
+      keptImpacts.add impact
+  sim.bubbleImpacts = keptImpacts
   var keptBlasts: seq[BlastFx] = @[]
   for blast in sim.recentBlasts:
     if sim.tickCount - blast.tick < BlastFxTicks:
       keptBlasts.add blast
   sim.recentBlasts = keptBlasts
-  var keptSwordSwipes: seq[SwordFx] = @[]
-  for swipe in sim.swordSwipes:
-    if sim.tickCount - swipe.tick < SwordFxTicks:
-      keptSwordSwipes.add swipe
-  sim.swordSwipes = keptSwordSwipes
+  var keptArcFlashes: seq[PlasmaArcFx] = @[]
+  for flash in sim.plasmaArcFlashes:
+    if sim.tickCount - flash.tick < PlasmaArcFxTicks:
+      keptArcFlashes.add flash
+  sim.plasmaArcFlashes = keptArcFlashes
 
   # Expire old shouts. Unlike the cosmetic effects above, shouts are
   # observable gameplay state (bots hear them), so expiry is part of the
@@ -4353,6 +5906,7 @@ proc step*(
   sim.splatters = keptSplatters
   var keptPops: seq[DamageFx] = @[]
   for pop in sim.damagePops:
-    if sim.tickCount - pop.tick < DamageFxTicks:
+    let life = if pop.kill: KillFxTicks else: DamageFxTicks
+    if sim.tickCount - pop.tick < life:
       keptPops.add pop
   sim.damagePops = keptPops

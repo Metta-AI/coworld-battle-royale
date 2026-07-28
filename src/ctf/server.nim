@@ -3,7 +3,7 @@ import
   bitworld/client as bitworldClient, bitworld/profile, bitworld/spriteprotocol,
   bitworld/runtime,
   curly, mummy,
-  sim, global, replays, broadcast
+  sim, global, replays, broadcast, replay_runtime
 
 when defined(posix):
   from std/posix import SHUT_RDWR, shutdown
@@ -19,6 +19,8 @@ type
     replayServerMode: bool
     replayLoaded: bool
     pendingReplayUri: string
+    loadingReplayUri: string
+    currentReplayUri: string
     resetRequested: bool
     kickRequests: seq[string]
     kickedIdentities: Table[string, bool]
@@ -30,6 +32,7 @@ type
     playerAddresses: Table[WebSocket, string]
     playerSlots: Table[WebSocket, int]
     playerTokens: Table[WebSocket, string]
+    playerReady: Table[WebSocket, bool]
     globalViewers: Table[WebSocket, GlobalViewerState]
     playerViewers: Table[WebSocket, PlayerViewerState]
     rewardViewers: Table[WebSocket, bool]
@@ -56,9 +59,12 @@ const
   ControlKickPath = "/control/kick"
   # The designed broadcast replay client, embedded at compile time. Served for
   # the replay routes in place of bitworld's generic global client; a single
-  # self-contained file (font + core JS inlined). Live/player/global paths are
+  # self-contained file (core JS inlined). Live/player/global paths are
   # untouched and keep serving the bitworld client (§14 live column).
-  EmbeddedBroadcastReplayHtml = staticRead("../../client/replay_broadcast.html")
+  EmbeddedBroadcastReplayHtml = staticRead("../../client/replay_broadcast.html").replace(
+    "<!-- BROADCAST_CORE -->",
+    "<script>" & staticRead("../../client/broadcast_core.js") & "</script>"
+  )
   # The League Replayer shell: a walled stone-pit viewer that EMBEDS the broadcast
   # client (via ?embed=1) as the lit pit floor and mounts the scorebug, KDA tables,
   # division standings and transport as flat panels over the dungeon walls. Served
@@ -69,12 +75,25 @@ const
   # Opaque stone, no alpha → JPEG (q82) keeps each well under any committed sprite.
   WallTextureHorizontal = staticRead("../../client/art/walls/wall_h.jpg")
   WallTextureVertical = staticRead("../../client/art/walls/wall_v.jpg")
+  BroadcastFont = staticRead("../../data/font.ttf")
+  # Front-facing cog art for the first-person EYES PiP billboards (real body +
+  # legs + wheels + cyan visor, team-tinted). Served as static PNGs so the
+  # raycast view can blit the true cog instead of a procedural chassis.
+  SoldierArtRed = staticRead("../../data/soldier_red.png")
+  SoldierArtBlue = staticRead("../../data/soldier_blue.png")
   LeagueReplayerPath = "/client/league"
   WallTextureHorizontalPath = "/client/art/walls/wall_h.jpg"
   WallTextureVerticalPath = "/client/art/walls/wall_v.jpg"
+  BroadcastFontPath = "/client/font.ttf"
+  SoldierArtRedPath = "/client/soldier_red.png"
+  SoldierArtBluePath = "/client/soldier_blue.png"
   # Hosted replay closes any WS frame larger than 1 MiB (sends 1009). We chunk
   # outbound sprite packets under a margin below that so no single frame trips it.
   MaxWsFrameBytes = 900_000
+  # The Sprite v1 player-ready packet id (0x85). The pinned bitworld predates
+  # it (newer bitworld drops ButtonC, which the grenade input bit needs), so
+  # the id is declared here rather than imported.
+  SpriteClientReady = 0x85'u8
 
 proc liveProgressMaxTick(config: GameConfig): int =
   ## Returns the live viewer tick-bar budget.
@@ -138,6 +157,8 @@ proc initAppState() =
   appState.replayServerMode = false
   appState.replayLoaded = false
   appState.pendingReplayUri = ""
+  appState.loadingReplayUri = ""
+  appState.currentReplayUri = ""
   appState.resetRequested = false
   appState.kickRequests = @[]
   appState.kickedIdentities = initTable[string, bool]()
@@ -149,6 +170,7 @@ proc initAppState() =
   appState.playerAddresses = initTable[WebSocket, string]()
   appState.playerSlots = initTable[WebSocket, int]()
   appState.playerTokens = initTable[WebSocket, string]()
+  appState.playerReady = initTable[WebSocket, bool]()
   appState.globalViewers = initTable[WebSocket, GlobalViewerState]()
   appState.playerViewers = initTable[WebSocket, PlayerViewerState]()
   appState.rewardViewers = initTable[WebSocket, bool]()
@@ -196,6 +218,11 @@ proc removePlayerWebSocketState(websocket: WebSocket): int =
   appState.playerAddresses.del(websocket)
   appState.playerSlots.del(websocket)
   appState.playerTokens.del(websocket)
+  appState.playerReady.del(websocket)
+
+proc isPlayerReadyPacket*(message: string): bool =
+  ## Returns true for the one-byte Sprite v1 player-ready packet.
+  message.len == 1 and message[0].uint8 == SpriteClientReady
 
 proc addressIsKicked(address: string): bool =
   ## Returns true when an address is blocked from this match.
@@ -226,6 +253,7 @@ proc registerPlayerWebSocket(
   appState.inputMasks[websocket] = 0
   appState.inputPressedMasks[websocket] = 0
   appState.lastAppliedMasks[websocket] = 0
+  appState.playerReady[websocket] = false
   true
 
 proc registerGlobalWebSocket(websocket: WebSocket) =
@@ -442,6 +470,28 @@ proc replayRequestUri(request: Request): string =
   ## Returns the replay artifact URI requested by a Coworld replay client.
   request.queryParams.getOrDefault("uri", "").strip()
 
+proc replayUriKnown(uri: string): bool =
+  ## Returns true when this URI is queued, loading, or already active.
+  if uri.len == 0:
+    return false
+  {.gcsafe.}:
+    withLock appState.lock:
+      result =
+        uri == appState.pendingReplayUri or
+        uri == appState.loadingReplayUri or
+        uri == appState.currentReplayUri
+
+proc queueReplayUri(uri: string) =
+  ## Queues a replay switch once, even when HTML and websocket requests repeat it.
+  if uri.len == 0:
+    return
+  {.gcsafe.}:
+    withLock appState.lock:
+      if uri != appState.pendingReplayUri and
+          uri != appState.loadingReplayUri and
+          uri != appState.currentReplayUri:
+        appState.pendingReplayUri = uri
+
 proc replayRequestUriOrPending(request: Request): tuple[uri: string, loaded: bool] =
   ## Returns the websocket URI, falling back to the URI captured when serving
   ## /client/replay. Kubernetes service-proxy websocket upgrades do not
@@ -452,7 +502,12 @@ proc replayRequestUriOrPending(request: Request): tuple[uri: string, loaded: boo
     withLock appState.lock:
       result.loaded = appState.replayLoaded
       if result.uri.len == 0:
-        result.uri = appState.pendingReplayUri
+        if appState.pendingReplayUri.len > 0:
+          result.uri = appState.pendingReplayUri
+        elif appState.loadingReplayUri.len > 0:
+          result.uri = appState.loadingReplayUri
+        else:
+          result.uri = appState.currentReplayUri
 
 proc httpHandler(request: Request) =
   if request.path == HealthPath and request.httpMethod == "GET":
@@ -512,14 +567,19 @@ proc httpHandler(request: Request) =
       if replayRequest.uri.len == 0 and not replayRequest.loaded:
         request.respondReplayRequestError(400, "missing replay uri\n")
         return
-      if replayRequest.uri.len > 0 and not replayRequest.uri.readableReplayUri():
+      if replayRequest.uri.len > 0 and
+          not replayRequest.uri.replayUriKnown() and
+          not replayRequest.uri.readableReplayUri():
         request.respondReplayRequestError(404, "replay uri is not readable\n")
         return
     let websocket = request.upgradeToWebSocket()
     {.gcsafe.}:
       withLock appState.lock:
         websocket.registerGlobalWebSocket()
-        if replayServerMode and replayRequest.uri.len > 0:
+        if replayServerMode and replayRequest.uri.len > 0 and
+            replayRequest.uri != appState.pendingReplayUri and
+            replayRequest.uri != appState.loadingReplayUri and
+            replayRequest.uri != appState.currentReplayUri:
           appState.pendingReplayUri = replayRequest.uri
   elif request.path == AdminWebSocketPath and request.httpMethod == "GET" and
       request.isWebSocketUpgrade():
@@ -572,6 +632,21 @@ proc httpHandler(request: Request) =
       request.respond(200, texHeaders, WallTextureHorizontal)
     else:
       request.respond(200, texHeaders, WallTextureVertical)
+  elif request.path in [SoldierArtRedPath, SoldierArtBluePath] and
+      request.httpMethod == "GET":
+    # Front-facing cog art for the EYES PiP billboards (static PNG assets).
+    var artHeaders: HttpHeaders
+    artHeaders["Content-Type"] = "image/png"
+    artHeaders["Cache-Control"] = "public, max-age=3600"
+    if request.path == SoldierArtRedPath:
+      request.respond(200, artHeaders, SoldierArtRed)
+    else:
+      request.respond(200, artHeaders, SoldierArtBlue)
+  elif request.path == BroadcastFontPath and request.httpMethod == "GET":
+    var fontHeaders: HttpHeaders
+    fontHeaders["Content-Type"] = "font/ttf"
+    fontHeaders["Cache-Control"] = "public, max-age=3600"
+    request.respond(200, fontHeaders, BroadcastFont)
   elif request.path in [
       bitworldClient.ReplayClientRoute,
       bitworldClient.CoworldReplayClientRoute,
@@ -582,13 +657,13 @@ proc httpHandler(request: Request) =
       if replayRequest.uri.len == 0 and not replayRequest.loaded:
         request.respondReplayRequestError(400, "missing replay uri\n")
         return
-      if replayRequest.uri.len > 0 and not replayRequest.uri.readableReplayUri():
+      if replayRequest.uri.len > 0 and
+          not replayRequest.uri.replayUriKnown() and
+          not replayRequest.uri.readableReplayUri():
         request.respondReplayRequestError(404, "replay uri is not readable\n")
         return
       if replayRequest.uri.len > 0:
-        {.gcsafe.}:
-          withLock appState.lock:
-            appState.pendingReplayUri = replayRequest.uri
+        replayRequest.uri.queueReplayUri()
     # The regular replay routes serve the plain designed broadcast client (the
     # board) exactly as before. /client/league is an ADD-ON that serves the
     # walled-pit League Replayer SHELL, which itself embeds the board in an
@@ -639,6 +714,7 @@ proc websocketHandler(
             appState.inputMasks[websocket] = 0
             appState.inputPressedMasks[websocket] = 0
             appState.lastAppliedMasks[websocket] = 0
+            appState.playerReady[websocket] = false
     if closeKickedSocket:
       websocket.disconnectWebSocket()
   of MessageEvent:
@@ -647,7 +723,10 @@ proc websocketHandler(
     elif message.kind == BinaryMessage:
       {.gcsafe.}:
         withLock appState.lock:
-          if websocket in appState.globalViewers:
+          if message.data.isPlayerReadyPacket() and
+              websocket in appState.playerReady:
+            appState.playerReady[websocket] = true
+          elif websocket in appState.globalViewers:
             appState.globalViewers[websocket].applyGlobalViewerMessage(
               message.data
             )
@@ -683,11 +762,54 @@ proc websocketHandler(
 proc serverThreadProc(args: ServerThreadArgs) {.thread.} =
   args.server[].serve(Port(args.port), args.address)
 
-proc runFrameLimiter(previousTick: var MonoTime) =
+proc resetPlayerReady(
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+) =
+  ## Clears readiness for active player sockets before sending one frame.
+  {.gcsafe.}:
+    withLock appState.lock:
+      for i, websocket in sockets:
+        if i < playerIndices.len and playerIndices[i] >= 0 and
+            playerIndices[i] < playerCount and
+            websocket in appState.playerReady:
+          appState.playerReady[websocket] = false
+
+proc allPlayersReady(
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+): bool =
+  ## Returns true when every active player socket sent ready.
+  var activePlayers = 0
+  {.gcsafe.}:
+    withLock appState.lock:
+      for i, websocket in sockets:
+        if i >= playerIndices.len or playerIndices[i] < 0 or
+            playerIndices[i] >= playerCount:
+          continue
+        inc activePlayers
+        if not appState.playerReady.getOrDefault(websocket, false):
+          return false
+  activePlayers > 0
+
+proc runFrameLimiter(
+  previousTick: var MonoTime,
+  fastMode: bool,
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+) =
   let frameDuration = initDuration(microseconds = 1_000_000 div TargetFps)
-  let elapsed = getMonoTime() - previousTick
-  if elapsed < frameDuration:
-    sleep(int((frameDuration - elapsed).inMilliseconds))
+  while true:
+    let elapsed = getMonoTime() - previousTick
+    if elapsed >= frameDuration:
+      break
+    if fastMode and sockets.allPlayersReady(playerIndices, playerCount):
+      break
+    let remaining = frameDuration - elapsed
+    sleep(max(1, min(2, int(remaining.inMilliseconds))))
   previousTick = getMonoTime()
 
 proc rewardAccountFor(sim: SimServer, address: string): int =
@@ -823,21 +945,21 @@ proc runServerLoop*(
         ReplayData()
     else:
       ReplayData()
-  var config =
+  var initializedReplay =
     if replayLoaded:
-      var replayConfig = defaultGameConfig()
-      replayConfig.update(replayData.configJson)
-      replayConfig
+      initReplayRuntime(replayData, runtimeConfig.mismatchQuit)
     else:
-      initialConfig
+      InitializedReplay()
+  var config =
+    if replayLoaded: move(initializedReplay.config)
+    else: initialConfig
   var
     replayWriter = openReplayWriter(saveReplayPath, config.configJson())
     replayPlayer =
       if replayLoaded:
-        initReplayPlayer(replayData)
+        move(initializedReplay.player)
       else:
         ReplayPlayer()
-  replayPlayer.mismatchQuit = runtimeConfig.mismatchQuit
   startProfileTrace()
   defer:
     finishProfileTrace()
@@ -846,11 +968,28 @@ proc runServerLoop*(
   appState.replayServerMode = replayLoaded
   appState.config = config
 
+  var
+    sim =
+      if replayLoaded: move(initializedReplay.sim)
+      else: initSimServer(config)
+    lastTick = getMonoTime()
+  block:
+    # Bake the supersampled spectator render caches (map, endzone fades,
+    # soldier rotations) BEFORE the listener opens: a viewer's first-message
+    # clock starts at its successful connect (the coworld certifier allows
+    # only seconds), so nothing may be accepted until every frame the loop
+    # will ever build can be assembled instantly.
+    let warmStart = getMonoTime()
+    sim.warmBoardRenderCaches()
+    echo "board render caches baked in ",
+      (getMonoTime() - warmStart).inMilliseconds, " ms"
+
   let httpServer = newServer(
     httpHandler,
     websocketHandler,
     workerThreads = 4
   )
+
   var
     serverThread: Thread[ServerThreadArgs]
     serverPtr = cast[ptr Server](unsafeAddr httpServer)
@@ -862,17 +1001,12 @@ proc runServerLoop*(
   httpServer.waitUntilReady()
 
   var
-    sim = initSimServer(config)
-    lastTick = getMonoTime()
     prevInputs: seq[InputState]
     liveSpeedIndex = config.liveSpeedIndex()
     gamesPlayed = 0
-    broadcastTracker = initBroadcastTracker()
-  if replayLoaded:
-    replayPlayer.buildReplayKeyframes(sim)
-    # Start playback at first action, not in the dead lobby (WAITING FOR PLAYERS).
-    replayPlayer.seekReplay(sim, replayPlayer.replayStartTick())
-    replayPlayer.playing = true
+    broadcastTracker =
+      if replayLoaded: move(initializedReplay.tracker)
+      else: initBroadcastTracker()
 
   while true:
     var
@@ -897,6 +1031,8 @@ proc runServerLoop*(
       withLock appState.lock:
         pendingReplayUri = appState.pendingReplayUri
         appState.pendingReplayUri = ""
+        if pendingReplayUri.len > 0:
+          appState.loadingReplayUri = pendingReplayUri
     if pendingReplayUri.len > 0:
       var
         pendingData: ReplayData
@@ -909,24 +1045,28 @@ proc runServerLoop*(
         # log why the switch was refused.
         echo "replay switch failed (keeping current state): ", e.msg
         pendingOk = false
+        {.gcsafe.}:
+          withLock appState.lock:
+            if appState.loadingReplayUri == pendingReplayUri:
+              appState.loadingReplayUri = ""
       if pendingOk:
         replayData = pendingData
-        var replayConfig = defaultGameConfig()
-        replayConfig.update(replayData.configJson)
-        config = replayConfig
-        sim = initSimServer(config)
-        replayPlayer = initReplayPlayer(replayData)
-        replayPlayer.mismatchQuit = runtimeConfig.mismatchQuit
-        replayPlayer.buildReplayKeyframes(sim)
-        # Start playback at first action, not in the dead lobby.
-        replayPlayer.seekReplay(sim, replayPlayer.replayStartTick())
-        replayPlayer.playing = true
-        broadcastTracker = initBroadcastTracker()
+        initializedReplay = initReplayRuntime(
+          replayData,
+          runtimeConfig.mismatchQuit
+        )
+        config = move(initializedReplay.config)
+        sim = move(initializedReplay.sim)
+        replayPlayer = move(initializedReplay.player)
+        broadcastTracker = move(initializedReplay.tracker)
         replayLoaded = true
         {.gcsafe.}:
           withLock appState.lock:
             appState.replayLoaded = true
             appState.config = config
+            appState.currentReplayUri = pendingReplayUri
+            if appState.loadingReplayUri == pendingReplayUri:
+              appState.loadingReplayUri = ""
 
     {.gcsafe.}:
       withLock appState.lock:
@@ -1163,6 +1303,7 @@ proc runServerLoop*(
               appState.inputMasks[join.websocket] = 0
               appState.inputPressedMasks[join.websocket] = 0
               appState.lastAppliedMasks[join.websocket] = 0
+              appState.playerReady[join.websocket] = false
               sockets.add(join.websocket)
               playerIndices.add(appState.playerIndices[join.websocket])
               appState.playerViewers[join.websocket] =
@@ -1189,33 +1330,21 @@ proc runServerLoop*(
           sockets[i].send(blobFromBytes(chunk), BinaryMessage)
       for websocket in rewardViewers:
         websocket.send(rewardPacket, TextMessage)
-      runFrameLimiter(lastTick)
+      # The lobby always paces at wall clock: fast-forwarding here spins the
+      # loop hot on whichever seats joined first, and the appState-lock churn
+      # starves mummy's upgrade path so the remaining seats never finish
+      # connecting (certifier deadlock at "waiting for players").
+      runFrameLimiter(lastTick, false, sockets, playerIndices, sim.players.len)
       continue
 
     var frameEvents = newJArray()
     if replayLoaded:
-      var didSeek = false
-      for seekTick in replaySeekTicks:
-        replayPlayer.applyReplaySeek(sim, seekTick)
-        didSeek = true
-      for command in replayCommands:
-        let tickBeforeCommand = sim.tickCount
-        replayPlayer.applyReplayCommand(sim, command)
-        if sim.tickCount != tickBeforeCommand:
-          didSeek = true
-      # A scrub/step/skip is a jump, not playback: resync so the tracker diffs
-      # the next real step against here and never fires phantom beats.
-      if didSeek:
-        broadcastTracker.resync(sim)
-      if replayPlayer.playing:
-        for _ in 0 ..< replayPlayer.replaySpeed():
-          if replayPlayer.playing:
-            replayPlayer.stepReplay(sim)
-            sim.stepEvents(broadcastTracker, frameEvents)
-        if replayPlayer.looping and not replayPlayer.playing:
-          replayPlayer.seekReplay(sim, replayPlayer.replayStartTick())
-          replayPlayer.playing = true
-          broadcastTracker.resync(sim)
+      frameEvents = replayPlayer.advanceReplayFrame(
+        sim,
+        broadcastTracker,
+        replaySeekTicks,
+        replayCommands
+      )
     else:
       for command in replayCommands:
         liveSpeedIndex.applySpeedCommand(command)
@@ -1262,6 +1391,9 @@ proc runServerLoop*(
           for websocket in appState.playerViewers.keys:
             appState.playerViewers[websocket] = initPlayerViewerState()
 
+    if not replayLoaded and config.fastMode:
+      sockets.resetPlayerReady(playerIndices, sim.players.len)
+
     for i in 0 ..< sockets.len:
       var nextState: PlayerViewerState
       let framePacket = sim.buildSpriteProtocolPlayerUpdates(
@@ -1291,19 +1423,26 @@ proc runServerLoop*(
 
     for i in 0 ..< globalViewers.len:
       var nextState: GlobalViewerState
-      let packet = sim.buildSpriteProtocolUpdates(
-        globalStates[i],
-        nextState,
-        sim.tickCount,
-        replayPlayer.playing,
-        if replayLoaded: replayPlayer.replaySpeed()
-        else: playbackSpeed(liveSpeedIndex),
-        if replayLoaded: replayPlayer.replayMaxTick()
-        else: liveProgressMaxTick(config),
-        replayPlayer.looping,
-        replayLoaded,
-        if replayLoaded: replayPlayer.hashMismatchTick else: -1
-      )
+      let packet =
+        if replayLoaded:
+          sim.buildReplayViewerPacket(
+            replayPlayer,
+            globalStates[i],
+            nextState,
+            frameEvents
+          )
+        else:
+          sim.buildSpriteProtocolUpdates(
+            globalStates[i],
+            nextState,
+            sim.tickCount,
+            replayPlayer.playing,
+            playbackSpeed(liveSpeedIndex),
+            liveProgressMaxTick(config),
+            replayPlayer.looping,
+            false,
+            -1
+          )
       if packet.len == 0:
         continue
       try:
@@ -1316,33 +1455,13 @@ proc runServerLoop*(
         # Piggybacking on the binary channel makes the chrome survive every
         # playback path (live serve, generic client, hosted replay), with no
         # opt-in. The generic bitworld client simply ignores an unknown sprite id.
-        var outPacket = packet
-        if replayLoaded:
-          # Ship the full-timeline lives-lead series ONCE (first frame), then the
-          # client caches it; later frames omit it to keep the label compact.
-          let sendLead = not globalStates[i].momentumSent
-          let stateJson = sim.buildStateJson(
-            frameEvents,
-            replayPlayer.playing,
-            replayPlayer.replaySpeed(),
-            replayPlayer.replayMaxTick(),
-            replayPlayer.looping,
-            replayLoaded,
-            replayPlayer.hashMismatchTick,
-            nextState.selectedJoinOrder,
-            if sendLead: replayPlayer.livesLeadSeries else: @[],
-            replayPlayer.replayStartTick()
-          )
-          outPacket.addSprite(BroadcastChromeSpriteId, 1, 1, [0'u8, 0, 0, 0], stateJson)
-          if sendLead:
-            nextState.momentumSent = true
         # Ship in WS-frame-sized chunks at message boundaries: the hosted replay
         # viewer closes any frame over 1 MiB (1009 "message too big"). The client
         # accumulates sprite/object state across binary messages, so N chunks are
         # equivalent to one packet. The init frame (banded map + atlas + chrome)
         # is the only one that ever exceeds the cap; steady-state frames pass
         # through as a single chunk.
-        for chunk in global.chunkSpritePacket(outPacket, MaxWsFrameBytes):
+        for chunk in global.chunkSpritePacket(packet, MaxWsFrameBytes):
           globalViewers[i].send(blobFromBytes(chunk), BinaryMessage)
         {.gcsafe.}:
           withLock appState.lock:
@@ -1375,4 +1494,10 @@ proc runServerLoop*(
       joinThread(serverThread)
       break
 
-    runFrameLimiter(lastTick)
+    runFrameLimiter(
+      lastTick,
+      not replayLoaded and config.fastMode,
+      sockets,
+      playerIndices,
+      sim.players.len
+    )

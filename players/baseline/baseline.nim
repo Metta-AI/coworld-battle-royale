@@ -4,7 +4,7 @@
 ## Speaks the Bitworld Sprite v1 protocol over a websocket. The observation is
 ## the FULL map in map coordinates, but entities are fogged: an enemy (and an
 ## enemy carrying our flag) is only streamed while it sits inside OUR vision —
-## a forward cone (half-angle ~45 degrees around our AIM ANGLE, unlimited
+## a forward cone (half-angle ~60 degrees around our AIM ANGLE, unlimited
 ## range, walls block) plus a small omnidirectional bubble (~90px). Always
 ## visible: the static map, BOTH flag pedestals (teammates are fogged too),
 ## our own flag's state (an empty own pedestal means it is stolen), and
@@ -74,7 +74,8 @@ import
   std/[algorithm, heapqueue, math, os, random, strutils],
   bitworld/spriteprotocol,
   whisky,
-  baseline/protocols
+  baseline/protocols,
+  baseline/artlog
 
 when defined(taunt):
   import baseline/taunts
@@ -85,18 +86,11 @@ const
                               # multiplied by this; sprites stay centered on
                               # the same map points, so dividing the object
                               # center recovers exact legacy map coordinates.
-  MapW = 1235
-  MapH = 659
-  CenterX = MapW div 2
-  CenterY = MapH div 2
   PlayerHalf = 6              # solid footprint half-extent, matches the sim
   NavCell = 8                 # nav grid cell size in px
-  GridW = (MapW + NavCell - 1) div NavCell
-  GridH = (MapH + NavCell - 1) div NavCell
   RepathTicks = 10            # refresh the cost field at least this often
   LookaheadCells = 6          # how far ahead on the path we aim the waypoint
 
-  FireRange = 1250.0          # engage distance (the 1300px gun is map-wide)
   CarrierFireRange = 110.0    # while carrying, only shoot enemies this close
   RushEngageRange = 230.0     # racing for the steal: only fight what blocks it
   EscortEngageRange = 320.0   # escorting a run: only fight near threats
@@ -146,9 +140,9 @@ const
                               # mate's aim ray counts as mate-targeted
   ButtonC = 1'u8 shl 7        # grenade charge/throw (input mask bit 128)
   NadeMaxRange = 240.0        # full-charge throw distance (~fifth of the field)
-  NadeMinRange = 60.0         # never lob inside this — the ~40px blast + drift
-                              # would clip us
-  NadeBlast = 40.0            # blast radius; a pair this close dies together
+  NadeMinRange = 72.0         # never lob inside this — the 52px blast + drift
+                              # would clip us (GV17: blast 40 -> 52)
+  NadeBlast = 52.0            # blast radius; a pair this close dies together
   NadeFullChargeTicks = 24    # ~1s of holding C reaches max range
   NadePickupDetour = 90.0     # grab a corner pickup within this detour range
   NadeCampTicks = 360         # -d:campNade: a STATIONARY remembered enemy stays
@@ -161,13 +155,17 @@ const
   MedKitRespawn = 30 * 24     # a taken kit refills after 30s (sim constant)
   MedKitSeenClear = 55.0      # inside this range an empty spot is truly
                               # empty (bubble vision), not just fogged
-  SwordReach = 26.0           # melee swipe range (sim SwordReach)
-  SwordArcBrads = 32          # +/-45 degree swipe arc in brads
-  SwordDetour = 70.0          # attacker detour budget for a sword pickup
-  ShieldStealDetour = 330.0   # MidGuard's shield trip: the enemy endzone
-                              # shield sits ~136px past their pedestal, so
-                              # the round trip inherently costs ~270 path px
-  PickupRespawn = 30 * 24     # sword/shield respawn timer (sim constant)
+  PlasmaReach = 136.0         # plasma cone reach: 4 squares (sim
+                              # PlasmaArcReach)
+  PlasmaHalfBrads = 10        # cone half-angle in brads: the cone is 2
+                              # squares wide at max reach, atan(1/4) ~ 14
+                              # degrees (sim PlasmaArcMaxWidth / Reach)
+  PlasmaDetour = 70.0         # attacker detour budget for a plasma arc pickup
+  ShieldStealDetour = 480.0   # MidGuard's shield trip: the enemy endzone
+                              # shield sits low in their back column
+                              # (~215px from the pedestal since the game-v7
+                              # split), so the round trip costs ~430 path px
+  PickupRespawn = 30 * 24     # plasma arc/shield respawn timer (sim constant)
   MedKitCarrierBudget = 90.0  # extra path px a hurt CARRIER spends to heal:
                               # a full-heal carrier survives pocket exits
                               # that kill a 1 hp one
@@ -225,8 +223,26 @@ const
   WeaveBand = 280.0           # rushers serpentine within this x-band of mid
 
   LaneTop = 40.0              # open corridor above the mirrored obstacles
+
+## Map dimensions, adopted at nav-grid build from the walkability sprite
+## (which spans the whole arena). The game supports multiple maps —
+## "arena" (1235x659, the default) and "arena-large" (1606x858) — and this
+## bot plays either; everything position-shaped below derives from these.
+## Initialized to the default arena.
+var
+  MapW = 1235
+  MapH = 659
+  CenterX = MapW div 2
+  CenterY = MapH div 2
+  GridW = (MapW + NavCell - 1) div NavCell
+  GridH = (MapH + NavCell - 1) div NavCell
   LaneMid = float(CenterY)
-  LaneBottom = 619.0          # open corridor below the mirrored obstacles
+  LaneBottom = float(MapH) - LaneTop  # open corridor below the obstacles
+  FireRange = float(MapW) + 15.0
+    # engage distance: every map's gun range is comfortably over its own
+    # width (1300 on the 1235px arena, 1690 on the 1606px arena-large), so
+    # a hair past a map-width is always inside it. 1250.0 on the default
+    # arena — the value this bot always used.
 
 type
   Team = enum
@@ -308,8 +324,8 @@ type
     hp: int                   # own hit points, read from the HUD lives label
     kitPos: seq[Vec]          # discovered med kit spots (two, center line)
     kitAbsentAt: seq[int]     # tick a spot was last seen empty; -1 = present
-    swordPos: seq[Vec]        # discovered sword spots (side midpoints)
-    swordAbsentAt: seq[int]
+    plasmaPos: seq[Vec]       # discovered plasma arc spots (side midpoints)
+    plasmaAbsentAt: seq[int]
     shieldPos: seq[Vec]       # discovered shield spots (endzone back columns)
     shieldAbsentAt: seq[int]
     everStoleTheirs: bool     # any own/mate carry of the enemy flag this game
@@ -596,9 +612,11 @@ proc homeSign(team: Team): float =
   if team == Red: -1.0 else: 1.0
 
 proc homeDeepX(team: Team): float =
-  ## A point well inside our capture zone (Red x <= ~206, Blue x >= ~1029).
-  ## Blue mirrors Red exactly across the x = 617 center line.
-  if team == Red: 150.0 else: float(MapW - 1) - 150.0
+  ## A point well inside our capture zone, mirrored across the map's
+  ## vertical center line (150 on the default 1235px arena, scaled with
+  ## the map).
+  let deep = float(MapW * 150 div 1235)
+  if team == Red: deep else: float(MapW - 1) - deep
 
 proc enemy(team: Team): Team =
   ## The opposing team.
@@ -606,13 +624,23 @@ proc enemy(team: Team): Team =
 
 proc flagHome(team: Team): Vec =
   ## The STATIC pedestal position of one team's flag: the center of the
-  ## team's protected spawn pocket (matches flagHome in src/ctf/sim.nim).
-  if team == Red: vec(186, 329) else: vec(1049, 329)
+  ## team's protected spawn pocket (matches flagHome in src/ctf/sim.nim,
+  ## computed from the map size instead of the old hardcoded 186/1049).
+  if team == Red:
+    vec(float(CenterX - CenterX * 7 div 10), float(CenterY))
+  else:
+    vec(float(CenterX + (MapW - CenterX) * 7 div 10), float(CenterY))
 
 proc chokeSpot(team: Team): Vec =
   ## Defender hold point between the flag and our home edge, mirrored
-  ## exactly across the x = 617 center line.
-  if team == Red: vec(390, 340) else: vec(float(MapW - 1) - 390.0, 340)
+  ## exactly across the map's vertical center line. (390, 340) on the
+  ## default 1235x659 arena — the gap between the diamond and disc
+  ## columns — scaled proportionally so it lands in the same tactical
+  ## pocket on every map.
+  let
+    x = float(MapW * 390 div 1235)
+    y = float(MapH * 340 div 659)
+  if team == Red: vec(x, y) else: vec(float(MapW - 1) - x, y)
 
 proc nearestOpenCell(bot: Bot, cell: int): int =
   ## The nearest walkable nav cell, searched in expanding rings.
@@ -720,7 +748,7 @@ proc findEnemyPosts(bot: Bot, client: ProtocolClient) =
   ## Precomputes the standing virtual threats every carrier run has to
   ## respect, fed into exposure costing and lane choice: the mirrored ENEMY
   ## overwatch post (a stationary, hidden killer) and the ENEMY spawn
-  ## pocket — every kill respawns an armed, spawn-protected enemy at the
+  ## pocket — every kill respawns an armed enemy at the
   ## pedestal aiming our way, so the pocket mouth (and its mid lane) is
   ## permanently watched ground even when no track remembers anyone there.
   bot.enemyPosts.setLen(0)
@@ -729,9 +757,25 @@ proc findEnemyPosts(bot: Bot, client: ProtocolClient) =
     bot.enemyPosts.add(post.peek)
   bot.enemyPosts.add(flagHome(enemy(bot.team)))
 
+proc adoptMapSize(client: ProtocolClient) =
+  ## The walkability sprite spans the whole arena: adopt its dimensions as
+  ## THE map size and rederive everything position-shaped. The game selects
+  ## its map per episode (config mapPath: "arena" or "arena-large"), so the
+  ## bot must read the size off the wire instead of assuming it.
+  MapW = client.walkabilityWidth
+  MapH = client.walkabilityHeight
+  CenterX = MapW div 2
+  CenterY = MapH div 2
+  GridW = (MapW + NavCell - 1) div NavCell
+  GridH = (MapH + NavCell - 1) div NavCell
+  LaneMid = float(CenterY)
+  LaneBottom = float(MapH) - LaneTop
+  FireRange = float(MapW) + 15.0
+
 proc buildNavGrid(bot: Bot, client: ProtocolClient) =
   ## Erodes the pixel walkability mask into a footprint-safe nav grid, then
   ## derives the cover model (cover cells, overwatch post, defender choke).
+  adoptMapSize(client)
   bot.cellWalkable = newSeq[bool](GridW * GridH)
   for cy in 0 ..< GridH:
     for cx in 0 ..< GridW:
@@ -1072,8 +1116,8 @@ proc resetTransient(bot: Bot) =
   bot.hp = MaxHp
   for i in 0 ..< bot.kitAbsentAt.len:
     bot.kitAbsentAt[i] = -1              # both kits restock at game start
-  for i in 0 ..< bot.swordAbsentAt.len:
-    bot.swordAbsentAt[i] = -1
+  for i in 0 ..< bot.plasmaAbsentAt.len:
+    bot.plasmaAbsentAt[i] = -1
   for i in 0 ..< bot.shieldAbsentAt.len:
     bot.shieldAbsentAt[i] = -1
   bot.shoutWant = ""
@@ -1202,6 +1246,9 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     bot.firedLast = false
     bot.rotSign = 0
     bot.wasDead = true
+    artFrame(FrameSnap(tick: bot.tick, alive: false,
+      x: int(bot.lastPos.x), y: int(bot.lastPos.y), hp: 0,
+      objective: "dead", action: "dead", engageDist: -1))
     return 0
   if bot.wasDead:
     # Respawned: the server points the aim back at the enemy side.
@@ -1213,31 +1260,34 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     let seen = client.observedAim(me, myColor)
     if seen >= 0 and abs(bradsErr(seen, bot.estAim)) > AimResyncBrads:
       bot.estAim = seen
-  # Swords and shields (0.7.2x): both spawn at the SAME endzone back-column
-  # point (inset 50, center line) on each side — seed the two spots up front
-  # (they are deterministic; the fog would otherwise hide them until we are
-  # already on top of them), then let sightings refine the nudged positions.
-  if bot.swordPos.len == 0:
-    # Since game v7 the pickups separated vertically: swords in the side
-    # back columns at a QUARTER height, shields at THREE QUARTERS.
-    for x in [50.0, float(MapW) - 50.0]:
-      bot.swordPos.add(vec(x, float(MapH div 4)))
-      bot.swordAbsentAt.add(-1)
-      bot.shieldPos.add(vec(x, float(3 * MapH div 4)))
+  # Plasma arcs and shields share the endzone back columns (inset 50)
+  # but are vertically SEPARATED: plasma arcs in the top half (quarter height),
+  # shields in the bottom half (three-quarter height). Seed the spots up
+  # front (they are deterministic; the fog would otherwise hide them until
+  # we are already on top of them), then let sightings refine the nudged
+  # positions.
+  if bot.plasmaPos.len == 0:
+    for spot in [vec(50.0, float(MapH div 4)),
+                 vec(float(MapW) - 50.0, float(MapH div 4))]:
+      bot.plasmaPos.add(spot)
+      bot.plasmaAbsentAt.add(-1)
+    for spot in [vec(50.0, float(3 * MapH div 4)),
+                 vec(float(MapW) - 50.0, float(3 * MapH div 4))]:
+      bot.shieldPos.add(spot)
       bot.shieldAbsentAt.add(-1)
-  var swordSeen, shieldSeen: seq[Vec]
-  for o in client.spriteObjectsWithLabel("sword"):
-    swordSeen.add(client.mapPos(o))
+  var plasmaSeen, shieldSeen: seq[Vec]
+  for o in client.spriteObjectsWithLabel("plasma arc"):
+    plasmaSeen.add(client.mapPos(o))
   for o in client.spriteObjectsWithLabel("shield"):
     shieldSeen.add(client.mapPos(o))
-  trackPickups(bot.swordPos, bot.swordAbsentAt, swordSeen, me, bot.tick)
+  trackPickups(bot.plasmaPos, bot.plasmaAbsentAt, plasmaSeen, me, bot.tick)
   trackPickups(bot.shieldPos, bot.shieldAbsentAt, shieldSeen, me, bot.tick)
   # Own carry state: the carried markers float over their carrier, and a
   # shield carrier's HUD reads 6 hp (the marker is the fallback).
-  var hasSword = false
-  for o in client.spriteObjectsWithLabel("sword carried"):
+  var hasPlasma = false
+  for o in client.spriteObjectsWithLabel("plasma arc carried"):
     if dist(client.mapPos(o), me) <= 30.0:
-      hasSword = true
+      hasPlasma = true
       break
   var hasShield = bot.hp > MaxHp
   if not hasShield:
@@ -1245,19 +1295,10 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       if dist(client.mapPos(o), me) <= 30.0:
         hasShield = true
         break
-  # Carrying a plasma arc REPLACES the gun (sim canFire requires no arc):
-  # a carrier that keeps gun habits fires 136px cones at 300px targets and
-  # hits nothing. Detect the carried marker and switch combat modes.
-  var hasArc = false
-  when defined(plasmaUse):
-    for o in client.spriteObjectsWithLabel("plasma arc carried"):
-      if dist(client.mapPos(o), me) <= 30.0:
-        hasArc = true
-        break
-
   let
     shotReady = client.spriteObjectsWithLabel("fire icon").len > 0 and
-      not hasShield and not hasSword     # shield bars the gun; sword replaces it
+      not hasPlasma                      # the plasma arc replaces the gun; a shield
+                                         # only slows it (3x cooldown)
     seenEnemies = client.actorsFor(enemyColor)
     seenMates = client.actorsFor(myColor)
   bot.updateTracks(bot.enemies, seenEnemies)
@@ -1690,9 +1731,12 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         " posts stay broken (stole=", bot.everStoleTheirs,
         " lost=", bot.everLostOurs, ")"
 
-  # Movement target from role and flag situation.
+  # Movement target from role and flag situation. `objMode` names the branch
+  # for the artifact telemetry (see baseline/artlog.nim).
   var target: Vec
+  var objMode = "attack"
   if iCarry:
+    objMode = "carry"
     # Run the stolen enemy flag home along the emptiest lane; the exposure
     # cost in the path field keeps the route hugging cover past remembered
     # enemies.
@@ -1701,7 +1745,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       laneY = bot.safestLaneY(me)
     if abs(me.x - pocket.x) < 60.0 and abs(me.y - laneY) > 70.0:
       # Bug out of the pocket VERTICALLY first: every kill respawns an
-      # armed, spawn-protected enemy at this pedestal whose spawn aim points
+      # armed enemy at this pedestal whose spawn aim points
       # along the east-west axis — pure-vertical movement exits that cone
       # fastest, then the border lane runs home outside it.
       target = vec(pocket.x, laneY)
@@ -1732,12 +1776,14 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
           " chasing on stale fix age=", bot.tick - bot.carrierSeen
     if bot.tick - bot.carrierSeen <= thiefChaseTtl:
       # Converge on the thief's predicted path toward the enemy capture edge.
+      objMode = "thief_hunt"
       var predicted = bot.carrierPos +
         bot.carrierVel * float(18 + bot.tick - bot.carrierSeen)
       predicted.x += -homeSign(bot.team) * 40.0
       target = vec(clamp(predicted.x, 20.0, float(MapW - 20)),
                    clamp(predicted.y, 20.0, float(MapH - 20)))
     else:
+      objMode = "thief_guard"
       var laneY = LaneMid
       if bot.carrierSeen > -100_000:
         var bestD = 1e18
@@ -1747,6 +1793,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
             laneY = lane
       target = vec(float(CenterX) - homeSign(bot.team) * 60.0, laneY)
   elif mateCarry:
+    objMode = "escort"
     case bot.role
     of MidTop, FlankTop:
       target = mateCarryPos + vec(homeSign(bot.team) * 46.0, -30.0)
@@ -1864,6 +1911,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   elif bot.role == HomeDefender and not pushOut:
     # Hold the choke on our pedestal approach; break off to chase the nearest
     # intruder on our half (every steal has to come through here).
+    objMode = "defend"
     var intruder = -1
     var intruderD = 1e18
     for i in 0 ..< bot.enemies.len:
@@ -1881,6 +1929,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     else:
       target = bot.chokeHold
   elif bot.role == Overwatch and not pushOut:
+    objMode = "overwatch"
     if bot.postReady:
       # Peek-and-shoot cycle: hold behind the post; with the gun up and a
       # remembered enemy in reach, sidestep to the peek cell to open the
@@ -1934,7 +1983,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   let rushing = not iCarry and not mateCarry and not counterPunch and
     not phalanxOn and bot.role in {MidTop, MidBottom, MidGuard}
   # The pocket endgame: duelling at the pocket edge is an infinite respawn
-  # grinder (respawners appear spawn-protected AT the pedestal), so the
+  # grinder (respawners reappear armed AT the pedestal), so the
   # attacker CLOSEST to the pedestal commits to the touch, unarmed and
   # undistracted, while the rest of the wave keeps its guns up to cover the
   # grab — even a suicide grab forces the enemy back onto defense, and a
@@ -1948,6 +1997,8 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom} and
     dist(me, stealTarget) < PocketRushRange and
     dist(me, stealTarget) < nearestMateToSteal + 8.0
+  if pocketRush:
+    objMode = "pocket_rush"
 
   # Combat: the nearest fresh track with a clear pixel ray AND a mate-free
   # fire cone is the engage target; the nearest fresh-but-wall-blocked track
@@ -1958,9 +2009,9 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # is actually in the way, instead of frag-chasing across the map.
   let maxEngage =
     if bot.tripping: 0.0                 # sprinting an errand: no fights
-    elif hasShield and not hasSword: 0.0 # no weapon at all: run and carry
-    elif hasArc: ArcReach + 30.0         # cone weapon: close-range only
-    elif hasSword: SwordReach + 6.0      # melee: only point-blank matters
+    elif hasShield and not hasPlasma:    # slow gun (3x cooldown): only fight
+      CarrierFireRange                   # what is point-blank in the way
+    elif hasPlasma: PlasmaReach + 6.0    # cone weapon: only close range matters
     elif pocketRush: 0.0
     elif iCarry: CarrierFireRange
     elif ownStolen and bot.tick - bot.carrierSeen <= thiefChaseTtl: FireRange
@@ -2139,9 +2190,9 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # Weapon pickups. SHIELD-THEN-STEAL: the enemy endzone shield sits just
   # behind their pedestal — a rusher near the pocket grabs 6 hp first and
   # steals second (the run home is what kills 3 hp carriers). Defensive
-  # roles never take a shield (it bars the gun). SWORDS arm the pocket
-  # brawlers: attackers detour a little for one on the way in — the pocket
-  # duel is point-blank, where an instant lethal swipe beats any gun.
+  # roles never take a shield (it slows the gun 3x). PLASMA ARCS arm the
+  # pocket brawlers: attackers detour a little for one on the way in — the
+  # pocket duel is close-range, where an instant lethal cone beats any gun.
   bot.tripping = false
   if not iCarry and not hasShield and bot.role == MidTop and
       enemyPlanted.len > 0 and
@@ -2160,32 +2211,20 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       if dist(me, bot.shieldPos[i]) + dist(bot.shieldPos[i], stealTarget) -
           dist(me, stealTarget) < ShieldStealDetour:
         target = bot.shieldPos[i]
+        objMode = "shield_trip"
         break
-  elif not iCarry and not hasSword and
+  elif not iCarry and not hasPlasma and
       bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom} and
       not mateCarry and not pocketRush:
-    # Sword top-up: swipe-armed pocket brawls win point-blank. Cheap when we
+    # Plasma top-up: cone-armed pocket brawls win close range. Cheap when we
     # are already visiting the endzone column (shield chain) or passing by.
-    for i in 0 ..< bot.swordPos.len:
-      if not pickupAvailable(bot.swordAbsentAt, i, bot.tick):
+    for i in 0 ..< bot.plasmaPos.len:
+      if not pickupAvailable(bot.plasmaAbsentAt, i, bot.tick):
         continue
-      if dist(me, bot.swordPos[i]) <= SwordDetour:
-        target = bot.swordPos[i]
+      if dist(me, bot.plasmaPos[i]) <= PlasmaDetour:
+        target = bot.plasmaPos[i]
+        objMode = "plasma_grab"
         break
-    when defined(plasmaUse):
-      # Plasma top-up for the pocket rusher: the cone one-shots the pocket
-      # defense cluster. Same cheap-detour budget as swords; visible spawns
-      # only (fog-honest).
-      if not hasArc and bot.role == MidTop:
-        for o in client.spriteObjectsWithLabel("plasma arc"):
-          let pp = client.mapPos(o)
-          if pp.x < 40.0 or pp.y < 40.0 or pp.x > float(MapW - 40) or
-              pp.y > float(MapH - 40):
-            continue                 # HUD icon shares the label
-          if dist(me, pp) <= SwordDetour:
-            target = pp
-            break
-
   # Med kit heal detour (hurt bots only; the carrier handles its own detour
   # in the carry branch). Wounded: a short opportunistic detour. Critical
   # (1 hp): a heal outranks the current errand at much longer reach — a
@@ -2201,6 +2240,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     if kit >= 0 and not (mateCarry and
         dist(mateCarryPos, bot.kitPos[kit]) < dist(me, bot.kitPos[kit]) + 100.0):
       target = bot.kitPos[kit]
+      objMode = "heal_detour"
 
   if not carryingNade and not iCarry and not mateCarry and not pocketRush:
     # Collect a pickup: anyone grabs one within a short detour, and the two
@@ -2234,6 +2274,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
           echo "DETOUR to pickup at ", p.x, ",", p.y, " role ", bot.role
         target = p
         pickupSet = true
+        objMode = "nade_grab"
         break
     when defined(nadeRelay):
       # Relayed respawn clock: a spot that just refilled is worth the same
@@ -2280,7 +2321,9 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     acted = false
     holdStill = false
     nadeC = false
+    actMode = "navigate"      # telemetry: which turret/act branch ran
   if bot.nadeCharge > 0 or nadeAim >= 0:
+    actMode = "nade"
     # Charge-throw: lay the turret on the lob line, then hold C for the ticks
     # the planned distance needs and release — the grenade leaves along the
     # CURRENT aim on release, so the turret keeps correcting while charging.
@@ -2298,31 +2341,24 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         bot.nadeCharge = 0           # release this tick = the throw
     holdStill = true
     acted = true
-  elif hasArc and engage >= 0:
-    # Plasma cone: instant multi-hit 3-damage burst, reach ~136px. Close the
-    # gap and release inside the cone — one touch is a kill, and a pair
-    # standing together dies together.
+  elif hasPlasma and engage >= 0:
+    actMode = "plasma"
+    # Plasma cone: ignition is INSTANT (no windup, no aim lock), reaches 4
+    # squares in a ~14-degree half-angle cone, stays on 5 ticks, and deals
+    # 3 hp (lethal to bare cogs) — press A the moment the victim is inside
+    # reach and roughly in front.
     desiredAim = bradsOf(aim - me)
     let err = abs(bradsErr(desiredAim, bot.estAim))
-    if engageD <= ArcReach and err <= ArcConeBrads and shotReady:
-      wantFire = true
-      holdStill = true
-    else:
-      moveMask = octantBits(aim - me)    # charge into cone range
-    acted = true
-  elif hasSword and engage >= 0:
-    # Sword melee: the swipe is INSTANT (no windup, no aim lock) and lethal
-    # in a +/-45 degree arc at 26 px — close the last step and press A the
-    # moment the victim is inside reach and roughly in front.
-    desiredAim = bradsOf(aim - me)
-    let err = abs(bradsErr(desiredAim, bot.estAim))
-    if engageD <= SwordReach and err <= SwordArcBrads - 4:
+    # Ignite a little early on the angle: the cone stays on 5 ticks and
+    # tracks our aim, so the ongoing traverse sweeps it across the target.
+    if engageD <= PlasmaReach - 6.0 and err <= PlasmaHalfBrads + 3:
       wantFire = true
       holdStill = true
     else:
       moveMask = octantBits(aim - me)    # charge in
     acted = true
   elif engage >= 0 and shotReady:
+    actMode = "fire"
     # Traverse onto the target and fire once the corridor covers it: the
     # perpendicular miss of the current aim error at the target's range must
     # sit inside the ~14px bullet corridor. Advancing scales that miss down
@@ -2341,6 +2377,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # vision cone) on the arc the threat would push through.
     let duck = bot.findDuckCell(client, me, bot.enemies[nearThreat].pos)
     if duck >= 0:
+      actMode = "duck"
       desiredAim = bradsOf(bot.enemies[nearThreat].pos - me)
       if dist(cellCenter(duck), me) < 5.0:
         holdStill = true
@@ -2354,6 +2391,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     desiredAim = bradsOf(blockedAim - me)
     let peek = bot.findPeekCell(client, me, blockedAim)
     if peek >= 0 and dist(cellCenter(peek), me) > 4.0:
+      actMode = "peek"
       moveMask = octantBits(cellCenter(peek) - me)
       acted = true
 
@@ -2372,6 +2410,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         threatD = d
         threat = i
     if threat >= 0 and not iCarry and not pocketRush:
+      actMode = "evade"
       let away = norm(me - seenEnemies[threat].pos)
       var side = vec(-away.y, away.x)
       if (bot.tick div 12 + bot.slot div 2) mod 2 == 0:
@@ -2387,6 +2426,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       # it back and forth across the arc threats cross while standing still.
       # While our flag is stolen the thief comes from our own half;
       # otherwise intruders come from the enemy half.
+      actMode = "scan"
       let watch =
         if ownStolen: vec(homeSign(bot.team), 0.0)
         else: vec(-homeSign(bot.team), 0.0)
@@ -2471,6 +2511,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   bot.lastPos = me
   if holdStill:
     bot.stuckTicks = 0
+  var jinked = false
   if bot.stuckTicks > 20 and engage < 0:
     bot.stuckTicks = 0
     bot.jinkUntil = bot.tick + 10
@@ -2479,9 +2520,11 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     if bot.jinkBits == 0:
       bot.jinkBits = ButtonUp
     moveMask = bot.jinkBits
+    jinked = true
 
   if nadeDanger:
     # Sprint straight out of the marked blast zone; drop any hold/duck.
+    actMode = "nade_flee"
     let away = me - nadeDangerFrom
     moveMask = octantBits(
       if len(away) < 1.0: vec(homeSign(bot.team), 0.3) else: away
@@ -2513,6 +2556,18 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     if (mask and ButtonB) != 0: 1
     elif (mask and ButtonSelect) != 0: -1
     else: 0
+  artFrame(FrameSnap(
+    tick: bot.tick, alive: true,
+    x: int(me.x), y: int(me.y), hp: bot.hp, aim: bot.estAim,
+    objective: objMode, action: actMode,
+    targetX: int(target.x), targetY: int(target.y),
+    iCarry: iCarry, mateCarry: mateCarry, ownStolen: ownStolen,
+    sawThief: sawThief, pushOut: pushOut,
+    hasShield: hasShield, hasPlasma: hasPlasma, carryNade: carryingNade,
+    nadeCharge: bot.nadeCharge, jinked: jinked, nadeDanger: nadeDanger,
+    enemiesVisible: seenEnemies.len,
+    engageDist: (if engage >= 0: int(engageD) else: -1),
+    mask: mask, fired: (mask and ButtonA) != 0))
   mask
 
 const ShoutVocab = [
@@ -2535,10 +2590,12 @@ proc runBot(url: string) =
     shoutEnabled = getEnv("CTF_BOT_SHOUT").len > 0
   bot.resetTransient()
   echo "baseline slot=", slot, " team=", team, " role=", role, " -> ", endpoint
+  artInit(slot, $team, $role)
   let client = initProtocolClient()
   when defined(taunt):
     startTaunts()                        # worker thread + bank prefetch
   var everConnected = false
+  var playing = false
   while true:
     try:
       let ws = newWebSocket(endpoint)
@@ -2558,8 +2615,14 @@ proc runBot(url: string) =
         bot.estAim = floorMod(
           bot.estAim + bot.rotSign * AimRate * advance, AimBrads)
         if not client.mapCameraReady:
+          if playing:
+            playing = false
+            artEvent(bot.tick, "game_end")
           bot.resetTransient()             # lobby / game-over interstitial
           continue
+        if not playing:
+          playing = true
+          artEvent(bot.tick, "game_start")
         if not bot.navBuilt and client.walkabilityReady:
           bot.buildNavGrid(client)
         let mask = bot.decide(client)
@@ -2577,12 +2640,19 @@ proc runBot(url: string) =
         when defined(shoutCoord) or defined(taunt):
           if bot.shoutWant.len > 0:
             ws.send(chatBlob(bot.shoutWant), BinaryMessage)
+            artEvent(bot.tick, "shout_tx", %*{"text": bot.shoutWant})
             bot.shoutWant = ""
+        # Done thinking: a fastMode server advances the tick as soon as
+        # every player has sent this; older servers ignore the packet.
+        ws.send(readyBlob(), BinaryMessage)
     except Exception as e:
       if everConnected:
         # The game ended and the server went away: exit so the episode
-        # runner sees a clean player shutdown.
+        # runner sees a clean player shutdown. The socket closing is this
+        # bot's final game message — ship the telemetry artifact now,
+        # before the runner tears the container down.
         echo "game over, exiting: ", e.msg
+        artFlush()
         quit(0)
       echo "connect retry: ", e.msg
       sleep(250)

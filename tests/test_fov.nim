@@ -33,13 +33,14 @@ suite "fog-of-war vision":
     check not sim.fovAt(visible, cx, 550)      # behind, beyond the bubble.
     check not sim.fovAt(visible, 100, cy)      # 90 degrees off, beyond bubble.
 
-  test "the 45-degree cone edge follows the aim":
+  test "the 60-degree cone edge follows the aim":
     var visible: seq[bool]
-    # Aiming diagonally up-right (32 brads): cells up the open center corridor just
-    # inside the 45-degree edge stay visible, just outside it fog over.
-    sim.computeFovVisible(cx div FovCellSize, cy div FovCellSize, 32, visible)
-    check sim.fovAt(visible, 630, 100)         # ~43 degrees off the aim.
-    check not sim.fovAt(visible, 610, 100)     # ~47 degrees off the aim.
+    # Aiming up-right at 21 brads (~30 degrees above east): cells up the open
+    # center corridor just inside the 60-degree edge stay visible, just
+    # outside it fog over.
+    sim.computeFovVisible(cx div FovCellSize, cy div FovCellSize, 21, visible)
+    check sim.fovAt(visible, 636, 100)         # ~56 degrees off the aim.
+    check not sim.fovAt(visible, 604, 100)     # ~64 degrees off the aim.
 
   test "vision bubble: close cells are visible regardless of aim":
     var visible: seq[bool]
@@ -48,13 +49,16 @@ suite "fog-of-war vision":
     check sim.fovAt(visible, cx - 60, cy)      # sideways, inside the bubble.
     check sim.fovAt(visible, cx, cy)           # own cell.
 
-  test "walls block the cone":
-    # The chevron wall pair straddles the midline near x=479..506; aiming
-    # west from the center, the lane past it is occluded.
+  test "walls block the cone, glass does not":
+    # The midline bracket (GameVersion 16) straddles the center row near
+    # x=479..507 with a GLASS pane at the middle of its bar: aiming west
+    # from the center the lane stays visible through the glass, and fog
+    # only lands behind the solid column-1 stub (x=268..286, y=300..359).
     var visible: seq[bool]
     sim.computeFovVisible(cx div FovCellSize, cy div FovCellSize, 128, visible)
-    check sim.fovAt(visible, 540, cy)          # before the wall: clear.
-    check not sim.fovAt(visible, 440, cy)      # behind the wall: fogged.
+    check sim.fovAt(visible, 540, cy)          # before the bracket: clear.
+    check sim.fovAt(visible, 440, cy)          # behind the glass: visible.
+    check not sim.fovAt(visible, 250, cy)      # behind the stone stub: fogged.
 
   test "unlimited range down an open lane":
     var visible: seq[bool]

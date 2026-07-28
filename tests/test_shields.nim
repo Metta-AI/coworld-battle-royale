@@ -22,8 +22,6 @@ proc twoTeamGame(): SimServer =
   result.startGame()
   result.players[0].team = Red
   result.players[1].team = Blue
-  for i in 0 ..< result.players.len:
-    result.players[i].spawnProtect = 0
 
 proc standOn(sim: var SimServer, playerIndex, spawnIndex: int) =
   ## Puts one player exactly on a shield spawn point.
@@ -37,72 +35,132 @@ suite "shields":
     for spawn in sim.shieldSpawns:
       check spawn.present
       check sim.canOccupy(spawn.x, spawn.y)
+      # Shields live in the BOTTOM half (three-quarter height); the plasma arcs
+      # hold the matching top-half spots.
+      check abs(spawn.y - 3 * MapHeight div 4) < 120
+      check spawn.y > MapHeight div 2
     # One shield on the red (left) half, one on the blue (right) half.
     check sim.shieldSpawns[0].x < MapWidth div 2
     check sim.shieldSpawns[1].x > MapWidth div 2
 
-  test "picking up a shield grants 6 hit points and bars shooting":
+  test "picking up a shield adds a full 3 hp shield layer over base hp":
     var sim = twoTeamGame()
-    check sim.config.hitPoints < ShieldHitPoints
+    check ShieldLayerHp == 3
+    check sim.players[0].hp == sim.config.hitPoints
     sim.standOn(0, 0)
     sim.tryPickupShields(0)
     check sim.players[0].hasShield
-    check sim.players[0].hp == ShieldHitPoints
+    check sim.players[0].hp == sim.config.hitPoints
+    check sim.players[0].shieldHp == ShieldLayerHp
     check not sim.shieldSpawns[0].present
     check sim.shieldSpawns[1].present
 
-  test "a shield carrier cannot shoot; an unshielded control kills":
-    # Control: no shield, a point-blank shot kills the enemy.
-    var ctrl = twoTeamGame()
-    ctrl.players[0].x = 300
-    ctrl.players[0].y = 300
-    ctrl.players[0].aimBrads = 0          # east
-    ctrl.players[0].fireCooldown = 0
-    ctrl.players[1].x = 300 + 30
-    ctrl.players[1].y = 300
-    ctrl.players[1].hp = 1
-    ctrl.tryFire(0)
-    check not ctrl.players[1].alive
-
-    # Same setup, but the shooter carries a shield: the shot never fires.
+  test "a shield pickup never heals base damage":
+    # A hurt shieldless player gains the 3 hp layer on top of its damaged
+    # base — the base damage stays until a med kit heals it.
     var sim = twoTeamGame()
+    sim.players[0].hp = 1
+    sim.standOn(0, 0)
+    sim.tryPickupShields(0)
+    check sim.players[0].hasShield
+    check sim.players[0].hp == 1
+    check sim.players[0].shieldHp == ShieldLayerHp
+    check not sim.shieldSpawns[0].present
+
+  test "damage depletes the shield layer before base hp":
+    var sim = twoTeamGame()
+    sim.players[0].hasShield = true
+    sim.players[0].shieldHp = ShieldLayerHp
+    sim.players[0].fireCooldown = 0
     sim.players[0].x = 300
     sim.players[0].y = 300
     sim.players[0].aimBrads = 0
+    sim.players[1].x = 300 + 30
+    sim.players[1].y = 300
+    sim.players[1].hasShield = true
+    sim.players[1].shieldHp = 2
+    sim.tryFire(0)
+    check sim.players[1].shieldHp == 1
+    check sim.players[1].hp == sim.config.hitPoints
+    # A hit larger than the remaining layer spills into base hp.
+    sim.absorbDamage(1, 2)
+    check sim.players[1].shieldHp == 0
+    check sim.players[1].hp == sim.config.hitPoints - 1
+
+  test "a worn carrier can take another shield to refill the layer":
+    var sim = twoTeamGame()
+    sim.players[0].hasShield = true
+    sim.players[0].shieldHp = 0
+    sim.players[0].hp = 2
+    sim.standOn(0, 0)
+    sim.tryPickupShields(0)
+    check sim.players[0].hasShield
+    check sim.players[0].shieldHp == ShieldLayerHp
+    check sim.players[0].hp == 2
+    check not sim.shieldSpawns[0].present
+    check sim.shieldSpawns[0].respawnAt == sim.tickCount + ShieldRespawnTicks
+
+  test "repeated pickups cannot launder base damage away":
+    # Base damage + an intact layer: another shield grants nothing, so the
+    # spawn is left untouched and the base stays hurt.
+    var sim = twoTeamGame()
+    sim.players[0].hasShield = true
+    sim.players[0].shieldHp = ShieldLayerHp
+    sim.players[0].hp = 1
+    sim.standOn(0, 0)
+    sim.tryPickupShields(0)
+    check sim.players[0].hp == 1
+    check sim.players[0].shieldHp == ShieldLayerHp
+    check sim.shieldSpawns[0].present
+
+  test "a med kit heals base damage under an intact shield":
+    var sim = twoTeamGame()
+    sim.players[0].hasShield = true
+    sim.players[0].shieldHp = ShieldLayerHp
+    sim.players[0].hp = 1
+    sim.players[0].x = sim.medKitSpawns[0].x - CollisionW div 2
+    sim.players[0].y = sim.medKitSpawns[0].y - CollisionH div 2
+    sim.tryPickupMedKits(0)
+    check sim.players[0].hp == sim.config.hitPoints
+    check sim.players[0].shieldHp == ShieldLayerHp
+
+  test "a shield carrier can still shoot and kill":
+    var sim = twoTeamGame()
+    sim.players[0].x = 300
+    sim.players[0].y = 300
+    sim.players[0].aimBrads = 0           # east
     sim.players[0].fireCooldown = 0
     sim.players[0].hasShield = true
     sim.players[1].x = 300 + 30
     sim.players[1].y = 300
     sim.players[1].hp = 1
     sim.tryFire(0)
-    check sim.players[1].alive
+    check not sim.players[1].alive
 
-  test "attack input from a shielded player releases no shot over many ticks":
+  test "a shield carrier's fire cooldown is 3x the normal cooldown":
+    # Control: no shield, a shot starts the normal cooldown.
+    var ctrl = twoTeamGame()
+    ctrl.players[0].fireCooldown = 0
+    ctrl.tryFire(0)
+    check ctrl.players[0].fireCooldown == ctrl.config.fireCooldownTicks
+
+    # Same shot with a shield: the cooldown is ShieldFireSlowdown times longer.
     var sim = twoTeamGame()
-    sim.players[0].x = 300
-    sim.players[0].y = 300
-    sim.players[0].aimBrads = 0
+    sim.players[0].fireCooldown = 0
     sim.players[0].hasShield = true
-    sim.players[1].x = 300 + 30
-    sim.players[1].y = 300
-    sim.players[1].hp = 1
-    var inputs = newSeq[InputState](sim.players.len)
-    inputs[0].attack = true
-    let none = newSeq[InputState](sim.players.len)
-    var prev = none
-    for _ in 0 ..< 4 * ReplayFps:
-      sim.step(inputs, prev)
-      prev = inputs
-      if not sim.players[0].hasShield:
-        break
-    check sim.players[1].alive
+    sim.tryFire(0)
+    check ShieldFireSlowdown == 3
+    check sim.players[0].fireCooldown ==
+      sim.config.fireCooldownTicks * ShieldFireSlowdown
 
-  test "a player carries at most one shield":
+  test "a full-layer carrier does not waste a spawn":
     var sim = twoTeamGame()
     sim.standOn(0, 0)
     sim.tryPickupShields(0)
     check sim.players[0].hasShield
-    # Standing on the second shield with one in hand takes nothing.
+    check sim.players[0].shieldHp == ShieldLayerHp
+    # Standing on the second shield with an intact layer takes nothing — a
+    # pickup that would grant 0 leaves the spawn for a teammate.
     sim.standOn(0, 1)
     sim.tryPickupShields(0)
     check sim.shieldSpawns[1].present
@@ -131,6 +189,7 @@ suite "shields":
   test "dying loses the carried shield":
     var sim = twoTeamGame()
     sim.players[0].hasShield = true
+    sim.players[0].shieldHp = 0
     sim.players[0].hp = 1
     sim.players[1].x = sim.players[0].x + 40
     sim.players[1].y = sim.players[0].y
@@ -144,6 +203,7 @@ suite "shields":
       prev = inputs
     check not sim.players[0].alive
     check not sim.players[0].hasShield
+    check sim.players[0].shieldHp == 0
 
   test "shield state is in the game hash":
     var sim1 = twoTeamGame()
@@ -152,5 +212,8 @@ suite "shields":
     sim1.players[0].hasShield = true
     check sim1.gameHash != sim2.gameHash
     sim1.players[0].hasShield = false
+    sim1.players[0].shieldHp = 2
+    check sim1.gameHash != sim2.gameHash
+    sim1.players[0].shieldHp = 0
     sim1.shieldSpawns[0].present = false
     check sim1.gameHash != sim2.gameHash

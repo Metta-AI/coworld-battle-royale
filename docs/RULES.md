@@ -20,15 +20,39 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   **right edge**.
 - **Two team hearts**, one on each team's **home pedestal** inside its spawn
   pocket (classic two-object CTF, with hearts for flags).
-- The arena is filled with **dense staggered cover** (a slalom of offset wall
+- The arena is filled with **staggered cover** (a slalom of offset wall
   stubs, diamonds, discs, and diagonal chevron walls, mirrored symmetrically so
-  neither team has a positional advantage): **no straight sightline crosses the
-  field**, so every approach is a series of corners.
+  neither team has a positional advantage): **no straight shot crosses the
+  field**, so every approach is a series of corners. GameVersion 16 thinned
+  the disc column to every other disc, opening real gaps in the mid-field
+  slalom.
+- In the outermost stub column of each half, the **second wall stub from the
+  top and from the bottom are glass windows** (GameVersion 15): they block
+  movement, bullets, and plasma arcs exactly like stone, but **vision passes
+  straight through them**. Glass draws as a pale pane with diagonal sheen —
+  cover you can be seen behind is not cover.
+- The old midline chevron zigzag is now a **square-bracket wall pair framing
+  the flag ring** (`[ … ]`, GameVersion 16), and the middle of each bracket's
+  bar — dead on the center row — is a **glass window**: the mid lane stays
+  closed to movement and fire, but both teams can watch the center corridor
+  through the glass.
 - A round ends when a team **captures the enemy heart** or is **wiped out**.
 
 ## Teams & spawns
 
 - Players are assigned to **Red** or **Blue** by slot (8 each).
+- A slot may configure a cosmetic **skin** (`slots[i].skin` in the game
+  config; currently `default` or `crown`) that restyles that player's body
+  art. Skins are cosmetic only: no gameplay effect, and the player, corpse,
+  and selected-player observation labels are unchanged, so policies cannot
+  (and need not) distinguish them.
+- Each team's players get a fixed **identity**, `alpha` through `theta`, by
+  slot order within the team — deterministic across matches and replays. A
+  small Greek-letter badge (Α Β Γ Δ Ε Ζ Η Θ) rides each living player's
+  sprite, and the badge object is labeled `identity <color> <name>` (e.g.
+  `identity red alpha`). Badges are fog-gated with their player: seeing a
+  player means seeing who it is. Existing `player <color> <side>` labels are
+  unchanged.
 - Each team has a **home edge**: Red = left, Blue = right.
 - Players spawn just inside their home edge and respawn there when killed.
 
@@ -37,6 +61,12 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
 - Movement is **continuous** (acceleration, friction, max speed, wall-sliding) —
   the d-pad drives it.
 - Movement is **pure locomotion**: it never changes where you aim or look.
+- Player bodies are **solid**: you cannot drive over or through another live
+  player (friend or foe). Contact is a **slightly elastic collision** — equal
+  masses, `playerBouncePct` restitution (default 40%): ramming a standing
+  player shoves them forward and keeps a little of your speed; a head-on
+  meeting bounces both back at 40% of the closing speed. Glancing contact
+  slides around the body the same way wall-sliding works. Corpses never block.
 
 ## Aim
 
@@ -65,28 +95,36 @@ Every player observes the **full map** — the terrain is static knowledge and i
 always drawn — but moving entities are fogged:
 
 - Your **vision** is a **forward cone** of half-angle `visionConeDeg` (default
-  ±45°) around your **aim angle**, with **unlimited range**, plus a small
+  ±60°) around your **aim angle**, with **unlimited range**, plus a small
   **omnidirectional bubble** of `visionBubble` (default ~90px) around you.
-- **Walls block vision** — the same walls that block bullets. A long open lane is
-  visible (and lethal) end to end; anything behind cover is not.
+- **Stone walls block vision** — the same walls that block bullets — with one
+  exception: **glass windows** (the second stub from the top and bottom of
+  each half's outer stub column) block bullets but NOT vision. A long open
+  lane is visible (and lethal) end to end; anything behind stone is not;
+  anything behind glass is **seen but safe from direct fire**.
 - **Your aim carries your vision.** You look where you aim, not where you walk,
   so watching a lane, sweeping an arc, and turning your back are deliberate
   rotation choices - and moving somewhere no longer reveals it.
 - Everything outside your vision is **masked**: enemies, an enemy carrying a
-  heart, and shot tracers / death splatters from unseen events are simply not in
-  your observation. The unseen area is dimmed by a fog overlay.
+  heart, and death splatters from unseen events are simply not in your
+  observation. The unseen area is dimmed by a fog overlay.
+- **Bullets are invisible to players.** Shot tracers and muzzle flashes are
+  spectator/replay rendering only — no player observation ever contains
+  them, whether the shot crossed your vision or not. Players learn of
+  gunfire only by sound (below).
 - **Always visible regardless of fog:** the static map, **both heart pedestals**,
   your **own heart's state** (its pedestal heart is never hidden — an empty own
   pedestal means your heart is stolen), and **yourself** via a distinct self
   marker. **Teammates are fogged like everyone else** — there is no team
   radio; keeping track of your own side takes eyes too.
-- **Gunshots are audible.** A shot whose muzzle you could not see leaves a
-  brief semi-transparent filled **sound ring** (label `shot sound`) near the
-  muzzle for ~0.5s, and a shot whose impact point you could not see leaves a
-  hollow **impact ring** (label `shot impact`) near where it landed. Each
-  ring is randomly (but deterministically, per shot) offset by up to ~20px,
-  so it tells you someone fired *roughly there* / something was hit
-  *roughly there* — never the exact spot, and never which team.
+- **Only a shot's landing is audible — and sound is all a player gets.**
+  Every shot leaves every living player one brief hollow **impact ring**
+  (label `shot impact`) near where it landed, for ~0.5s, regardless of line
+  of sight. **Firing itself is silent**: the muzzle emits no signal, so
+  pulling the trigger never reveals the shooter's neighborhood — only where
+  the paint lands. The ring is randomly (but deterministically, per shot)
+  offset by up to ~20px, so it tells you something was hit *roughly there*
+  — never the exact spot, the shot's line, or which team.
 - There is **no global heart tracking**: once a thief carries your heart into the
   fog, finding it again takes eyes on it.
 - Death does not lift the fog: a dead player sees the whole map fogged —
@@ -107,16 +145,57 @@ always drawn — but moving entities are fogged:
 - The bullet is **hitscan along your aim ray**: it travels down the locked
   aim direction and hits the **first player whose footprint crosses its
   narrow corridor** — it never passes through a body to hit someone behind,
-  and **walls stop it** (clear line of sight required). Range is effectively
-  map-wide, so cover and angles matter more than distance.
+  and **walls stop it**. Range is effectively map-wide, so cover and angles
+  matter more than distance.
+- **Cover is partial, not binary.** A target's body is sampled across its
+  silhouette: only the part of the body that is both inside the bullet
+  corridor AND visible from the shooter can be hit. A corner-hugger showing
+  a sliver is exactly as hittable as that sliver — no more (fully hidden
+  body parts cannot be tagged through the wall), and no less (the poking
+  shoulder is fair game even when the body's center is safely covered).
+  More exposure means more aim angles connect.
 - **Friendly fire is ON.** A shot hits the first valid target regardless of team,
   so firing into a cluster of teammates can kill your own escort.
 - **Same-tick shots resolve simultaneously.** Every trigger pulled on the same
   tick picks its target against the same snapshot before any kill applies: a
   mutual face-off duel kills both shooters, and neither team gains an
   input-processing-order advantage.
-- On respawn you have brief **spawn protection** (temporary invulnerability) to
-  prevent spawn-camping.
+
+### Shot micro (frame data)
+
+The full life of one shot, at 24 ticks/second:
+
+1. **Trigger pull (tick 0).** Fire is edge-triggered: a shot arms on the
+   tick the button goes down — holding it does nothing, and a second pull
+   during a pending windup is ignored. The pull is refused entirely while
+   the cooldown is still running.
+2. **Windup (5 ticks, ~0.2s).** Your **aim angle locks at the pull**;
+   turning during the windup does not bend the pending shot (it only
+   re-aims the next one). Your **position stays live**: movement is
+   full-speed and unrestricted during the windup.
+3. **Release (tick 5).** The bullet resolves instantly (hitscan) **from
+   your position at release, along the angle locked at the pull**. All
+   movement for the tick happens first; every shot releasing that tick then
+   resolves at once against the post-movement snapshot.
+4. **Cooldown (12 ticks, ~0.5s; 3x that for a shield carrier).** The
+   cooldown starts at release, so the sustained rate is one shot per
+   cooldown — the windup does not slow your cadence.
+
+What that means in practice:
+
+- **Strafe-firing works.** The shot line translates with your movement
+  (new position, old angle), so lead your own strafe when you pull.
+- **Fire-and-duck can waste your own shot.** Line of sight is checked from
+  your release position: step behind a wall during your windup and the
+  wall eats your bullet.
+- **Targets can dodge the windup.** Anyone who breaks line of sight during
+  your ~0.2s windup survives; the aim lock is the price of the shot.
+- **The corridor is forgiving.** The bullet is a ray with an 8px half-width
+  corridor sampled against the target's ~12px-wide silhouette — near-misses
+  connect; precision beyond the corridor width buys nothing.
+- **Respawners are live immediately.** There is no spawn protection: a
+  freshly respawned player can shoot and be shot (and blocks bullets) from
+  their first tick.
 
 ## Grenades
 
@@ -137,33 +216,44 @@ always drawn — but moving entities are fogged:
   windups (~0.4s) after release, near or far** — long throws just travel
   faster. A grenade is a snap weapon: the reaction window is the same as
   eating two aimed shots, not a mortar shell you can stroll away from.
-- **The blast hurts everyone inside its radius (~40 px): enemies, teammates,
-  and the thrower alike**, removing 2 hit points each. Spawn protection
-  still shields. Kills credit the thrower (except suicides).
+- **The blast hurts everyone inside its radius (~52 px): enemies, teammates,
+  and the thrower alike**, removing 2 hit points each. The landing splat and
+  the charge-time throw-target ring are drawn at the TRUE blast diameter —
+  what looks painted is exactly what got hit, and everything inside the ring
+  will be. Kills credit the thrower (except suicides).
 - **Throwing is silent; landing is loud.** A landing you could not see
-  leaves a large jittered sound ring (label `grenade sound`), exactly like
-  gunshot rings. The throw itself leaves nothing.
+  leaves a large jittered sound ring (label `grenade sound`) — landing-only
+  audio, exactly like gunshot impact rings. The throw itself leaves nothing.
 - Observation labels: pickups `grenade`, airborne `grenade air`, the marker
   above a carrier `grenade carried`, the charge marker `throw target`, the
   landing flash `blast stage N`.
 
-## Sword
+## Plasma arc
 
-- **Two sword pickups spawn at the side midpoints** — one on each side,
-  midway between that side's two corner grenades, nudged to the nearest
-  walkable floor. Both are present when the game starts, and a taken sword
-  respawns after **30 seconds**.
-- **Each player carries at most one sword**, independently of their grenade.
-  Dying loses the carried sword; nothing drops.
-- While carrying a sword, **A performs an immediate melee swipe instead of
-  firing the gun**. The swipe reaches **26 px** in front of the player and
-  covers a **±45° forward arc**. The gun is disabled while the sword is held;
-  C still throws a carried grenade normally.
-- The swipe is lethal to every other living player in its arc, including
-  teammates. It requires line of sight, and spawn protection blocks it.
-  Kills credit the sword attacker.
-- Observation labels: pickup `sword`, carrier marker `sword carried`, and
-  the fading slash `sword swipe`.
+- **Two plasma arc pickups spawn high in the side back columns** — one on
+  each side, in the TOP half (a quarter of the map height down, between the
+  top corner grenade and the side midpoint), nudged to the nearest walkable
+  floor. The shields hold the matching bottom-half spots. Both plasma arcs
+  are present when the game starts, and a taken one respawns after
+  **30 seconds**.
+- **Each player carries at most one plasma arc**, independently of their
+  grenade. Dying loses the carried arc; nothing drops.
+- While carrying a plasma arc, **A ignites a forward plasma cone instead of
+  firing the gun**. The cone reaches **4 squares** in front of the player
+  (136 px — one square is one 34 px cog body) and widens linearly to
+  **2 squares (68 px) at max reach**, a constant half-angle of
+  atan(1/4) ≈ 14°. The gun is disabled while the arc is held; C still
+  throws a carried grenade normally.
+- **The cone stays on for 5 ticks**, tracking the attacker's position and
+  aim across the window, then the weapon takes **20 ticks to reset**
+  (one firing every 25 ticks). The cone shuts off if its owner dies.
+- **A touch removes 3 hit points, once per victim per firing** — instantly
+  lethal to a bare 3 hp cog, while a 6 hp shield carrier survives the first
+  touch with 3 hp left. The cone affects teammates too and requires line
+  of sight. Kills credit the attacker.
+- Observation labels: pickup `plasma arc`, carrier marker
+  `plasma arc carried`, and the fading cone `plasma arc pulse` (a run of
+  team-colored pulse discs along the attacker's aim each active tick).
 
 ## Shouts
 
@@ -177,7 +267,7 @@ always drawn — but moving entities are fogged:
   not appear in your frame at all.
 - A heard shout appears as a speech bubble labeled
   `<team> shout <player>: <text>` pinned at **deterministically jittered
-  coordinates** (~±20 px, like gunshot sound rings): you learn roughly where
+  coordinates** (~±20 px, like gunshot impact rings): you learn roughly where
   the shouter is, never exactly.
 - **Rate limit: one shout per second per player**, and each player has at
   most one live bubble (a new shout replaces the old). Bubbles fade after
@@ -200,14 +290,20 @@ always drawn — but moving entities are fogged:
 ## Shields
 
 - **One shield sits deep in each team's endzone**, in the same back column
-  as the corner grenade pickups (centered between the two corners), nudged
-  to the nearest walkable floor.
+  as the corner grenade pickups but in the BOTTOM half (three quarters of
+  the map height down, between the side midpoint and the bottom corner
+  grenade), nudged to the nearest walkable floor. The plasma arcs hold the
+  matching top-half spots.
 - **Touch a shield to pick it up** — either team may take either endzone's
-  shield, and a player carries at most one.
-- **While carrying a shield you have 6 hit points but cannot shoot.**
-  Picking one up sets your hit points to 6; the trigger does nothing until
-  you lose the shield. You can still move, carry the heart, and throw
-  grenades.
+  shield. A shield is a **3 hp armor layer on top of your base hit points**:
+  damage depletes the shield layer first, and only then your base hp. A
+  pickup refills the layer to 3 but **never heals base damage** (med kits
+  do that) — so a worn carrier can take another shield to restore the
+  layer, while a carrier whose layer is intact leaves the spawn untouched.
+- **While carrying a shield you fire 3x slower.** A fresh player with a
+  fresh shield has 6 effective hp (3 base + 3 shield). Each shot you fire
+  starts a cooldown three times the normal length until you lose the
+  shield. You can still move, carry the heart, and throw grenades.
 - **A shield is lost when you die** and is not dropped on the ground; the
   taken endzone shield **respawns 30 seconds later** in the same spot.
 - Observation label: `shield`. Shields are fog-gated like the med kits and
@@ -241,8 +337,8 @@ A round ends immediately when either condition is met:
 1. **Capture** — carry the **enemy heart** into **your own home capture zone**.
 2. **Wipe** — the entire **enemy team is out of lives**.
 
-If neither happens before the **time limit**, the round is a **scoreless
-draw** — there is no tiebreak.
+If neither happens before the **time limit**, the round is a **lose-lose
+draw** — there is no tiebreak, and both sides are penalized.
 
 ## Scoring
 
@@ -250,7 +346,10 @@ Scoring is **sparse and win-only**:
 
 - **Decisive round** (capture or wipe): every winner scores **+1**, every
   loser scores **-1**.
-- **Time-limit draw: 0 for both sides.**
+- **Time-limit draw: -1 for both sides** (GameVersion 21). Running out the
+  clock is never better than losing, so stalling has no upside for anyone.
+- **Mutual-wipe draw** (both teams eliminated on the same tick): 0 for both
+  sides — both at least fought to a decision.
 
 Kills, deaths, heart pickups, carry time, and captures are still **recorded** in
 the episode results for leaderboards and analysis — they just do not award
@@ -261,7 +360,7 @@ points. This keeps the training objective tied purely to winning.
 | Button | Action |
 | --- | --- |
 | D-pad | Move (locomotion only — never changes your aim) |
-| A | Fire; while carrying a sword, perform a melee swipe |
+| A | Fire; while carrying a plasma arc, ignite the plasma cone |
 | B | Rotate aim counter-clockwise (browser client: X or K) |
 | Select | Rotate aim clockwise (browser client: Space or L) |
 | C | Hold to charge a grenade throw, release to throw (browser client: C) |
@@ -279,20 +378,23 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Lives per player | 3 | Out of lives = out for the round |
 | Hit points per life (`hitPoints`) | 3 | Shots to kill; reset to full on respawn |
 | Respawn delay | ~3s | Time dead before respawning at home |
-| Spawn protection | ~1s | Invulnerability after respawn |
 | Gun range | 1300px | Effectively map-wide; aim precision and line of sight are the real limits |
 | Fire windup | ~0.2s | Trigger pull to bullet release; aim locks at the pull |
 | Fire cooldown | ~0.5s | Minimum time between shots |
 | Carrier speed | ~70% | Movement penalty while holding the heart |
+| Body bounce (`playerBouncePct`) | 40% | Restitution of player-player collisions; bodies are always solid |
 | Aim turn rate (`aimTurnRate`) | 5 brads/tick | Rotation speed while B/Select is held (~7°/tick; full turn ~2.1s) |
-| Vision cone (`visionConeDeg`) | ±45° | Fog-of-war forward vision half-angle; unlimited range, walls block |
+| Vision cone (`visionConeDeg`) | ±60° | Fog-of-war forward vision half-angle; unlimited range, walls block |
 | Vision bubble (`visionBubble`) | 90px | Omnidirectional close-range vision regardless of aim |
-| Sword range (`SwordRange`) | 26px | Forward melee reach |
-| Sword arc (`SwordArcBrads`) | ±32 brads (±45°) | Forward swipe half-angle |
-| Sword respawn | 30s | Taken pickups refill after this interval |
-| Sword swipe lifetime (`SwordFxTicks`) | 8 ticks | Cosmetic slash lifetime |
+| Plasma arc reach (`PlasmaArcReach`) | 136px (4 squares) | Forward cone reach; one square = one 34px cog body |
+| Plasma arc max width (`PlasmaArcMaxWidth`) | 68px (2 squares) | Cone width at max reach; widens linearly (half-angle atan(1/4) ≈ 14°) |
+| Plasma arc damage (`PlasmaArcDamage`) | 3 hp | One touch per victim per firing; lethal to a bare cog, survivable by a shield carrier |
+| Plasma arc active window (`PlasmaArcActiveTicks`) | 5 ticks | The fired cone stays on, tracking its owner's position and aim |
+| Plasma arc reset (`PlasmaArcResetTicks`) | 20 ticks | Recharge after the cone shuts off (one firing per 25 ticks) |
+| Plasma arc respawn | 30s | Taken pickups refill after this interval |
+| Plasma pulse lifetime (`PlasmaArcFxTicks`) | 4 ticks | Cosmetic fade of each per-tick cone snapshot |
 | Heart auto-return | instant | A heart snaps back to its own pedestal the moment its carrier dies |
-| Time limit | (TBD) ticks | Round length cap before the scoreless draw |
+| Time limit (`MaxTicks`) | 5000 ticks (~3.5 min) | Round length cap before the lose-lose draw |
 | Map size | 1235×659 | Inherited from Crewrift; may change |
 
 Engine tick rate is **24 ticks/sec** (inherited from Crewrift); all
@@ -317,8 +419,9 @@ are labeled `red heart` / `blue heart` (formerly `red flag` / `blue flag`).
 Grenades add the labels documented in the Grenades section, and the throw
 button is input mask bit 128.
 
-Swords add the labels documented in the Sword section; their pickup and
-carrier markers are fog-gated like other floor and overhead item markers.
+Plasma arcs add the labels documented in the Plasma arc section; their
+pickup and carrier markers are fog-gated like other floor and overhead item
+markers.
 
 **Since 0.7.5:** shouts (see the Shouts section) add the label
 `<team> shout <player>: <text>`; chat packets, previously ignored, are now
@@ -333,6 +436,12 @@ high-definition soldier is a pure visual upgrade — living players are still
 `aim dot <color>` indicator has been **retired**; facing is read from the
 sprite's swept gun and the vision cone, so a label-scanning policy sees the
 same vocabulary it always has.
+
+**Identity badges:** every living player carries a separate badge object
+labeled `identity <color> <name>` (`alpha`..`theta` — see Teams & spawns).
+Like the `hp <n>/3` bar, the badge is a distinct object centered on its
+player's body: attach it by proximity. It is fog-gated with its player and disappears on
+death.
 
 ---
 
@@ -361,7 +470,7 @@ This section is a build plan, not player-facing rules.
   **Lobby → Playing → GameOver** phase machine (drop RoleReveal/Voting/VoteResult).
 - Player struct: keep `x,y,velX,velY,carryX,carryY,alive,color,reward`; drop
   task/vent/vote fields; add `team`, `lives`, `respawnTimer`, `fireCooldown`,
-  `aimBrads`, `carryingFlag`, `spawnProtect`.
+  `aimBrads`, `carryingFlag`.
 - `global.nim` observation building: team-colored player sprites, the heart
   sprites, a **carrier indicator**, the per-viewer **fog overlay** and
   fog-culled entity stream (there are deliberately **no heart arrows** — fog of
