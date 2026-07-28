@@ -59,7 +59,7 @@
           }
         },
         "slots": {
-          "description": "Optional fixed player slot team, color, and token settings.",
+          "description": "Optional fixed player slot team, color, skin, and token settings.",
           "type": "array",
           "maxItems": 16,
           "default": [],
@@ -75,6 +75,14 @@
                 "enum": [
                   "red",
                   "blue"
+                ]
+              },
+              "skin": {
+                "description": "Cosmetic body-art skin for this slot's player. Rendering only: no gameplay effect and no observation-label change.",
+                "type": "string",
+                "enum": [
+                  "default",
+                  "crown"
                 ]
               },
               "color": {
