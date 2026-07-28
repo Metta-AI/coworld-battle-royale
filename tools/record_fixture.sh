@@ -24,6 +24,7 @@ SERVER_PID=$!
 sleep 1.5
 BOT_PIDS=()
 for i in ${SLOTS:-$(seq 0 15)}; do
+  CTF_BOT_FAST_READY=1 \
   COWORLD_PLAYER_WS_URL="ws://127.0.0.1:$PORT/player?slot=$i&token=0xBADA55_$i" \
     ./players/baseline/baseline.out >/dev/null 2>&1 &
   BOT_PIDS+=($!)

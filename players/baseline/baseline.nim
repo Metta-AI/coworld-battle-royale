@@ -2774,6 +2774,14 @@ proc runBot(url: string) =
   let
     bot = Bot(slot: slot, team: team, role: role)
     shoutEnabled = getEnv("CTF_BOT_SHOUT").len > 0
+    # Opt-in ONLY (fixture recording): the per-frame ready send measurably
+    # corrupts input-application timing in league play — the bot's
+    # dead-reckoned aim (estAim) random-walks to a median ~15 brad error at
+    # the trigger and gun accuracy collapses 44-54% -> 13-23% (task
+    # 1216940574461149: removing this send flipped the same tree from
+    # 0W-23L-1M to 8W-10L-6M vs the champion, p=0.0039). League/xreq runners
+    # never set this env, so competitive builds do not send ready at all.
+    fastReadyEnabled = getEnv("CTF_BOT_FAST_READY").len > 0
   bot.resetTransient()
   echo "baseline slot=", slot, " team=", team, " role=", role, " -> ", endpoint
   artInit(slot, $team, $role)
@@ -2830,7 +2838,10 @@ proc runBot(url: string) =
             bot.shoutWant = ""
         # Done thinking: a fastMode server advances the tick as soon as
         # every player has sent this; older servers ignore the packet.
-        ws.send(readyBlob(), BinaryMessage)
+        # Gated OFF by default (see fastReadyEnabled above): only fixture
+        # recording opts in via CTF_BOT_FAST_READY=1.
+        if fastReadyEnabled:
+          ws.send(readyBlob(), BinaryMessage)
     except Exception as e:
       if everConnected:
         # The game ended and the server went away: exit so the episode
