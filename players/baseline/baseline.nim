@@ -114,6 +114,11 @@ const
                               # turret needs traverse time, so chases keep
                               # shooting a bit after the target fogs out
   ThiefFixTtl = 40            # a thief position fix guides the chase this long
+  ThiefCommitTtl = 240        # -d:thiefCommit: how long a dead-reckoned fix
+                              # keeps EVERY free role committed to the chase —
+                              # a thief who ducks into fog is still running our
+                              # flag; abandoning the hunt after ~1.7s is how
+                              # campers walk flags home (daveey, R1693 review)
 
   AimBrads = 256              # aim angle units per full turn
   AimRate = 5                 # brads/tick a held rotate button turns the aim
@@ -146,6 +151,11 @@ const
   NadeBlast = 40.0            # blast radius; a pair this close dies together
   NadeFullChargeTicks = 24    # ~1s of holding C reaches max range
   NadePickupDetour = 90.0     # grab a corner pickup within this detour range
+  NadeCampTicks = 360         # -d:campNade: a STATIONARY remembered enemy stays
+                              # lob-eligible this long after fogging out — a
+                              # camper's position is durable knowledge, and the
+                              # lob over his cover is the counter the gun lacks
+  NadeCampSpeed = 0.3         # px/tick: tracks slower than this count as camped
   MedKitDetour = 80.0         # heal-detour budget when merely wounded
   MedKitCriticalReach = 180.0 # at 1 hp a heal outranks the current errand
   MedKitRespawn = 30 * 24     # a taken kit refills after 30s (sim constant)
@@ -988,7 +998,16 @@ proc updateTracks(bot: Bot, tracks: var seq[Track], seen: seq[Actor]) =
       claimed.add(true)
   var kept: seq[Track]
   for t in tracks:
-    if bot.tick - t.lastSeen <= TrackTtl:
+    # -d:campNade: a stationary track is a CAMPER and his position outlives
+    # the normal memory window — keep it around long enough to lob at. Every
+    # combat consumer (gun, exposure, serpentine) filters by its own age
+    # window, so the longer retention only feeds the grenade planner.
+    let ttl =
+      when defined(campNade):
+        (if len(t.vel) < NadeCampSpeed: NadeCampTicks else: TrackTtl)
+      else:
+        TrackTtl
+    if bot.tick - t.lastSeen <= ttl:
       kept.add(t)
   kept.sort(proc(a, b: Track): int = cmp(b.lastSeen, a.lastSeen))
   if kept.len > TrackCap:                # there are only eight real players
@@ -1462,6 +1481,19 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         " mateCarryPos=", int(mateCarryPos.x), ",", int(mateCarryPos.y)
       flushFile(stdout)
   var ownStolen = ownPlanted.len == 0
+  # -d:thiefCommit (daveey, R1693 review): a thief in fog is STILL running our
+  # flag — the 40-tick fix window meant one duck behind cover dissolved the
+  # whole chase and everyone strolled back to posts while the flag walked
+  # home. Commit to the dead-reckoned route for ThiefCommitTtl instead; the
+  # only bots excused are the ones escorting OUR live carry (the race is the
+  # v16/v17 scar: never trade our own conversion for defense).
+  let thiefChaseTtl =
+    when defined(thiefCommit): ThiefCommitTtl else: ThiefFixTtl
+  let raceExempt =
+    when defined(thiefCommit):
+      mateCarry and dist(me, mateCarryPos) < 250.0
+    else:
+      false
   # Counter-punch: loss telemetry says lost games are 0-steal games — the
   # wave never converts while the enemy penetrates 3-4 times and wins on
   # capture or the lives tiebreak. Deep into a game with that exact shape
@@ -1640,8 +1672,23 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # castle's whole value was winning the wait — there is nothing to win
     # anymore; break the posts early and go create a flag race.
     (bot.tick - bot.gameStart > StalemateTick and
-     not bot.everStoleTheirs and not bot.everLostOurs)
+     (when defined(stickyBreak):
+        # Sticky (R1693 decode): the one-shot breaker disarmed forever after
+        # the FIRST steal attempt, so a dead carrier sent everyone back to
+        # posts until LatePushTick while the timeout clock ran — the -1/-1
+        # draw tax. Past StalemateTick with no flag in flight the game is
+        # still heading for the mutual loss, so the posts stay broken.
+        not (iCarry or mateCarry)
+      else:
+        not bot.everStoleTheirs and not bot.everLostOurs))
   )
+  when defined(v57Debug):
+    if pushOut and (bot.everStoleTheirs or bot.everLostOurs) and
+        bot.tick - bot.gameStart in StalemateTick .. LatePushTick and
+        bot.tick mod 48 == 0:
+      echo "V57 stickyBreak slot=", bot.slot, " tick=", bot.tick,
+        " posts stay broken (stole=", bot.everStoleTheirs,
+        " lost=", bot.everLostOurs, ")"
 
   # Movement target from role and flag situation.
   var target: Vec
@@ -1668,8 +1715,8 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       let kit = bot.bestKitDetour(me, target, MedKitCarrierBudget)
       if kit >= 0:
         target = bot.kitPos[kit]
-  elif ownStolen and (bot.role == HomeDefender or
-      bot.tick - bot.carrierSeen <= ThiefFixTtl):
+  elif ownStolen and not raceExempt and (bot.role == HomeDefender or
+      bot.tick - bot.carrierSeen <= thiefChaseTtl):
     # An enemy is RUNNING OUR FLAG: with a fresh fix (own eyes or a mate's
     # "T" shout), EVERY role drops what it is doing and converges on the
     # thief's predicted route — an enemy capture ends the episode against
@@ -1678,7 +1725,12 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # fogged but MUST cross mid toward its home edge, so the defender holds
     # the lane nearest the last fix and sweeps its vision — reacquisition
     # takes eyes, not magic.
-    if bot.tick - bot.carrierSeen <= ThiefFixTtl:
+    when defined(v57Debug):
+      if bot.tick - bot.carrierSeen in (ThiefFixTtl + 1) .. thiefChaseTtl and
+          bot.tick mod 24 == 0:
+        echo "V57 thiefCommit slot=", bot.slot, " tick=", bot.tick,
+          " chasing on stale fix age=", bot.tick - bot.carrierSeen
+    if bot.tick - bot.carrierSeen <= thiefChaseTtl:
       # Converge on the thief's predicted path toward the enemy capture edge.
       var predicted = bot.carrierPos +
         bot.carrierVel * float(18 + bot.tick - bot.carrierSeen)
@@ -1911,7 +1963,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     elif hasSword: SwordReach + 6.0      # melee: only point-blank matters
     elif pocketRush: 0.0
     elif iCarry: CarrierFireRange
-    elif ownStolen and bot.tick - bot.carrierSeen <= ThiefFixTtl: FireRange
+    elif ownStolen and bot.tick - bot.carrierSeen <= thiefChaseTtl: FireRange
       # A live fix on the enemy running our flag lifts every role's range
       # cap: the map-wide gun is the fastest flag return there is.
     elif rushing: RushEngageRange
@@ -1968,11 +2020,21 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       prio -= float(MaxHp - t.hp) * HpFocusBonus
     if mateTargeted[i]:
       prio -= FocusFireBonus
-    if ownStolen and bot.tick - bot.carrierSeen <= ThiefFixTtl and
-        dist(t.pos, bot.carrierPos) <= 48.0:
-      # This track IS (or shadows) the enemy running our flag: shoot it
-      # before anything else — a dead carrier returns the flag instantly.
-      prio -= ThiefFocusBonus
+    block thiefPrio:
+      let fixAge = bot.tick - bot.carrierSeen
+      if ownStolen and fixAge <= thiefChaseTtl:
+        # Under -d:thiefCommit the fix may be stale: test proximity against
+        # the DEAD-RECKONED carrier position, not the aging last fix.
+        let carrierRef =
+          when defined(thiefCommit):
+            bot.carrierPos + bot.carrierVel * float(fixAge)
+          else:
+            bot.carrierPos
+        let slack = when defined(thiefCommit): 90.0 else: 48.0
+        if dist(t.pos, carrierRef) <= slack:
+          # This track IS (or shadows) the enemy running our flag: shoot it
+          # before anything else — a dead carrier returns the flag instantly.
+          prio -= ThiefFocusBonus
     if client.pixelRayClear(me, predicted):
       if bot.friendlyBlocked(me, predicted, d):
         continue                        # prefer a target with an empty corridor
@@ -2036,9 +2098,23 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     var bestD = 1e18
     for i in 0 ..< bot.enemies.len:
       let t = bot.enemies[i]
-      if bot.tick - t.lastSeen > FreshShotTicks:
+      let age = bot.tick - t.lastSeen
+      # -d:campNade (daveey, R1693 review): a STATIONARY enemy that fogged out
+      # is a camper, and his remembered position stays true long after the
+      # 1-second fresh window — the lob over his cover is exactly what the
+      # grenade is for, and the gun only engages fresh tracks so this never
+      # competes with a live firefight.
+      let camped =
+        when defined(campNade):
+          age > FreshShotTicks and age <= NadeCampTicks and
+            len(t.vel) < NadeCampSpeed
+        else:
+          false
+      if age > FreshShotTicks and not camped:
         continue
-      let p = t.pos + t.vel * float(bot.tick - t.lastSeen)
+      let p =
+        if camped: t.pos
+        else: t.pos + t.vel * float(age)
       let d = dist(p, me)
       if d < NadeMinRange or d > NadeMaxRange or d >= bestD:
         continue
@@ -2050,10 +2126,15 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
               dist(bot.enemies[j].pos, p) <= NadeBlast:
             paired = true
             break
-      if blocked or paired:
+      if blocked or paired or camped:
         bestD = d
         nadeAim = bradsOf(p - me)
         nadeThrowD = d
+        when defined(v57Debug):
+          if camped:
+            echo "V57 campNade slot=", bot.slot, " tick=", bot.tick,
+              " lob at camped track age=", age, " d=", int(d),
+              " pos=", int(p.x), ",", int(p.y)
 
   # Weapon pickups. SHIELD-THEN-STEAL: the enemy endzone shield sits just
   # behind their pedestal — a rusher near the pocket grabs 6 hp first and
