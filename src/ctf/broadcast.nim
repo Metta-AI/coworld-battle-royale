@@ -507,7 +507,7 @@ proc buildStateJson*(
 
   var state = %*{
     "t": sim.tickCount,
-    "mt": sim.config.maxTicks,
+    "mt": sim.effectiveMaxTicks(),
     "ph": ($sim.phase).toLowerAscii,
     "lob": sim.lobbyStartSecondsRemaining(),
     "pl": playing,

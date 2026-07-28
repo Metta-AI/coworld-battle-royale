@@ -9,7 +9,10 @@ when not defined(emscripten):
 
 const
   GameName* = "ctf"
-  GameVersion* = "22"  ## GV22: shield armor layer (re-land of #76).
+  GameVersion* = "23"  ## GV23: a depleted shield layer breaks the shield
+                       ## outright (icon + fire slowdown end with the bubble),
+                       ## and kills/heart-steals floor the game clock at
+                       ## ActionClockFloorTicks remaining.
   ReplayFps* = 24
   DefaultMapPath* = "arena"
   DarkBgPath* = "data/darkbg.aseprite"
@@ -109,6 +112,9 @@ const
   StartWaitTicks* = 5 * TargetFps
   GameOverTicks* = 360
   MaxTicks* = 5_000  ## 0 = no limit.
+  ActionClockFloorTicks* = 500  ## a kill or heart steal leaves at least this
+                                ## many ticks on the clock, so a timed game
+                                ## never ends mid-action.
   MaxGames* = 0  ## 0 = no limit.
   MaxPlayers* = 16
   MinPlayers* = 16
@@ -649,6 +655,8 @@ type
     winner*: Team
     gameOverTimer*: int
     timeLimitReached*: bool
+    overtimeTicks*: int        ## clock extension banked by the action floor
+                               ## (kills / heart steals); resets each game.
     isDraw*: bool
     needsReregister*: bool
     gameEventLoggingEnabled*: bool
@@ -3146,6 +3154,7 @@ proc gameHash*(sim: SimServer): uint64 =
   result.mixHashInt(sim.gameStartTick)
   result.mixHashInt(sim.startWaitTimer)
   result.mixHashBool(sim.timeLimitReached)
+  result.mixHashInt(sim.overtimeTicks)
   result.mixHashBool(sim.isDraw)
   result.mixHashBool(sim.needsReregister)
   result.mixHashInt(sim.nextJoinOrder)
@@ -4111,6 +4120,7 @@ proc startGame*(sim: var SimServer) =
   sim.phase = Playing
   sim.gameStartTick = sim.tickCount
   sim.timeLimitReached = false
+  sim.overtimeTicks = 0
   sim.isDraw = false
   sim.lastLobbyPlayersLogged = -1
   sim.lastLobbyNeededLogged = -1
@@ -4346,6 +4356,29 @@ proc lineOfSightClear*(sim: SimServer, ax, ay, bx, by: int): bool =
       return false
   true
 
+proc gameTicksElapsed*(sim: SimServer): int =
+  ## Returns ticks elapsed since the current game left the lobby.
+  if sim.gameStartTick < 0:
+    return 0
+  max(0, sim.tickCount - sim.gameStartTick)
+
+proc effectiveMaxTicks*(sim: SimServer): int =
+  ## Returns the game's tick limit including banked action-floor overtime
+  ## (0 stays "no limit").
+  if sim.config.maxTicks <= 0:
+    return 0
+  sim.config.maxTicks + sim.overtimeTicks
+
+proc floorGameClock(sim: var SimServer) =
+  ## Guarantees at least ActionClockFloorTicks of clock remain. Kills and
+  ## heart steals call this so a timed game never ends mid-action; the
+  ## extension banks into overtimeTicks (per-game, part of gameHash).
+  if sim.config.maxTicks <= 0 or sim.phase != Playing:
+    return
+  let remaining = sim.effectiveMaxTicks() - sim.gameTicksElapsed()
+  if remaining < ActionClockFloorTicks:
+    sim.overtimeTicks += ActionClockFloorTicks - remaining
+
 proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
   ## Applies a fatal hit: return any carried flag to its pedestal, decrement
   ## lives, start respawn.
@@ -4357,6 +4390,8 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
     playerColorText(sim.players[targetIndex].color) &
       " killed by " & sim.playerText(killerIndex)
   )
+  # A kill is action: keep at least ActionClockFloorTicks on the clock.
+  sim.floorGameClock()
   # A dying trigger pull never releases, and a carried grenade is lost.
   sim.players[targetIndex].fireWindup = 0
   sim.players[targetIndex].windupBrads = -1
@@ -4420,6 +4455,14 @@ proc absorbDamage*(sim: var SimServer, targetIndex: int, amount: int): int {.dis
   let fromShield = min(sim.players[targetIndex].shieldHp, amount)
   sim.players[targetIndex].shieldHp -= fromShield
   sim.players[targetIndex].hp -= amount - fromShield
+  if fromShield > 0 and sim.players[targetIndex].shieldHp == 0:
+    # A broken shield is GONE: the carry icon, the " shield" label, and the
+    # fire slowdown all end with the bubble, and an in-flight slowed cooldown
+    # re-clamps so the next shot fires at the normal rate.
+    sim.players[targetIndex].hasShield = false
+    sim.players[targetIndex].fireCooldown = min(
+      sim.players[targetIndex].fireCooldown, sim.config.fireCooldownTicks
+    )
   fromShield
 
 proc canFire*(sim: SimServer, shooterIndex: int): bool =
@@ -5125,6 +5168,8 @@ proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
   if distSq(px, py, sim.flags[flagTeam].x, sim.flags[flagTeam].y) <= rangeSq:
     sim.flags[flagTeam].carrier = playerIndex
     sim.players[playerIndex].carryingFlag = true
+    # A steal is action: keep at least ActionClockFloorTicks on the clock.
+    sim.floorGameClock()
     sim.emitEvent(
       FlagSteal, source = playerIndex,
       x = float(sim.flags[flagTeam].x), y = float(sim.flags[flagTeam].y)
@@ -5499,15 +5544,9 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
     else:
       sim.rewardAccounts[i].reward += LossReward
 
-proc gameTicksElapsed*(sim: SimServer): int =
-  ## Returns ticks elapsed since the current game left the lobby.
-  if sim.gameStartTick < 0:
-    return 0
-  max(0, sim.tickCount - sim.gameStartTick)
-
 proc maxTicksReached(sim: SimServer): bool =
   sim.config.maxTicks > 0 and sim.phase == Playing and
-    sim.gameTicksElapsed() >= sim.config.maxTicks
+    sim.gameTicksElapsed() >= sim.effectiveMaxTicks()
 
 proc teamLivesRemaining*(sim: SimServer, team: Team): int =
   ## Returns total lives remaining (alive players count their current life).
@@ -5733,6 +5772,7 @@ proc resetToLobby*(sim: var SimServer) =
   sim.gameStartTick = -1
   sim.startWaitTimer = 0
   sim.timeLimitReached = false
+  sim.overtimeTicks = 0
   sim.isDraw = false
   sim.needsReregister = true
   sim.resetFlags()

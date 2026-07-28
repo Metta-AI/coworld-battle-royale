@@ -300,10 +300,14 @@ What that means in practice:
   pickup refills the layer to 3 but **never heals base damage** (med kits
   do that) — so a worn carrier can take another shield to restore the
   layer, while a carrier whose layer is intact leaves the spawn untouched.
+- **A depleted layer breaks the shield outright** (GV23): the moment the
+  last shield hp is absorbed, the shield is gone — the carry icon and the
+  `shield` label drop, the fire slowdown ends (an in-flight slowed cooldown
+  re-clamps to the normal length), and the player may take a fresh shield.
 - **While carrying a shield you fire 3x slower.** A fresh player with a
   fresh shield has 6 effective hp (3 base + 3 shield). Each shot you fire
-  starts a cooldown three times the normal length until you lose the
-  shield. You can still move, carry the heart, and throw grenades.
+  starts a cooldown three times the normal length until the shield breaks
+  or you die. You can still move, carry the heart, and throw grenades.
 - **A shield is lost when you die** and is not dropped on the ground; the
   taken endzone shield **respawns 30 seconds later** in the same spot.
 - Observation label: `shield`. Shields are fog-gated like the med kits and
@@ -339,6 +343,11 @@ A round ends immediately when either condition is met:
 
 If neither happens before the **time limit**, the round is a **lose-lose
 draw** — there is no tiebreak, and both sides are penalized.
+
+**Action floors the clock** (GV23): every kill and every heart steal
+guarantees at least **500 ticks** remain on the clock, extending the time
+limit if needed — a timed round never ends in the middle of a fight or a
+heart run. The broadcast clock counts down against the extended limit.
 
 ## Scoring
 
