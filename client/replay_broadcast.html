@@ -276,6 +276,7 @@ html, body {
 
 /* center clock pill + phase */
 .clock {
+  position: relative; /* anchors the fast-forward mini indicator */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -283,6 +284,19 @@ html, body {
   gap: calc(3 * var(--u));
   padding-top: calc(1 * var(--u));
 }
+/* Tiny amber ▸▸ riding the right of the match clock while skip-lulls is
+   actually fast-forwarding — the at-a-glance "time is compressed" cue. */
+.ffwd-mini {
+  display: none;
+  position: absolute;
+  left: calc(100% + 5 * var(--u));
+  top: calc(6 * var(--u));
+  font-family: var(--pixfont);
+  font-size: calc(12 * var(--u));
+  color: var(--amber);
+  text-shadow: 0 calc(2 * var(--u)) 0 var(--ink);
+}
+.ffwd-mini.show { display: block; }
 .clock .time {
   font-family: var(--pixfont);
   /* The clock is the centerpiece: with the name folded into the lives row the
@@ -1013,6 +1027,7 @@ body[data-embed] #board { top: 0; height: 100%; }
       <div class="clock-col">
         <div class="clock amb" id="clock">
           <div class="time" id="clock-time">0:00</div>
+          <span class="ffwd-mini" id="ffwd-mini">▸▸</span>
           <div class="caption" id="clock-caption">Warming up</div>
         </div>
       </div>
@@ -1560,6 +1575,7 @@ body[data-embed] #board { top: 0; height: 100%; }
     $('btn-loop').classList.toggle('on', !!s.lp);
     $('btn-skip').classList.toggle('on', !!s.sk);
     $('ffwd-chip').classList.toggle('show', !!s.ff);
+    $('ffwd-mini').classList.toggle('show', !!s.ff);
 
     // speed chips
     SPEEDS.forEach(function (sp) { speedChipEls[sp].classList.toggle('on', sp === s.sp); });

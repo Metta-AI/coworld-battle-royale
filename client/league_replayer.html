@@ -75,13 +75,17 @@
     text-shadow:0 calc(2*var(--u)) 0 var(--ink), 0 0 calc(11*var(--u)) rgba(0,0,0,.72)}
   .wallname.red{text-align:left; color:var(--red)}
   .wallname.blue{text-align:right; color:var(--blue)}
-  .clock{flex:none; display:flex; flex-direction:column; align-items:center; justify-content:center;
-    gap:calc(3*var(--u))}
+  .clock{flex:none; position:relative; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:calc(3*var(--u))}
   .clock .time{font-family:var(--pixfont); font-size:calc(34*var(--u)); line-height:1; color:var(--paper);
     text-shadow:0 calc(2*var(--u)) 0 var(--ink), 0 0 calc(10*var(--u)) rgba(0,0,0,.7); font-variant-numeric:tabular-nums}
   .clock .caption{font-family:var(--finefont); font-size:calc(9*var(--u)); letter-spacing:.18em;
     text-transform:uppercase; color:var(--paper-dim); white-space:nowrap; text-shadow:0 calc(1*var(--u)) 0 #000}
   .clock.tiebreak-warn .time{color:var(--amber)}
+  .ffwd-mini{display:none; position:absolute; left:calc(100% + 5*var(--u)); top:calc(6*var(--u));
+    font-family:var(--pixfont); font-size:calc(13*var(--u)); color:var(--amber);
+    text-shadow:0 calc(2*var(--u)) 0 var(--ink)}
+  .ffwd-mini.show{display:block}
   .clock.amb{animation:clocktick 2s ease-in-out infinite}
   @keyframes clocktick{0%,100%{opacity:.94}50%{opacity:1}}
 
@@ -240,6 +244,7 @@
     <div class="wallname red" id="name-red">RED</div>
     <div class="clock amb" id="clock">
       <div class="time" id="clock-time">0:00</div>
+      <span class="ffwd-mini" id="ffwd-mini">▸▸</span>
       <div class="caption" id="clock-caption">Warming up</div>
     </div>
     <div class="wallname blue" id="name-blue">BLUE</div>
@@ -701,6 +706,7 @@
     $('btn-loop').classList.toggle('on', !!s.lp);
     $('btn-skip').classList.toggle('on', !!s.sk);
     $('ffwd-chip').classList.toggle('show', !!s.ff);
+    $('ffwd-mini').classList.toggle('show', !!s.ff);
     SPEEDS.forEach(function(sp){ var b=speedChipEls[sp]; if(b) b.classList.toggle('on', sp===s.sp); });
 
     // scrubber x-axis skips the dead lobby: spans [startTick, maxTick].
