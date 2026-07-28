@@ -29,5 +29,6 @@ import
   test_agent_skins,
   test_sprite_collisions,
   test_fast_mode,
-  test_artlog
+  test_artlog,
+  test_clock_floor
 {.warning[UnusedImport]: on.}

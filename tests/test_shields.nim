@@ -186,6 +186,45 @@ suite "shields":
       sim.step(none, none)
     check sim.shieldSpawns[0].present
 
+  test "a depleted shield layer breaks the shield outright":
+    # GV23: when the last layer hp goes, the shield is GONE — carry icon,
+    # " shield" label, and fire slowdown all end with the bubble.
+    var sim = twoTeamGame()
+    sim.standOn(0, 0)
+    sim.tryPickupShields(0)
+    check sim.players[0].hasShield
+    # A slowed cooldown is mid-flight when the layer breaks: it re-clamps.
+    sim.players[0].fireCooldown =
+      sim.config.fireCooldownTicks * ShieldFireSlowdown
+    sim.absorbDamage(0, ShieldLayerHp)
+    check sim.players[0].shieldHp == 0
+    check not sim.players[0].hasShield
+    check sim.players[0].hp == sim.config.hitPoints
+    check sim.players[0].fireCooldown <= sim.config.fireCooldownTicks
+    # The next shot starts the NORMAL cooldown.
+    sim.players[0].fireCooldown = 0
+    sim.tryFire(0)
+    check sim.players[0].fireCooldown == sim.config.fireCooldownTicks
+
+  test "a partially depleted layer keeps the shield":
+    var sim = twoTeamGame()
+    sim.standOn(0, 0)
+    sim.tryPickupShields(0)
+    sim.absorbDamage(0, ShieldLayerHp - 1)
+    check sim.players[0].hasShield
+    check sim.players[0].shieldHp == 1
+
+  test "a broken-shield player can take a fresh shield":
+    var sim = twoTeamGame()
+    sim.standOn(0, 0)
+    sim.tryPickupShields(0)
+    sim.absorbDamage(0, ShieldLayerHp)
+    check not sim.players[0].hasShield
+    sim.standOn(0, 1)
+    sim.tryPickupShields(0)
+    check sim.players[0].hasShield
+    check sim.players[0].shieldHp == ShieldLayerHp
+
   test "dying loses the carried shield":
     var sim = twoTeamGame()
     sim.players[0].hasShield = true
