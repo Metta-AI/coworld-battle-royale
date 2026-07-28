@@ -1298,8 +1298,6 @@ proc runServerLoop*(
             rewardViewers.add(websocket)
 
       let rewardPacket = sim.buildRewardPacket()
-      if config.fastMode:
-        sockets.resetPlayerReady(playerIndices, sim.players.len)
       for i in 0 ..< sockets.len:
         var nextState: PlayerViewerState
         let framePacket = sim.buildSpriteProtocolPlayerUpdates(
@@ -1315,13 +1313,11 @@ proc runServerLoop*(
           sockets[i].send(blobFromBytes(chunk), BinaryMessage)
       for websocket in rewardViewers:
         websocket.send(rewardPacket, TextMessage)
-      runFrameLimiter(
-        lastTick,
-        config.fastMode,
-        sockets,
-        playerIndices,
-        sim.players.len
-      )
+      # The lobby always paces at wall clock: fast-forwarding here spins the
+      # loop hot on whichever seats joined first, and the appState-lock churn
+      # starves mummy's upgrade path so the remaining seats never finish
+      # connecting (certifier deadlock at "waiting for players").
+      runFrameLimiter(lastTick, false, sockets, playerIndices, sim.players.len)
       continue
 
     var frameEvents = newJArray()

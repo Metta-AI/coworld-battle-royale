@@ -2134,7 +2134,6 @@ proc runBot(url: string) =
           bot.estAim + bot.rotSign * AimRate * advance, AimBrads)
         if not client.mapCameraReady:
           bot.resetTransient()             # lobby / game-over interstitial
-          ws.send(readyBlob(), BinaryMessage)
           continue
         if not bot.navBuilt and client.walkabilityReady:
           bot.buildNavGrid(client)
