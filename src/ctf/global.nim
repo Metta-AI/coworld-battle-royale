@@ -1351,6 +1351,17 @@ const
   SprayPuffOverlap = 1.35  ## puffs are drawn OVERSIZE for their slot so
                            ## neighbours merge into one plume — at 1.0 the fan
                            ## reads as beads on a string, floor showing between.
+  SprayNozzleFwd = SprayHeldGripPx + SprayHeldLengthPx
+    ## Where the paint actually LEAVES the can: the held can's tail sits
+    ## SprayHeldGripPx along the aim and the can is SprayHeldLengthPx long, so
+    ## its nozzle is this far forward of the body center. Derived from the mount
+    ## constants, not hardcoded, so re-posing the can moves the paint with it.
+    ##
+    ## The fan starts HERE rather than at the body center. Starting at the center
+    ## put the first puff ~10px BEHIND the nozzle, on top of the cog's own body,
+    ## so the paint read as pouring out of the cog's FACE instead of the can.
+    ## (The damage cone is still measured from the center — that's where the
+    ## victim test runs — so the visual is inset slightly inside the hitbox.)
 
 proc sprayJetGrowth(stage: int): float =
   ## How far the fan has jetted out, 0 = just left the nozzle, 1 = full reach.
@@ -1358,9 +1369,13 @@ proc sprayJetGrowth(stage: int): float =
     (stage.float / float(max(1, PlasmaArcFxStages - 1)))
 
 proc plasmaPulseForward*(pulse, stage: int): int =
-  ## The forward distance of one paint-mist puff's center, in map px: its slot
-  ## along the fan, scaled by how far the burst has jetted out this stage.
-  int(round(float(PlasmaArcReach) * sprayJetGrowth(stage) *
+  ## The forward distance of one paint-mist puff's center, in map px, measured
+  ## from the sprayer's body center: the puff's slot along the fan, where the fan
+  ## spans the NOZZLE out to however far this stage has jetted.
+  let tip = float(PlasmaArcReach) * sprayJetGrowth(stage)
+  if tip <= float(SprayNozzleFwd):
+    return SprayNozzleFwd
+  SprayNozzleFwd + int(round((tip - float(SprayNozzleFwd)) *
     float(2 * pulse + 1) / float(2 * PlasmaArcFxPulses)))
 
 proc plasmaPulseDiameter(pulse, stage: int): int =
