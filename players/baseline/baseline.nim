@@ -108,6 +108,11 @@ const
                               # turret needs traverse time, so chases keep
                               # shooting a bit after the target fogs out
   ThiefFixTtl = 40            # a thief position fix guides the chase this long
+  ThiefCommitTtl = 240        # -d:thiefCommit: how long a dead-reckoned fix
+                              # keeps EVERY free role committed to the chase —
+                              # a thief who ducks into fog is still running our
+                              # flag; abandoning the hunt after ~1.7s is how
+                              # campers walk flags home (daveey, R1693 review)
 
   AimBrads = 256              # aim angle units per full turn
   AimRate = 5                 # brads/tick a held rotate button turns the aim
@@ -140,6 +145,11 @@ const
   NadeBlast = 52.0            # blast radius; a pair this close dies together
   NadeFullChargeTicks = 24    # ~1s of holding C reaches max range
   NadePickupDetour = 90.0     # grab a corner pickup within this detour range
+  NadeCampTicks = 360         # -d:campNade: a STATIONARY remembered enemy stays
+                              # lob-eligible this long after fogging out — a
+                              # camper's position is durable knowledge, and the
+                              # lob over his cover is the counter the gun lacks
+  NadeCampSpeed = 0.3         # px/tick: tracks slower than this count as camped
   MedKitDetour = 80.0         # heal-detour budget when merely wounded
   MedKitCriticalReach = 180.0 # at 1 hp a heal outranks the current errand
   MedKitRespawn = 30 * 24     # a taken kit refills after 30s (sim constant)
@@ -170,12 +180,27 @@ const
   FireSlackPx = 11.0          # fire when the aim error's perpendicular miss
                               # at the target's range is inside this (the
                               # corridor half-width is ~14px; keep margin)
+  ArcReach = 130.0            # plasma cone: sim reach 136px, small margin
+  ArcConeBrads = 9            # cone half-width ~14deg at max reach
+  CenterScanHalf = 280.0      # |x - CenterX| under this counts as the corridor
+  TargetCallCooldown = 48     # min ticks between one bot's engage callouts
   ScanArc = 44                # scan sweeps this many brads each side of the
                               # watch heading (cone half-angle is 32 brads)
+  CounterPunchTick = 1400     # by here a 0-steal attack is not converting:
+                              # fall back and win the attrition instead
   PushOutTicks = 360          # endgame push: no enemy seen for ~15s...
-  PushOutMinGame = 2400       # ...this deep into the game breaks the posts
-  LatePushTick = 6800         # all-in on the clock: past this tick a draw is
+  PushOutMinGame = 1400       # ...this deep into the game breaks the posts
+  StalemateTick = 2000        # nobody has MOVED a flag by here: the game is
+                              # heading for a lose-lose timeout — go convert.
+  LatePushTick = 3400         # all-in on the clock: past this tick a draw is
+                              # A LOSS FOR BOTH (GV21 lose-lose timeouts) and
+                              # games cap at 5000 ticks — the all-in must land
+                              # with time to convert. Scaled from 6800/10000.
                               # the default outcome, so commit to the capture
+  HoldFrontCap = 220.0        # -d:holdFront: ceiling on the phalanx creep — a
+                              # castle line near our wall: fights there recur on
+                              # ground where our respawn walk is ~100px and the
+                              # attacker re-crosses ~400px of watched open ground
 
   CoverShieldDist = 42.0      # an obstacle this close blocks a threat direction
   PeekLineDist = 150.0        # floor for an overwatch peek firing line; post
@@ -238,6 +263,7 @@ type
   Track = object              # a remembered player
     pos, vel: Vec
     lastSeen: int
+    synthetic: bool           # injected from an E-shout, not own eyes
     facingRight: bool
     hp: int                   # last observed hit points; 0 = never read
 
@@ -283,9 +309,18 @@ type
     comebackWant: string      # pending reply to a heard enemy shout
     corpseCount: int          # visible enemy corpses last frame (kill signal)
     killMoodUntil: int        # taunt window opened by a fresh kill
+    nextPeaceTick: int        # slot-staggered cadence for the audible persona
+    lastTeamShoutSeen: int    # any teammate bubble; peace lines keep clear of it
+    nadeSpotPos: seq[Vec]     # -d:nadeRelay: learned grenade spawn spots
+    nadeSpotEta: seq[int]     # 0 = believed stocked; else respawn-ready tick
+    wasNade: bool             # last tick's carried-grenade state (edge detect)
+    nadeShoutWant: string     # pending "G<cx> <cy>" pickup announcement
+    lastTargetCall: int       # -d:targetCall: engage-callout rate limit
+    sweepFlip: bool           # -d:centerScan: which vertical arc is swept
     lastEnemyShout: string    # last enemy shout label already responded to
     lastComebackReq: int      # rate limit on comeback generation requests
     wasMateCarry: bool        # edge detector: a fresh steal opens a taunt window
+    tripping: bool            # mid-errand to a gear spot: sprint, no fights
     hp: int                   # own hit points, read from the HUD lives label
     kitPos: seq[Vec]          # discovered med kit spots (two, center line)
     kitAbsentAt: seq[int]     # tick a spot was last seen empty; -1 = present
@@ -293,6 +328,13 @@ type
     plasmaAbsentAt: seq[int]
     shieldPos: seq[Vec]       # discovered shield spots (endzone back columns)
     shieldAbsentAt: seq[int]
+    everStoleTheirs: bool     # any own/mate carry of the enemy flag this game
+    everLostOurs: bool        # our flag has been stolen at least once
+    phalanxHold: float        # frozen advance front while our lane has contact
+    helpLane: int             # 1=top 2=mid 3=bottom, from an H-shout
+    helpUntil: int            # tick the help retasking expires
+    lastEShout: int           # scout sighting-broadcast rate limit
+    lastHShout: int           # help-call rate limit
 
 proc roleForSeat(seat: int, team: Team): Role =
   ## Deterministic role spread over the 8 per-team seats. Seats 2 and 3 both
@@ -318,6 +360,34 @@ proc roleForSeat(seat: int, team: Team): Role =
     of 5: Overwatch        # cover post flanking the ring: the lane sniper
     of 6: FlankTop         # wide top lane, get behind the contest
     else: HomeDefender     # choke guard before our capture column
+
+when defined(zonePhalanx):
+  type PhalanxDuty = enum
+    pdScout, pdTopA, pdTopB, pdMidA, pdMidB, pdBotA, pdBotB, pdFloat
+
+  proc phalanxDuty(bot: Bot): PhalanxDuty =
+    ## Zone-control assignment: a shield scout spots forward, three staggered
+    ## pairs hold the lanes, the eighth seat floats on help calls.
+    case clamp(bot.slot div 2, 0, 7)
+    of 1: pdScout            # MidGuard seat becomes the forward observer
+    of 6: pdTopA
+    of 2, 3: (if bot.role == MidTop: pdTopB else: pdBotB)
+    of 0: pdBotA
+    of 5: pdMidA
+    of 4: pdMidB
+    else: pdFloat            # HomeDefender seat: choke + reinforcement
+
+  proc phalanxLaneY(d: PhalanxDuty): float =
+    case d
+    of pdTopA, pdTopB: LaneTop + 26.0
+    of pdMidA, pdMidB: LaneMid
+    else: LaneBottom - 26.0
+
+  proc phalanxLaneNo(d: PhalanxDuty): int =
+    case d
+    of pdTopA, pdTopB: 1
+    of pdMidA, pdMidB: 2
+    else: 3
 
 proc vec(x, y: float): Vec =
   Vec(x: x, y: y)
@@ -962,6 +1032,7 @@ proc updateTracks(bot: Bot, tracks: var seq[Track], seen: seq[Actor]) =
       tracks[best].pos = a.pos
       tracks[best].facingRight = a.facingRight
       tracks[best].lastSeen = bot.tick
+      tracks[best].synthetic = false
       if a.hp > 0:
         tracks[best].hp = a.hp
       claimed[best] = true
@@ -971,7 +1042,16 @@ proc updateTracks(bot: Bot, tracks: var seq[Track], seen: seq[Actor]) =
       claimed.add(true)
   var kept: seq[Track]
   for t in tracks:
-    if bot.tick - t.lastSeen <= TrackTtl:
+    # -d:campNade: a stationary track is a CAMPER and his position outlives
+    # the normal memory window — keep it around long enough to lob at. Every
+    # combat consumer (gun, exposure, serpentine) filters by its own age
+    # window, so the longer retention only feeds the grenade planner.
+    let ttl =
+      when defined(campNade):
+        (if len(t.vel) < NadeCampSpeed: NadeCampTicks else: TrackTtl)
+      else:
+        TrackTtl
+    if bot.tick - t.lastSeen <= ttl:
       kept.add(t)
   kept.sort(proc(a, b: Track): int = cmp(b.lastSeen, a.lastSeen))
   if kept.len > TrackCap:                # there are only eight real players
@@ -1048,6 +1128,7 @@ proc resetTransient(bot: Bot) =
   bot.lastEnemyShout = ""
   bot.lastComebackReq = 0
   bot.wasMateCarry = false
+  bot.tripping = false
   bot.carrierSeen = -100_000
   bot.lastEnemySeen = bot.tick
   bot.gameStart = bot.tick
@@ -1214,7 +1295,6 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       if dist(client.mapPos(o), me) <= 30.0:
         hasShield = true
         break
-
   let
     shotReady = client.spriteObjectsWithLabel("fire icon").len > 0 and
       not hasPlasma                      # the plasma arc replaces the gun; a shield
@@ -1316,11 +1396,18 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     for o in client.spriteObjects():
       if not o.label.startsWith(myColor & " shout "):
         continue
+      bot.lastTeamShoutSeen = bot.tick      # spacing signal for peace lines
       let sep = o.label.rfind(": ")
       if sep < 0:
         continue
       let text = o.label[sep + 2 .. ^1]
-      if text.len < 4 or text[0] notin {'C', 'T'}:
+      when defined(zonePhalanx):
+        # "H<1|2|3>": a lane pair is outnumbered; floater and scout retask.
+        if text.len >= 2 and text[0] == 'H' and text[1] in {'1', '2', '3'}:
+          bot.helpLane = ord(text[1]) - ord('0')
+          bot.helpUntil = bot.tick + 320
+          continue
+      if text.len < 4 or text[0] notin {'C', 'T', 'E', 'G'}:
         continue
       let parts = text[1 .. ^1].split(' ')
       if parts.len != 2:
@@ -1332,6 +1419,46 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       except ValueError:
         continue
       let p = vec(float(cx * 8 + 4), float(cy * 8 + 4))
+      when defined(nadeRelay):
+        if text[0] == 'G':
+          # A mate took the grenade at spot p: the sim refills a taken corner
+          # after 5s (GrenadeRespawnTicks), so start the shared respawn clock.
+          # Also teaches spots this bot has never had eyes on (fog).
+          var known = false
+          for i in 0 ..< bot.nadeSpotPos.len:
+            if dist(bot.nadeSpotPos[i], p) < 24.0:
+              bot.nadeSpotEta[i] = bot.tick + 126
+              known = true
+              break
+          if not known:
+            bot.nadeSpotPos.add p
+            bot.nadeSpotEta.add bot.tick + 126
+          continue
+      if text[0] == 'E':
+        when defined(zonePhalanx):
+          # Scout sighting: feed shared vision into the track table so the
+          # pair guns pre-aim before the runner enters their cones. Slightly
+          # aged so a bot's own eyes always outrank the relay. Own shouts
+          # (origin on top of us) are skipped, and an E never refreshes a
+          # synthetic track — otherwise the relay echoes itself into a
+          # permanently-fresh phantom (probe scar: "E37 10" forever).
+          let shoutOrigin = vec(
+            float(o.x + o.width div 2 + client.mapCameraX),
+            float(o.y + o.height div 2 + client.mapCameraY))
+          if dist(shoutOrigin, me) > 24.0:
+            var dup = false
+            for t in bot.enemies.mitems:
+              if dist(t.pos, p) < 70.0:
+                dup = true
+                if not t.synthetic and bot.tick - t.lastSeen > 10:
+                  discard  # fresh real track outranks the relay
+                elif not t.synthetic:
+                  discard
+                break
+            if not dup:
+              bot.enemies.add(Track(pos: p, lastSeen: bot.tick - 6,
+                synthetic: true, facingRight: p.x < float(CenterX), hp: MaxHp))
+        continue
       if text[0] == 'C':
         # Fresher than any dead-reckoned estimate: pin the escort fix here.
         bot.mateFixPos = p
@@ -1395,6 +1522,39 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         " mateCarryPos=", int(mateCarryPos.x), ",", int(mateCarryPos.y)
       flushFile(stdout)
   var ownStolen = ownPlanted.len == 0
+  # -d:thiefCommit (daveey, R1693 review): a thief in fog is STILL running our
+  # flag — the 40-tick fix window meant one duck behind cover dissolved the
+  # whole chase and everyone strolled back to posts while the flag walked
+  # home. Commit to the dead-reckoned route for ThiefCommitTtl instead; the
+  # only bots excused are the ones escorting OUR live carry (the race is the
+  # v16/v17 scar: never trade our own conversion for defense).
+  let thiefChaseTtl =
+    when defined(thiefCommit): ThiefCommitTtl else: ThiefFixTtl
+  let raceExempt =
+    when defined(thiefCommit):
+      mateCarry and dist(me, mateCarryPos) < 250.0
+    else:
+      false
+  # Counter-punch: loss telemetry says lost games are 0-steal games — the
+  # wave never converts while the enemy penetrates 3-4 times and wins on
+  # capture or the lives tiebreak. Deep into a game with that exact shape
+  # (they have stolen, we never have), attacking is feeding: fall back to
+  # home-side stations, keep full gun range, punish every thief run, and
+  # take the timeout tiebreak on lives instead. The late all-in push still
+  # fires past LatePushTick, so a tied endgame still plays for the capture.
+  if iCarry or mateCarry:
+    bot.everStoleTheirs = true
+  if ownStolen:
+    bot.everLostOurs = true
+  when defined(counterPunch):
+    let counterPunch = bot.tick - bot.gameStart > CounterPunchTick and
+      bot.everLostOurs and not bot.everStoleTheirs
+  else:
+    let counterPunch = false
+  when defined(zonePhalanx):
+    let phalanxOn = true
+  else:
+    let phalanxOn = false
   var sawThief = false
   if ownPlanted.len > 0:
     bot.carrierSeen = -100_000           # our flag is safely home
@@ -1423,7 +1583,53 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         bot.shoutWant = "T" & $(int(bot.carrierPos.x) div 8) & " " &
           $(int(bot.carrierPos.y) div 8)
         bot.lastShoutTick = bot.tick
+      else:
+        when defined(nadeRelay):
+          if bot.nadeShoutWant.len > 0:
+            bot.shoutWant = bot.nadeShoutWant
+            bot.nadeShoutWant = ""
+            bot.lastShoutTick = bot.tick
+        when defined(targetCall):
+          # Engage callout: any bot with a live close target broadcasts the
+          # fix so nearby mates converge or lob a grenade at it. Rides the
+          # existing E wire format — every receiver already ingests E fixes
+          # into its track table. Position leak is moot mid-fight: our own
+          # gunfire already rings map-wide.
+          if bot.shoutWant.len == 0 and
+              bot.tick - bot.lastTargetCall > TargetCallCooldown:
+            for t in bot.enemies:
+              if not t.synthetic and bot.tick - t.lastSeen <= 15 and
+                  dist(t.pos, me) < 500.0:
+                bot.shoutWant = "E" & $(int(t.pos.x) div 8) & " " &
+                  $(int(t.pos.y) div 8)
+                bot.lastTargetCall = bot.tick
+                bot.lastShoutTick = bot.tick
+                break
 
+  when defined(zonePhalanx):
+    # Phalanx comms ride the leftover budget under C/T: help calls first
+    # (a lane about to break matters more than one more sighting), then the
+    # scout's sighting relay.
+    if bot.shoutWant.len == 0 and not iCarry:
+      let pd = bot.phalanxDuty
+      if pd in {pdTopA, pdTopB, pdMidA, pdMidB, pdBotA, pdBotB} and
+          bot.tick - bot.lastHShout > 400:
+        var near = 0
+        for t in bot.enemies:
+          if not t.synthetic and bot.tick - t.lastSeen <= 50 and
+              dist(t.pos, me) < 420.0:
+            inc near
+        if near >= 3:
+          bot.shoutWant = "H" & $phalanxLaneNo(pd)
+          bot.lastHShout = bot.tick
+      if bot.shoutWant.len == 0 and pd == pdScout and
+          bot.tick - bot.lastEShout > 30:
+        for t in bot.enemies:
+          if not t.synthetic and bot.tick - t.lastSeen <= 20:
+            bot.shoutWant = "E" & $(int(t.pos.x) div 8) & " " &
+              $(int(t.pos.y) div 8)
+            bot.lastEShout = bot.tick
+            break
   when defined(taunt):
     # Taunts spend only LEFTOVER shout budget: never while carrying and never
     # over a gameplay shout (the carrier heartbeat always wins the 1/s slot).
@@ -1448,6 +1654,38 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
           bot.shoutWant = sample(CannedTaunts)
         bot.killMoodUntil = 0              # one taunt per window
       bot.lastShoutTick = bot.tick
+    # Opening greeting: the persona speaks in the first ~12s, one staggered
+    # line per bot. Enemies are 800+px away then — far outside the ~247px
+    # shout-audible radius — so the greeting leaks nothing (spawns are public
+    # knowledge), while spectators and replays get the full peace wave. A
+    # mid-game periodic pulse was REFUTED (v39: -0.35 vs h006 on paired
+    # seeds — fights happen inside earshot, and each pulse is a through-fog
+    # position ping plus a 26-tick delay on the next gameplay shout).
+    # Spread-out persona (user spec): lines are staggered across the WHOLE
+    # game — first lines land one bot at a time (~19s apart), each bot then
+    # speaks at most every ~2.5min, never while a teammate bubble is up, and
+    # only from QUIET ground (no live enemy track near — v39 showed mid-duel
+    # speech is a through-fog position ping the RL rival converts, -0.35 on
+    # paired seeds). Net effect: one peace line somewhere every ~20-30s.
+    if bot.nextPeaceTick == 0:
+      bot.nextPeaceTick = 200 + bot.slot * 450
+    if bot.shoutWant.len == 0 and not iCarry and
+        bot.tick - bot.lastShoutTick >= 26 and bot.tick >= bot.nextPeaceTick and
+        bot.tick - bot.lastTeamShoutSeen > 120:
+      var quiet = true
+      for t in bot.enemies:
+        if not t.synthetic and bot.tick - t.lastSeen <= 120 and
+            dist(t.pos, me) < 400.0:
+          quiet = false
+          break
+      if quiet:
+        if bot.tauntBank.len > 0:
+          bot.shoutWant = bot.tauntBank[0]
+          bot.tauntBank.delete(0)
+        else:
+          bot.shoutWant = sample(CannedTaunts)
+        bot.nextPeaceTick = bot.tick + 3600 + (bot.slot mod 4) * 210
+        bot.lastShoutTick = bot.tick
 
   # Flank progress: sticky so lane-runners do not oscillate at the boundary.
   if bot.role in {FlankTop, FlankBottom}:
@@ -1469,8 +1707,29 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # capture the posts are worth nothing — break them and go win. Standoffs
     # keep enemies in sight, so the quiet-field trigger above never fires
     # against a peek-duck opponent; this one is on the clock.
-    bot.tick - bot.gameStart > LatePushTick
+    bot.tick - bot.gameStart > LatePushTick or
+    # Stalemate breaker (GV21): a timeout scores -1 to BOTH sides, so a game
+    # where neither flag has ever moved is a mutual loss in the making. The
+    # castle's whole value was winning the wait — there is nothing to win
+    # anymore; break the posts early and go create a flag race.
+    (bot.tick - bot.gameStart > StalemateTick and
+     (when defined(stickyBreak):
+        # Sticky (R1693 decode): the one-shot breaker disarmed forever after
+        # the FIRST steal attempt, so a dead carrier sent everyone back to
+        # posts until LatePushTick while the timeout clock ran — the -1/-1
+        # draw tax. Past StalemateTick with no flag in flight the game is
+        # still heading for the mutual loss, so the posts stay broken.
+        not (iCarry or mateCarry)
+      else:
+        not bot.everStoleTheirs and not bot.everLostOurs))
   )
+  when defined(v57Debug):
+    if pushOut and (bot.everStoleTheirs or bot.everLostOurs) and
+        bot.tick - bot.gameStart in StalemateTick .. LatePushTick and
+        bot.tick mod 48 == 0:
+      echo "V57 stickyBreak slot=", bot.slot, " tick=", bot.tick,
+        " posts stay broken (stole=", bot.everStoleTheirs,
+        " lost=", bot.everLostOurs, ")"
 
   # Movement target from role and flag situation. `objMode` names the branch
   # for the artifact telemetry (see baseline/artlog.nim).
@@ -1500,8 +1759,8 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       let kit = bot.bestKitDetour(me, target, MedKitCarrierBudget)
       if kit >= 0:
         target = bot.kitPos[kit]
-  elif ownStolen and (bot.role == HomeDefender or
-      bot.tick - bot.carrierSeen <= ThiefFixTtl):
+  elif ownStolen and not raceExempt and (bot.role == HomeDefender or
+      bot.tick - bot.carrierSeen <= thiefChaseTtl):
     # An enemy is RUNNING OUR FLAG: with a fresh fix (own eyes or a mate's
     # "T" shout), EVERY role drops what it is doing and converges on the
     # thief's predicted route — an enemy capture ends the episode against
@@ -1510,7 +1769,12 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # fogged but MUST cross mid toward its home edge, so the defender holds
     # the lane nearest the last fix and sweeps its vision — reacquisition
     # takes eyes, not magic.
-    if bot.tick - bot.carrierSeen <= ThiefFixTtl:
+    when defined(v57Debug):
+      if bot.tick - bot.carrierSeen in (ThiefFixTtl + 1) .. thiefChaseTtl and
+          bot.tick mod 24 == 0:
+        echo "V57 thiefCommit slot=", bot.slot, " tick=", bot.tick,
+          " chasing on stale fix age=", bot.tick - bot.carrierSeen
+    if bot.tick - bot.carrierSeen <= thiefChaseTtl:
       # Converge on the thief's predicted path toward the enemy capture edge.
       objMode = "thief_hunt"
       var predicted = bot.carrierPos +
@@ -1569,6 +1833,81 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         target = mateCarryPos + vec(homeSign(bot.team) * 40.0, -24.0)
       else:
         target = bot.chokeHold
+  elif phalanxOn and not pushOut:
+   when defined(zonePhalanx):
+     # Zone phalanx: shield scout spots forward and relays sightings, three
+     # staggered pairs hold the lanes at a slowly advancing front (freeze on
+     # contact — never trade cover for ground while a runner is tracked),
+     # the floater answers H-shouts. Steal conversion comes from the late
+     # push, which overrides this whole branch via pushOut.
+     let
+       gameTick = bot.tick - bot.gameStart
+       ownEdgeX = (if bot.team == Red: 0.0 else: float(MapW))
+       dirX = (if bot.team == Red: 1.0 else: -1.0)
+       pd = bot.phalanxDuty
+     var front = min(180.0 + 0.11 * float(gameTick), float(MapW) - 300.0)
+     when defined(holdFront):
+       # Against midline-holding attrition bots the creep walks the pairs into
+       # a standing midfield duel fought at the enemy's chosen range; cap the
+       # front at a prepared line inside our half and make them cross open
+       # ground to reach it. Conversion still comes from the late push.
+       front = min(front, HoldFrontCap)
+     case pd
+     of pdScout:
+       let scHasShield = bot.hp > MaxHp
+       var shieldSpot = vec(-1.0, -1.0)
+       if not scHasShield:
+         for sp in bot.shieldPos:
+           if dirX * (sp.x - float(CenterX)) < 0.0:  # our own back column
+             shieldSpot = sp
+             break
+       if not scHasShield and shieldSpot.x >= 0.0 and gameTick < 2200:
+         target = shieldSpot
+       else:
+         # Forward patrol beyond the front: bottom-biased weave (their
+         # runners are 63% bottom lane), or the lane that called for help.
+         var py: float
+         if bot.helpUntil > bot.tick:
+           py = (case bot.helpLane
+             of 1: LaneTop + 40.0
+             of 2: LaneMid
+             else: LaneBottom - 40.0)
+         else:
+           let ph = float((gameTick div 3) mod 400)
+           py = (if ph < 200.0:
+               LaneBottom - 40.0 - (LaneBottom - 40.0 - LaneMid) * (ph / 200.0)
+             else:
+               LaneMid + (LaneBottom - 40.0 - LaneMid) * ((ph - 200.0) / 200.0))
+         target = vec(ownEdgeX + dirX * (front + 130.0), py)
+     of pdFloat:
+       if bot.helpUntil > bot.tick:
+         target = bot.snapToCover(vec(ownEdgeX + dirX * (front - 60.0),
+           (case bot.helpLane
+             of 1: LaneTop + 26.0
+             of 2: LaneMid
+             else: LaneBottom - 26.0)))
+       else:
+         target = bot.chokeHold
+     else:
+       let laneY = phalanxLaneY(pd)
+       # Contact freeze: while a fresh track sits near our lane station,
+       # hold the front we had — advance only through quiet ground.
+       var contact = false
+       let probe = vec(ownEdgeX + dirX * front, laneY)
+       for t in bot.enemies:
+         if bot.tick - t.lastSeen <= 90 and dist(t.pos, probe) < 420.0:
+           contact = true
+           break
+       if contact:
+         if bot.phalanxHold <= 0.0:
+           bot.phalanxHold = front
+         front = min(front, bot.phalanxHold)
+       else:
+         bot.phalanxHold = 0.0
+       let lead = pd in {pdTopA, pdMidA, pdBotA}
+       target = bot.snapToCover(vec(
+         ownEdgeX + dirX * (if lead: front else: front - 44.0),
+         laneY + (if lead: -32.0 else: 32.0)))
   elif bot.role == HomeDefender and not pushOut:
     # Hold the choke on our pedestal approach; break off to chase the nearest
     # intruder on our half (every steal has to come through here).
@@ -1604,6 +1943,16 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
             break
     else:
       target = vec(float(CenterX) + homeSign(bot.team) * 70.0, float(CenterY))
+  elif counterPunch and not pushOut:
+    # Home-side stations: one gun per lane on our half, second choke on the
+    # pedestal approach. Combat below runs at full FireRange (not rushing).
+    let sx = float(CenterX) + homeSign(bot.team) * 200.0
+    case bot.role
+    of FlankTop: target = bot.snapToCover(vec(sx, LaneTop))
+    of FlankBottom: target = bot.snapToCover(vec(sx, LaneBottom))
+    of MidTop: target = bot.snapToCover(vec(sx, LaneMid - 90.0))
+    of MidBottom: target = bot.snapToCover(vec(sx, LaneMid + 90.0))
+    else: target = bot.snapToCover(bot.chokeHold + vec(0.0, -64.0))
   else:
     # Attackers: route to the ENEMY pedestal — a fixed, known position by
     # team side. The lead rusher races it dead straight (its seat spawns at
@@ -1631,8 +1980,8 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # The mid trio plays for the flag, not for position: pickup races and
   # carrier chases are lost to peek/duck detours, so mids keep moving and
   # shoot on the move whenever a mate is not already carrying.
-  let rushing = not iCarry and not mateCarry and
-    bot.role in {MidTop, MidBottom, MidGuard}
+  let rushing = not iCarry and not mateCarry and not counterPunch and
+    not phalanxOn and bot.role in {MidTop, MidBottom, MidGuard}
   # The pocket endgame: duelling at the pocket edge is an infinite respawn
   # grinder (respawners reappear armed AT the pedestal), so the
   # attacker CLOSEST to the pedestal commits to the touch, unarmed and
@@ -1659,12 +2008,13 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # rushers racing for the steal and escorts guarding a run only fight what
   # is actually in the way, instead of frag-chasing across the map.
   let maxEngage =
-    if hasShield and not hasPlasma:      # slow gun (3x cooldown): only fight
+    if bot.tripping: 0.0                 # sprinting an errand: no fights
+    elif hasShield and not hasPlasma:    # slow gun (3x cooldown): only fight
       CarrierFireRange                   # what is point-blank in the way
     elif hasPlasma: PlasmaReach + 6.0    # cone weapon: only close range matters
     elif pocketRush: 0.0
     elif iCarry: CarrierFireRange
-    elif ownStolen and bot.tick - bot.carrierSeen <= ThiefFixTtl: FireRange
+    elif ownStolen and bot.tick - bot.carrierSeen <= thiefChaseTtl: FireRange
       # A live fix on the enemy running our flag lifts every role's range
       # cap: the map-wide gun is the fastest flag return there is.
     elif rushing: RushEngageRange
@@ -1721,11 +2071,21 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       prio -= float(MaxHp - t.hp) * HpFocusBonus
     if mateTargeted[i]:
       prio -= FocusFireBonus
-    if ownStolen and bot.tick - bot.carrierSeen <= ThiefFixTtl and
-        dist(t.pos, bot.carrierPos) <= 48.0:
-      # This track IS (or shadows) the enemy running our flag: shoot it
-      # before anything else — a dead carrier returns the flag instantly.
-      prio -= ThiefFocusBonus
+    block thiefPrio:
+      let fixAge = bot.tick - bot.carrierSeen
+      if ownStolen and fixAge <= thiefChaseTtl:
+        # Under -d:thiefCommit the fix may be stale: test proximity against
+        # the DEAD-RECKONED carrier position, not the aging last fix.
+        let carrierRef =
+          when defined(thiefCommit):
+            bot.carrierPos + bot.carrierVel * float(fixAge)
+          else:
+            bot.carrierPos
+        let slack = when defined(thiefCommit): 90.0 else: 48.0
+        if dist(t.pos, carrierRef) <= slack:
+          # This track IS (or shadows) the enemy running our flag: shoot it
+          # before anything else — a dead carrier returns the flag instantly.
+          prio -= ThiefFocusBonus
     if client.pixelRayClear(me, predicted):
       if bot.friendlyBlocked(me, predicted, d):
         continue                        # prefer a target with an empty corridor
@@ -1762,6 +2122,26 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     if dist(client.mapPos(o), me) <= 30.0:
       carryingNade = true
       break
+  when defined(nadeRelay):
+    if carryingNade and not bot.wasNade:
+      # Fresh pickup: announce WHICH spot so the team shares the 5s respawn
+      # clock. Nearest known spot wins; a grab at a never-seen spot teaches
+      # a new one at our own position.
+      var si = -1
+      var bestD = 60.0
+      for i in 0 ..< bot.nadeSpotPos.len:
+        let d = dist(bot.nadeSpotPos[i], me)
+        if d < bestD:
+          bestD = d
+          si = i
+      if si < 0:
+        bot.nadeSpotPos.add me
+        bot.nadeSpotEta.add 0
+        si = bot.nadeSpotPos.len - 1
+      bot.nadeSpotEta[si] = bot.tick + 126
+      bot.nadeShoutWant = "G" & $(int(bot.nadeSpotPos[si].x) div 8) & " " &
+        $(int(bot.nadeSpotPos[si].y) div 8)
+    bot.wasNade = carryingNade
   var
     nadeAim = -1
     nadeThrowD = 0.0
@@ -1769,9 +2149,23 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     var bestD = 1e18
     for i in 0 ..< bot.enemies.len:
       let t = bot.enemies[i]
-      if bot.tick - t.lastSeen > FreshShotTicks:
+      let age = bot.tick - t.lastSeen
+      # -d:campNade (daveey, R1693 review): a STATIONARY enemy that fogged out
+      # is a camper, and his remembered position stays true long after the
+      # 1-second fresh window — the lob over his cover is exactly what the
+      # grenade is for, and the gun only engages fresh tracks so this never
+      # competes with a live firefight.
+      let camped =
+        when defined(campNade):
+          age > FreshShotTicks and age <= NadeCampTicks and
+            len(t.vel) < NadeCampSpeed
+        else:
+          false
+      if age > FreshShotTicks and not camped:
         continue
-      let p = t.pos + t.vel * float(bot.tick - t.lastSeen)
+      let p =
+        if camped: t.pos
+        else: t.pos + t.vel * float(age)
       let d = dist(p, me)
       if d < NadeMinRange or d > NadeMaxRange or d >= bestD:
         continue
@@ -1783,10 +2177,15 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
               dist(bot.enemies[j].pos, p) <= NadeBlast:
             paired = true
             break
-      if blocked or paired:
+      if blocked or paired or camped:
         bestD = d
         nadeAim = bradsOf(p - me)
         nadeThrowD = d
+        when defined(v57Debug):
+          if camped:
+            echo "V57 campNade slot=", bot.slot, " tick=", bot.tick,
+              " lob at camped track age=", age, " d=", int(d),
+              " pos=", int(p.x), ",", int(p.y)
 
   # Weapon pickups. SHIELD-THEN-STEAL: the enemy endzone shield sits just
   # behind their pedestal — a rusher near the pocket grabs 6 hp first and
@@ -1794,40 +2193,26 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # roles never take a shield (it slows the gun 3x). PLASMA ARCS arm the
   # pocket brawlers: attackers detour a little for one on the way in — the
   # pocket duel is close-range, where an instant lethal cone beats any gun.
-  if not iCarry and not hasShield and bot.role == MidGuard and
+  bot.tripping = false
+  if not iCarry and not hasShield and bot.role == MidTop and
+      enemyPlanted.len > 0 and
       not (ownStolen and bot.tick - bot.carrierSeen <= ThiefFixTtl):
-    # ONE designated shield-runner (MidGuard, the trailing mid): the shield
-    # sits ~136px BEYOND the enemy pedestal, so the trip costs ~270 path px —
-    # never spend the LEAD rusher's tempo on it (first steal wins races).
-    # The second wave arrives as a 6 hp bruiser: it steals if the flag is
-    # still planted, escorts (and re-steals after a failed run) if not.
-    var best = -1
-    var bestCost = ShieldStealDetour
+    # HOME KIT-UP: either team may take either endzone's shield, and OURS
+    # sits ~50px from our own spawn — so the LEAD RUSHER gears up at home
+    # for near-zero tempo (the enemy-side trip was refuted twice: a 3hp
+    # unarmed sprinter cannot cross the map, fighting or not). The rusher
+    # arrives at the pocket as a 6hp bruiser; the co-located sword makes
+    # the pocket duel an instant-lethal swipe instead of a gunfight.
     for i in 0 ..< bot.shieldPos.len:
       if not pickupAvailable(bot.shieldAbsentAt, i, bot.tick):
         continue
-      if homeSign(bot.team) * (bot.shieldPos[i].x - float(CenterX)) > 0.0:
-        continue                         # OUR endzone shield: leave the gun
-      let cost = dist(me, bot.shieldPos[i]) + dist(bot.shieldPos[i], stealTarget) -
-        dist(me, stealTarget)
-      if cost < bestCost:
-        bestCost = cost
-        best = i
-    if best >= 0:
-      target = bot.shieldPos[best]
-      objMode = "shield_trip"
-      when defined(pickupDebug):
-        if bot.tick mod 50 == 0:
-          echo "SHIELDTRIP slot=", bot.slot, " t=", bot.tick, " me=",
-            int(me.x), ",", int(me.y), " -> ", int(target.x), ",",
-            int(target.y), " cost=", int(bestCost)
-          flushFile(stdout)
-    else:
-      when defined(pickupDebug):
-        if bot.tick mod 100 == 0:
-          echo "SHIELDTRIP-NONE slot=", bot.slot, " t=", bot.tick,
-            " spots=", bot.shieldPos.len
-          flushFile(stdout)
+      if homeSign(bot.team) * (bot.shieldPos[i].x - float(CenterX)) < 0.0:
+        continue                         # enemy endzone: refuted suicide run
+      if dist(me, bot.shieldPos[i]) + dist(bot.shieldPos[i], stealTarget) -
+          dist(me, stealTarget) < ShieldStealDetour:
+        target = bot.shieldPos[i]
+        objMode = "shield_trip"
+        break
   elif not iCarry and not hasPlasma and
       bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom} and
       not mateCarry and not pocketRush:
@@ -1840,7 +2225,6 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         target = bot.plasmaPos[i]
         objMode = "plasma_grab"
         break
-
   # Med kit heal detour (hurt bots only; the carrier handles its own detour
   # in the carry branch). Wounded: a short opportunistic detour. Critical
   # (1 hp): a heal outranks the current errand at much longer reach — a
@@ -1862,11 +2246,23 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # Collect a pickup: anyone grabs one within a short detour, and the two
     # flankers own their lane's friendly-side corner spawn — it sits right on
     # their border route, so they arm up on the way out every respawn cycle.
+    var pickupSet = false
     for o in client.spriteObjectsWithLabel("grenade"):
       let p = client.mapPos(o)
       if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
           p.y > float(MapH - 40):
         continue                     # HUD indicator shares the label
+      when defined(nadeRelay):
+        # Seeing a stocked spot teaches it and clears any respawn clock.
+        var known = false
+        for i in 0 ..< bot.nadeSpotPos.len:
+          if dist(bot.nadeSpotPos[i], p) < 24.0:
+            bot.nadeSpotEta[i] = 0
+            known = true
+            break
+        if not known:
+          bot.nadeSpotPos.add p
+          bot.nadeSpotEta.add 0
       let laneMatch =
         (bot.role == FlankTop and p.y < float(CenterY) and
          homeSign(bot.team) * (p.x - float(CenterX)) > 0) or
@@ -1877,8 +2273,27 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         when defined(nadeDebug):
           echo "DETOUR to pickup at ", p.x, ",", p.y, " role ", bot.role
         target = p
+        pickupSet = true
         objMode = "nade_grab"
         break
+    when defined(nadeRelay):
+      # Relayed respawn clock: a spot that just refilled is worth the same
+      # detour as a visible one even through fog — arrive right on time.
+      if not pickupSet:
+        for i in 0 ..< bot.nadeSpotPos.len:
+          let eta = bot.nadeSpotEta[i]
+          if eta == 0 or bot.tick < eta or bot.tick > eta + 360:
+            continue
+          let p = bot.nadeSpotPos[i]
+          let laneMatch =
+            (bot.role == FlankTop and p.y < float(CenterY) and
+             homeSign(bot.team) * (p.x - float(CenterX)) > 0) or
+            (bot.role == FlankBottom and p.y > float(CenterY) and
+             homeSign(bot.team) * (p.x - float(CenterX)) > 0)
+          let reach = if laneMatch: 1e9 else: NadePickupDetour
+          if dist(p, me) <= reach:
+            target = p
+            break
 
   # Grenade danger: a visible throw-target ring marks where an enemy's lob
   # will land, and an airborne grenade is seconds from bursting — anything
@@ -2019,6 +2434,18 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
         desiredAim = bot.scanAim(watch)
       holdStill = true
     else:
+      when defined(centerScan):
+        # Center-corridor vision sweep: crossing mid-map with a forward-glued
+        # aim walks blind past enemies passing a lane above or below. With no
+        # live contact, rake the cone across the vertical arcs while moving —
+        # alternating the upper and lower sweep so both flanks get eyes.
+        if desiredAim < 0 and not iCarry and
+            abs(me.x - float(CenterX)) < CenterScanHalf and
+            bot.tick - bot.lastEnemySeen > 40:
+          if (bot.tick div 180) mod 2 == 0:
+            desiredAim = bot.scanAim(vec(0.0, -1.0))
+          else:
+            desiredAim = bot.scanAim(vec(0.0, 1.0))
       # Navigate: cover-aware path steering plus soft repulsion from nearby
       # teammates so one burst (or our own shot) cannot hit two of us.
       var steer = norm(bot.navSteer(client, me, target))
@@ -2056,6 +2483,18 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       moveMask = octantBits(steer)
       if bot.tick < bot.jinkUntil:
         moveMask = bot.jinkBits            # unsticking burst
+      if desiredAim < 0 and ownStolen and
+          bot.role in {FlankTop, FlankBottom} and
+          bot.tick - bot.carrierSeen > ThiefFixTtl:
+        # Flanker rear-view: our flag is out and fogged, and the classic
+        # escape is a 1 hp runner hugging exactly this border lane BEHIND
+        # us (decoded from Picasso v7 and v14 losses alike). Alternate the
+        # sweep between rear and forward along the lane every two seconds —
+        # aim is decoupled from movement, so this costs nothing positional.
+        let sweepDir =
+          if (bot.tick div 48) mod 2 == 0: homeSign(bot.team)
+          else: -homeSign(bot.team)
+        desiredAim = bot.scanAim(vec(sweepDir, 0.0))
       if desiredAim < 0:
         # No target demands the turret: the aim leads the movement direction
         # so the vision cone watches down-lane where we are heading. Movement
