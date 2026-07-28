@@ -492,7 +492,10 @@ proc buildStateJson*(
   livesLeadSeries: seq[array[2, int]] = @[],
   startTick: int = 0,
   endHoldSeconds: int = 0,
-  includeFpMap: bool = false
+  includeFpMap: bool = false,
+  skipLulls: bool = false,
+  fastForwarding: bool = false,
+  lullSpans: seq[array[2, int]] = @[]
 ): string =
   ## Assembles the broadcast chrome frame from the current board state plus the
   ## events accumulated across this playback frame. Board-derived STATE (lives,
@@ -512,6 +515,8 @@ proc buildStateJson*(
     "mx": maxTick,
     "st": startTick,
     "lp": looping,
+    "sk": skipLulls,
+    "ff": fastForwarding,
     "en": transportEnabled,
     "mm": mismatchTick,
     "pov": povSlot,
@@ -549,6 +554,15 @@ proc buildStateJson*(
   # caches it and reuses it for the whole match.
   if includeFpMap:
     state["fpmap"] = sim.fpMapWallsJson()
+
+  # Full-timeline lull spans, shipped alongside the lead series on the same
+  # first frame: [[firstTick, lastTick], …] quiet stretches the skip-lulls mode
+  # fast-forwards. The client caches them to shade the scrubber.
+  if lullSpans.len > 0:
+    var spans = newJArray()
+    for span in lullSpans:
+      spans.add(%*[span[0], span[1]])
+    state["lulls"] = spans
 
   # The end-card is STATE, not an event: present on every game-over frame so a
   # viewer who seeks straight to the end still sees the verdict. isDraw is read

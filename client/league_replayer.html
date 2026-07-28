@@ -174,6 +174,11 @@
     min-width:calc(26*var(--u)); cursor:pointer; line-height:1; box-shadow:0 0 calc(3*var(--u)) rgba(0,0,0,.5)}
   .tbtn:hover{background:rgba(242,232,216,.2)}
   .tbtn.on{color:var(--amber); box-shadow:inset 0 calc(-2*var(--u)) 0 var(--amber)}
+  .lull-span{position:absolute; top:calc(6*var(--u)); height:calc(10*var(--u));
+    background:rgba(18,13,9,.6); pointer-events:none}
+  .ffwd-chip{display:none; font-family:var(--pixfont); font-size:calc(9*var(--u));
+    color:var(--amber); padding:0 calc(6*var(--u)); white-space:nowrap}
+  .ffwd-chip.show{display:inline}
   .tsep{flex:1}
   .tick-clock{font-family:var(--pixfont); font-size:calc(9*var(--u)); color:var(--paper-dim);
     font-variant-numeric:tabular-nums; white-space:nowrap}
@@ -274,6 +279,8 @@
       <button class="tbtn" id="btn-fwd" title="Skip +5s (.)">+5s</button>
       <button class="tbtn" id="btn-end" title="Jump to end (e)">|▸</button>
       <button class="tbtn" id="btn-loop" title="Loop (r)">↻</button>
+      <button class="tbtn" id="btn-skip" title="Auto-skip lulls (f)">▸▸</button>
+      <span class="ffwd-chip" id="ffwd-chip">▸▸ SKIPPING LULL</span>
       <span class="tick-clock" id="tick-clock">0 / 0</span>
       <span class="tsep"></span>
       <div class="speedchips" id="speedchips"></div>
@@ -284,6 +291,7 @@
       <span class="momentum-label">LIVES LEAD</span>
       <div class="scrub-track"></div>
       <div class="scrub-fill" id="scrub-fill"></div>
+      <div id="lulls"></div>
       <div class="scrub-head" id="scrub-head"></div>
     </div>
   </div>
@@ -466,7 +474,7 @@
   // ==========================================================================
   //  FRAME STREAM — the embedded replay postMessages each parsed state here.
   // ==========================================================================
-  var lastState=null, maxTick=1, lastTick=-1;
+  var lastState=null, maxTick=1, lastTick=-1, lastFf=false;
 
   // Relay an Esc up to the Observatory theater host (the frame that embeds THIS
   // shell). keydown never crosses an iframe boundary, so the host can't see
@@ -691,6 +699,8 @@
     $('transport').classList.toggle('disabled', !s.en);
     $('btn-play').textContent = s.pl ? '❘❘' : '▶';
     $('btn-loop').classList.toggle('on', !!s.lp);
+    $('btn-skip').classList.toggle('on', !!s.sk);
+    $('ffwd-chip').classList.toggle('show', !!s.ff);
     SPEEDS.forEach(function(sp){ var b=speedChipEls[sp]; if(b) b.classList.toggle('on', sp===s.sp); });
 
     // scrubber x-axis skips the dead lobby: spans [startTick, maxTick].
@@ -703,7 +713,30 @@
     $('tick-clock').textContent = Math.max(0, s.t-st)+' / '+span;
 
     renderBeatMarkers(st, mx);
+    renderLullSpans(st, mx);
     renderMomentum();
+  }
+
+  // ---- scrubber lull shading (spans shipped once; rendered once) -----------
+  var lullSpans=null, lullsRendered=false;
+  function ingestLullSpans(s){
+    if (!s.lulls || lullSpans) return;
+    lullSpans = s.lulls;
+  }
+  function renderLullSpans(st, mx){
+    if (!lullSpans || lullsRendered) return;
+    lullsRendered = true;
+    var span=Math.max(1, mx-st);
+    var box=$('lulls');
+    lullSpans.forEach(function(p){
+      var el=document.createElement('div');
+      el.className='lull-span';
+      var a=Math.min(1, Math.max(0, (p[0]-st)/span));
+      var b=Math.min(1, Math.max(0, (p[1]-st)/span));
+      el.style.left=(a*100)+'%';
+      el.style.width=((b-a)*100)+'%';
+      box.appendChild(el);
+    });
   }
 
   // ---- scrubber beat markers -----------------------------------------------
@@ -804,7 +837,11 @@
 
     // Detect a jump (seek/loop) — nothing transient to clear here, but we keep
     // beat markers collected so far (markBeat dedups by tick|kind anyway).
-    var jumped = (s.t < lastTick) || (lastTick>=0 && s.t-lastTick > (s.sp||1)*4+2);
+    // A skip-lulls fast-forward frame advances up to 64 ticks (this frame or
+    // the previous one crossing out of the lull) — not a seek.
+    var stride = (s.ff || lastFf) ? Math.min((s.sp||1)*8, 64) : (s.sp||1);
+    var jumped = (s.t < lastTick) || (lastTick>=0 && s.t-lastTick > stride*4+2);
+    lastFf = !!s.ff;
 
     renderScorebug(s);
     renderClock(s);
@@ -825,6 +862,7 @@
       }
     }
     ingestLeadSeries(s);
+    ingestLullSpans(s);
     recordMomentum(s);
 
     lastTick = s.t;
@@ -846,6 +884,7 @@
   $('btn-fwd').addEventListener('click',     function(){ sendCmd('.'); });
   $('btn-end').addEventListener('click',     function(){ sendCmd('e'); });
   $('btn-loop').addEventListener('click',    function(){ sendCmd('r'); });
+  $('btn-skip').addEventListener('click',    function(){ sendCmd('f'); });
 
   // speed chips (absolute set: single-char speed commands; 16× maps to '6')
   var speedChipEls={};
