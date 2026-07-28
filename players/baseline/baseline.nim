@@ -2793,7 +2793,10 @@ proc runBot(url: string) =
   while true:
     try:
       let ws = newWebSocket(endpoint)
-      ws.socket.setSockOpt(OptNoDelay, true)
+      # TCP_NODELAY lives at IPPROTO_TCP, not the default SOL_SOCKET (where
+      # optname 1 is SO_DEBUG: EACCES without CAP_NET_ADMIN, and a silent
+      # no-op for Nagle even when privileged).
+      ws.socket.setSockOpt(OptNoDelay, true, level = IPPROTO_TCP.cint)
       echo "connected ", endpoint
       everConnected = true
       client.reset()
