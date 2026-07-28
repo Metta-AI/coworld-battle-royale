@@ -1164,12 +1164,30 @@ body[data-embed] #board { top: 0; height: 100%; }
   // Two poses per team: _gun (the cog holding its paintball marker forward at the
   // camera) is what a LIVE cog shows, since every live cog carries its gun; the
   // empty-handed master rides as the fallback until that one loads.
+  //
+  // COG_BASE, not a root-absolute "/client/…": this page is served from THREE
+  // places and a leading slash is only correct at one of them.
+  //  - native server, bare:      /client/replay        → "" + /client/…
+  //  - native server, proxied:   /<prefix>/client/replay (Kubernetes service
+  //    proxy) — a leading slash would drop <prefix> and 404.
+  //  - the STATIC WASM BUNDLE:   /v2/coworlds/replays/static/<coworld>/<hash>/
+  //    index.html, where the PNGs sit NEXT TO the page and there is no server
+  //    at all — a leading slash resolves to the API origin root and 404s.
+  // Stripping the trailing "/client/<page>" recovers the prefix, so the same
+  // expression serves all three. Mirrors ART_BASE in league_replayer.html and
+  // websocketPathForClientPage() in broadcast_core.js, which map the same
+  // /client + /clients route pair the same way. The bundle is detected by its
+  // WASM adapter rather than a URL param: window.CtfStaticReplay only exists
+  // when static_replay.js is on the page.
+  var COG_BASE = window.CtfStaticReplay
+    ? '.'
+    : location.pathname.replace(/\/clients?\/[^/]*$/, '') + '/client';
   var COG_ART = { red: new Image(), blue: new Image() };
-  COG_ART.red.src = '/client/soldier_red_front.png';
-  COG_ART.blue.src = '/client/soldier_blue_front.png';
+  COG_ART.red.src = COG_BASE + '/soldier_red_front.png';
+  COG_ART.blue.src = COG_BASE + '/soldier_blue_front.png';
   var COG_ART_GUN = { red: new Image(), blue: new Image() };
-  COG_ART_GUN.red.src = '/client/soldier_red_front_gun.png';
-  COG_ART_GUN.blue.src = '/client/soldier_blue_front_gun.png';
+  COG_ART_GUN.red.src = COG_BASE + '/soldier_red_front_gun.png';
+  COG_ART_GUN.blue.src = COG_BASE + '/soldier_blue_front_gun.png';
   function cogArtReady(img) { return img && img.complete && img.naturalWidth > 0; }
   // Pick the armed pose when it's ready, else the plain one, else null (the
   // caller falls back to the procedural chassis).
