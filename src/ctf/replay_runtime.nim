@@ -102,7 +102,11 @@ proc buildReplayViewerPacket*(
       if sendLead: replay.livesLeadSeries else: @[],
       replay.replayStartTick(),
       replay.endHoldSecondsLeft(),
-      sendFpMap
+      sendFpMap,
+      replay.skipLulls,
+      replay.skipLulls and replay.playing and
+        replay.isLullTick(sim.tickCount),
+      if sendLead: replay.lullSpans else: @[]
     )
   )
   if sendLead:
