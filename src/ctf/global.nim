@@ -1352,16 +1352,30 @@ const
                            ## neighbours merge into one plume — at 1.0 the fan
                            ## reads as beads on a string, floor showing between.
   SprayNozzleFwd = SprayHeldGripPx + SprayHeldLengthPx
-    ## Where the paint actually LEAVES the can: the held can's tail sits
-    ## SprayHeldGripPx along the aim and the can is SprayHeldLengthPx long, so
-    ## its nozzle is this far forward of the body center. Derived from the mount
-    ## constants, not hardcoded, so re-posing the can moves the paint with it.
+    ## Where the paint actually LEAVES the can, ALONG the aim: the held can's
+    ## tail sits SprayHeldGripPx along the aim and the can is SprayHeldLengthPx
+    ## long, so its nozzle is this far forward of the body center.
     ##
     ## The fan starts HERE rather than at the body center. Starting at the center
     ## put the first puff ~10px BEHIND the nozzle, on top of the cog's own body,
     ## so the paint read as pouring out of the cog's FACE instead of the can.
-    ## (The damage cone is still measured from the center — that's where the
-    ## victim test runs — so the visual is inset slightly inside the hitbox.)
+  SprayNozzleRight = GunRightPx
+    ## ...and PERPENDICULAR to the aim: the can is held at the cog's RIGHT, the
+    ## same GunRightPx off the aim ray as the marker it replaces, so the nozzle
+    ## is off-axis too. Without this the plume left the correct distance but the
+    ## wrong side, hanging in the air beside the can rather than out of it.
+    ##
+    ## Both offsets are DERIVED from the mount constants, not hardcoded, so
+    ## re-posing the held can moves the paint with it.
+  SprayAxisConverge = 0.65
+    ## How much of the lateral offset has bled away by the far end of the plume.
+    ## The near puffs sit fully at the nozzle; further out they drift back toward
+    ## the cone's true center line, because that IS where the cone points — a jet
+    ## held rigidly off-axis for its whole length would visibly miss the hitbox it
+    ## represents. This is the visual bridge from the nozzle to the centered cone.
+    ##
+    ## The hitbox stays centered on the body throughout: selectArcVictims is
+    ## untouched, and this is a render-side offset only.
 
 proc sprayJetGrowth(stage: int): float =
   ## How far the fan has jetted out, 0 = just left the nozzle, 1 = full reach.
@@ -1377,6 +1391,17 @@ proc plasmaPulseForward*(pulse, stage: int): int =
     return SprayNozzleFwd
   SprayNozzleFwd + int(round((tip - float(SprayNozzleFwd)) *
     float(2 * pulse + 1) / float(2 * PlasmaArcFxPulses)))
+
+proc plasmaPulseRight*(pulse, stage: int): int =
+  ## The PERPENDICULAR offset of one puff's center, in map px, positive toward
+  ## the cog's right (the side the can is held on). Full at the nozzle and
+  ## easing back toward the cone's center line with distance, per
+  ## SprayAxisConverge — so the plume visibly leaves the nozzle and then joins
+  ## the axis the cone actually covers.
+  if PlasmaArcFxPulses <= 1:
+    return SprayNozzleRight
+  let along = float(pulse) / float(PlasmaArcFxPulses - 1)   ## 0 near .. 1 far
+  int(round(float(SprayNozzleRight) * (1.0 - SprayAxisConverge * along)))
 
 proc plasmaPulseDiameter(pulse, stage: int): int =
   ## One puff sprite's diameter: the cone's width AT that puff's current distance
@@ -3715,6 +3740,9 @@ proc addPlasmaArcFlashes(
         0, PlasmaArcFxStages - 1)
       colorIndex = playerColorIndex(flash.color)
       (ux, uy) = aimVector(flash.aimBrads)
+      # The cog's RIGHT, perpendicular to the aim: for east aim (1, 0) this is
+      # (0, 1) — screen-down — matching the held weapon's GunRightPx convention.
+      (rx, ry) = (-uy, ux)
     for pulse in 0 ..< PlasmaArcFxPulses:
       let
         spriteId = PlasmaArcFxSpriteBase +
@@ -3723,9 +3751,12 @@ proc addPlasmaArcFlashes(
         # Both the distance and the width move with `stage`: the fan jets out
         # from the nozzle as the burst ages instead of appearing fully formed.
         forward = float(plasmaPulseForward(pulse, stage))
+        # ...and each puff is nudged toward the cog's right, so the plume leaves
+        # the NOZZLE (which is held off-axis) and eases onto the cone's axis.
+        right = float(plasmaPulseRight(pulse, stage))
         diameter = plasmaPulseDiameter(pulse, stage)
-        px = flash.x + int(round(ux * forward))
-        py = flash.y + int(round(uy * forward))
+        px = flash.x + int(round(ux * forward + rx * right))
+        py = flash.y + int(round(uy * forward + ry * right))
       # The damage cone is blocked by walls (selectArcVictims runs a
       # line-of-sight test per victim), so the animation must not sail
       # through them either: stop placing mist puffs at the first wall
