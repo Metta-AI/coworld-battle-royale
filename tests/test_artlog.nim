@@ -55,6 +55,13 @@ block artifact_round_trip:
   doAssert meta["slot"].getInt == 3
   doAssert meta["team"].getStr == "Blue"
   doAssert meta["role"].getStr == "MidTop"
+  # buildDefines mirrors whatever -d:buildDefines the build injected
+  # (empty seq when not injected, the full parsed list when it was).
+  doAssert meta["buildDefines"] == %artBuildDefines()
+  when defined(buildDefines):
+    doAssert artBuildDefines().len > 0,
+      "-d:buildDefines was injected but parsed to an empty list"
+    echo "buildDefines recorded: ", $artBuildDefines()
 
   var kinds: CountTable[string]
   for line in files["events.jsonl"].splitLines:
