@@ -18,7 +18,7 @@
 ## entry point traps, remembers the first error, and goes quiet.
 ##
 ## Zip layout:
-## - meta.json     slot / team / role / active compile defines
+## - meta.json     slot / team / role / build-injected define list
 ## - events.jsonl  one JSON object per event, `t` = tick, `e` = kind
 ## - ticks.jsonl   sampled state rows (pos, hp, aim, modes, target, mask)
 ## - summary.json  counters + per-mode tick histograms + first error, if any
@@ -89,6 +89,27 @@ type
 
 var art = ArtLog(active: false)
 
+const buildDefines {.strdefine.} = ""
+  ## Raw define string injected by the build (players/baseline/Dockerfile
+  ## passes -d:buildDefines="..." with the full compile-line define set).
+  ## Records what the build was TOLD to compile with — NOT proof that any
+  ## code guarded by a define still exists in this tree. Behavioral
+  ## verification (mechdiff.py --trigger) stays authoritative.
+
+proc artBuildDefines*(): seq[string] =
+  ## Define names parsed from the injected build string, in compile-line
+  ## order, e.g. @["release", "swarm", "useMalloc"]. Empty when the build
+  ## did not inject -d:buildDefines (local/test builds).
+  for tok in buildDefines.splitWhitespace():
+    var name = tok
+    name.removePrefix("--define:")
+    name.removePrefix("-d:")
+    let eq = name.find('=')
+    if eq >= 0:
+      name.setLen(eq)
+    if name.len > 0 and name notin result:
+      result.add(name)
+
 proc artError(msg: string) =
   ## First internal error wins; later ones are dropped. The error rides in
   ## summary.json AND goes to stdout once, so a broken logger is visible in
@@ -111,18 +132,12 @@ proc artInit*(slot: int, team, role: string) =
   # lastSample sits one full window in the past so the very first frame
   # lands a state row (episode-start position, spawn aim).
   art = ArtLog(active: true, lastSample: -SampleEvery)
-  var defines: seq[string]
-  when defined(taunt): defines.add("taunt")
-  when defined(shoutCoord): defines.add("shoutCoord")
-  when defined(shoutThief): defines.add("shoutThief")
-  when defined(swarm): defines.add("swarm")
-  when defined(rushAll): defines.add("rushAll")
   art.meta = %*{
-    "schema": 1,
+    "schema": 2,
     "slot": slot,
     "team": team,
     "role": role,
-    "defines": defines,
+    "buildDefines": artBuildDefines(),
     "sampleEvery": SampleEvery,
   }
 
