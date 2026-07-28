@@ -38,10 +38,10 @@ leaves after a ~5-tick windup. Labels we read:
 - `"player <color> right|left"` — another player; the suffix is the
   horizontal sprite flip. Teammates are always streamed; enemies only while
   inside our vision cone/bubble with line of sight.
-- `"aim dot <color>"` — the aim-indicator dots every visible player wears
-  along its aim line. OUR OWN farthest dot is an absolute readback of our
-  actual aim angle (see the turret controller); a visible enemy's dots are
-  readable intel about where it is looking.
+- No label carries anyone's **aim angle**. The old `"aim dot <color>"` line was
+  retired engine-side (see RULES.md label changes), so our own aim is pure dead
+  reckoning and a mate's or enemy's facing is only the coarse left/right sprite
+  flip above.
 - `"<team> flag"` (`"red flag"` / `"blue flag"`) — a flag, on its pedestal or
   riding its carrier's exact position. Pedestal flags are never fogged; a
   carried flag is exactly as visible as its carrier. Consequences: the ENEMY
@@ -194,12 +194,11 @@ the capture race stays on.
   pixel raycast against the walkability mask (exactly the sim's LOS rule).
   Shoot first — first shot wins. Tracks form anywhere the vision cone
   reaches, so a lane watcher genuinely engages down its open lane.
-- **Turret controller**: the bot tracks its own aim two ways — dead reckoning
+- **Turret controller**: the bot tracks its own aim by **dead reckoning only**
   (spawn aim is toward the enemy side; every elapsed sim tick advances it by
-  the rotation of the last sent mask) plus an **absolute readback** from its
-  own rendered aim dots each frame (`observedAim`, resync when they disagree
-  by > `AimResyncBrads`). Each tick it outputs the rotate button (B = CCW,
-  Select = CW) that closes the shortest arc to the desired aim and stops
+  the rotation of the last sent mask) — no observation label reads the aim
+  angle back, so drift is uncorrected. Each tick it outputs the rotate button
+  (B = CCW, Select = CW) that closes the shortest arc to the desired aim and stops
   inside `CombatDeadband` (±2 brads; `AimRate` = 5 cannot settle tighter).
 - **Fire gate**: fire only when the corridor covers the target at its range —
   the perpendicular miss of the current aim error, `range × sin(err)`, must
