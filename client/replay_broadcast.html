@@ -693,9 +693,57 @@ html, body {
   transform: translateX(-1px);
   z-index: 2;
 }
-.beat-marker.kill { background: var(--paper-dim); }
+/* kill ticks are short and colored by the KILLER's team (a red tick = red
+   scored a kill); team-kills and unattributable pileups stay neutral. */
+.beat-marker.kill { background: var(--paper-dim); height: calc(6 * var(--u)); }
+.beat-marker.kill.red { background: var(--red); }
+.beat-marker.kill.blue { background: var(--blue); }
+/* flag beats are colored by the FLAG's team, matching the banners ("RED
+   HEART TAKEN"): steal = full tick with a flag head, return = same tick
+   dimmed (the heart snapped home), capture = the chunky match point in the
+   CAPTURING team's color. */
 .beat-marker.steal { background: var(--amber); }
-.beat-marker.capture { background: var(--red); }
+.beat-marker.steal.red { background: var(--red); }
+.beat-marker.steal.blue { background: var(--blue); }
+.beat-marker.steal::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0;
+  width: calc(5 * var(--u));
+  height: calc(3 * var(--u));
+  background: inherit;
+}
+.beat-marker.return { background: var(--paper-dim); opacity: 0.45; }
+.beat-marker.return.red { background: var(--red); }
+.beat-marker.return.blue { background: var(--blue); }
+.beat-marker.capture { background: var(--red); width: calc(3 * var(--u)); height: calc(12 * var(--u)); }
+.beat-marker.capture.blue { background: var(--blue); }
+/* winner cap: a flat block just past the track's right end, colored by the
+   verdict (split for a draw), so the scrubber itself says how this ends. */
+.scrub-win {
+  display: none;
+  position: absolute;
+  right: calc(-4 * var(--u));
+  top: calc(2 * var(--u));
+  width: calc(6 * var(--u));
+  height: calc(12 * var(--u));
+  z-index: 3;
+}
+.scrub-win.red { display: block; background: var(--red); }
+.scrub-win.blue { display: block; background: var(--blue); }
+.scrub-win.draw { display: block; background: linear-gradient(180deg, var(--red) 50%, var(--blue) 50%); }
+/* verdict chip in the transport bar: "RED WINS" next to the tick clock. */
+.win-chip {
+  display: none;
+  font-family: var(--pixfont);
+  font-size: calc(9 * var(--u));
+  padding: 0 calc(6 * var(--u));
+  white-space: nowrap;
+}
+.win-chip.show { display: inline; }
+.win-chip.red { color: var(--red); }
+.win-chip.blue { color: var(--blue); }
+.win-chip.draw { color: var(--paper-dim); }
 
 .tbar {
   display: flex;
@@ -1087,6 +1135,7 @@ body[data-embed] #board { top: 0; height: 100%; }
         <button class="tbtn" id="btn-loop" title="Loop (r)">↻</button>
         <button class="tbtn" id="btn-skip" title="Auto-skip lulls (f)">▸▸</button>
         <span class="ffwd-chip" id="ffwd-chip">▸▸ SKIPPING LULL</span>
+        <span class="win-chip" id="win-chip"></span>
         <span class="tick-clock" id="tick-clock">0 / 0</span>
         <span class="tsep"></span>
         <div class="speedchips" id="speedchips"></div>
@@ -1102,6 +1151,7 @@ body[data-embed] #board { top: 0; height: 100%; }
         <!-- lull shading rides ABOVE track+fill so the quiet stretches read
              dimmed whether played or not; the amber head still wins (z:3) -->
         <div id="lulls"></div>
+        <div class="scrub-win" id="scrub-win"></div>
         <div class="scrub-head" id="scrub-head"></div>
       </div>
     </div>
@@ -1352,9 +1402,10 @@ body[data-embed] #board { top: 0; height: 100%; }
     ingestLeadSeries(s);
     ingestFpMap(s);
     ingestLullSpans(s);
+    ingestBeats(s);
     recordMomentum(s);
 
-    if (s.ph === 'gameover') { renderEndcard(s); }
+    if (s.ph === 'gameover') { renderEndcard(s); if (s.over) setVerdict(s.over); }
     else { $('endcard').classList.remove('on'); }
 
     lastTick = s.t;
@@ -1376,6 +1427,40 @@ body[data-embed] #board { top: 0; height: 100%; }
   function ingestLullSpans(s) {
     if (!s.lulls || lullSpans) return;
     lullSpans = s.lulls;
+  }
+
+  // The full-match flag beats + verdict ride the same first HUD frame: place
+  // every steal/return/capture marker and the winner cap up front, so the
+  // scrubber tells the flag story (and how it ends) before playback gets
+  // there. Kill markers stay accumulate-as-played — dozens of them up front
+  // would bury the flag beats. markBeat dedups by tick|kind, so the live
+  // events re-firing over these is harmless.
+  var beatTimeline = null;
+  function otherTeam(t) { return t === 'red' ? 'blue' : t === 'blue' ? 'red' : ''; }
+  function ingestBeats(s) {
+    if (!s.beats || beatTimeline) return;
+    beatTimeline = s.beats;
+    for (var i = 0; i < beatTimeline.length; i++) {
+      var b = beatTimeline[i];
+      if (b.k === 'steal' || b.k === 'return') markBeat(b.t, b.k, b.flag);
+      else if (b.k === 'capture') markBeat(b.t, 'capture', otherTeam(b.flag));
+      else if (b.k === 'gameover') setVerdict(b);
+    }
+  }
+
+  // Winner cap + "RED WINS" chip. Fed by the up-front beat timeline, and as a
+  // fallback by the game-over state (older servers that ship no beats still
+  // get the verdict once playback reaches the end). Idempotent.
+  function setVerdict(v) {
+    var cls = v.draw ? 'draw' : (v.winner === 'red' || v.winner === 'blue' ? v.winner : '');
+    if (!cls) return;
+    var label = v.draw ? 'DRAW' : v.winner.toUpperCase() + ' WINS';
+    var cap = $('scrub-win');
+    cap.className = 'scrub-win ' + cls;
+    cap.title = label;
+    var chip = $('win-chip');
+    chip.textContent = label;
+    chip.className = 'win-chip show ' + cls;
   }
 
   // The server ships the static minimap wall silhouette ONCE (RLE of a coarse
@@ -2430,10 +2515,10 @@ body[data-embed] #board { top: 0; height: 100%; }
   // ============================================================
   function applyEvent(e, s) {
     switch (e.k) {
-      case 'kill': onKill(e, s); markBeat(e.t, 'kill'); beatPulse(); break;
-      case 'steal': onSteal(e, s); markBeat(e.t, 'steal'); beatPulse(); break;
-      case 'return': onReturn(e, s); beatPulse(); break;
-      case 'capture': onCapture(e, s); markBeat(e.t, 'capture'); beatPulse(); break;
+      case 'kill': onKill(e, s); markBeat(e.t, 'kill', killMarkerTeam(e, s)); beatPulse(); break;
+      case 'steal': onSteal(e, s); markBeat(e.t, 'steal', e.flag); beatPulse(); break;
+      case 'return': onReturn(e, s); markBeat(e.t, 'return', e.flag); beatPulse(); break;
+      case 'capture': onCapture(e, s); markBeat(e.t, 'capture', otherTeam(e.flag)); beatPulse(); break;
       case 'respawn': /* board rematerialize handles this visually */ break;
       case 'gameover': /* end-card is state-driven */ break;
       case 'phase': /* clock caption handles phase */ break;
@@ -2558,11 +2643,17 @@ body[data-embed] #board { top: 0; height: 100%; }
 
   // ---------- scrubber beat markers ----------
   var scrubEl = $('scrub');
-  function markBeat(tick, kind) {
+  function markBeat(tick, kind, team) {
     var mk = tick + '|' + kind;
     if (seenMarkers[mk]) return;
-    seenMarkers[mk] = { tick: tick, kind: kind };
-    pendingMarkers.push({ tick: tick, kind: kind });
+    seenMarkers[mk] = { tick: tick, kind: kind, team: team || '' };
+    pendingMarkers.push(seenMarkers[mk]);
+  }
+  // A kill tick is colored by the KILLER's team; a team-kill or an
+  // unattributable same-tick pileup stays honestly neutral.
+  function killMarkerTeam(e, s) {
+    if (e.amb || e.tk || e.killer < 0) return '';
+    return teamOf(s, e.killer) || '';
   }
   var pendingMarkers = [];
   function renderBeatMarkers(st, mx) {
@@ -2570,7 +2661,7 @@ body[data-embed] #board { top: 0; height: 100%; }
     var span = Math.max(1, mx - st);
     pendingMarkers.forEach(function (m) {
       var el = document.createElement('div');
-      el.className = 'beat-marker ' + m.kind;
+      el.className = 'beat-marker ' + m.kind + (m.team ? ' ' + m.team : '');
       el.style.left = (Math.min(1, Math.max(0, (m.tick - st) / span)) * 100) + '%';
       scrubEl.appendChild(el);
     });
