@@ -28,5 +28,6 @@ import
   test_windows,
   test_agent_skins,
   test_sprite_collisions,
-  test_fast_mode
+  test_fast_mode,
+  test_artlog
 {.warning[UnusedImport]: on.}
