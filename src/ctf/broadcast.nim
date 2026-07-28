@@ -495,7 +495,8 @@ proc buildStateJson*(
   includeFpMap: bool = false,
   skipLulls: bool = false,
   fastForwarding: bool = false,
-  lullSpans: seq[array[2, int]] = @[]
+  lullSpans: seq[array[2, int]] = @[],
+  beatEvents: JsonNode = nil
 ): string =
   ## Assembles the broadcast chrome frame from the current board state plus the
   ## events accumulated across this playback frame. Board-derived STATE (lives,
@@ -554,6 +555,13 @@ proc buildStateJson*(
   # caches it and reuses it for the whole match.
   if includeFpMap:
     state["fpmap"] = sim.fpMapWallsJson()
+
+  # Full-timeline flag beats + verdict, shipped alongside the lead series on
+  # the same first frame: the steal/return/capture/gameover events the whole
+  # match will produce, so the scrubber draws its flag markers and winner cap
+  # immediately instead of collecting them as playback passes each one.
+  if not beatEvents.isNil and beatEvents.len > 0:
+    state["beats"] = beatEvents
 
   # Full-timeline lull spans, shipped alongside the lead series on the same
   # first frame: [[firstTick, lastTick], …] quiet stretches the skip-lulls mode

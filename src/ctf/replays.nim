@@ -59,6 +59,12 @@ type
       ## LullLeadTicks), precomputed on the same keyframe walk. Spans shorter
       ## than MinLullTicks are dropped: skipping a short breather is more
       ## jarring than watching it.
+    beatEvents*: JsonNode
+      ## Full-match flag-story beats (steal/return/capture) plus the terminal
+      ## gameover verdict, exactly as `stepEvents` emits them, precomputed on
+      ## the same keyframe walk. Shipped once to the HUD client so the
+      ## scrubber can place its flag markers and winner cap up front instead
+      ## of accumulating them as playback happens to pass each beat.
 
 const
   PlaybackSpeeds* = [1, 2, 3, 4, 8, 16]
@@ -375,6 +381,7 @@ proc buildReplayKeyframes*(
     beatTracker = initBroadcastTracker()
     beatTicks: seq[int]
   beatTracker.resync(sim)
+  replay.beatEvents = newJArray()
   # -1 until the match leaves the lobby: the first tick the game is Playing is
   # where a spectator's watch should begin (everything before is warmup).
   replay.startTick = if sim.phase == Playing: sim.gameStartTick else: -1
@@ -388,6 +395,11 @@ proc buildReplayKeyframes*(
       lastLead = lead
     var stepBeats = newJArray()
     sim.stepEvents(beatTracker, stepBeats)
+    for event in stepBeats:
+      # The flag story + verdict for the scrubber's up-front timeline. Kills
+      # stay out: dozens of same-looking ticks would bury the flag beats.
+      if event["k"].getStr() in ["steal", "return", "capture", "gameover"]:
+        replay.beatEvents.add(event)
     for event in stepBeats:
       if event["k"].getStr() != "respawn":
         beatTicks.add(sim.tickCount)
