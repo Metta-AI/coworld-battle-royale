@@ -2,7 +2,7 @@ import
   std/[algorithm, math, os, strutils, tables],
   bitworld/pixelfonts, bitworld/profile, bitworld/spriteprotocol, bitworld/server,
   pixie,
-  sim
+  labels, sim
 
 const
   BroadcastChromeSpriteId* = 4090
@@ -51,8 +51,9 @@ const
   ## sprite/object pools start at 100).
   MapBandSpriteBase = 30
   MapBandObjectBase = 40
-  MapBandHeight = 96          ## px rows per band — 659/96 ≈ 7 bands, each well
-                              ## under 200 KB compressed (far below the 1 MiB cap).
+  MapBandHeight = 192         ## px rows per band — 659/192 ≈ 4 bands (was 96 /
+                              ## ~7). Logical rows shrink by boardScale² so each
+                              ## band's byte size stays under the 1 MiB cap.
   ScoreboardWidth = 84
   ScoreboardHeight = 116
   ScoreboardY = 2
@@ -100,6 +101,11 @@ const
   PlantedFlagSpriteBase = 704  ## scaled home-heart sprites: 704 red, 705 blue.
   GameOverIconSpriteBase = 706 ## compact roster-chip soldiers: 706 red, 707 blue.
   GameOverIconSize = 14        ## roster chip footprint (fits the game-over row).
+  CarryHeartSpriteBase = 708   ## carried-heart sprites, baked per team×aim so the
+                               ## held heart rotates WITH the cog: team×16 aim →
+                               ## 708..739 (red 708..723, blue 724..739).
+  CarryHeartFwdPx = 12         ## px the carried heart rides FORWARD of the body along
+                               ## the aim, so it sits between the head and the arms.
   FlagAuraSpriteBase = 702     ## carrier-glow sprites: 702 red-flag halo, 703 blue-flag halo.
   FlagAuraObjectBase = 19200   ## carrier-glow object pool (one per carried flag).
   FlagAuraSize = 26            ## px diameter of the carrier halo.
@@ -169,12 +175,12 @@ const
                                  ## leads), so an un-lagged bubble reads
                                  ## off-center around the agent.
   ShieldBubbleObjectBase = 19680 ## carrier bubbles: one per player, 19680..19695
-                                 ## (clear of plasma arc FX at 19700).
+                                 ## (clear of spray cone FX at 19700).
   ## The bubble shows while the carrier's shield layer (shieldHp) is intact;
   ## sim.nim records the impact FX with the same condition.
   ShieldBubbleDeformBase = 1424  ## blink/dent impact variants keyed
                                  ## bucket*stages+stage: 1424..1487 (clear of
-                                 ## tracer heads at 1300..1363 and plasma
+                                 ## tracer heads at 1300..1363 and spray can
                                  ## sprites at 2000).
   ShieldBubbleDeformBuckets = 16 ## impact-angle buckets (16 brads apart, like
                                  ## the soldier rotations).
@@ -182,18 +188,20 @@ const
                                  ## BubbleImpactTicks.
   PlasmaArcPickupSpriteId = 2000
   PlasmaArcCarrySpriteId = 2001
-  PlasmaArcFxSpriteBase = 2002   ## cone pulse discs, keyed colorIndex *
+  PlasmaArcFxSpriteBase = 2002   ## cone paint-mist puffs, keyed colorIndex *
                                  ## (stages * pulses) + stage * pulses +
-                                 ## pulse: 2002..2257, clear of the replay
+                                 ## pulse: 2002..2385, clear of the replay
                                  ## UI sprites at 4002.
   PlasmaArcFxStages = 4          ## fade stages across PlasmaArcFxTicks.
-  PlasmaArcFxPulses = 4          ## discs placed along the cone axis, sized
-                                 ## to the local cone width.
+  PlasmaArcFxPulses* = 6         ## puffs placed along the cone axis, sized to
+                                 ## the local cone width. 6 (was 4) so the
+                                 ## overlapping puffs close into a continuous
+                                 ## plume instead of beads on a string.
   PlasmaArcPickupSize = 20
   PlasmaArcCarrySize = 10
   PlasmaArcPickupObjectBase = 19640
   PlasmaArcCarryObjectBase = 19660
-  PlasmaArcFxObjectBase = 19700  ## 19700..19763 (16 flashes x 4 pulses),
+  PlasmaArcFxObjectBase* = 19700 ## 19700..19795 (16 flashes x 6 pulses),
                                  ## clear of the map markers at 20000.
   PlasmaArcMaxFlashes = 16
   RotDiamondSpriteBase = 1401    ## spinning diamond frames: 1401..1416;
@@ -276,6 +284,32 @@ const
   KillPopSpriteBase = 31128    ## floating "KO" kill-marker sprites keyed
                                ## color×stage: 31128..31191 (above damage pops).
   KillPopRisePx = 16           ## px the kill marker floats upward over its life.
+  ## --- Articulated turret-rig sprite/object id pools (board only) ---
+  ## The cog draws as 9 z-stacked segments + a held gun, each its own board object
+  ## so the head/arms track AIM while the legs/wheels track MOVEMENT (a true turret
+  ## swivel). Sprite pools are generous and lazily baked; they start well clear of
+  ## every family above (highest was kill pops ~31191). Bake dims: head = team×16
+  ## aim; arms = team×16 aim; legs = team×16 heading×(2·swing+1)×(shorten+1);
+  ## wheels = team×16 heading×(2·caster+1).
+  RigHeadSpriteBase* = 40000   ## 40000..40031 (team×16 aim). Exported so the
+                               ## sprite-collision audit can scope skin-pool checks
+                               ## below the (skin-independent) rig pool.
+  RigArmSpriteBase = 40040     ## 40040 + team×2arms×16 aim → 40040..40103.
+  RigLegSpriteBase = 40200     ## team×3legs×16head×33swing×5shorten ≈ 15840 ids
+                               ## → 40200..56039.
+  RigWheelSpriteBase = 56100   ## team×3wheels×16head×17caster ≈ 1632 ids
+                               ## → 56100..57731.
+  RigGunSpriteBase = 57800     ## team×16 aim → 57800..57831 (held marker + glow).
+  RigSpraySpriteBase = 57840   ## team×16 aim → 57840..57871 (held spray can +
+                               ## glow): the swap-in art while a cog carries a
+                               ## can, sharing the gun's object slot.
+  ## Object pools sit clear of the tracer-dot pool (24000..30991) and the damage/
+  ## kill pops (31200..31215); rig objects live at 32000+ (16 players each).
+  RigHeadObjectBase = 32000    ## 1 head object per player: 32000..32015.
+  RigArmObjectBase = 32020     ## 2 arm objects per player: 32020..32051.
+  RigLegObjectBase = 32060     ## 3 leg objects per player: 32060..32107.
+  RigWheelObjectBase = 32120   ## 3 wheel objects per player: 32120..32167.
+  RigGunObjectBase = 32168     ## 1 gun object per player: 32168..32183.
   AimDotSpriteBase = 780       ## per-color aim indicator dot sprites: 780..795.
   AimDotObjectBase = 18000     ## aim dot object-id pool: 18000..18063.
   AimDotSize = 2
@@ -411,12 +445,20 @@ type
     replayCommands*: seq[char]
     broadcastHud*: bool          ## viewer opted into the JSON chrome channel.
     momentumSent*: bool          ## full lives-lead series already sent to this viewer.
+    fpMapSent*: bool             ## static minimap wall silhouette already sent (EYES PiP tactical map).
     povSelectPending*: int       ## POV slot requested by a `v:<slot>` command.
     endzoneFade*: array[Team, int]  ## per-team endzone glow crossfade stage (0
                                  ## = full glow / heart home, GlowFadeStages-1 =
                                  ## dark / heart taken); ramped ±1 per frame.
     endzonePrewarmFrames*: int   ## frames seen since connect, used to drip the
                                  ## endzone fade crops to this viewer up front.
+    cogDrive*: array[MaxPlayers, CogDriveState]  ## per-player segmented-trike
+                                 ## animation state (body heading / turnAmt /
+                                 ## per-wheel casters), evolved once per frame
+                                 ## from velocity. Broadcast-only; see stepCogDrive.
+    cogDriveTick*: int           ## sim.tickCount at the last cogDrive step; a
+                                 ## non-sequential jump snaps the pose instead of
+                                 ## integrating across it (scrub-safe).
     spriteDefs: seq[SpriteDefinition]
 
   PlayerViewerState* = ref object
@@ -653,6 +695,7 @@ proc initGlobalViewerState*(): GlobalViewerState =
   result.replaySeekTick = -1
   result.replayCommands = @[]
   result.povSelectPending = -2   ## -2 = no request; -1 = clear; >=0 = slot.
+  result.cogDriveTick = low(int)  ## no drive step yet; the first frame snaps.
 
 proc initPlayerViewerState*(): PlayerViewerState =
   ## Returns the default state for one sprite player viewer.
@@ -751,6 +794,56 @@ proc selectedSoldierPlayerSpriteId(team: Team, skin: Skin, rot: int): int =
   SelectedPlayerSpriteBase + ord(skin) * SoldierSkinSpriteStride +
     ord(team) * SoldierRotations + rot
 
+# --- Articulated turret-rig sprite ids ---
+# Each family packs its dimensions into a dense range. Signed articulation steps
+# (leg swing, wheel caster) are offset to a non-negative index. ord(seg) within a
+# family: arms armL/armR = 0/1; legs FL/FR/Rear = 0/1/2; wheels L/R/Rear = 0/1/2.
+proc rigHeadSpriteId(team: Team, aimStep: int): int =
+  RigHeadSpriteBase + ord(team) * RigSteps + aimStep
+
+proc rigGunSpriteId(team: Team, aimStep: int): int =
+  RigGunSpriteBase + ord(team) * RigSteps + aimStep
+
+proc rigSpraySpriteId(team: Team, aimStep: int): int =
+  RigSpraySpriteBase + ord(team) * RigSteps + aimStep
+
+proc rigArmSpriteId(team: Team, seg: RigSeg, aimStep, reach: int): int =
+  ## reach 0 = tucked (idle), 1 = reaching forward (carrying).
+  let armIdx = if seg == rsArmL: 0 else: 1
+  RigArmSpriteBase + (((ord(team) * 2 + armIdx) * RigSteps + aimStep) * 2) + reach
+
+proc rigLegIdx(seg: RigSeg): int =
+  case seg
+  of rsLegFL: 0
+  of rsLegFR: 1
+  of rsLegRear: 2
+  else: 0
+
+proc rigLegSpriteId(team: Team, seg: RigSeg,
+    headStep, swingStep, shortenStep: int): int =
+  ## headStep 0..15; swingStep signed → 0..2·RigLegSwingSteps; shortenStep 0..RigShortenSteps.
+  let
+    swings = 2 * RigLegSwingSteps + 1
+    shorts = RigShortenSteps + 1
+    sw = swingStep + RigLegSwingSteps
+    idx = ((rigLegIdx(seg) * RigSteps + headStep) * swings + sw) * shorts + shortenStep
+  RigLegSpriteBase + (ord(team) * 3 * RigSteps * swings * shorts) + idx
+
+proc rigWheelIdx(seg: RigSeg): int =
+  case seg
+  of rsWheelL: 0
+  of rsWheelR: 1
+  of rsWheelRear: 2
+  else: 0
+
+proc rigWheelSpriteId(team: Team, seg: RigSeg, headStep, casterStep: int): int =
+  ## headStep 0..15; casterStep signed → 0..2·RigCasterSteps.
+  let
+    casters = 2 * RigCasterSteps + 1
+    cs = casterStep + RigCasterSteps
+    idx = (rigWheelIdx(seg) * RigSteps + headStep) * casters + cs
+  RigWheelSpriteBase + (ord(team) * 3 * RigSteps * casters) + idx
+
 proc corpseSoldierSpriteId(team: Team, skin: Skin, rot: int): int =
   ## Sprite id for a dead soldier (grey corpse) at rotation `rot` (the
   ## selected-soldier pools start at 6000).
@@ -785,10 +878,13 @@ proc addSpriteChanged(
   defs: var seq[SpriteDefinition],
   spriteId, width, height: int,
   pixels: openArray[uint8],
-  label: string = "",
+  label: string,
   changed = false
 ) {.measure.} =
   ## Appends a sprite definition when metadata or caller dirtiness changed.
+  ## Every sprite MUST carry a non-empty label — the inspector and bot readers
+  ## both key off it, and an empty label silently re-sends forever.
+  doAssert label.len > 0, "sprite " & $spriteId & " needs a non-empty label"
   let index = defs.spriteDefinitionIndex(spriteId)
   if index >= 0:
     if defs[index].width == width and
@@ -826,7 +922,7 @@ proc addBoardSpriteChanged(
   defs: var seq[SpriteDefinition],
   spriteId, width, height: int,
   pixels: openArray[uint8],
-  label: string = "",
+  label: string,
   changed = false,
   native = 1
 ) {.measure.} =
@@ -835,6 +931,7 @@ proc addBoardSpriteChanged(
   ## scale `pixels` was rasterized at — 1 (upscaled here on emission) or
   ## boardScale (already high-res; passed through). The dedup check runs
   ## before any upscale so per-frame callers pay nothing when unchanged.
+  doAssert label.len > 0, "sprite " & $spriteId & " needs a non-empty label"
   let
     outW = width * boardScale
     outH = height * boardScale
@@ -850,23 +947,6 @@ proc addBoardSpriteChanged(
     packet.addSpriteChanged(
       defs, spriteId, outW, outH,
       scaleSpritePixels(pixels, width, height, boardScale), label, changed)
-
-proc addBoardSprite(
-  packet: var seq[uint8],
-  spriteId, width, height: int,
-  pixels: openArray[uint8],
-  label = "",
-  native = 1
-) =
-  ## Uncached addSprite for BOARD sprites (per-frame text labels): logical
-  ## dims in, boardScale× wire sprite out. See addBoardSpriteChanged.
-  if native == boardScale:
-    packet.addSprite(spriteId, width * boardScale, height * boardScale,
-      pixels, label)
-  else:
-    packet.addSprite(
-      spriteId, width * boardScale, height * boardScale,
-      scaleSpritePixels(pixels, width, height, boardScale), label)
 
 proc applyGlobalViewerMessage*(
   state: var GlobalViewerState,
@@ -1255,52 +1335,97 @@ proc buildShieldBubbleSprite(): seq[uint8] =
   ## The idle (no recent impact) carrier bubble.
   buildShieldBubblePixels(-1, 0)
 
-proc buildPlasmaArcIcon(size: int): seq[uint8] {.measure.} =
-  ## Builds a small, readable plasma arc emitter icon for pickups and
-  ## carried markers: a dark grip on the left firing a widening cyan cone.
-  result = newRgbaPixels(size, size)
-  let center = float(size - 1) / 2
-  for y in 0 ..< size:
-    for x in 0 ..< size:
-      let
-        dx = float(x) - center
-        dy = float(y) - center
-        coneHalf = (dx + center * 0.3) * 0.45
-        cone = dx > -center * 0.3 and abs(dy) <= coneHalf
-        core = cone and abs(dy) <= coneHalf / 3.0
-        grip = dx <= -center * 0.3 and dx >= -center and abs(dy) < 1.6
-      if core:
-        result.putRawRgbaPixel(
-          y * size + x, 225, 250, 255, 250
-        )
-      elif cone:
-        result.putRawRgbaPixel(
-          y * size + x, 70, 200, 245, 220
-        )
-      elif grip:
-        result.putRawRgbaPixel(
-          y * size + x, 70, 76, 88, 245
-        )
+## The spray cone ANIMATES: a burst's fan starts bunched at the nozzle and jets
+## outward to full reach as each per-tick snapshot ages, then thins out. The old
+## plasma version placed its discs at fixed distances and only faded them, so the
+## cone popped into existence fully formed and never moved — it read as a static
+## stamp, not as paint leaving a can.
+##
+## The sim emits one snapshot per active tick (PlasmaArcActiveTicks) and each
+## lives PlasmaArcFxTicks, so several fans at different stages overlap at any
+## instant — that overlap is what makes a held trigger read as one continuous jet
+## rather than a pulsing strobe.
+const
+  SprayJetStart = 0.55   ## how far along the reach the fan spans on its FIRST
+                         ## frame; it grows to the full reach by the last stage.
+  SprayPuffOverlap = 1.35  ## puffs are drawn OVERSIZE for their slot so
+                           ## neighbours merge into one plume — at 1.0 the fan
+                           ## reads as beads on a string, floor showing between.
+  SprayNozzleFwd = SprayHeldGripPx + SprayHeldLengthPx
+    ## Where the paint actually LEAVES the can, ALONG the aim: the held can's
+    ## tail sits SprayHeldGripPx along the aim and the can is SprayHeldLengthPx
+    ## long, so its nozzle is this far forward of the body center.
+    ##
+    ## The fan starts HERE rather than at the body center. Starting at the center
+    ## put the first puff ~10px BEHIND the nozzle, on top of the cog's own body,
+    ## so the paint read as pouring out of the cog's FACE instead of the can.
+  SprayNozzleRight = GunRightPx
+    ## ...and PERPENDICULAR to the aim: the can is held at the cog's RIGHT, the
+    ## same GunRightPx off the aim ray as the marker it replaces, so the nozzle
+    ## is off-axis too. Without this the plume left the correct distance but the
+    ## wrong side, hanging in the air beside the can rather than out of it.
+    ##
+    ## Both offsets are DERIVED from the mount constants, not hardcoded, so
+    ## re-posing the held can moves the paint with it.
+  SprayAxisConverge = 0.65
+    ## How much of the lateral offset has bled away by the far end of the plume.
+    ## The near puffs sit fully at the nozzle; further out they drift back toward
+    ## the cone's true center line, because that IS where the cone points — a jet
+    ## held rigidly off-axis for its whole length would visibly miss the hitbox it
+    ## represents. This is the visual bridge from the nozzle to the centered cone.
+    ##
+    ## The hitbox stays centered on the body throughout: selectArcVictims is
+    ## untouched, and this is a render-side offset only.
 
-proc loadPlasmaArcSprite(size: int): seq[uint8] =
-  ## Returns the plasma arc icon at its requested protocol footprint.
-  buildPlasmaArcIcon(size)
+proc sprayJetGrowth(stage: int): float =
+  ## How far the fan has jetted out, 0 = just left the nozzle, 1 = full reach.
+  SprayJetStart + (1.0 - SprayJetStart) *
+    (stage.float / float(max(1, PlasmaArcFxStages - 1)))
 
-proc plasmaPulseForward(pulse: int): int =
-  ## The forward distance of one cone pulse disc's center, in map px.
-  PlasmaArcReach * (2 * pulse + 1) div (2 * PlasmaArcFxPulses)
+proc plasmaPulseForward*(pulse, stage: int): int =
+  ## The forward distance of one paint-mist puff's center, in map px, measured
+  ## from the sprayer's body center: the puff's slot along the fan, where the fan
+  ## spans the NOZZLE out to however far this stage has jetted.
+  let tip = float(PlasmaArcReach) * sprayJetGrowth(stage)
+  if tip <= float(SprayNozzleFwd):
+    return SprayNozzleFwd
+  SprayNozzleFwd + int(round((tip - float(SprayNozzleFwd)) *
+    float(2 * pulse + 1) / float(2 * PlasmaArcFxPulses)))
 
-proc plasmaPulseDiameter(pulse: int): int =
-  ## One cone pulse disc's diameter: the cone width at the disc's center.
-  max(6, PlasmaArcMaxWidth * (2 * pulse + 1) div (2 * PlasmaArcFxPulses))
+proc plasmaPulseRight*(pulse, stage: int): int =
+  ## The PERPENDICULAR offset of one puff's center, in map px, positive toward
+  ## the cog's right (the side the can is held on). Full at the nozzle and
+  ## easing back toward the cone's center line with distance, per
+  ## SprayAxisConverge — so the plume visibly leaves the nozzle and then joins
+  ## the axis the cone actually covers.
+  if PlasmaArcFxPulses <= 1:
+    return SprayNozzleRight
+  let along = float(pulse) / float(PlasmaArcFxPulses - 1)   ## 0 near .. 1 far
+  int(round(float(SprayNozzleRight) * (1.0 - SprayAxisConverge * along)))
+
+proc plasmaPulseDiameter(pulse, stage: int): int =
+  ## One puff sprite's diameter: the cone's width AT that puff's current distance
+  ## (so the mist widens with the cone as it travels — geometrically honest about
+  ## the hitbox), scaled by the overlap so the plume closes up. The floor keeps a
+  ## near-nozzle puff from collapsing to a speck.
+  let
+    forward = plasmaPulseForward(pulse, stage)
+    slot = PlasmaArcMaxWidth * forward div max(1, PlasmaArcReach)
+  max(10, int(round(float(slot) * SprayPuffOverlap)))
 
 proc buildPlasmaPulseSprite(
   colorIndex, stage, pulse: int
 ): seq[uint8] {.measure.} =
-  ## Builds one team-colored plasma pulse disc: a hot white core falling
-  ## off to the whitened team color, with a short stage fade.
+  ## Builds one puff of the spray cone: atomized PAINT in the sprayer's team
+  ## color, speckled by a per-pixel hash (the death splatter's dither idiom) so
+  ## it reads as wet mist rather than a solid disc, at full team saturation
+  ## except a wet sheen in the core.
+  ##
+  ## The puffs overlap (see `SprayPuffOverlap`) into one continuous plume, and
+  ## the droplet density thins toward each puff's rim so the plume's edge is
+  ## ragged and gassy instead of a ring of hard circles.
   let
-    size = plasmaPulseDiameter(pulse)
+    size = plasmaPulseDiameter(pulse, stage)
     base = Palette[PlayerColors[colorIndex and 0x0f] and 0x0f]
     center = float(size - 1) / 2
     radius = max(center, 1.0)
@@ -1316,12 +1441,24 @@ proc buildPlasmaPulseSprite(
       if distance > radius:
         continue
       let core = 1.0 - distance / radius
+      # Droplet dither: hash the pixel (with the stage AND slot, so every puff
+      # of every frame speckles differently — a static pattern would read as a
+      # texture sliding along the aim instead of moving paint). Keep the pixel
+      # only if it beats the local density: dense core, thin ragged rim.
+      var noise = uint32(x + 1) * 374761393'u32 +
+        uint32(y + 1) * 668265263'u32 + uint32(stage + 1) * 2246822519'u32 +
+        uint32(pulse + 1) * 3266489917'u32
+      noise = (noise xor (noise shr 13)) * 1274126177'u32
+      if float((noise shr 16) mod 100) > 30.0 + 70.0 * core:
+        continue
+      # Wet sheen only in the hot center; the body stays saturated team paint.
+      let sheen = max(0.0, core - 0.55) * 2.0
       result.putRawRgbaPixel(
         y * size + x,
-        uint8(clamp(float((base.r.int + 255) div 2) + core * 60.0, 0, 255)),
-        uint8(clamp(float((base.g.int + 255) div 2) + core * 60.0, 0, 255)),
-        uint8(clamp(float((base.b.int + 255) div 2) + core * 60.0, 0, 255)),
-        uint8(clamp(255.0 * fade * (0.3 + 0.7 * core), 0.0, 255.0))
+        uint8(clamp(base.r.float + sheen * (255.0 - base.r.float), 0, 255)),
+        uint8(clamp(base.g.float + sheen * (255.0 - base.g.float), 0, 255)),
+        uint8(clamp(base.b.float + sheen * (255.0 - base.b.float), 0, 255)),
+        uint8(clamp(255.0 * fade * (0.45 + 0.55 * core), 0.0, 255.0))
       )
 
 proc buildBlastSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
@@ -2438,8 +2575,7 @@ proc addTeamScoreboard(
     red.width,
     red.height,
     red.pixels,
-    "team score " & redText,
-    changed = true
+    "team score " & redText
   )
   packet.addSpriteChanged(
     spriteDefs,
@@ -2447,8 +2583,7 @@ proc addTeamScoreboard(
     blue.width,
     blue.height,
     blue.pixels,
-    "team score " & blueText,
-    changed = true
+    "team score " & blueText
   )
   currentIds.add(TeamScoreObjectBase)
   currentIds.add(TeamScoreObjectBase + 1)
@@ -2694,6 +2829,32 @@ proc buildFlagBannerSprite(team: Team): seq[uint8] {.measure.} =
   ## Rasterized from the ~450px painted master at scale× the carried footprint.
   loadHeartSprite(team, FlagBannerW * boardScale)
 
+proc buildCarryHeartSprite(team: Team, aimStep: int): seq[uint8] {.measure.} =
+  ## The carried heart RIGIDLY LOCKED to the cog's grip: rotated to the aim step so
+  ## its orientation turns WITH the cog (never floats/tumbles free), plus a fixed
+  ## PERPENDICULAR offset so the pointed end faces to the SIDE (not along the aim) —
+  ## the cog cradles it sideways in its arms out front, held. As the cog turns, the
+  ## heart turns with it, so it always reads as gripped. Baked per aim step (like the
+  ## gun) so position AND orientation track the aim together.
+  let
+    size = FlagBannerW * boardScale
+    src = loadHeartSprite(team, size)
+  var img = newImage(size, size)
+  for i in 0 ..< size * size:
+    img.data[i] = rgba(src[i*4], src[i*4+1], src[i*4+2], src[i*4+3]).rgbx()
+  # aim increases CCW (0=east); screen y is down, so rotate by -aimAngle to track it.
+  # +PI turns the point PERPENDICULAR to the aim (to the side), the cradled pose.
+  let aimAngle = float(aimStep) * 2.0 * PI / float(SoldierRotations)
+  let rotated = newImage(size, size)
+  let m = translate(vec2(float32(size) / 2, float32(size) / 2)) *
+    rotate(float32(-aimAngle + PI)) *
+    translate(vec2(float32(-size) / 2, float32(-size) / 2))
+  rotated.draw(img, m)
+  result = newSeq[uint8](size * size * 4)
+  for i in 0 ..< size * size:
+    let c = rotated.data[i].rgba()
+    result[i*4] = c.r; result[i*4+1] = c.g; result[i*4+2] = c.b; result[i*4+3] = c.a
+
 proc buildPlantedFlagSprite(team: Team): seq[uint8] {.measure.} =
   ## The HOME heart-gem, loaded NATIVELY at the big pedestal footprint (not an
   ## upscale of the tiny carried sprite) so the hand-painted facets stay crisp.
@@ -2728,6 +2889,11 @@ proc buildFlagAuraSprite(team: Team): seq[uint8] {.measure.} =
 proc flagLabel(team: Team): string =
   ## Returns the observation label for one team's flag sprite.
   teamText(team) & " flag"
+
+proc carryHeartSpriteId(team: Team, aimStep: int): int =
+  ## The carried-heart sprite id at aim step `aimStep` (cradled in the rig cog's
+  ## arms, rotating with the aim so it stays gripped).
+  CarryHeartSpriteBase + ord(team) * SoldierRotations + aimStep
 
 proc addFlagSprites(
   sim: SimServer,
@@ -2764,6 +2930,8 @@ proc addFlagSprites(
       flagLabel(team) & " carrier glow",
       native = boardScale
     )
+  # The carried heart is baked PER AIM STEP (team×16) so it rotates with the cog;
+  # defined lazily in the board flag loop (only the carrier's current aim is drawn).
 
 proc soldierOutlined(
   pixels: seq[uint8],
@@ -2902,9 +3070,9 @@ proc buildSpriteProtocolInit(
   result.addViewport(BottomRightLayerId, ScreenWidth, ScreenHeight)
   result.addLayer(TeamScoreLayerId, TeamScoreLayerType, UiLayerFlag)
   result.addViewport(TeamScoreLayerId, TeamScoreWidth, TextLineHeight + 2)
-  # The map rides as horizontal bands (see addMapBands): one 1.09 MB map sprite
-  # is a single message over the hosted 1 MiB WS frame cap — banding keeps every
-  # pixel while making each message a fraction of the cap.
+  # The map rides as horizontal bands (see addMapBands): one ~1.09 MB map
+  # sprite exceeds the hosted 1 MiB WS frame cap — banding keeps every pixel
+  # while making each message a fraction of the cap.
   sim.addMapBands(spriteDefs, result)
   sim.addMapMarkers(spriteDefs, result)
   sim.addFlagSprites(spriteDefs, result)
@@ -2952,7 +3120,7 @@ proc buildSpriteProtocolPlayerInit(
     sim.gameMap.width,
     sim.gameMap.height,
     sim.buildWalkabilitySpritePixels(),
-    "walkability map"
+    LabelWalkabilityMap
   )
   sim.addFlagSprites(spriteDefs, result)
   result.addSpriteChanged(
@@ -2961,7 +3129,7 @@ proc buildSpriteProtocolPlayerInit(
     sim.flagSprite.width,
     sim.flagSprite.height,
     buildSpriteProtocolRawSprite(sim.flagSprite),
-    "fire icon"
+    LabelFireIcon
   )
   result.addSpriteChanged(
     spriteDefs,
@@ -3495,7 +3663,7 @@ proc addPlasmaArcs(
   packet: var seq[uint8],
   viewerIndex = -1
 ) {.measure.} =
-  ## Places side-center plasma arc pickups and carried markers.
+  ## Places side-center spray can pickups and carried markers.
   for i in 0 ..< sim.plasmaArcSpawns.len:
     let spawn = sim.plasmaArcSpawns[i]
     if not spawn.present:
@@ -3508,8 +3676,9 @@ proc addPlasmaArcs(
         PlasmaArcPickupSpriteId,
         PlasmaArcPickupSize,
         PlasmaArcPickupSize,
-        loadPlasmaArcSprite(PlasmaArcPickupSize),
-        "plasma arc"
+        loadSprayCanSprite(PlasmaArcPickupSize * boardScale),
+        LabelSprayCan,
+        native = boardScale
       )
     let objectId = PlasmaArcPickupObjectBase + i
     currentIds.add(objectId)
@@ -3535,8 +3704,9 @@ proc addPlasmaArcs(
         PlasmaArcCarrySpriteId,
         PlasmaArcCarrySize,
         PlasmaArcCarrySize,
-        loadPlasmaArcSprite(PlasmaArcCarrySize),
-        "plasma arc carried"
+        loadSprayCanSprite(PlasmaArcCarrySize * boardScale),
+        LabelSprayCanCarried,
+        native = boardScale
       )
     let objectId = PlasmaArcCarryObjectBase + i
     currentIds.add(objectId)
@@ -3557,7 +3727,7 @@ proc addPlasmaArcFlashes(
   packet: var seq[uint8],
   viewerIndex = -1
 ) {.measure.} =
-  ## Places each recent plasma arc's fading cone: a run of pulse discs
+  ## Places each recent spray burst's fading cone: a run of paint-mist puffs
   ## along the attacker's aim, each sized to the local cone width.
   for i in 0 ..< min(sim.plasmaArcFlashes.len, PlasmaArcMaxFlashes):
     let flash = sim.plasmaArcFlashes[i]
@@ -3570,18 +3740,26 @@ proc addPlasmaArcFlashes(
         0, PlasmaArcFxStages - 1)
       colorIndex = playerColorIndex(flash.color)
       (ux, uy) = aimVector(flash.aimBrads)
+      # The cog's RIGHT, perpendicular to the aim: for east aim (1, 0) this is
+      # (0, 1) — screen-down — matching the held weapon's GunRightPx convention.
+      (rx, ry) = (-uy, ux)
     for pulse in 0 ..< PlasmaArcFxPulses:
       let
         spriteId = PlasmaArcFxSpriteBase +
           colorIndex * PlasmaArcFxStages * PlasmaArcFxPulses +
           stage * PlasmaArcFxPulses + pulse
-        forward = float(plasmaPulseForward(pulse))
-        diameter = plasmaPulseDiameter(pulse)
-        px = flash.x + int(round(ux * forward))
-        py = flash.y + int(round(uy * forward))
+        # Both the distance and the width move with `stage`: the fan jets out
+        # from the nozzle as the burst ages instead of appearing fully formed.
+        forward = float(plasmaPulseForward(pulse, stage))
+        # ...and each puff is nudged toward the cog's right, so the plume leaves
+        # the NOZZLE (which is held off-axis) and eases onto the cone's axis.
+        right = float(plasmaPulseRight(pulse, stage))
+        diameter = plasmaPulseDiameter(pulse, stage)
+        px = flash.x + int(round(ux * forward + rx * right))
+        py = flash.y + int(round(uy * forward + ry * right))
       # The damage cone is blocked by walls (selectArcVictims runs a
       # line-of-sight test per victim), so the animation must not sail
-      # through them either: stop placing pulse discs at the first wall
+      # through them either: stop placing mist puffs at the first wall
       # along the aim ray.
       if not sim.lineOfSightClear(flash.x, flash.y, px, py):
         break
@@ -3592,7 +3770,7 @@ proc addPlasmaArcFlashes(
           diameter,
           diameter,
           buildPlasmaPulseSprite(colorIndex, stage, pulse),
-          "plasma arc pulse"
+          LabelSprayPaintPuff
         )
       let objectId = PlasmaArcFxObjectBase + i * PlasmaArcFxPulses + pulse
       currentIds.add(objectId)
@@ -3625,7 +3803,7 @@ proc addMedKits(
       packet.addBoardSpriteChanged(
         spriteDefs, MedKitSpriteId,
         MedKitSize, MedKitSize,
-        loadMedKitSprite(MedKitSize * boardScale), "med kit",
+        loadMedKitSprite(MedKitSize * boardScale), LabelMedKit,
         native = boardScale
       )
     let objectId = MedKitObjectBase + i
@@ -3660,7 +3838,7 @@ proc addShields(
       packet.addBoardSpriteChanged(
         spriteDefs, ShieldSpriteId,
         ShieldSize, ShieldSize,
-        loadShieldSprite(ShieldSize * boardScale), "shield",
+        loadShieldSprite(ShieldSize * boardScale), LabelShield,
         native = boardScale
       )
     let objectId = ShieldObjectBase + i
@@ -3684,7 +3862,7 @@ proc addShields(
       packet.addBoardSpriteChanged(
         spriteDefs, ShieldCarrySpriteId,
         ShieldCarrySize, ShieldCarrySize,
-        loadShieldSprite(ShieldCarrySize * boardScale), "shield carried",
+        loadShieldSprite(ShieldCarrySize * boardScale), LabelShieldCarried,
         native = boardScale
       )
     let objectId = ShieldCarryObjectBase + i
@@ -3777,7 +3955,7 @@ proc addGrenades(
       packet.addBoardSpriteChanged(
         spriteDefs, PaintBombPickupSpriteId,
         PaintBombPickupSize, PaintBombPickupSize,
-        loadPaintBombSprite(PaintBombPickupSize * boardScale), "grenade",
+        loadPaintBombSprite(PaintBombPickupSize * boardScale), LabelGrenade,
         native = boardScale
       )
     let objectId = PaintBombPickupObjectBase + i
@@ -3798,7 +3976,7 @@ proc addGrenades(
       packet.addBoardSpriteChanged(
         spriteDefs, PaintBombAirSpriteId,
         PaintBombAirSize, PaintBombAirSize,
-        loadPaintBombSprite(PaintBombAirSize * boardScale), "grenade air",
+        loadPaintBombSprite(PaintBombAirSize * boardScale), LabelGrenadeAir,
         native = boardScale
       )
     let objectId = PaintBombAirObjectBase + i
@@ -3825,7 +4003,7 @@ proc addGrenades(
         packet.addBoardSpriteChanged(
           spriteDefs, PaintBombCarrySpriteId,
           PaintBombCarrySize, PaintBombCarrySize,
-          loadPaintBombSprite(PaintBombCarrySize * boardScale), "grenade carried",
+          loadPaintBombSprite(PaintBombCarrySize * boardScale), LabelGrenadeCarried,
           native = boardScale
         )
       let objectId = PaintBombCarryObjectBase + i
@@ -3849,7 +4027,7 @@ proc addGrenades(
         packet.addBoardSpriteChanged(
           spriteDefs, ThrowTargetSpriteId,
           ThrowTargetSize, ThrowTargetSize,
-          buildThrowTargetSprite(), "throw target"
+          buildThrowTargetSprite(), LabelThrowTarget
         )
       let objectId = ThrowTargetObjectBase + i
       currentIds.add(objectId)
@@ -3889,7 +4067,7 @@ proc addGrenades(
       if spriteDefs.spriteDefinitionIndex(SoundRingSpriteId) < 0:
         packet.addBoardSpriteChanged(
           spriteDefs, SoundRingSpriteId, SoundRingSize, SoundRingSize,
-          buildSoundRingSprite(), "grenade sound"
+          buildSoundRingSprite(), LabelGrenadeSound
         )
       var h = 0x9E3779B9'u32
       h = (h xor uint32(blast.tick)) * 0x85EBCA6B'u32
@@ -4059,10 +4237,10 @@ proc addIdentityBadges(
       IdentityNames[identityIndex]
     if player.hasShield: label.add " shield"
     if player.hasGrenade: label.add " nade"
-    # The weapon token is always LAST and always present: " arc" keeps its
-    # exact historical text for existing parsers; the default gun becomes
-    # explicit as " gun" so observers never infer a weapon from absence.
-    if player.hasPlasmaArc: label.add " arc"
+    # The weapon token is always LAST and always present, so observers never
+    # infer a weapon from absence: " spray" for the spray can (0.7.x renamed
+    # the plasma arc, whose token was " arc"), " gun" for the default gun.
+    if player.hasPlasmaArc: label.add " spray"
     else: label.add " gun"
     packet.addBoardSpriteChanged(
       spriteDefs,
@@ -4451,8 +4629,7 @@ proc buildSpriteProtocolPlayerUpdates*(
       lives.width,
       lives.height,
       lives.pixels,
-      "lives " & livesText,
-      changed = true
+      "lives " & livesText
     )
     result.addBoardObject(
       SelectedTextObjectId,
@@ -4464,11 +4641,11 @@ proc buildSpriteProtocolPlayerUpdates*(
     )
 
     # Own-weapon readout under the lives counter: the sim swaps the gun out
-    # whenever a plasma arc is carried, and a bot that has to infer its own
+    # whenever a spray can is carried, and a bot that has to infer its own
     # weapon from floating markers gets it wrong at the worst moments. The
-    # label is the machine contract ("weapon gun" | "weapon arc").
+    # label is the machine contract ("weapon gun" | "weapon spray").
     let
-      weaponText = if player.hasPlasmaArc: "arc" else: "gun"
+      weaponText = if player.hasPlasmaArc: "spray" else: "gun"
       weapon = sim.buildSpriteProtocolTextSprite([weaponText], 2'u8)
     currentIds.add(SpritePlayerWeaponObjectId)
     result.addSpriteChanged(
@@ -4477,8 +4654,7 @@ proc buildSpriteProtocolPlayerUpdates*(
       weapon.width,
       weapon.height,
       weapon.pixels,
-      "weapon " & weaponText,
-      changed = true
+      "weapon " & weaponText
     )
     result.addBoardObject(
       SpritePlayerWeaponObjectId,
@@ -4732,8 +4908,7 @@ proc addReplayMismatchWarning(
     warning.width,
     warning.height,
     warning.pixels,
-    warning.label,
-    changed = true
+    warning.label
   )
   packet.addBoardObject(
     ReplayMismatchObjectId,
@@ -4827,6 +5002,130 @@ proc addEndzoneGlowFade(
       MapLayerId,
       endzoneFadeSpriteId(team, stage)
     )
+
+proc rigSegLabel(seg: RigSeg, color: string): string =
+  ## The `player <color>` contract label rides on the HEAD segment (the aim-facing
+  ## piece a label scanner reads as the actor); limbs get plain tags.
+  case seg
+  of rsHead: "player " & color
+  of rsArmL, rsArmR: "cog arm " & color
+  of rsLegFL, rsLegFR, rsLegRear: "cog leg " & color
+  else: "cog wheel " & color
+
+proc addCogRigObjects(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  currentIds: var seq[int],
+  packet: var seq[uint8],
+  player: Player,
+  drive: CogDriveState,
+  carrying: bool
+) =
+  ## Places one cog's articulated TURRET trike. Every segment sprite is baked in
+  ## the same RigCanvas, HUB-centered, so all objects share ONE canvas position
+  ## and differ only by sprite id + z. Sprites are lazily defined (large pools).
+  ## Turret swivel: the HEAD (+gun) and ARMS are baked to AIM; the LEGS and WHEELS
+  ## are baked to the movement HEADING (bodyHeading) with per-leg swing + inner-leg
+  ## shorten and per-wheel caster. The base is fully decoupled from the head
+  ## (true tank); `carrying` is accepted for future carry-specific posing but the
+  ## heart itself is emitted in the flag loop.
+  ## Z (painter depth ~ map Y): rear wheel/leg < front wheels < front legs < head
+  ## < arms (arms cradle the forward heart on top).
+  let
+    color = teamText(player.team)
+    aimStep = soldierRotIndex(player.aimBrads)
+    # TRUE TANK: the leg base points exactly where the cog MOVES (fully decoupled
+    # from the head/aim — it can face 180° opposite the head when reversing). No
+    # clamp; the legs stay tucked via the art so full divergence isn't spidery.
+    baseHeading = if drive.initialized: drive.bodyHeading else: player.aimBrads
+    headStep = rigHeadingStep(baseHeading)
+    base = player.joinOrder
+    # Center the RigCanvas on the player (canvas center = hub). 1× map px.
+    rigX = player.x + CollisionW div 2 - RigCanvas div 2
+    rigY = player.y + CollisionH div 2 - RigCanvas div 2
+
+  # Precompute the movement-driven leg/wheel steps.
+  proc legSprite(seg: RigSeg): int =
+    rigLegSpriteId(player.team, seg, headStep,
+      rigLegSwingStep(seg, drive.turnAmt), rigLegShortenStep(seg, drive.turnAmt))
+  proc wheelSprite(seg: RigSeg, caster: int): int =
+    rigWheelSpriteId(player.team, seg, headStep,
+      rigCasterStep(caster, baseHeading))
+
+  # Baked-art selector for each segment (so define-on-demand rebakes the exact pose).
+  proc bakePixels(seg: RigSeg): seq[uint8] =
+    case seg
+    of rsHead: rigSegPixels(player.team, rsHead, aimStep, 0, 0, boardScale)
+    of rsArmL, rsArmR: rigSegPixels(player.team, seg, aimStep, 0, 0, boardScale)
+    of rsLegFL, rsLegFR, rsLegRear:
+      rigSegPixels(player.team, seg, headStep,
+        rigLegSwingStep(seg, drive.turnAmt),
+        rigLegShortenStep(seg, drive.turnAmt), boardScale)
+    of rsWheelL:
+      rigSegPixels(player.team, rsWheelL, headStep,
+        rigCasterStep(drive.casterFL, baseHeading), 0, boardScale)
+    of rsWheelR:
+      rigSegPixels(player.team, rsWheelR, headStep,
+        rigCasterStep(drive.casterFR, baseHeading), 0, boardScale)
+    of rsWheelRear:
+      rigSegPixels(player.team, rsWheelRear, headStep,
+        rigCasterStep(drive.casterRear, baseHeading), 0, boardScale)
+
+  var segs: seq[tuple[seg: RigSeg, objectId, spriteId, z: int]] = @[
+    (rsWheelRear, RigWheelObjectBase + base*3 + 2,
+      wheelSprite(rsWheelRear, drive.casterRear), player.y - 4),
+    (rsLegRear, RigLegObjectBase + base*3 + 2, legSprite(rsLegRear), player.y - 3),
+    (rsWheelL, RigWheelObjectBase + base*3 + 0,
+      wheelSprite(rsWheelL, drive.casterFL), player.y - 2),
+    (rsWheelR, RigWheelObjectBase + base*3 + 1,
+      wheelSprite(rsWheelR, drive.casterFR), player.y - 2),
+    (rsLegFL, RigLegObjectBase + base*3 + 0, legSprite(rsLegFL), player.y - 1),
+    (rsLegFR, RigLegObjectBase + base*3 + 1, legSprite(rsLegFR), player.y - 1),
+    (rsHead, RigHeadObjectBase + base, rigHeadSpriteId(player.team, aimStep),
+      player.y)]
+  # Arms = the cog's SHOULDER pads. They're part of the cog's fixed silhouette:
+  # always drawn, always in their natural tucked pose, rotating with the HEAD/aim
+  # (never jutting forward — the earlier "reach" pose read as weird prongs). At rest
+  # they sit just below the head z (head cube reads on top). While CARRYING, they
+  # drop to y-2 so the carried heart tucks BETWEEN them and the head: the z-sandwich
+  # is head(y) > heart(y-1) > arms(y-2) — head/face stays on top, the heart sits
+  # under the head and over the arms, so it reads as held under the chin, not over
+  # the face.
+  let armZ = if carrying: player.y - 2 else: player.y - 1
+  segs.add((rsArmL, RigArmObjectBase + base*2 + 0,
+    rigArmSpriteId(player.team, rsArmL, aimStep, 0), armZ))
+  segs.add((rsArmR, RigArmObjectBase + base*2 + 1,
+    rigArmSpriteId(player.team, rsArmR, aimStep, 0), armZ))
+
+  for s in segs:
+    if spriteDefs.spriteDefinitionIndex(s.spriteId) < 0:
+      packet.addBoardSpriteChanged(
+        spriteDefs, s.spriteId, RigCanvas, RigCanvas,
+        bakePixels(s.seg), rigSegLabel(s.seg, color), native = boardScale)
+    currentIds.add(s.objectId)
+    packet.addBoardObject(s.objectId, rigX, rigY, s.z, MapLayerId, s.spriteId)
+
+  # The held WEAPON: its OWN object (not baked into the head), tracking AIM, with
+  # a warm backlight glow so the dark art pops. Drawn ABOVE the head so it always
+  # reads. A cog holds exactly one thing — the sim swaps the gun out whenever a
+  # spray can is carried, so the art swaps with it and the silhouette shows which
+  # weapon is live. Both share one object slot (a cog can't hold both).
+  let
+    holdsSpray = player.hasPlasmaArc
+    weaponSpriteId =
+      if holdsSpray: rigSpraySpriteId(player.team, aimStep)
+      else: rigGunSpriteId(player.team, aimStep)
+  if spriteDefs.spriteDefinitionIndex(weaponSpriteId) < 0:
+    packet.addBoardSpriteChanged(
+      spriteDefs, weaponSpriteId, RigCanvas, RigCanvas,
+      (if holdsSpray: rigSprayCanPixels(player.team, aimStep, boardScale)
+       else: rigGunPixels(player.team, aimStep, boardScale)),
+      (if holdsSpray: "cog spray can " else: "cog gun ") & color,
+      native = boardScale)
+  let weaponObjectId = RigGunObjectBase + base
+  currentIds.add(weaponObjectId)
+  packet.addBoardObject(
+    weaponObjectId, rigX, rigY, player.y + 1, MapLayerId, weaponSpriteId)
 
 proc buildSpriteProtocolUpdates*(
   sim: var SimServer,
@@ -5006,27 +5305,63 @@ proc buildSpriteProtocolUpdates*(
   sim.addHpPips(nextState.spriteDefs, currentIds, result)
   sim.addIdentityBadges(nextState.spriteDefs, currentIds, result)
 
+  # Advance the per-player segmented-trike drive animation. Only step on a NEW
+  # tick; a sequential 1..16-tick delta smooths, any other delta (scrub, pause,
+  # respawn, dead) SNAPS to a fresh rest pose so a jump never inherits a stale limb
+  # pose. Broadcast-only + deterministic given the recorded velocities, so playback
+  # stays replay-exact.
+  const MaxSmoothStepTicks = 16   ## = the top replay playback speed.
+  let neverStepped = nextState.cogDriveTick == low(int)
+  let tickDelta = if neverStepped: 0 else: sim.tickCount - nextState.cogDriveTick
+  if neverStepped or tickDelta != 0:
+    let sequential = not neverStepped and
+      tickDelta >= 1 and tickDelta <= MaxSmoothStepTicks
+    for i in 0 ..< sim.players.len:
+      let p = sim.players[i]
+      if not p.alive:
+        nextState.cogDrive[i] = initCogDriveState(p.aimBrads)
+      elif sequential and nextState.cogDrive[i].initialized:
+        nextState.cogDrive[i] = stepCogDrive(
+          nextState.cogDrive[i], p.velX, p.velY, p.aimBrads)
+      else:
+        nextState.cogDrive[i] = initCogDriveState(p.aimBrads)
+    nextState.cogDriveTick = sim.tickCount
+
   for playerIndex in 0 ..< sim.players.len:
     let player = sim.players[playerIndex]
     if not player.alive:
       continue
-    let objectId = player.spriteObjectId()
-    currentIds.add(objectId)
-    result.addBoardObject(
-      objectId,
-      player.spritePlayerX(),
-      player.spritePlayerY(),
-      player.y,
-      MapLayerId,
-      player.spriteActorSpriteId(nextState.selectedJoinOrder)
-    )
+    # The cog draws as an articulated TURRET trike (board only): head + gun + arms
+    # face AIM; 3 legs + 3 caster wheels track MOVEMENT (bodyHeading), each its own
+    # board object so aim and movement read independently. Arms appear only while
+    # carrying. All poses come from the scrub-snapped CogDriveState, so playback is
+    # replay-exact. All coords are 1× MAP px; addBoardObject applies boardScale.
+    sim.addCogRigObjects(nextState.spriteDefs, currentIds, result,
+      player, nextState.cogDrive[playerIndex],
+      carrying = sim.carriedFlagTeam(playerIndex) >= 0)
     if sim.config.showPlayerLabels:
       let flagTeamOrd = sim.carriedFlagTeam(playerIndex)
       let
-        label =
+        labelSpriteId = player.spritePlayerNameSpriteId()
+        labelObjectId = player.spritePlayerNameObjectId()
+        # Stable content key: name art only changes when the name or carried
+        # flag marker changes. Skip rebuild + wire when the key already matches.
+        labelKey =
           if flagTeamOrd >= 0:
-            # This player holds a flag: name + a team-colored flag marker beside
-            # it, so it's obvious who is carrying and whose flag it is.
+            "name " & playerLabelText(player) & " flag " & $flagTeamOrd
+          else:
+            "name " & playerLabelText(player)
+        defIndex = nextState.spriteDefs.spriteDefinitionIndex(labelSpriteId)
+      var
+        labelW = 0
+        labelH = 0
+      if defIndex >= 0 and
+          nextState.spriteDefs[defIndex].label == labelKey:
+        labelW = nextState.spriteDefs[defIndex].width div max(1, boardScale)
+        labelH = nextState.spriteDefs[defIndex].height div max(1, boardScale)
+      else:
+        let label =
+          if flagTeamOrd >= 0:
             sim.buildCarrierNameSprite(player, flagTeamOrd,
               smooth = boardScale > 1)
           else:
@@ -5035,20 +5370,23 @@ proc buildSpriteProtocolUpdates*(
               PlayerNameColor,
               smooth = boardScale > 1
             )
-        labelSpriteId = player.spritePlayerNameSpriteId()
-        labelObjectId = player.spritePlayerNameObjectId()
+        labelW = label.width
+        labelH = label.height
+        result.addBoardSpriteChanged(
+          nextState.spriteDefs,
+          labelSpriteId,
+          label.width,
+          label.height,
+          label.pixels,
+          labelKey,
+          native = boardScale
+        )
+      let
         labelX = player.overheadAnchorX() +
-          (SoldierBodyPx - label.width) div 2
+          (SoldierBodyPx - labelW) div 2
         labelY = player.overheadAnchorY() - OverheadYOffset -
-          HpBarH - label.height - 1
+          HpBarH - labelH - 1
       currentIds.add(labelObjectId)
-      result.addBoardSprite(
-        labelSpriteId,
-        label.width,
-        label.height,
-        label.pixels,
-        native = boardScale
-      )
       result.addBoardObject(
         labelObjectId,
         labelX,
@@ -5078,17 +5416,31 @@ proc buildSpriteProtocolUpdates*(
       )
     currentIds.add(objectId)
     if flag.carrier >= 0:
-      # Carried: the heart rides BEHIND the carrier (z below the player), so the
-      # runner's body stays the readable figure and the heart peeks out around
-      # them instead of covering them. Centered on the carrier; the aura +
-      # nameplate still mark WHO runs it.
+      # Carried: the rig cog CRADLES the heart in its arms out FRONT along the aim.
+      # The heart sprite is baked PER AIM STEP so it rotates WITH the cog (stays
+      # gripped, never floats/tumbles free); its position also rides forward on the
+      # aim. Z-sandwich: head(carrier.y) > heart(carrier.y-1) > arms(carrier.y-2) —
+      # the heart sits UNDER the head/face and OVER the arms, so it reads as held
+      # under the chin, never covering the face. Broadcast board only; POV unchanged.
+      let
+        carrier = sim.players[flag.carrier]
+        aimStep = soldierRotIndex(carrier.aimBrads)
+        aim = aimVector(carrier.aimBrads)
+        hx = flag.x + int(round(aim.x * float(CarryHeartFwdPx)))
+        hy = flag.y + int(round(aim.y * float(CarryHeartFwdPx)))
+        heartSpriteId = carryHeartSpriteId(team, aimStep)
+      if nextState.spriteDefs.spriteDefinitionIndex(heartSpriteId) < 0:
+        result.addBoardSpriteChanged(
+          nextState.spriteDefs, heartSpriteId, FlagBannerW, FlagBannerH,
+          buildCarryHeartSprite(team, aimStep),
+          flagLabel(team) & " carried", native = boardScale)
       result.addBoardObject(
         objectId,
-        flag.x - FlagBannerW div 2,
-        flag.y - FlagBannerH div 2,
-        flag.y - 1,
+        hx - FlagBannerW div 2,
+        hy - FlagBannerH div 2,
+        carrier.y - 1,
         MapLayerId,
-        FlagSpriteBase + ord(team)
+        heartSpriteId
       )
     else:
       # Home: the BIG planted banner, centered + bottom-anchored on the pedestal.
@@ -5164,8 +5516,7 @@ proc buildSpriteProtocolUpdates*(
       scrubber.width,
       scrubber.height,
       scrubber.pixels,
-      "replay scrubber",
-      changed = true
+      "replay scrubber " & $controlTick & "/" & $controlMaxTick
     )
     result.addBoardObject(
       ReplayScrubberObjectId,
@@ -5181,8 +5532,8 @@ proc buildSpriteProtocolUpdates*(
       controls.width,
       controls.height,
       controls.pixels,
-      "replay controls",
-      changed = true
+      "replay controls play=" & $replayPlaying &
+        " speed=" & $replaySpeed & " loop=" & $replayLooping
     )
     result.addBoardObject(
       ReplayControlsObjectId,
@@ -5227,6 +5578,16 @@ proc warmBoardRenderCaches*(sim: SimServer) =
     for team in Team:
       for rot in 0 ..< SoldierRotations:
         discard soldierRotPixels(team, skin, rot, RenderScale)
+  # The board turret-rig segments (skin-independent: they slice the DefaultSkin
+  # master). Prebake the REST pose (swing/caster/shorten 0) at every aim/heading
+  # step so a standing/straight-driving cog is hot on the first frame; maneuvering
+  # poses bake lazily.
+  for team in Team:
+    for rot in 0 ..< SoldierRotations:
+      for seg in RigSeg:
+        discard rigSegPixels(team, seg, rot, 0, 0, RenderScale)
+      discard rigGunPixels(team, rot, RenderScale)
+      discard rigSprayCanPixels(team, rot, RenderScale)
   discard boardTypeface()
   block:
     # Encode the map-band wire messages too: they are byte-identical for

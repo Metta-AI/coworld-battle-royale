@@ -150,6 +150,61 @@ suite "broadcast state channel":
     finally:
       setCurrentDir(previousDir)
 
+  test "keyframe walk precomputes the flag beats + verdict timeline":
+    let previousDir = getCurrentDir()
+    setCurrentDir(GameDir)
+    try:
+      let data = loadReplay(CaptureFixture)
+      var
+        sim = initFixtureSim(data)
+        replay = initReplayPlayer(data)
+      replay.mismatchQuit = true
+      replay.buildReplayKeyframes(sim)
+      # The precomputed timeline holds exactly the streamed flag beats +
+      # verdict (never kills/respawns), in tick order.
+      let streamed = broadcastBeats(CaptureFixture).filterIt(
+        it.key in ["steal", "return", "capture", "gameover"]
+      )
+      check replay.beatEvents.len == streamed.len
+      for i, event in replay.beatEvents.elems:
+        check event["k"].getStr == streamed[i].key
+        check event["t"].getInt == streamed[i].tick
+      # The timeline carries exactly one verdict, matching the fixture's
+      # pinned ending. (On a capture tick the phase-change gameover event
+      # precedes the capture event, so the verdict need not sort last.)
+      let verdicts = replay.beatEvents.elems.filterIt(it["k"].getStr == "gameover")
+      check verdicts.len == 1
+      check verdicts[0]["draw"].getBool == false
+      check verdicts[0]["winner"].getStr == "blue"
+      # The chrome frame ships the timeline when (and only when) asked.
+      let withBeats = parseJson(sim.buildStateJson(
+        newJArray(), false, 1, replay.replayMaxTick(), false, true, -1, -1,
+        beatEvents = replay.beatEvents
+      ))
+      check withBeats["beats"] == replay.beatEvents
+      let withoutBeats = parseJson(sim.buildStateJson(
+        newJArray(), false, 1, replay.replayMaxTick(), false, true, -1, -1
+      ))
+      check not withoutBeats.hasKey("beats")
+    finally:
+      setCurrentDir(previousDir)
+
+  test "beat timeline verdict reports a draw honestly":
+    let previousDir = getCurrentDir()
+    setCurrentDir(GameDir)
+    try:
+      let data = loadReplay(DrawFixture)
+      var
+        sim = initFixtureSim(data)
+        replay = initReplayPlayer(data)
+      replay.mismatchQuit = true
+      replay.buildReplayKeyframes(sim)
+      let verdicts = replay.beatEvents.elems.filterIt(it["k"].getStr == "gameover")
+      check verdicts.len == 1
+      check verdicts[0]["draw"].getBool == true
+    finally:
+      setCurrentDir(previousDir)
+
   test "draw end-card reports a draw before any winner (F4)":
     let previousDir = getCurrentDir()
     setCurrentDir(GameDir)

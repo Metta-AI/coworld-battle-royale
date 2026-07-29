@@ -9,7 +9,10 @@ when not defined(emscripten):
 
 const
   GameName* = "ctf"
-  GameVersion* = "22"  ## GV22: shield armor layer (re-land of #76).
+  GameVersion* = "23"  ## GV23: a depleted shield layer breaks the shield
+                       ## outright (icon + fire slowdown end with the bubble),
+                       ## and kills/heart-steals floor the game clock at
+                       ## ActionClockFloorTicks remaining.
   ReplayFps* = 24
   DefaultMapPath* = "arena"
   DarkBgPath* = "data/darkbg.aseprite"
@@ -29,8 +32,28 @@ const
   SoldierRotations* = 16      ## pre-rendered aim steps (16 brads apart).
   SoldierCanvas* = 72         ## px square sprite canvas (fits the swinging gun).
   SoldierBodyPx* = 34         ## cog body target size on the map (full-body unit).
-  GunLengthPx* = 26           ## gun master length on the map, grip to muzzle.
-  GunGripPx* = 8              ## gun grip offset from the body center, along aim.
+  GunLengthPx* = 34           ## top-down gun master length on the map (stock-tip to
+                              ## muzzle, along the aim ray).
+  GunGripPx* = -13            ## gun stock-tip offset from the body center, along
+                              ## aim (negative = stock sits behind the hub so the
+                              ## barrel reaches out front, marker straddling the cog).
+  GunRightPx* = 10            ## the marker is held at the cog's RIGHT: barrel
+                              ## centerline offset this far off the aim ray, toward
+                              ## the head's right (screen +y when facing +x/east).
+                              ## Enough to clear the head silhouette and read as a
+                              ## distinct held object, without floating far off.
+  GunGlowRadius* = 0.6        ## px blur (master-frame): tiny, so the rim is CRISP —
+                              ## an outline stroke, not a soft glow.
+  GunGlowSpread* = 1.0        ## px the silhouette expands before blurring — this is
+                              ## the outline WIDTH that sticks out past the gun edge.
+  GunGlowAlpha* = 95'u8       ## faint warm outline (0..255), reads as a subtle stroke.
+  SprayHeldLengthPx* = 22     ## the held spray can's length on the map, along the
+                              ## aim ray. Shorter than the marker (GunLengthPx):
+                              ## a can is a fistful, and the silhouette difference
+                              ## is what tells a viewer WHICH weapon a cog holds.
+  SprayHeldGripPx* = -6       ## can tail offset from the body center along aim.
+                              ## Less negative than GunGripPx so the short can
+                              ## sits IN the fist rather than straddling the hub.
   CollisionW* = 1
   CollisionH* = 1
   PlayerHalf* = 6             ## half-extent of the solid player footprint, in px.
@@ -96,6 +119,9 @@ const
   StartWaitTicks* = 5 * TargetFps
   GameOverTicks* = 360
   MaxTicks* = 5_000  ## 0 = no limit.
+  ActionClockFloorTicks* = 500  ## a kill or heart steal leaves at least this
+                                ## many ticks on the clock, so a timed game
+                                ## never ends mid-action.
   MaxGames* = 0  ## 0 = no limit.
   MaxPlayers* = 16
   MinPlayers* = 16
@@ -300,7 +326,7 @@ type
     ## One arena obstacle. Discs and diamonds are center + radius (L2 and L1
     ## norms); diagonals are a 45-degree wall segment of given perpendicular
     ## thickness between two endpoints. A `window` shape is glass: it blocks
-    ## movement, bullets, and plasma-arc line-of-sight exactly like stone, but
+    ## movement, bullets, and spray-cone line-of-sight exactly like stone, but
     ## fog-of-war shadowcasting sees straight through it.
     window*: bool
     case kind*: ArenaShapeKind
@@ -386,6 +412,9 @@ type
     maxTicks*: int
     maxGames*: int
     showPlayerLabels*: bool
+    fastMode*: bool           ## advance frames early when every player has
+                              ## sent the Sprite v1 ready packet; pacing only,
+                              ## never in gameHash.
     mapPath*: string
     closedRoster*: bool
     slots*: seq[PlayerSlotConfig]
@@ -412,12 +441,17 @@ type
     shieldHp*: int             ## remaining shield-layer hp (0..ShieldLayerHp);
                                ## damage depletes it before base hp.
     hasPlasmaArc*: bool        ## each player carries at most one plasma arc.
-    arcTicksLeft*: int         ## remaining active ticks of a fired plasma
+    arcTicksLeft*: int         ## remaining active ticks of a fired spray
                                ## cone (0 = the cone is off).
     arcHitMask*: uint32        ## players already damaged by the current
                                ## activation: one hit per victim per firing.
     throwCharge*: int          ## ticks the throw button has been held.
     lastShoutTick*: int        ## tick of this player's latest shout, -1 = never.
+    paintHitTick*: int         ## tick of the latest PAINT hit taken. Every
+                               ## weapon throws paint — gun, grenade, and the
+                               ## spray can — so all three stamp it. Cosmetic:
+                               ## drives the EYES-PiP visor paint splat; -1 =
+                               ## never, never enters gameHash.
     joinOrder*: int
     address*: string
     color*: uint8
@@ -430,15 +464,15 @@ type
                                ## excluded from gameHash (see gameHash).
     shotsHit*: int             ## released shots that connected with an enemy;
                                ## analysis-only, excluded from gameHash.
-    multiKills2*: int          ## grenade blasts / plasma activations that
+    multiKills2*: int          ## grenade blasts / spray bursts that
                                ## killed exactly 2; analysis-only, excluded
                                ## from gameHash.
-    multiKills3*: int          ## grenade blasts / plasma activations that
+    multiKills3*: int          ## grenade blasts / spray bursts that
                                ## killed 3 or more; analysis-only, excluded
                                ## from gameHash.
     teamKills*: int            ## teammates this player killed (backstabs);
                                ## analysis-only, excluded from gameHash.
-    arcKillsThisFire*: int     ## kills scored by the current plasma
+    arcKillsThisFire*: int     ## kills scored by the current spray
                                ## activation; transient multi-kill
                                ## bookkeeping, excluded from gameHash.
 
@@ -495,7 +529,7 @@ type
                                ## splat reads as that team's paint-bomb.
 
   PlasmaArcFx* = object
-    ## A cosmetic plasma-arc cone flash; never enters gameHash (replay-safe).
+    ## A cosmetic spray-cone paint flash; never enters gameHash (replay-safe).
     x*, y*: int
     aimBrads*: int
     tick*: int
@@ -511,6 +545,52 @@ type
     color*: uint8              ## the victim's team color, so it reads as their loss.
     kill*: bool                ## a fatal hit: drawn as a "KO" kill marker that
                                ## lives KillFxTicks instead of the "-N" number.
+
+  SimEventKind* = enum
+    ## Tier-2 analysis event channel (the Logs substrate). Every kind is
+    ## emitted at the exact in-sim site where the fact is known first-hand
+    ## (weapon, positions, attacker), so downstream never has to guess by
+    ## counter-diffing. Analysis-only: never enters gameHash.
+    Shot        ## a gun shot released (source = shooter).
+    Hit         ## a released shot connected with an enemy on its ray.
+    Damage      ## hit points removed (gun/spray/grenade), amount = hp lost.
+    Kill        ## a CREDITED kill (mirrors recordKill; self-kills by own
+                ## grenade are a Death without a Kill).
+    Death       ## a player died (source = victim, target = killer).
+    FlagSteal   ## a flag left its pedestal on an enemy's back.
+    FlagReturn  ## a flag went home for any reason other than capture.
+    Capture     ## a carrier scored the enemy flag.
+    Respawn     ## a dead player came back at home.
+    Heal        ## hit points restored (med kit or shield pickup).
+    PhaseChange ## the game phase moved (lobby / playing / gameover):
+                ## weapon = the new phase name, amount = its ordinal.
+
+  SimEvent* = object
+    ## One tier-2 analysis event; never enters gameHash (replay-safe).
+    ## Collected only while collectEvents is on, so live servers pay nothing.
+    tick*: int
+    kind*: SimEventKind
+    source*: int               ## acting player's stable join slot, -1 = n/a.
+    target*: int               ## affected player's stable join slot, -1 = n/a.
+    weapon*: string            ## "gun" / "spray" / "grenade", the new phase
+                               ## name for PhaseChange, "" = n/a.
+    amount*: int               ## hp delta for Damage/Kill/Heal, the new
+                               ## phase ordinal for PhaseChange, else 0.
+    hp*: int                   ## the affected player's remaining hit points
+                               ## AFTER the event, floored at 0 (a fatal
+                               ## overkill still reads 0): the victim on
+                               ## Damage, the healed player on Heal.
+                               ## -1 on every other kind (n/a).
+    blocked*: int              ## on a Damage event, how many of `amount`'s hit
+                               ## points the victim's SHIELD absorbed — i.e.
+                               ## damage prevented from touching the base cog.
+                               ## A shield carrier holds bonus hp above the base
+                               ## HitPoints ceiling (only a shield pickup lifts a
+                               ## cog there), so any of this hit that lands while
+                               ## the victim is above base is shield-soaked. 0
+                               ## when the victim held no shield hp, and on every
+                               ## non-Damage kind (n/a).
+    x*, y*: float              ## map position where the event happened.
 
   Shout* = object
     ## One short player message, audible within ShoutRange of where it was
@@ -583,9 +663,15 @@ type
     winner*: Team
     gameOverTimer*: int
     timeLimitReached*: bool
+    overtimeTicks*: int        ## clock extension banked by the action floor
+                               ## (kills / heart steals); resets each game.
     isDraw*: bool
     needsReregister*: bool
     gameEventLoggingEnabled*: bool
+    collectEvents*: bool       ## tier-2 event sink switch; default off so
+                               ## live servers pay nothing (see SimEvent).
+    events*: seq[SimEvent]     ## collected tier-2 events; the extractor
+                               ## drains this every tick. Never in gameHash.
     lastLobbyPlayersLogged*: int
     lastLobbyNeededLogged*: int
     lastLobbySecondsLogged*: int
@@ -741,6 +827,14 @@ proc loadPaintBombSprite*(size: int): seq[uint8] =
   ## pickup, the carried icon, and the in-flight projectile.
   loadRgbaSprite("data/paintbomb.png", size)
 
+proc loadSprayCanSprite*(size: int): seq[uint8] =
+  ## The side-column cone weapon: a chunky aerosol spray-paint can, in the same
+  ## bold-outline painted style as the med kit, shield, and paint bomb (this is
+  ## paintball — the short-range weapon sprays paint, it does not fire plasma).
+  ## Used for the floor pickup and the carried marker. Hard alpha edge keeps the
+  ## ink outline crisp on the floor instead of feathering into a halo.
+  loadRgbaSprite("data/spraycan.png", size, alphaCutoff = 128'u8)
+
 ## --- HD top-down soldier: CvC cog + gun, rotated as one rigid unit ---
 ## Each team's master (soldier_red/blue.png) is the canonical Cogs-vs-Clips cog
 ## facing SOUTH, smile visor visible, used exactly as drawn. It is measured for
@@ -775,6 +869,9 @@ var
   gunMaster: Image
   gunScale: float
   gunLoaded: bool
+  sprayMaster: Image
+  sprayScale: float
+  sprayLoaded: bool
 
 proc measureSoldierBody(skin: Skin, team: Team, master: Image) =
   ## Finds the body pivot and the master->canvas scale: the centroid and
@@ -814,9 +911,21 @@ proc ensureSoldierLoaded(skin: Skin, team: Team) =
 proc ensureGunLoaded() =
   if gunLoaded:
     return
-  gunMaster = readImage(gameDir() / "data/paintgun.png")
+  # Top-down paintball marker, muzzle east, barrel on the image mid-line. Scaled
+  # by WIDTH so GunLengthPx spans the full stock-to-muzzle length along the aim.
+  gunMaster = readImage(gameDir() / "data/paintgun_topdown.png")
   gunScale = float(GunLengthPx) / max(1.0, float(gunMaster.width))
   gunLoaded = true
+
+proc ensureSprayLoaded() =
+  if sprayLoaded:
+    return
+  # The held spray can: same convention as the gun master (nozzle EAST, body on
+  # the image mid-line) so the identical grip math mounts it. Scaled to
+  # SprayHeldLengthPx — a can is a short fistful, not a long marker.
+  sprayMaster = readImage(gameDir() / "data/spraycan_held.png")
+  sprayScale = float(SprayHeldLengthPx) / max(1.0, float(sprayMaster.width))
+  sprayLoaded = true
 
 proc soldierRotPixels*(
   team: Team,
@@ -863,11 +972,14 @@ proc soldierRotPixels*(
           float32(-soldierPivotY[skin][team])
         )
       )
-    # Gun-local (0, height/2) — the grip end of the barrel centerline — mounts
-    # GunGripPx east of the body center and spins with the unit.
+    # Gun-local (0, height/2) — the stock end of the barrel centerline — mounts
+    # GunGripPx along the aim (stock behind the hub, barrel reaching out front)
+    # and GunRightPx off the aim ray to the cog's RIGHT (+y = right when facing
+    # +x/east); it spins with the unit so the marker rides the head's right.
     gunMat =
       unitRot *
-      translate(vec2(float32(GunGripPx * renderScale), 0)) *
+      translate(vec2(
+        float32(GunGripPx * renderScale), float32(GunRightPx * renderScale))) *
       scale(vec2(
         float32(gunScale * float(renderScale)),
         float32(gunScale * float(renderScale))
@@ -890,6 +1002,291 @@ proc soldierRotIndex*(aimBrads: int): int =
   ## Quantizes an aim angle to the nearest pre-rotated sprite step.
   ((aimBrads + AimBradsTurn div (SoldierRotations * 2)) *
     SoldierRotations div AimBradsTurn) mod SoldierRotations
+
+## --- Articulated TURRET rig: the REAL CvC cog, segmented (broadcast board only) ---
+## The SAME real master art as soldierRotPixels, SLICED (scripts/art/build_cvc_rig.py)
+## into 9 pieces that recompose to the south master at rest but articulate like a
+## tank trike when moving:
+##   head  - cube + cyan visor + center pistons + the held GUN. Faces AIM. Drawn
+##           LAST so it covers the hub/leg-joins (no head-hole).
+##   armL/R- the two shoulder assemblies. Face AIM. TUCKED at rest; reach FORWARD
+##           to cradle the carried heart only while carrying (carry-gated caller).
+##   legFL/FR/Rear - the three leg struts (tire removed). Face the MOVEMENT heading
+##           (CogDriveState.bodyHeading), each hinged about its own hip with a
+##           differential turn swing; the INNER leg SHORTENS into a turn.
+##   wheelL/R/Rear - the three tires, cut out of the legs, each CASTERING (rotating
+##           about its axle) toward the roll direction, capped so a tall top-down
+##           tire only tilts to hint the turn (never swings fully broadside).
+## The head/arms track AIM while the legs/wheels track MOVEMENT — a true turret
+## swivel. All broadcast-only (no sim state, no GameVersion bump); POV keeps the
+## unified soldierRotPixels sprite.
+##
+## Every segment is baked in the SAME 192px master frame space through ONE code
+## path (rigSegPixels): rotate the segment about its ANCHOR by a base angle (aim
+## for head/arms, bodyHeading for legs/wheels) plus an articulation, then place the
+## HUB on the player. At rest everything rotates by the same aim delta about anchors
+## that ARE its master pixels, so the composite == the south master.
+type
+  RigSeg* = enum
+    rsHead, rsArmL, rsArmR, rsLegFL, rsLegFR, rsLegRear,
+    rsWheelL, rsWheelR, rsWheelRear
+
+const
+  RigSegCount* = 9
+  RigCanvas* = 96             ## px square rig segment canvas at 1x (fits the
+                              ## swung legs + castered wheels + reaching arms).
+  # Anchors in 192px master-frame space (scripts/art/build_cvc_rig.py anchors.json).
+  RigHub: tuple[x, y: float] = (96.0, 88.0)   ## cog rotation center (head-cube
+                              ## center); head, arms and leg-hips all measured here.
+  RigAnchor: array[RigSeg, tuple[x, y: float]] = [
+    (96.0, 88.0),     # rsHead      (== hub; head rotates about the hub to aim)
+    (70.0, 84.0),     # rsArmL      left shoulder attach
+    (120.0, 84.0),    # rsArmR      right shoulder attach
+    (72.0, 100.0),    # rsLegFL     left front hip
+    (120.0, 100.0),   # rsLegFR     right front hip
+    (96.0, 80.0),     # rsLegRear   rear hip — flipped 180° about hub to the BACK
+    # Wheels caster about their TIRE CENTROID (measured), not the axle at the top —
+    # pivoting mid-tire spins the wheel in place, not swinging the tire body out.
+    (73.5, 134.0),    # rsWheelL    left front tire centroid
+    (117.3, 132.7),   # rsWheelR    right front tire centroid
+    (94.7, 48.3)]     # rsWheelRear rear tire centroid — flipped 180° to the BACK
+  # Articulation feel (degrees). Legs differential-steer: rest tuck ± splay on the
+  # turn signal; the INNER leg shortens instead of splaying wide.
+  RigRestTuckDeg = 2.0
+  RigSplayDeg = 5.0           ## outer leg barely swings — the inner-leg SHORTEN +
+                              ## wheel caster carry the turn read; a big swing on
+                              ## the far leg reads as a splayed spider strut.
+  RigRearCounterFrac = 0.3    ## rear leg counter-swings this fraction of splay.
+  RigInnerShorten = 0.34      ## inner leg shrinks up to this fraction on a turn.
+  RigArmReachDeg = 22.0       ## arms swing forward this far to cradle a carried
+                              ## heart (art step 1); 0 at rest (tucked shoulders).
+  RigShortenSteps* = 4        ## baked leg-length steps (0 = full .. this = shortest).
+  RigSteps* = 16              ## baked steps per rotating quantity (aim / heading).
+  RigLegSwingSteps* = 16      ## baked leg swing steps across the full turn range.
+  # Wheel caster: capped TIGHT so a tall top-down tire only tilts to hint the roll
+  # direction. Expressed in brads (AimBradsTurn=256): 16 brads ≈ 22°.
+  RigCasterMaxBrads* = 16
+  RigCasterSteps* = 8         ## baked caster tilt steps across ±RigCasterMaxBrads.
+
+var
+  rigLoaded: array[Team, bool]
+  rigSegImg: array[Team, array[RigSeg, Image]]
+  rigScale: array[Team, float]   ## master-frame px -> map px (body fills body px).
+  # Bake cache keyed by (baseStep, artStep, shortenStep, scale). baseStep is the
+  # aim step (head/arms) or heading step (legs/wheels); artStep is the leg swing or
+  # wheel caster; shortenStep is the leg-length index (0 for non-legs).
+  rigSegCache: array[Team, array[RigSeg, seq[tuple[
+    baseStep, artStep, shortenStep, scale: int, pixels: seq[uint8]]]]]
+
+proc rigSegPath(seg: RigSeg): string =
+  case seg
+  of rsHead: "head"
+  of rsArmL: "arm_l"
+  of rsArmR: "arm_r"
+  of rsLegFL: "leg_fl"
+  of rsLegFR: "leg_fr"
+  of rsLegRear: "leg_rear"
+  of rsWheelL: "wheel_l"
+  of rsWheelR: "wheel_r"
+  of rsWheelRear: "wheel_rear"
+
+proc rigSegIsLeg(seg: RigSeg): bool =
+  seg in {rsLegFL, rsLegFR, rsLegRear}
+
+proc rigSegIsWheel(seg: RigSeg): bool =
+  seg in {rsWheelL, rsWheelR, rsWheelRear}
+
+proc ensureRigLoaded(team: Team) =
+  if rigLoaded[team]:
+    return
+  let dir = gameDir() / "data/rig_real" / (if team == Red: "red" else: "blue")
+  for seg in RigSeg:
+    rigSegImg[team][seg] = readImage(dir / rigSegPath(seg) & ".png")
+  # Scale the rig so its body matches the unified soldier footprint. The solid
+  # body spans ~99px in the 192px frame (y56..154); map that to SoldierBodyPx.
+  ensureSoldierLoaded(DefaultSkin, team)
+  rigScale[team] = float(SoldierBodyPx) / 99.0
+  rigLoaded[team] = true
+
+proc soldierCanvasToPixels(canvas: Image): seq[uint8] =
+  ## Straight-alpha RGBA (Sprite v1 protocol) from a pixie canvas.
+  result = newSeq[uint8](canvas.width * canvas.height * 4)
+  for i in 0 ..< canvas.width * canvas.height:
+    let c = canvas.data[i].rgba()
+    result[i * 4] = c.r
+    result[i * 4 + 1] = c.g
+    result[i * 4 + 2] = c.b
+    result[i * 4 + 3] = c.a
+
+proc rigSegPixels*(team: Team, seg: RigSeg, baseStep, artStep: int,
+    shortenStep = 0, renderScale = 1): seq[uint8] =
+  ## One rig segment baked into a RigCanvas sprite, HUB-centered.
+  ##  - baseStep: the segment's base rotation step (RigSteps) — the AIM step for
+  ##    the head/arms, the movement-HEADING step for legs/wheels. This IS the
+  ##    turret swivel: head/arms and legs get DIFFERENT baseSteps.
+  ##  - artStep: leg differential swing (signed, RigLegSwingSteps) or wheel caster
+  ##    tilt (signed, RigCasterSteps); ignored for the head.
+  ##  - shortenStep: leg-length index 0..RigShortenSteps (legs only; inner-leg
+  ##    shorten). 0 for everything else.
+  ## Each segment rotates about its ANCHOR by baseDeg + articulation, then the HUB
+  ## lands at canvas center — so at rest (all baseSteps equal, art 0) the segments
+  ## recompose to the south master exactly.
+  let
+    b = ((baseStep mod RigSteps) + RigSteps) mod RigSteps
+    art = artStep
+    sh = clamp(shortenStep, 0, RigShortenSteps)
+  for cached in rigSegCache[team][seg]:
+    if cached.baseStep == b and cached.artStep == art and
+        cached.shortenStep == sh and cached.scale == renderScale:
+      return cached.pixels
+  ensureRigLoaded(team)
+  let
+    outCanvas = RigCanvas * renderScale
+    img = rigSegImg[team][seg]
+    s = rigScale[team] * float(renderScale)
+    center = float32(outCanvas) / 2
+    anchor = RigAnchor[seg]
+    hub = RigHub
+    # base delta: rot 0 = east; the master faces SOUTH so the −90° turn makes the
+    # face lead the base direction. Angle increases CCW; screen y down → rotate −.
+    baseAngle = float(b) * 2.0 * PI / float(RigSteps)
+    baseDeg = -baseAngle - PI / 2.0
+    # The gun mounts in PURE aim space (no −90° — the master-south turn is only for
+    # the body art), like soldierRotPixels: unitRot = rotate(−aimAngle).
+    unitDeg = -baseAngle
+  # Articulation about the segment's own anchor (radians, screen CCW+).
+  var artDeg = 0.0
+  if rigSegIsLeg(seg):
+    let sw = float(art) / float(RigLegSwingSteps) * RigSplayDeg  # signed swing
+    case seg
+    of rsLegFL:  artDeg = (-RigRestTuckDeg + sw) * PI / 180.0
+    of rsLegFR:  artDeg = ( RigRestTuckDeg + sw) * PI / 180.0
+    of rsLegRear: artDeg = (sw * RigRearCounterFrac) * PI / 180.0
+    else: discard
+  elif rigSegIsWheel(seg):
+    # caster tilt: art is the signed caster step; convert to a small angle.
+    let tilt = float(art) / float(RigCasterSteps) *
+      (float(RigCasterMaxBrads) * 2.0 * PI / float(AimBradsTurn))
+    artDeg = -tilt
+  elif seg in {rsArmL, rsArmR}:
+    # Arms: art 0 = tucked (rest); art 1 = REACHING forward to cradle a carried
+    # heart. The reach swings each shoulder inward-and-forward about its attach so
+    # the two arms close in front of the aim (where the heart rides).
+    if art != 0:
+      artDeg = (if seg == rsArmL: RigArmReachDeg else: -RigArmReachDeg) *
+        PI / 180.0
+  # Leg-length shorten: scale the leg toward its hip along the hip→foot (down)
+  # axis. The leg art hangs below its hip anchor, so scaling y about the anchor
+  # pulls the foot (and its wheel, placed separately) up toward the hip.
+  let shortenF = 1.0 - float(sh) / float(RigShortenSteps) * RigInnerShorten
+  var canvas = newImage(outCanvas, outCanvas)
+  let
+    toCenter = translate(vec2(center, center))
+    baseRot = rotate(float32(baseDeg))
+    scl = scale(vec2(float32(s), float32(s)))
+    hubToOrigin = translate(vec2(float32(-hub.x), float32(-hub.y)))
+    artMat =
+      translate(vec2(float32(anchor.x), float32(anchor.y))) *
+      rotate(float32(artDeg)) *
+      scale(vec2(1.0'f32, float32(shortenF))) *
+      translate(vec2(float32(-anchor.x), float32(-anchor.y)))
+    mat = toCenter * baseRot * scl * hubToOrigin * artMat
+  # NB: the held gun is NO LONGER baked into the head — it is its own board object
+  # (rigGunPixels), drawn ABOVE the head with a backlight glow so it reads clearly
+  # and can be gated off if a cog is ever disarmed. The head is a clean turret.
+  canvas.draw(img, mat)
+  let pixels = soldierCanvasToPixels(canvas)
+  rigSegCache[team][seg].add(
+    (baseStep: b, artStep: art, shortenStep: sh, scale: renderScale,
+     pixels: pixels))
+  pixels
+
+var rigGunCache: array[Team, seq[tuple[aimStep, scale: int, pixels: seq[uint8]]]]
+
+proc rigGunPixels*(team: Team, aimStep: int, renderScale = 1): seq[uint8] =
+  ## The held top-down paintball MARKER as its OWN HUB-centered rig object (not
+  ## baked into the head): mounted at the cog's RIGHT (GunRightPx off the aim ray,
+  ## stock GunGripPx along aim), barrel on +aim so tracers line up. A soft warm
+  ## backlight glow is composited BEHIND the marker so the dark gun pops off the
+  ## dark floor/legs. Team-independent shape, but cached per team for symmetry with
+  ## the other rig segments. Emitted ABOVE the head z; gate the caller on a
+  ## `hasGun` flag to hide it when a cog is disarmed.
+  let a = ((aimStep mod RigSteps) + RigSteps) mod RigSteps
+  for cached in rigGunCache[team]:
+    if cached.aimStep == a and cached.scale == renderScale:
+      return cached.pixels
+  ensureGunLoaded()
+  let
+    outCanvas = RigCanvas * renderScale
+    center = float32(outCanvas) / 2
+    baseAngle = float(a) * 2.0 * PI / float(RigSteps)
+    unitDeg = -baseAngle                 # pure aim space (muzzle on +aim)
+    gs = gunScale * float(renderScale)
+    gunMat =
+      translate(vec2(center, center)) * rotate(float32(unitDeg)) *
+      translate(vec2(
+        float32(GunGripPx * renderScale), float32(GunRightPx * renderScale))) *
+      scale(vec2(float32(gs), float32(gs))) *
+      translate(vec2(0'f32, float32(-gunMaster.height) / 2))
+  # 1) lay the gun on a transparent canvas, 2) build a warm-amber backlight from
+  # its silhouette (spread + blur), 3) draw glow THEN gun on the output.
+  var gunLayer = newImage(outCanvas, outCanvas)
+  gunLayer.draw(gunMaster, gunMat)
+  let glow = gunLayer.shadow(
+    offset = vec2(0, 0),
+    spread = float32(GunGlowSpread * float(renderScale)),
+    blur = float32(GunGlowRadius * float(renderScale)),
+    color = rgba(255, 214, 138, GunGlowAlpha).color)  # faint warm rim light
+  var canvas = newImage(outCanvas, outCanvas)
+  canvas.draw(glow)                            # subtle warm edge behind the marker
+  canvas.draw(gunLayer)
+  let pixels = soldierCanvasToPixels(canvas)
+  rigGunCache[team].add((aimStep: a, scale: renderScale, pixels: pixels))
+  pixels
+
+var rigSprayCache: array[Team, seq[tuple[aimStep, scale: int, pixels: seq[uint8]]]]
+
+proc rigSprayCanPixels*(team: Team, aimStep: int, renderScale = 1): seq[uint8] =
+  ## The held SPRAY CAN, the swap-in for rigGunPixels while a cog carries one:
+  ## same grip (the cog's RIGHT, GunRightPx off the aim ray) and the same
+  ## nozzle-on-+aim convention, so the spray cone leaves the nozzle exactly where
+  ## tracers leave the muzzle. Mounted SprayHeldGripPx along aim and scaled to
+  ## SprayHeldLengthPx: a can is a short fistful, so its silhouette reads clearly
+  ## different from the long marker — that difference is how a viewer tells which
+  ## weapon a cog is holding.
+  let a = ((aimStep mod RigSteps) + RigSteps) mod RigSteps
+  for cached in rigSprayCache[team]:
+    if cached.aimStep == a and cached.scale == renderScale:
+      return cached.pixels
+  ensureSprayLoaded()
+  let
+    outCanvas = RigCanvas * renderScale
+    center = float32(outCanvas) / 2
+    baseAngle = float(a) * 2.0 * PI / float(RigSteps)
+    unitDeg = -baseAngle                 # pure aim space (nozzle on +aim)
+    ss = sprayScale * float(renderScale)
+    canMat =
+      translate(vec2(center, center)) * rotate(float32(unitDeg)) *
+      translate(vec2(
+        float32(SprayHeldGripPx * renderScale),
+        float32(GunRightPx * renderScale))) *
+      scale(vec2(float32(ss), float32(ss))) *
+      translate(vec2(0'f32, float32(-sprayMaster.height) / 2))
+  # Same three-step composite as the marker: can, warm backlight from its
+  # silhouette, then glow-under-can — so it pops off the dark floor identically.
+  var canLayer = newImage(outCanvas, outCanvas)
+  canLayer.draw(sprayMaster, canMat)
+  let glow = canLayer.shadow(
+    offset = vec2(0, 0),
+    spread = float32(GunGlowSpread * float(renderScale)),
+    blur = float32(GunGlowRadius * float(renderScale)),
+    color = rgba(255, 214, 138, GunGlowAlpha).color)
+  var canvas = newImage(outCanvas, outCanvas)
+  canvas.draw(glow)
+  canvas.draw(canLayer)
+  let pixels = soldierCanvasToPixels(canvas)
+  rigSprayCache[team].add((aimStep: a, scale: renderScale, pixels: pixels))
+  pixels
 
 proc soldierIconPixels*(team: Team, sizePx: int): seq[uint8] =
   ## A compact roster chip: the face-on cog scaled so the body fills the icon
@@ -916,6 +1313,151 @@ proc soldierIconPixels*(team: Team, sizePx: int): seq[uint8] =
     result[i * 4 + 1] = c.g
     result[i * 4 + 2] = c.b
     result[i * 4 + 3] = c.a
+
+proc bradsOfVector*(dx, dy: int): int   ## fwd decl (defined near aimVector below).
+
+## --- Cog driving physics: how the segmented trike steers/turns (broadcast-only) ---
+## Ports the Maxwell-approved CogDriveState model (from maxwell/cog-base-turret-
+## split): the body heading eases slowly toward travel; each wheel casters toward
+## its foot's travel direction near-instantly (so tyres never scrape); the leg
+## splay follows a smoothed turn signal. Everything derives from the already-known
+## velocity, so it stays broadcast-only and replay-deterministic.
+const
+  CogBodyTurnRate* = 28       ## max brads/frame the body heading eases toward the
+                              ## travel direction — the base is a TRUE TANK track
+                              ## that snaps to where it rolls (fast + accurate),
+                              ## fully independent of the head/aim.
+  CogWheelTurnRate* = 48      ## brads/frame a wheel casters toward travel (even
+                              ## faster than the base, so tyres never scrape).
+  CogReverseMaxBrads* = 112   ## |heading-travel| beyond this (~158°) = reversing;
+                              ## below it the base just turns to face travel.
+  CogReverseCommitFrames* = 8   ## backward frames before committing to a U-turn.
+  CogMoveMinSpeed* = StopThreshold
+  CogTurnFullBrads* = 6       ## heading angular velocity mapped to full splay.
+  CogTurnAmtEase* = 200       ## turnAmt eases toward target this many milli/frame.
+
+type
+  CogDriveState* = object
+    ## Per-player broadcast animation state for the segmented trike. NOT in the
+    ## sim / gameHash — lives in the viewer state, evolved once per frame.
+    initialized*: bool
+    bodyHeading*: int          ## brads the chassis currently faces.
+    reverseFrames*: int        ## consecutive backward frames (commit counter).
+    turnAmt*: int              ## signed steer signal, -1000..1000 (x1000). + = left.
+    casterFL*, casterFR*, casterRear*: int  ## brads each wheel points.
+
+proc bradDiff*(a, b: int): int =
+  ## Shortest signed difference a-b wrapped to (-128, 128] brads.
+  var d = ((a - b) mod AimBradsTurn + AimBradsTurn) mod AimBradsTurn
+  if d > AimBradsTurn div 2:
+    d -= AimBradsTurn
+  d
+
+proc easeBrads*(cur, target, maxStep: int): int =
+  ## Steps `cur` toward `target` by at most `maxStep` brads along the shortest
+  ## arc, wrapping into 0..AimBradsTurn-1.
+  let d = bradDiff(target, cur)
+  let step = clamp(d, -maxStep, maxStep)
+  ((cur + step) mod AimBradsTurn + AimBradsTurn) mod AimBradsTurn
+
+proc initCogDriveState*(aimBrads: int): CogDriveState =
+  ## A freshly-spawned cog faces where it aims, wheels aligned, not reversing,
+  ## legs at rest. Reset on any scrub/respawn so a jump never inherits a stale pose.
+  CogDriveState(initialized: true, bodyHeading: aimBrads, reverseFrames: 0,
+    turnAmt: 0, casterFL: aimBrads, casterFR: aimBrads, casterRear: aimBrads)
+
+proc stepCogDrive*(state: CogDriveState, velX, velY, aimBrads: int):
+    CogDriveState =
+  ## Advances the trike's driving animation ONE frame from the current velocity.
+  ## Deterministic: same (state, vel, aim) always yields the same next state.
+  if not state.initialized:
+    return initCogDriveState(aimBrads)
+  result = state
+  let speed = abs(velX) + abs(velY)
+  if speed < CogMoveMinSpeed:
+    # Parked: hold heading, coast every caster back to the heading, relax legs.
+    result.reverseFrames = max(0, state.reverseFrames - 1)
+    result.turnAmt = state.turnAmt -
+      clamp(state.turnAmt, -CogTurnAmtEase, CogTurnAmtEase)
+    result.casterFL = easeBrads(state.casterFL, state.bodyHeading, CogWheelTurnRate)
+    result.casterFR = easeBrads(state.casterFR, state.bodyHeading, CogWheelTurnRate)
+    result.casterRear = easeBrads(state.casterRear, state.bodyHeading, CogWheelTurnRate)
+    return
+  let
+    travel = bradsOfVector(velX, velY)
+    offBody = bradDiff(travel, state.bodyHeading).abs
+    goingBackward = offBody > CogReverseMaxBrads
+  if goingBackward:
+    result.reverseFrames = min(state.reverseFrames + 1, CogReverseCommitFrames * 2)
+  else:
+    result.reverseFrames = max(0, state.reverseFrames - 2)
+  let committed = result.reverseFrames >= CogReverseCommitFrames
+  let headingTarget =
+    if goingBackward and not committed: state.bodyHeading
+    else: travel
+  # The base snaps toward travel at a FLAT fast rate (a tank track grips and
+  # turns hard) — no speed penalty, so a direction change is tracked promptly and
+  # accurately instead of lagging a quarter-second behind.
+  result.bodyHeading = easeBrads(state.bodyHeading, headingTarget, CogBodyTurnRate)
+  # turnAmt: smoothed signed heading angular velocity / CogTurnFull, ×1000.
+  let w = bradDiff(result.bodyHeading, state.bodyHeading)
+  let tInst = clamp(w * 1000 div max(1, CogTurnFullBrads), -1000, 1000)
+  let smoothed = (state.turnAmt * 7 + tInst * 3) div 10
+  result.turnAmt = state.turnAmt +
+    clamp(smoothed - state.turnAmt, -CogTurnAmtEase, CogTurnAmtEase)
+  # Each wheel casters toward the travel direction (with a small turn lean so the
+  # wheels visibly lead the arc). Rear leans opposite (pivot foot).
+  let lean = clamp(result.turnAmt * (AimBradsTurn div 8) div 1000,
+    -(AimBradsTurn div 8), AimBradsTurn div 8)
+  result.casterFL = easeBrads(state.casterFL, travel + lean, CogWheelTurnRate)
+  result.casterFR = easeBrads(state.casterFR, travel + lean, CogWheelTurnRate)
+  result.casterRear = easeBrads(state.casterRear, travel - lean, CogWheelTurnRate)
+
+proc rigHeadingStep*(headingBrads: int): int =
+  ## The base rotation step for the movement-facing legs/wheels (quantized to
+  ## RigSteps). Same quantization as soldierRotIndex, on the body heading.
+  soldierRotIndex(headingBrads)
+
+proc rigLegSwingStep*(seg: RigSeg, turnAmt: int): int =
+  ## SIGNED leg swing step (−RigLegSwingSteps..RigLegSwingSteps) from the turn
+  ## signal (turnAmt ×1000, + = LEFT/CCW). Both front legs swing together with the
+  ## turn (the outer leg widens, the inner one is SHORTENED separately); the rear
+  ## counter-swings. Non-leg segments return 0.
+  let t = clamp(turnAmt, -1000, 1000)
+  if rigSegIsLeg(seg):
+    int(round(float(t) / 1000.0 * float(RigLegSwingSteps)))
+  else: 0
+
+proc rigLegShortenStep*(seg: RigSeg, turnAmt: int): int =
+  ## Leg-length shorten step (0..RigShortenSteps) for the INNER leg of the turn.
+  ## +turnAmt = LEFT/CCW ⇒ the LEFT (inner) front leg shortens; −turnAmt ⇒ RIGHT.
+  let t = clamp(turnAmt, -1000, 1000)
+  case seg
+  of rsLegFL:  int(round(float(max(0, t)) / 1000.0 * float(RigShortenSteps)))
+  of rsLegFR:  int(round(float(max(0, -t)) / 1000.0 * float(RigShortenSteps)))
+  else: 0
+
+proc rigCasterStep*(casterBrads, headingBrads: int): int =
+  ## SIGNED wheel caster tilt step (−RigCasterSteps..RigCasterSteps): the caster
+  ## direction relative to the base HEADING (the wheel is baked rotated by the
+  ## heading, so its extra tilt is caster − heading), clamped to ±RigCasterMaxBrads
+  ## so a tall top-down tire only tilts to hint the turn.
+  let capped = clamp(bradDiff(casterBrads, headingBrads),
+    -RigCasterMaxBrads, RigCasterMaxBrads)
+  int(round(float(capped) / float(RigCasterMaxBrads) * float(RigCasterSteps)))
+
+const RigBaseMaxDivergeBrads* = 14  ## ~20°: the leg base only LEANS a little toward
+                                    ## the movement heading — it never swings far
+                                    ## sideways (the spidery look). The HEAD still
+                                    ## aims freely for the full turret swivel.
+
+proc clampBaseHeading*(headingBrads, aimBrads: int): int =
+  ## Clamps the leg-base heading to within ±RigBaseMaxDivergeBrads of the aim, so
+  ## the base only LEANS into a strafe/turn while the head swivels freely. Returns
+  ## a wrapped 0..AimBradsTurn-1 heading.
+  let d = clamp(bradDiff(headingBrads, aimBrads),
+    -RigBaseMaxDivergeBrads, RigBaseMaxDivergeBrads)
+  ((aimBrads + d) mod AimBradsTurn + AimBradsTurn) mod AimBradsTurn
 
 proc crewVariantIndex*(slotId: int): int =
   ## Returns the crew sprite variant for one player slot.
@@ -980,7 +1522,7 @@ const
   ArenaLeftObstacles = [
     # Column 1 (x=268..286): rect stubs, phase 0, border-attached ends. The
     # SECOND stub from the top and from the bottom are GLASS WINDOWS
-    # (GameVersion 15): solid to movement, bullets, and plasma arcs, transparent
+    # (GameVersion 15): solid to movement, bullets, and spray cones, transparent
     # to fog-of-war.
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 10, w: 18, h: 62)),
     ArenaShape(kind: shapeRect, window: true,
@@ -1018,7 +1560,7 @@ const
     # (x=479..507, y=276..383): a vertical bar on the outer side plus short
     # arms reaching toward the flag ring — "[" here, "]" on the x-mirror.
     # The middle of the bar, straddling the midline, is a GLASS WINDOW:
-    # the mid lane stays closed to movement, bullets, and plasma, but
+    # the mid lane stays closed to movement, bullets, and spray, but
     # fog-of-war now sees straight down the center corridor through it.
     ArenaShape(kind: shapeRect, rect: MapRect(x: 479, y: 276, w: 28, h: 12)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 479, y: 288, w: 12, h: 24)),
@@ -1051,7 +1593,7 @@ const
   ArenaLargeLeftObstacles = [
     # Column 1 (x=351..369): rect stubs, phase 0, border-attached ends. The
     # SECOND stub from the top and from the bottom are GLASS WINDOWS
-    # (GameVersion 15): solid to movement, bullets, and plasma arcs, transparent
+    # (GameVersion 15): solid to movement, bullets, and spray cones, transparent
     # to fog-of-war.
     ArenaShape(kind: shapeRect, rect: MapRect(x: 351, y: 10, w: 18, h: 62)),
     ArenaShape(kind: shapeRect, window: true,
@@ -1088,7 +1630,7 @@ const
     # (x=627..655, y=375..482): a vertical bar on the outer side plus short
     # arms reaching toward the flag ring — "[" here, "]" on the x-mirror.
     # The middle of the bar, straddling the midline, is a GLASS WINDOW:
-    # the mid lane stays closed to movement, bullets, and plasma, but
+    # the mid lane stays closed to movement, bullets, and spray, but
     # fog-of-war now sees straight down the center corridor through it.
     ArenaShape(kind: shapeRect, rect: MapRect(x: 627, y: 375, w: 28, h: 12)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 627, y: 387, w: 12, h: 24)),
@@ -2107,6 +2649,7 @@ proc defaultGameConfig*(): GameConfig =
     maxTicks: MaxTicks,
     maxGames: MaxGames,
     showPlayerLabels: true,
+    fastMode: true,
     mapPath: DefaultMapPath,
     closedRoster: false,
     slots: @[]
@@ -2461,6 +3004,7 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("maxGameTicks", config.maxTicks)
   node.readConfigInt("maxGames", config.maxGames)
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
+  node.readConfigBool("fastMode", config.fastMode)
   node.readConfigString("map", config.mapPath)
   node.readConfigString("mapPath", config.mapPath)
   ## The gun range follows the selected map unless the config sets it
@@ -2546,6 +3090,7 @@ proc configJson*(config: GameConfig): string =
     "mapPath": config.mapPath,
     "closedRoster": config.closedRoster,
     "showPlayerLabels": config.showPlayerLabels,
+    "fastMode": config.fastMode,
     "tokens": tokens,
     "slots": slots
   }
@@ -2682,6 +3227,7 @@ proc gameHash*(sim: SimServer): uint64 =
   result.mixHashInt(sim.gameStartTick)
   result.mixHashInt(sim.startWaitTimer)
   result.mixHashBool(sim.timeLimitReached)
+  result.mixHashInt(sim.overtimeTicks)
   result.mixHashBool(sim.isDraw)
   result.mixHashBool(sim.needsReregister)
   result.mixHashInt(sim.nextJoinOrder)
@@ -2836,8 +3382,67 @@ proc arrangeHomePositions*(sim: var SimServer) =
     sim.players[i].homeY = spawn.y
     sim.resetPlayerToHome(i)
 
+proc eventSlot(sim: SimServer, playerIndex: int): int {.inline.} =
+  ## Returns a player's stable join slot for the tier-2 event stream, so an
+  ## event survives roster changes; -1 for no/invalid player.
+  if playerIndex >= 0 and playerIndex < sim.players.len:
+    return sim.players[playerIndex].joinOrder
+  -1
+
+proc emitEvent(
+  sim: var SimServer,
+  kind: SimEventKind,
+  source = -1,
+  target = -1,
+  weapon = "",
+  amount = 0,
+  hp = -1,
+  blocked = 0,
+  x = 0.0,
+  y = 0.0
+) {.inline.} =
+  ## Appends one tier-2 analysis event (see SimEvent); a no-op unless
+  ## collectEvents is on, so live servers pay nothing. `source` and `target`
+  ## are PLAYER INDICES here; they are recorded as stable join slots.
+  if not sim.collectEvents:
+    return
+  sim.events.add SimEvent(
+    tick: sim.tickCount,
+    kind: kind,
+    source: sim.eventSlot(source),
+    target: sim.eventSlot(target),
+    weapon: weapon,
+    amount: amount,
+    hp: hp,
+    blocked: blocked,
+    x: x,
+    y: y
+  )
+
+proc emitPhaseChange(sim: var SimServer, newPhase: GamePhase) {.inline.} =
+  ## Appends one PhaseChange analysis event for a phase about to be entered
+  ## (call BEFORE assigning sim.phase, with the phase being switched to).
+  ## A no-op unless collectEvents is on.
+  if not sim.collectEvents:
+    return
+  sim.emitEvent(
+    PhaseChange,
+    weapon = ($newPhase).toLowerAscii,
+    amount = ord(newPhase)
+  )
+
 proc resetFlag*(sim: var SimServer, team: Team) =
   ## Returns one team's flag to its home pedestal.
+  # A flag leaving an enemy's back mid-game (death, disconnect — any reason
+  # other than capture) is a FlagReturn analysis event; the pedestal resets
+  # at game boundaries are not (phase guard).
+  if sim.collectEvents and sim.phase == Playing and sim.flags[team].carrier >= 0:
+    sim.emitEvent(
+      FlagReturn,
+      source = sim.flags[team].carrier,
+      x = float(sim.flags[team].x),
+      y = float(sim.flags[team].y)
+    )
   let home = sim.gameMap.flagHome(team)
   sim.flags[team] = FlagState(x: home.x, y: home.y, carrier: -1)
 
@@ -3283,6 +3888,7 @@ proc addPlayer*(
     color: color,
     skin: slot.skin,
     lastShoutTick: -1,
+    paintHitTick: -1,
     reward: sim.rewardAccounts[accountIndex].reward
   )
   sim.fovCaches.add PlayerFov(
@@ -3358,7 +3964,7 @@ proc recordKill*(sim: var SimServer, playerIndex: int) =
 
 proc recordTeamKill*(sim: var SimServer, killerIndex, victimIndex: int) =
   ## Counts a teammate kill (the endscreen "backstab" badge). Weapon-agnostic:
-  ## bullets, grenade blasts, and plasma cones all land here.
+  ## bullets, grenade blasts, and spray cones all land here.
   if killerIndex < 0 or killerIndex >= sim.players.len:
     return
   if victimIndex < 0 or victimIndex >= sim.players.len:
@@ -3393,6 +3999,8 @@ proc playerResultsJson*(sim: SimServer): string =
     killsList = newJArray()
     deathsList = newJArray()
     capturesList = newJArray()
+    shotsFiredList = newJArray()
+    shotsHitList = newJArray()
     results = newJObject()
   for slotIndex in 0 ..< sim.playerResultSlotCount():
     resultSlots.add(slotIndex)
@@ -3418,6 +4026,8 @@ proc playerResultsJson*(sim: SimServer): string =
       kills = 0
       deaths = 0
       captures = 0
+      shotsFired = 0
+      shotsHit = 0
     if accountIndex >= 0:
       let account = sim.rewardAccounts[accountIndex]
       name = account.address
@@ -3436,6 +4046,10 @@ proc playerResultsJson*(sim: SimServer): string =
       playerTeam = player.team
       hasTeam = true
       playerWon = not sim.isDraw and player.team == sim.winner
+      # Accuracy counters live only on the player (analysis-only, never
+      # mirrored into reward accounts): a slot whose player left reports 0.
+      shotsFired = player.shotsFired
+      shotsHit = player.shotsHit
     if not hasTeam and slotConfig.hasTeam:
       playerTeam = slotConfig.team
       hasTeam = true
@@ -3446,6 +4060,8 @@ proc playerResultsJson*(sim: SimServer): string =
     killsList.add(%kills)
     deathsList.add(%deaths)
     capturesList.add(%captures)
+    shotsFiredList.add(%shotsFired)
+    shotsHitList.add(%shotsHit)
   results["names"] = names
   results["scores"] = scores
   results["win"] = win
@@ -3453,6 +4069,11 @@ proc playerResultsJson*(sim: SimServer): string =
   results["kills"] = killsList
   results["deaths"] = deathsList
   results["captures"] = capturesList
+  # shotsFired/shotsHit stay OUT of the results payload: the platform's
+  # episode-results schema is closed (additionalProperties: false) and the
+  # certifier rejects unknown fields, blocking every canonical upload. The
+  # counters remain on the players for replay-side analysis; re-add here
+  # only after the platform schema learns the fields.
   $results
 
 proc grenadeSpawnPoints*(): array[4, tuple[x, y: int]] =
@@ -3491,7 +4112,7 @@ proc resetMedKits*(sim: var SimServer) =
 proc resetShields*(sim: var SimServer) =
   ## Places one shield deep in each team's endzone, in the same back column
   ## as the corner grenade pickups but in the BOTTOM half (three quarters of
-  ## the map height down) — the plasma arcs hold the matching top-half spots —
+  ## the map height down) — the spray cans hold the matching top-half spots —
   ## nudged to the nearest walkable floor, and refills both.
   let
     inset = ArenaBorder + GrenadeSpawnInset
@@ -3509,16 +4130,16 @@ proc resetShields*(sim: var SimServer) =
     sim.players[i].hasShield = false
     sim.players[i].shieldHp = 0
 proc plasmaArcSpawnPoints*(): array[2, tuple[x, y: int]] =
-  ## The two plasma arc spawn points, nudged to walkable floor: the same side
+  ## The two spray can spawn points, nudged to walkable floor: the same side
   ## back columns as the shields, but in the TOP half (a quarter of the map
   ## height down) so the two pickups no longer sit on top of each other —
-  ## plasma arcs high, shields low.
+  ## spray cans high, shields low.
   let inset = ArenaBorder + PlasmaArcSpawnInset
   [(inset, MapHeight div 4),
     (MapWidth - inset, MapHeight div 4)]
 
 proc resetPlasmaArcs*(sim: var SimServer) =
-  ## Refills both side-center plasma arc pickups and clears carried arcs.
+  ## Refills both side-center spray can pickups and clears carried cans.
   let points = plasmaArcSpawnPoints()
   for i in 0 ..< sim.plasmaArcSpawns.len:
     let spot = sim.nearestWalkable(points[i].x, points[i].y)
@@ -3568,9 +4189,11 @@ proc startGame*(sim: var SimServer) =
   sim.resetGrenades()
   sim.resetShields()
   sim.resetPlasmaArcs()
+  sim.emitPhaseChange(Playing)
   sim.phase = Playing
   sim.gameStartTick = sim.tickCount
   sim.timeLimitReached = false
+  sim.overtimeTicks = 0
   sim.isDraw = false
   sim.lastLobbyPlayersLogged = -1
   sim.lastLobbyNeededLogged = -1
@@ -3806,6 +4429,29 @@ proc lineOfSightClear*(sim: SimServer, ax, ay, bx, by: int): bool =
       return false
   true
 
+proc gameTicksElapsed*(sim: SimServer): int =
+  ## Returns ticks elapsed since the current game left the lobby.
+  if sim.gameStartTick < 0:
+    return 0
+  max(0, sim.tickCount - sim.gameStartTick)
+
+proc effectiveMaxTicks*(sim: SimServer): int =
+  ## Returns the game's tick limit including banked action-floor overtime
+  ## (0 stays "no limit").
+  if sim.config.maxTicks <= 0:
+    return 0
+  sim.config.maxTicks + sim.overtimeTicks
+
+proc floorGameClock(sim: var SimServer) =
+  ## Guarantees at least ActionClockFloorTicks of clock remain. Kills and
+  ## heart steals call this so a timed game never ends mid-action; the
+  ## extension banks into overtimeTicks (per-game, part of gameHash).
+  if sim.config.maxTicks <= 0 or sim.phase != Playing:
+    return
+  let remaining = sim.effectiveMaxTicks() - sim.gameTicksElapsed()
+  if remaining < ActionClockFloorTicks:
+    sim.overtimeTicks += ActionClockFloorTicks - remaining
+
 proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
   ## Applies a fatal hit: return any carried flag to its pedestal, decrement
   ## lives, start respawn.
@@ -3817,6 +4463,8 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
     playerColorText(sim.players[targetIndex].color) &
       " killed by " & sim.playerText(killerIndex)
   )
+  # A kill is action: keep at least ActionClockFloorTicks on the clock.
+  sim.floorGameClock()
   # A dying trigger pull never releases, and a carried grenade is lost.
   sim.players[targetIndex].fireWindup = 0
   sim.players[targetIndex].windupBrads = -1
@@ -3856,6 +4504,14 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
   sim.players[targetIndex].carryX = 0
   sim.players[targetIndex].carryY = 0
   sim.recordDeath(targetIndex)
+  # Death is the victim-side record (source = victim, target = killer); the
+  # weapon-attributed Kill is emitted by each weapon's own damage site, where
+  # the weapon is known first-hand.
+  sim.emitEvent(
+    Death, source = targetIndex, target = killerIndex,
+    x = float(sim.players[targetIndex].x + CollisionW div 2),
+    y = float(sim.players[targetIndex].y + CollisionH div 2)
+  )
   if sim.players[targetIndex].lives > 0:
     dec sim.players[targetIndex].lives
   sim.players[targetIndex].respawnTimer =
@@ -3864,12 +4520,23 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
     else:
       0
 
-proc absorbDamage*(sim: var SimServer, targetIndex: int, amount: int) =
+proc absorbDamage*(sim: var SimServer, targetIndex: int, amount: int): int {.discardable.} =
   ## Applies damage to a player: the shield layer soaks hits before base hp.
-  ## Callers keep their own death checks on the base hp that remains.
+  ## Callers keep their own death checks on the base hp that remains. Returns
+  ## how many hp the shield layer absorbed (`fromShield`) — first-hand `blocked`
+  ## for the tier-2 Damage event; callers that don't need it can ignore it.
   let fromShield = min(sim.players[targetIndex].shieldHp, amount)
   sim.players[targetIndex].shieldHp -= fromShield
   sim.players[targetIndex].hp -= amount - fromShield
+  if fromShield > 0 and sim.players[targetIndex].shieldHp == 0:
+    # A broken shield is GONE: the carry icon, the " shield" label, and the
+    # fire slowdown all end with the bubble, and an in-flight slowed cooldown
+    # re-clamps so the next shot fires at the normal rate.
+    sim.players[targetIndex].hasShield = false
+    sim.players[targetIndex].fireCooldown = min(
+      sim.players[targetIndex].fireCooldown, sim.config.fireCooldownTicks
+    )
+  fromShield
 
 proc canFire*(sim: SimServer, shooterIndex: int): bool =
   ## Returns whether one player is able to fire a shot right now.
@@ -3879,7 +4546,7 @@ proc canFire*(sim: SimServer, shooterIndex: int): bool =
   shooter.alive and shooter.fireCooldown <= 0 and not shooter.hasPlasmaArc
 
 proc canFireArc*(sim: SimServer, attackerIndex: int): bool =
-  ## Returns whether one player can fire an immediate plasma arc.
+  ## Returns whether one player can fire an immediate spray burst.
   if attackerIndex < 0 or attackerIndex >= sim.players.len:
     return false
   let attacker = sim.players[attackerIndex]
@@ -3889,7 +4556,7 @@ proc selectArcVictims(
   sim: SimServer,
   attackerIndex: int
 ): seq[int] =
-  ## Returns every living player inside the attacker's forward plasma cone,
+  ## Returns every living player inside the attacker's forward spray cone,
   ## computed from the attacker's CURRENT position and aim: a live cone
   ## tracks its owner across the active window.
   if attackerIndex < 0 or attackerIndex >= sim.players.len:
@@ -3936,11 +4603,11 @@ proc startArcFire*(sim: var SimServer, attackerIndex: int) =
   sim.players[attackerIndex].arcHitMask = 0
   sim.players[attackerIndex].arcKillsThisFire = 0
   sim.logGameEvent(
-    playerColorText(sim.players[attackerIndex].color) & " fired a plasma arc"
+    playerColorText(sim.players[attackerIndex].color) & " sprayed paint"
   )
 
 proc resolveActiveArcCones*(sim: var SimServer) =
-  ## Advances every live plasma cone one tick: all cones are resolved
+  ## Advances every live spray cone one tick: all cones are resolved
   ## against the same snapshot (no processing-order advantage), each victim
   ## is damaged at most once per activation, and every live cone leaves a
   ## cosmetic flash at its owner's current position and aim. A touch removes
@@ -3974,7 +4641,24 @@ proc resolveActiveArcCones*(sim: var SimServer) =
           continue
         sim.players[arcFire.attacker].arcHitMask =
           sim.players[arcFire.attacker].arcHitMask or bit
-      sim.absorbDamage(victimIndex, PlasmaArcDamage)
+      # A bubble that eats the burst keeps the body clean, exactly as with a
+      # paintball (see the gun's damage site).
+      let bubbleUp = sim.players[victimIndex].hasShield and
+        sim.players[victimIndex].shieldHp > 0
+      let blocked = sim.absorbDamage(victimIndex, PlasmaArcDamage)
+      # A can of paint sprayed in the face paints: stamp the visor splat, like
+      # the gun and the grenade.
+      if not bubbleUp:
+        sim.players[victimIndex].paintHitTick = sim.tickCount
+      let
+        vx = float(sim.players[victimIndex].x + CollisionW div 2)
+        vy = float(sim.players[victimIndex].y + CollisionH div 2)
+      sim.emitEvent(
+        Damage, source = arcFire.attacker, target = victimIndex,
+        weapon = "spray", amount = PlasmaArcDamage,
+        hp = max(0, sim.players[victimIndex].hp),
+        blocked = blocked, x = vx, y = vy
+      )
       # Floating damage number for the HP loss (cosmetic, not in gameHash).
       sim.damagePops.add DamageFx(
         x: sim.players[victimIndex].x + CollisionW div 2,
@@ -3987,6 +4671,10 @@ proc resolveActiveArcCones*(sim: var SimServer) =
         if victimIndex != arcFire.attacker:
           sim.recordKill(arcFire.attacker)
           sim.recordTeamKill(arcFire.attacker, victimIndex)
+          sim.emitEvent(
+            Kill, source = arcFire.attacker, target = victimIndex,
+            weapon = "spray", amount = PlasmaArcDamage, x = vx, y = vy
+          )
           # Multi-kill accounting per ACTIVATION (not per tick): the second
           # kill of one firing mints a double, the third upgrades it to a
           # triple; a fourth+ stays inside the already-counted triple.
@@ -4000,7 +4688,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
       dec sim.players[arcFire.attacker].arcTicksLeft
 
 proc tryFireArc*(sim: var SimServer, attackerIndex: int) =
-  ## Fires one plasma arc immediately for direct callers and tests: ignites
+  ## Fires one spray burst immediately for direct callers and tests: ignites
   ## the cone and resolves its first tick (other live cones also advance).
   if not sim.canFireArc(attackerIndex):
     return
@@ -4079,6 +4767,9 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
   # (targetIndex >= 0) is on-target, so it counts as a hit even in the rare
   # tick where the victim already died to a simultaneous shot.
   inc sim.players[shooterIndex].shotsFired
+  sim.emitEvent(
+    Shot, source = shooterIndex, weapon = "gun", x = float(sx), y = float(sy)
+  )
   # Record a cosmetic tracer for the shot (never enters gameHash). It ends at
   # the victim, so a bullet visibly never travels past its first hit.
   var
@@ -4088,6 +4779,10 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     inc sim.players[shooterIndex].shotsHit
     ex = sim.players[targetIndex].x + CollisionW div 2
     ey = sim.players[targetIndex].y + CollisionH div 2
+    sim.emitEvent(
+      Hit, source = shooterIndex, target = targetIndex, weapon = "gun",
+      x = float(ex), y = float(ey)
+    )
   else:
     # March along the unit aim to the last wall-free pixel or max range
     # (checking each sampled pixel keeps this O(range) at 1300px).
@@ -4119,7 +4814,20 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     # unchanged.)
     let bubbleUp = sim.players[targetIndex].hasShield and
       sim.players[targetIndex].shieldHp > 0
-    sim.absorbDamage(targetIndex, 1)
+    let blocked = sim.absorbDamage(targetIndex, 1)
+    # Paintball paint marks the body only when the shield bubble ISN'T eating it
+    # (a bubble dent draws no body paint). Stamp so the EYES-PiP visor splat
+    # fires for THIS paint hit — and only for a PAINT hit (gun/grenade). The
+    # spray cone stamps it at its own damage site.
+    if not bubbleUp:
+      sim.players[targetIndex].paintHitTick = sim.tickCount
+    sim.emitEvent(
+      Damage, source = shooterIndex, target = targetIndex, weapon = "gun",
+      amount = 1, hp = max(0, sim.players[targetIndex].hp),
+      blocked = blocked,
+      x = float(sim.players[targetIndex].x + CollisionW div 2),
+      y = float(sim.players[targetIndex].y + CollisionH div 2)
+    )
     if bubbleUp:
       sim.bubbleImpacts.add BubbleImpactFx(
         playerIndex: targetIndex,
@@ -4146,6 +4854,12 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
       sim.killPlayer(targetIndex, shooterIndex)
       sim.recordKill(shooterIndex)
       sim.recordTeamKill(shooterIndex, targetIndex)
+      sim.emitEvent(
+        Kill, source = shooterIndex, target = targetIndex, weapon = "gun",
+        amount = 1,
+        x = float(sim.players[targetIndex].x + CollisionW div 2),
+        y = float(sim.players[targetIndex].y + CollisionH div 2)
+      )
     else:
       if not bubbleUp:
         # A non-fatal hit leaves a small, short-lived paint spark in the
@@ -4286,7 +5000,16 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       py = sim.players[i].y + CollisionH div 2
     if distSq(px, py, grenade.tx, grenade.ty) > radiusSq:
       continue
-    sim.absorbDamage(i, GrenadeDamage)
+    let blocked = sim.absorbDamage(i, GrenadeDamage)
+    # A paint-bomb blast marks everyone caught in it — stamp so the EYES-PiP
+    # visor splat fires for this paint hit (gun/grenade; spray stamps its own).
+    sim.players[i].paintHitTick = sim.tickCount
+    sim.emitEvent(
+      Damage, source = grenade.thrower, target = i, weapon = "grenade",
+      amount = GrenadeDamage, hp = max(0, sim.players[i].hp),
+      blocked = blocked,
+      x = float(px), y = float(py)
+    )
     # Floating damage number for the blast's HP loss (cosmetic, not in gameHash).
     sim.damagePops.add DamageFx(
       x: px, y: py, tick: sim.tickCount,
@@ -4297,6 +5020,10 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       if grenade.thrower != i:
         sim.recordKill(grenade.thrower)
         sim.recordTeamKill(grenade.thrower, i)
+        sim.emitEvent(
+          Kill, source = grenade.thrower, target = i, weapon = "grenade",
+          amount = GrenadeDamage, x = float(px), y = float(py)
+        )
         inc blastKills
   # Multi-kill accounting per BLAST: one landing that kills 2 mints a double,
   # 3+ a triple (a self-kill in the blast never counts toward either).
@@ -4350,7 +5077,7 @@ proc updateMedKits*(sim: var SimServer) =
       spawn.present = true
 
 proc updatePlasmaArcs*(sim: var SimServer) =
-  ## Refills side-center plasma arc pickups whose respawn timer elapsed.
+  ## Refills side-center spray can pickups whose respawn timer elapsed.
   for spawn in sim.plasmaArcSpawns.mitems:
     if not spawn.present and sim.tickCount >= spawn.respawnAt:
       spawn.present = true
@@ -4371,7 +5098,12 @@ proc tryPickupMedKits*(sim: var SimServer, playerIndex: int) =
     if spawn.present and distSq(px, py, spawn.x, spawn.y) <= rangeSq:
       spawn.present = false
       spawn.respawnAt = sim.tickCount + MedKitRespawnTicks
+      let healed = sim.config.hitPoints - sim.players[playerIndex].hp
       sim.players[playerIndex].hp = sim.config.hitPoints
+      sim.emitEvent(
+        Heal, source = playerIndex, amount = healed,
+        hp = sim.players[playerIndex].hp, x = float(px), y = float(py)
+      )
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
           " picked up a med kit"
@@ -4414,7 +5146,7 @@ proc tryPickupShields*(sim: var SimServer, playerIndex: int) =
       return
 
 proc tryPickupPlasmaArcs*(sim: var SimServer, playerIndex: int) =
-  ## Lets a living player pick up one side-center plasma arc by touch.
+  ## Lets a living player pick up one side-center spray can by touch.
   if not sim.players[playerIndex].alive or sim.players[playerIndex].hasPlasmaArc:
     return
   let
@@ -4430,7 +5162,7 @@ proc tryPickupPlasmaArcs*(sim: var SimServer, playerIndex: int) =
       sim.players[playerIndex].windupBrads = -1
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
-          " picked up a plasma arc"
+          " picked up a spray can"
       )
       return
 
@@ -4518,6 +5250,12 @@ proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
   if distSq(px, py, sim.flags[flagTeam].x, sim.flags[flagTeam].y) <= rangeSq:
     sim.flags[flagTeam].carrier = playerIndex
     sim.players[playerIndex].carryingFlag = true
+    # A steal is action: keep at least ActionClockFloorTicks on the clock.
+    sim.floorGameClock()
+    sim.emitEvent(
+      FlagSteal, source = playerIndex,
+      x = float(sim.flags[flagTeam].x), y = float(sim.flags[flagTeam].y)
+    )
     sim.logGameEvent(
       teamText(sim.players[playerIndex].team) & " stole the " &
         teamText(flagTeam) & " heart"
@@ -4835,6 +5573,7 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
     sim.logGameEvent("draw")
   else:
     sim.logGameEvent(teamText(winner) & " win")
+  sim.emitPhaseChange(GameOver)
   sim.phase = GameOver
   sim.winner = winner
   sim.isDraw = isDraw
@@ -4887,15 +5626,9 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
     else:
       sim.rewardAccounts[i].reward += LossReward
 
-proc gameTicksElapsed*(sim: SimServer): int =
-  ## Returns ticks elapsed since the current game left the lobby.
-  if sim.gameStartTick < 0:
-    return 0
-  max(0, sim.tickCount - sim.gameStartTick)
-
 proc maxTicksReached(sim: SimServer): bool =
   sim.config.maxTicks > 0 and sim.phase == Playing and
-    sim.gameTicksElapsed() >= sim.config.maxTicks
+    sim.gameTicksElapsed() >= sim.effectiveMaxTicks()
 
 proc teamLivesRemaining*(sim: SimServer, team: Team): int =
   ## Returns total lives remaining (alive players count their current life).
@@ -4954,6 +5687,10 @@ proc checkWinCondition*(sim: var SimServer) {.measure.} =
       cx = carrier.x + CollisionW div 2
     if cx >= zone.lo and cx <= zone.hi:
       sim.recordCapture(carrierIndex)
+      sim.emitEvent(
+        Capture, source = carrierIndex,
+        x = float(cx), y = float(carrier.y + CollisionH div 2)
+      )
       sim.logGameEvent(
         teamText(carrier.team) & " captured the " & teamText(flagTeam) & " heart"
       )
@@ -5066,7 +5803,7 @@ proc initSimServer*(config: GameConfig): SimServer =
       result.wallMask[mapIndex(x, y)] = pixel.a > 0
 
   ## The fog occlusion grid builds from the OPAQUE walls only: glass window
-  ## pixels stay in wallMask (movement/bullets/plasma arcs) but drop out here, so
+  ## pixels stay in wallMask (movement/bullets/spray cones) but drop out here, so
   ## shadowcasting sees straight through every window.
   var opaqueMask = result.wallMask
   block:
@@ -5095,6 +5832,8 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.lastLobbySecondsLogged = -1
 
 proc resetToLobby*(sim: var SimServer) =
+  if sim.phase != Lobby:
+    sim.emitPhaseChange(Lobby)
   sim.phase = Lobby
   sim.players = @[]
   sim.fovCaches = @[]
@@ -5115,6 +5854,7 @@ proc resetToLobby*(sim: var SimServer) =
   sim.gameStartTick = -1
   sim.startWaitTimer = 0
   sim.timeLimitReached = false
+  sim.overtimeTicks = 0
   sim.isDraw = false
   sim.needsReregister = true
   sim.resetFlags()
@@ -5158,6 +5898,11 @@ proc respawnPlayers(sim: var SimServer) =
         sim.players[i].hp = sim.config.hitPoints
         sim.players[i].aimBrads = spawnAimBrads(sim.players[i].team)
         sim.players[i].flipH = sim.players[i].team == Blue
+        sim.emitEvent(
+          Respawn, source = i,
+          x = float(sim.players[i].x + CollisionW div 2),
+          y = float(sim.players[i].y + CollisionH div 2)
+        )
 
 proc step*(
   sim: var SimServer,

@@ -1,8 +1,9 @@
 import
+  std/json,
   flatty,
   bitworld/spriteprotocol,
   bitworld/replays as replayCodec,
-  sim
+  broadcast, sim
 
 type
   ReplayKeyframe* = object
@@ -50,6 +51,20 @@ type
       ## Real-time frames left to HOLD on the final game-over frame before a
       ## looping replay restarts, so the end segment (winner, win condition,
       ## stats) is readable instead of flashing for one frame. 0 = not holding.
+    skipLulls*: bool
+      ## When on, playback fast-forwards through the lull spans below.
+    lullSpans*: seq[array[2, int]]
+      ## Inclusive [firstTick, lastTick] spans where nothing beat-worthy
+      ## happens (no kill/steal/return/capture/phase change within
+      ## LullLeadTicks), precomputed on the same keyframe walk. Spans shorter
+      ## than MinLullTicks are dropped: skipping a short breather is more
+      ## jarring than watching it.
+    beatEvents*: JsonNode
+      ## Full-match flag-story beats (steal/return/capture) plus the terminal
+      ## gameover verdict, exactly as `stepEvents` emits them, precomputed on
+      ## the same keyframe walk. Shipped once to the HUD client so the
+      ## scrubber can place its flag markers and winner cap up front instead
+      ## of accumulating them as playback happens to pass each beat.
 
 const
   PlaybackSpeeds* = [1, 2, 3, 4, 8, 16]
@@ -57,6 +72,14 @@ const
   ReplayEndHoldSeconds* = 10
     ## How long a looping replay holds on its final game-over frame (real
     ## seconds) before restarting.
+  LullLeadTicks* = 2 * ReplayFps
+    ## Context kept before and after every beat event.
+  MinLullTicks* = 6 * ReplayFps
+    ## Shortest quiet stretch worth fast-forwarding.
+  LullSpeedBoost* = 8
+    ## Speed multiplier applied inside a lull span.
+  MaxLullTicksPerFrame* = 64
+    ## Per-frame cap on boosted stepping so the server stays responsive.
   CtfReplayMagic = "COWLDCTF"
   CtfReplayFormatVersion = 1'u16
   CtfReplaySpec = ReplaySpec(
@@ -303,6 +326,30 @@ proc stepReplay*(replay: var ReplayPlayer, sim: var SimServer) =
   replay.clearReplayPressedMasks()
   replay.checkReplayHash(sim)
 
+proc buildLullSpans*(
+  beatTicks: seq[int],
+  startTick, maxTick: int
+): seq[array[2, int]] =
+  ## Turns the ascending beat-tick list into the quiet spans between beats,
+  ## keeping LullLeadTicks of context on both sides and dropping spans shorter
+  ## than MinLullTicks.
+  var prevBeat = startTick
+  for i in 0 .. beatTicks.len:
+    let nextBeat =
+      if i < beatTicks.len:
+        beatTicks[i]
+      else:
+        # The stretch after the final beat runs lead-free to the end: there is
+        # no upcoming action that needs a lead-in.
+        maxTick + LullLeadTicks + 1
+    let
+      a = prevBeat + LullLeadTicks + 1
+      b = min(nextBeat - LullLeadTicks - 1, maxTick)
+    if b - a + 1 >= MinLullTicks:
+      result.add([a, b])
+    if i < beatTicks.len:
+      prevBeat = nextBeat
+
 proc buildReplayKeyframes*(
   replay: var ReplayPlayer,
   initialSim: SimServer,
@@ -326,6 +373,15 @@ proc buildReplayKeyframes*(
     sim.teamLivesRemaining(Red) - sim.teamLivesRemaining(Blue)
   var lastLead = livesLead(sim)
   replay.livesLeadSeries.add([sim.tickCount, lastLead])
+  # Beat ticks for the lull map, derived by the SAME tracker the broadcast
+  # channel uses, so "nothing happens here" agrees with the story the kill
+  # feed and banners tell. Respawns are excluded: they trail kills on a fixed
+  # timer and are not drama worth slowing down for.
+  var
+    beatTracker = initBroadcastTracker()
+    beatTicks: seq[int]
+  beatTracker.resync(sim)
+  replay.beatEvents = newJArray()
   # -1 until the match leaves the lobby: the first tick the game is Playing is
   # where a spectator's watch should begin (everything before is warmup).
   replay.startTick = if sim.phase == Playing: sim.gameStartTick else: -1
@@ -337,12 +393,45 @@ proc buildReplayKeyframes*(
     if lead != lastLead:
       replay.livesLeadSeries.add([sim.tickCount, lead])
       lastLead = lead
+    var stepBeats = newJArray()
+    sim.stepEvents(beatTracker, stepBeats)
+    for event in stepBeats:
+      # The flag story + verdict for the scrubber's up-front timeline. Kills
+      # stay out: dozens of same-looking ticks would bury the flag beats.
+      if event["k"].getStr() in ["steal", "return", "capture", "gameover"]:
+        replay.beatEvents.add(event)
+    for event in stepBeats:
+      if event["k"].getStr() != "respawn":
+        beatTicks.add(sim.tickCount)
+        break
     if sim.tickCount mod max(interval, 1) == 0 or sim.tickCount == maxTick:
       replay.keyframes.add(builder.saveReplayKeyframe(sim))
   # Anchor the final tick so the client can hold the last value to the end.
   if replay.livesLeadSeries.len == 0 or
       replay.livesLeadSeries[^1][0] != sim.tickCount:
     replay.livesLeadSeries.add([sim.tickCount, lastLead])
+  replay.lullSpans = buildLullSpans(
+    beatTicks,
+    replay.replayStartTick(),
+    maxTick
+  )
+
+proc isLullTick*(replay: ReplayPlayer, tick: int): bool =
+  ## Returns true when one tick sits inside a precomputed lull span.
+  for span in replay.lullSpans:
+    if tick < span[0]:
+      return false
+    if tick <= span[1]:
+      return true
+  false
+
+proc replayStepBudget*(replay: ReplayPlayer, tick: int): int =
+  ## Returns how many ticks playback may advance this frame from one tick:
+  ## the chosen speed, boosted inside a lull while skip-lulls is on.
+  let speed = replay.replaySpeed()
+  if replay.skipLulls and replay.isLullTick(tick):
+    return min(speed * LullSpeedBoost, MaxLullTicksPerFrame)
+  speed
 
 proc seekReplay*(replay: var ReplayPlayer, sim: var SimServer, tick: int) =
   ## Seeks replay playback to a target tick.
@@ -408,6 +497,8 @@ proc applyReplayCommand*(
     replay.seekReplay(sim, replay.replayMaxTick())
   of 'r':
     replay.looping = not replay.looping
+  of 'f':
+    replay.skipLulls = not replay.skipLulls
   of '.', '>':
     replay.playing = false
     replay.seekReplay(sim, sim.tickCount + ReplayFps * 5)
@@ -450,10 +541,15 @@ proc advanceReplayPlayback*(
     onJump()
   if replay.playing:
     replay.endHoldFrames = 0
-    for _ in 0 ..< replay.replaySpeed():
-      if replay.playing:
-        replay.stepReplay(sim)
-        onStep()
+    # The step budget is re-read every tick: inside a lull it is boosted, and
+    # the moment stepping crosses back into action it drops to the plain
+    # speed, so a fast-forward never overshoots a beat's lead-in.
+    var stepsTaken = 0
+    while replay.playing and
+        stepsTaken < replay.replayStepBudget(sim.tickCount):
+      replay.stepReplay(sim)
+      onStep()
+      inc stepsTaken
     if replay.looping and not replay.playing:
       # Playback just reached the end: begin the end-segment hold.
       replay.endHoldFrames = ReplayEndHoldSeconds * ReplayFps

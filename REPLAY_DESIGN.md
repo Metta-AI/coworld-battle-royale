@@ -3,6 +3,14 @@
 > Companion artifacts: `DEPTH_TARGET.md` (Phase 0r) + `REPLAY_BRIEF.md` (Phase 0 engine-traced brief +
 > fidelity audit). This file is the Phase-2 unlock; the Phase-4 battery grades the build against it.
 
+> ⚠️ **STALE-RULES CORRECTION (2026-07-28, GameVersion 22).** Rule claims here were traced at GV1. The
+> timeout **tiebreak no longer exists** (removed GV2, fac8704): `checkMaxTicks` (src/ctf/sim.nim:5589)
+> is an unconditional draw, and since GV21 (a768a0e) a time-limit draw pays `TimeoutReward = -1` to every
+> player on both teams while a mutual-wipe draw stays 0/0. End-card copy like "tiebreak NAMING the key"
+> and "the real tiebreak currency" (sections 5, scorebug, verdict fixture) must be re-based on the two
+> draw classes: "mutual destruction" (0/0) vs "time expired — lose-lose" (-1/-1). See REPLAY_BRIEF.md's
+> correction banner for the full list of stale claims.
+
 ## 1. PLATFORM + ARCHETYPE
 
 Platform **A-plumbing, third-shape**: self-hosted Nim+mummy server (`src/ctf/server.nim`) serving

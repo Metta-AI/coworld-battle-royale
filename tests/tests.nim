@@ -24,7 +24,17 @@ import
   test_trade_pair,
   test_shot_accuracy,
   test_shot_exposure,
+  test_extract_events,
   test_windows,
   test_agent_skins,
-  test_sprite_collisions
+  test_sprite_collisions,
+  test_label_contract,
+  test_blocked_damage,
+  test_broadcast_state,
+  test_lull_spans,
+  test_kill_badges,
+  test_weapon_observability,
+  test_fast_mode,
+  test_artlog,
+  test_clock_floor
 {.warning[UnusedImport]: on.}

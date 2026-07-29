@@ -59,7 +59,10 @@ proc sanitizeTaunt*(raw: string): string =
   for c in result:
     if c < ' ':
       return ""
-  if result.len >= 4 and result[0] in {'C', 'T'}:
+  if result.len >= 2 and result[0] in {'H', 'B', 'A'} and
+      result[1] in {'1', '2', '3'}:
+    return ""                            # lane-order call shape: drop
+  if result.len >= 4 and result[0] in {'C', 'T', 'E', 'G'}:
     let parts = result[1 .. ^1].split(' ')
     if parts.len == 2:
       try:

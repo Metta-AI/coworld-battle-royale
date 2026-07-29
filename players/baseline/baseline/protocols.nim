@@ -144,6 +144,12 @@ proc chatBlob*(text: string): string =
   ## Builds one sprite player chat packet.
   blobFromSpriteChat(text)
 
+proc readyBlob*(): string =
+  ## Builds one sprite player-ready packet (0x85). The pinned bitworld
+  ## predates the packet, so the id is declared here rather than imported.
+  result = newString(1)
+  result[0] = char(0x85)
+
 proc unpack4bpp*(
   packed: openArray[uint8],
   unpacked: var seq[uint8]

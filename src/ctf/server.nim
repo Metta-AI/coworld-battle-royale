@@ -32,6 +32,7 @@ type
     playerAddresses: Table[WebSocket, string]
     playerSlots: Table[WebSocket, int]
     playerTokens: Table[WebSocket, string]
+    playerReady: Table[WebSocket, bool]
     globalViewers: Table[WebSocket, GlobalViewerState]
     playerViewers: Table[WebSocket, PlayerViewerState]
     rewardViewers: Table[WebSocket, bool]
@@ -75,13 +76,43 @@ const
   WallTextureHorizontal = staticRead("../../client/art/walls/wall_h.jpg")
   WallTextureVertical = staticRead("../../client/art/walls/wall_v.jpg")
   BroadcastFont = staticRead("../../data/font.ttf")
+  # Cog art for the first-person EYES PiP billboards (real body + legs + wheels
+  # + cyan visor, team-tinted). Served as static PNGs so the raycast view can
+  # blit the true cog instead of a procedural chassis.
+  #
+  # The _front masters are drawn from a HORIZONTAL, eye-level camera with the
+  # smile visor tilted up toward the viewer (scripts/art/build_cvc_front.py) —
+  # that is what the PiP blits. The plain soldier_{red,blue} masters are the
+  # TOP-DOWN board sprites (the cog seen from ABOVE): they stay served as the
+  # PiP's fallback, but an overhead projection in an eye-level view reads as a
+  # flat plate with the face squashed onto its lower lip, so the front masters
+  # are what the billboard actually wants.
+  SoldierArtRed = staticRead("../../data/soldier_red.png")
+  SoldierArtBlue = staticRead("../../data/soldier_blue.png")
+  SoldierArtRedFront = staticRead("../../data/soldier_red_front.png")
+  SoldierArtBlueFront = staticRead("../../data/soldier_blue_front.png")
+  # ...and the same cogs holding their paintball marker forward at the camera.
+  # A live cog always carries its gun, so this is the pose the PiP shows for any
+  # armed cog; the empty-handed masters above cover the unarmed read.
+  SoldierArtRedFrontGun = staticRead("../../data/soldier_red_front_gun.png")
+  SoldierArtBlueFrontGun = staticRead("../../data/soldier_blue_front_gun.png")
   LeagueReplayerPath = "/client/league"
   WallTextureHorizontalPath = "/client/art/walls/wall_h.jpg"
   WallTextureVerticalPath = "/client/art/walls/wall_v.jpg"
   BroadcastFontPath = "/client/font.ttf"
+  SoldierArtRedPath = "/client/soldier_red.png"
+  SoldierArtBluePath = "/client/soldier_blue.png"
+  SoldierArtRedFrontPath = "/client/soldier_red_front.png"
+  SoldierArtBlueFrontPath = "/client/soldier_blue_front.png"
+  SoldierArtRedFrontGunPath = "/client/soldier_red_front_gun.png"
+  SoldierArtBlueFrontGunPath = "/client/soldier_blue_front_gun.png"
   # Hosted replay closes any WS frame larger than 1 MiB (sends 1009). We chunk
   # outbound sprite packets under a margin below that so no single frame trips it.
   MaxWsFrameBytes = 900_000
+  # The Sprite v1 player-ready packet id (0x85). The pinned bitworld predates
+  # it (newer bitworld drops ButtonC, which the grenade input bit needs), so
+  # the id is declared here rather than imported.
+  SpriteClientReady = 0x85'u8
 
 proc liveProgressMaxTick(config: GameConfig): int =
   ## Returns the live viewer tick-bar budget.
@@ -158,6 +189,7 @@ proc initAppState() =
   appState.playerAddresses = initTable[WebSocket, string]()
   appState.playerSlots = initTable[WebSocket, int]()
   appState.playerTokens = initTable[WebSocket, string]()
+  appState.playerReady = initTable[WebSocket, bool]()
   appState.globalViewers = initTable[WebSocket, GlobalViewerState]()
   appState.playerViewers = initTable[WebSocket, PlayerViewerState]()
   appState.rewardViewers = initTable[WebSocket, bool]()
@@ -205,6 +237,11 @@ proc removePlayerWebSocketState(websocket: WebSocket): int =
   appState.playerAddresses.del(websocket)
   appState.playerSlots.del(websocket)
   appState.playerTokens.del(websocket)
+  appState.playerReady.del(websocket)
+
+proc isPlayerReadyPacket*(message: string): bool =
+  ## Returns true for the one-byte Sprite v1 player-ready packet.
+  message.len == 1 and message[0].uint8 == SpriteClientReady
 
 proc addressIsKicked(address: string): bool =
   ## Returns true when an address is blocked from this match.
@@ -235,6 +272,7 @@ proc registerPlayerWebSocket(
   appState.inputMasks[websocket] = 0
   appState.inputPressedMasks[websocket] = 0
   appState.lastAppliedMasks[websocket] = 0
+  appState.playerReady[websocket] = false
   true
 
 proc registerGlobalWebSocket(websocket: WebSocket) =
@@ -613,6 +651,28 @@ proc httpHandler(request: Request) =
       request.respond(200, texHeaders, WallTextureHorizontal)
     else:
       request.respond(200, texHeaders, WallTextureVertical)
+  elif request.path in [SoldierArtRedPath, SoldierArtBluePath,
+      SoldierArtRedFrontPath, SoldierArtBlueFrontPath,
+      SoldierArtRedFrontGunPath, SoldierArtBlueFrontGunPath] and
+      request.httpMethod == "GET":
+    # Cog art for the EYES PiP billboards (static PNG assets): the _front
+    # eye-level masters the billboard blits, plus the top-down board masters
+    # kept as its fallback.
+    var artHeaders: HttpHeaders
+    artHeaders["Content-Type"] = "image/png"
+    artHeaders["Cache-Control"] = "public, max-age=3600"
+    if request.path == SoldierArtRedPath:
+      request.respond(200, artHeaders, SoldierArtRed)
+    elif request.path == SoldierArtBluePath:
+      request.respond(200, artHeaders, SoldierArtBlue)
+    elif request.path == SoldierArtRedFrontPath:
+      request.respond(200, artHeaders, SoldierArtRedFront)
+    elif request.path == SoldierArtBlueFrontPath:
+      request.respond(200, artHeaders, SoldierArtBlueFront)
+    elif request.path == SoldierArtRedFrontGunPath:
+      request.respond(200, artHeaders, SoldierArtRedFrontGun)
+    else:
+      request.respond(200, artHeaders, SoldierArtBlueFrontGun)
   elif request.path == BroadcastFontPath and request.httpMethod == "GET":
     var fontHeaders: HttpHeaders
     fontHeaders["Content-Type"] = "font/ttf"
@@ -685,6 +745,7 @@ proc websocketHandler(
             appState.inputMasks[websocket] = 0
             appState.inputPressedMasks[websocket] = 0
             appState.lastAppliedMasks[websocket] = 0
+            appState.playerReady[websocket] = false
     if closeKickedSocket:
       websocket.disconnectWebSocket()
   of MessageEvent:
@@ -693,7 +754,10 @@ proc websocketHandler(
     elif message.kind == BinaryMessage:
       {.gcsafe.}:
         withLock appState.lock:
-          if websocket in appState.globalViewers:
+          if message.data.isPlayerReadyPacket() and
+              websocket in appState.playerReady:
+            appState.playerReady[websocket] = true
+          elif websocket in appState.globalViewers:
             appState.globalViewers[websocket].applyGlobalViewerMessage(
               message.data
             )
@@ -729,11 +793,54 @@ proc websocketHandler(
 proc serverThreadProc(args: ServerThreadArgs) {.thread.} =
   args.server[].serve(Port(args.port), args.address)
 
-proc runFrameLimiter(previousTick: var MonoTime) =
+proc resetPlayerReady(
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+) =
+  ## Clears readiness for active player sockets before sending one frame.
+  {.gcsafe.}:
+    withLock appState.lock:
+      for i, websocket in sockets:
+        if i < playerIndices.len and playerIndices[i] >= 0 and
+            playerIndices[i] < playerCount and
+            websocket in appState.playerReady:
+          appState.playerReady[websocket] = false
+
+proc allPlayersReady(
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+): bool =
+  ## Returns true when every active player socket sent ready.
+  var activePlayers = 0
+  {.gcsafe.}:
+    withLock appState.lock:
+      for i, websocket in sockets:
+        if i >= playerIndices.len or playerIndices[i] < 0 or
+            playerIndices[i] >= playerCount:
+          continue
+        inc activePlayers
+        if not appState.playerReady.getOrDefault(websocket, false):
+          return false
+  activePlayers > 0
+
+proc runFrameLimiter(
+  previousTick: var MonoTime,
+  fastMode: bool,
+  sockets: openArray[WebSocket],
+  playerIndices: openArray[int],
+  playerCount: int
+) =
   let frameDuration = initDuration(microseconds = 1_000_000 div TargetFps)
-  let elapsed = getMonoTime() - previousTick
-  if elapsed < frameDuration:
-    sleep(int((frameDuration - elapsed).inMilliseconds))
+  while true:
+    let elapsed = getMonoTime() - previousTick
+    if elapsed >= frameDuration:
+      break
+    if fastMode and sockets.allPlayersReady(playerIndices, playerCount):
+      break
+    let remaining = frameDuration - elapsed
+    sleep(max(1, min(2, int(remaining.inMilliseconds))))
   previousTick = getMonoTime()
 
 proc rewardAccountFor(sim: SimServer, address: string): int =
@@ -1227,6 +1334,7 @@ proc runServerLoop*(
               appState.inputMasks[join.websocket] = 0
               appState.inputPressedMasks[join.websocket] = 0
               appState.lastAppliedMasks[join.websocket] = 0
+              appState.playerReady[join.websocket] = false
               sockets.add(join.websocket)
               playerIndices.add(appState.playerIndices[join.websocket])
               appState.playerViewers[join.websocket] =
@@ -1253,7 +1361,11 @@ proc runServerLoop*(
           sockets[i].send(blobFromBytes(chunk), BinaryMessage)
       for websocket in rewardViewers:
         websocket.send(rewardPacket, TextMessage)
-      runFrameLimiter(lastTick)
+      # The lobby always paces at wall clock: fast-forwarding here spins the
+      # loop hot on whichever seats joined first, and the appState-lock churn
+      # starves mummy's upgrade path so the remaining seats never finish
+      # connecting (certifier deadlock at "waiting for players").
+      runFrameLimiter(lastTick, false, sockets, playerIndices, sim.players.len)
       continue
 
     var frameEvents = newJArray()
@@ -1309,6 +1421,9 @@ proc runServerLoop*(
               appState.playerIndices[websocket] = 0x7fffffff
           for websocket in appState.playerViewers.keys:
             appState.playerViewers[websocket] = initPlayerViewerState()
+
+    if not replayLoaded and config.fastMode:
+      sockets.resetPlayerReady(playerIndices, sim.players.len)
 
     for i in 0 ..< sockets.len:
       var nextState: PlayerViewerState
@@ -1410,4 +1525,10 @@ proc runServerLoop*(
       joinThread(serverThread)
       break
 
-    runFrameLimiter(lastTick)
+    runFrameLimiter(
+      lastTick,
+      not replayLoaded and config.fastMode,
+      sockets,
+      playerIndices,
+      sim.players.len
+    )

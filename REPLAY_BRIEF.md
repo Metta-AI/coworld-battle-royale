@@ -1,5 +1,17 @@
 # REPLAY BRIEF — Ctf (Phase 0 artifact)
 
+> ⚠️ **STALE-RULES CORRECTION (2026-07-28, GameVersion 22).** This brief was traced at HEAD 5994eb0
+> (GameVersion 1). The **timeout tiebreak described below NO LONGER EXISTS**: the lives-then-flag-progress
+> tiebreak was removed at GV2 (commit fac8704, 2026-07-14). On the current sim, `checkMaxTicks`
+> (src/ctf/sim.nim:5589) is an **unconditional draw** — "no tiebreak, no rewards" — and since GV21
+> (a768a0e, 2026-07-22; same commit set `MaxTicks* = 5000`) a time-limit draw pays **`TimeoutReward = -1`
+> to every player on both teams** (sim.nim:118, 5455-5473), while a **mutual-wipe draw stays 0/0**
+> (sim.nim:5587 vs 5594). So there are TWO draw classes with different costs, and any "wins the
+> tiebreak on lives/progress" narrative is an impossible outcome class on GV2+. `teamLivesRemaining` /
+> `teamFlagProgress` survive only as broadcast chrome. Sections affected below: "What the game IS",
+> "Standing axis", beat 8, F1/F3/F4/F10. Scoring scale is also stale: `WinReward* = 1` now (sim.nim:116),
+> not +100. Re-trace before reusing any rule claim from this file.
+
 > Every claim below is traced to engine source (`file:line` in this worktree, HEAD 5994eb0) or to the
 > real-player research (TagPro competitive vocabulary + FPS CTF broadcast grammar + fog-honesty
 > precedents, gathered this run). Nothing is derived-from-vibes.

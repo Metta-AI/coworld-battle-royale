@@ -1,0 +1,81 @@
+name: build-decoder
+# Builds tools/expand_replay as a fully static linux binary and publishes it
+# to a GitHub release, so agent sandboxes can fetch a ready-to-run replay
+# decoder in seconds instead of installing the nim toolchain (~10 min).
+#
+# The binary bakes GameDir = /workspace/coworld-ctf at compile time
+# (currentSourcePath in tools/expand_replay.nim), which is exactly where the
+# agent sandboxes mount the game repo — so the source is cloned to that same
+# path on the runner before compiling. At runtime the binary still needs a
+# repo checkout at /workspace/coworld-ctf for map assets.
+#
+# Release tag: decoder-gv<GameVersion>-<shortsha>. Pin consumers via
+# cogames/ctf/team/bin/fetch-decoder.sh in daveey/cogamer.
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "coworld-ctf ref (branch/tag/sha) to build the decoder from"
+        default: "main"
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Clone game repo at the sandbox path
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          sudo mkdir -p /workspace
+          sudo chown "$USER" /workspace
+          git init /workspace/coworld-ctf
+          cd /workspace/coworld-ctf
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth 1 origin "$SOURCE_REF"
+          git checkout --detach FETCH_HEAD
+      - name: Install nim toolchain (nimby)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/nimby" https://github.com/treeform/nimby/releases/download/0.1.26/nimby-Linux-X64
+          chmod +x "$RUNNER_TEMP/nimby"
+          "$RUNNER_TEMP/nimby" use 2.2.4
+          echo "$HOME/.nimby/nim/bin" >> "$GITHUB_PATH"
+      - name: Sync nim deps
+        working-directory: /workspace/coworld-ctf
+        run: |
+          "$RUNNER_TEMP/nimby" --global sync nimby.lock
+      - name: Build static decoder
+        working-directory: /workspace/coworld-ctf
+        run: |
+          nim c -d:release --opt:speed \
+            --path:"$HOME/.nimby/pkgs" \
+            --passL:-static \
+            --nimcache:"$RUNNER_TEMP/nimcache" \
+            -o:"$RUNNER_TEMP/expand_replay-linux-x64" \
+            tools/expand_replay.nim
+          strip "$RUNNER_TEMP/expand_replay-linux-x64"
+      - name: Smoke test (static linkage + decode from foreign cwd)
+        run: |
+          file "$RUNNER_TEMP/expand_replay-linux-x64" | grep -q "statically linked"
+          cd /tmp
+          "$RUNNER_TEMP/expand_replay-linux-x64" /workspace/coworld-ctf/tests/replays/ctf.bitreplay | tail -1 | grep -qx done
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd /workspace/coworld-ctf
+          GV="$(grep -oP 'GameVersion\* = "\K[0-9]+' src/ctf/sim.nim)"
+          FULL_SHA="$(git rev-parse HEAD)"
+          TAG="decoder-gv${GV}-$(git rev-parse --short HEAD)"
+          cd "$RUNNER_TEMP"
+          sha256sum expand_replay-linux-x64 > expand_replay-linux-x64.sha256
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$FULL_SHA" \
+              --title "Static replay decoder (GV${GV}, ${FULL_SHA:0:7})" \
+              --notes "Static linux x86-64 build of tools/expand_replay from ${FULL_SHA} (GameVersion ${GV}). Needs a coworld-ctf checkout mounted at /workspace/coworld-ctf for map assets. Built by the build-decoder workflow, run ${GITHUB_RUN_ID}."
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            expand_replay-linux-x64 expand_replay-linux-x64.sha256
+          echo "published $TAG"
