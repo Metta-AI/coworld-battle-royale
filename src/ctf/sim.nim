@@ -9,17 +9,16 @@ when not defined(emscripten):
 
 const
   GameName* = "ctf"
-  GameVersion* = "25"  ## GV25 (three operator rules, one boundary):
-                       ## (a) the SELF marker renders TRUE aim again — the
-                       ## fuzz hides OTHERS' aim, never your own state;
-                       ## (b) HEART carriers fire at 1/3 rate
-                       ## (CarrierFireSlowdown, shield-pattern);
-                       ## (c) respawns land at a pseudo-random spot inside
-                       ## the team ENDZONE (seed-deterministic, replay-safe)
-                       ## — spawn camping loses its pre-aim; the episode
-                       ## seed is CAUSAL now;
-                       ## (d) column-1's FIFTH vertical bar (y=395, and its
+  GameVersion* = "26"  ## GV26 (three operator rules): (a) the SELF marker
+                       ## renders TRUE aim again — the fuzz hides OTHERS'
+                       ## aim, never your own state; (b) HEART carriers fire
+                       ## at 1/3 rate (CarrierFireSlowdown, shield-pattern);
+                       ## (c) column-1's FIFTH vertical bar (y=395 +
                        ## x-mirror) is a glass window.
+                       ## GV25: dead players respawn at a RANDOM spot in
+                       ## their endzone (uniform over the home capture
+                       ## column, deterministic sim RNG) — a fixed respawn
+                       ## point can no longer be camped.
                        ## GV24: soldier sprites in PLAYER views render with
                        ## FUZZED gun rotation (±~20°, deterministic, both
                        ## sides, self included) — exact aim is never readable
@@ -196,7 +195,7 @@ const
   ShieldFireSlowdown* = 3     ## a shield carrier's fire cooldown is this many
                               ## times longer (3x slower fire rate).
   CarrierFireSlowdown* = 3    ## a HEART carrier's fire cooldown multiplier
-                              ## (GV25): carriers can shoot, at a third the
+                              ## (GV26): carriers can shoot, at a third the
                               ## rate. Shield+heart do not stack (max, not
                               ## product).
 
@@ -1548,7 +1547,7 @@ const
       rect: MapRect(x: 268, y: 108, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 204, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 300, w: 18, h: 59)),
-    # GV25: the FIFTH stub from the top is a GLASS WINDOW too (operator rule)
+    # GV26: the FIFTH stub from the top is a GLASS WINDOW too (operator rule)
     # — windows at stubs 2, 5, and 6; x-mirrored like every column-1 shape.
     ArenaShape(kind: shapeRect, window: true,
       rect: MapRect(x: 268, y: 395, w: 18, h: 60)),
@@ -3382,41 +3381,36 @@ proc captureZoneXRange(sim: SimServer, team: Team): tuple[lo, hi: int] =
     let lo = sim.teamHomeX(Blue) - CaptureZoneWidth div 2
     (lo, MapWidth - 1)
 
-proc respawnPosition*(sim: SimServer, playerIndex: int): tuple[x, y: int] =
-  ## A deterministic pseudo-random respawn spot inside the player's team
-  ## ENDZONE (the home capture zone strip), drawn from (game seed, tick,
-  ## player) — replays reproduce it exactly, but a camper can no longer
-  ## pre-aim a fixed respawn point (GV25; the counterweight to GV20's
-  ## no-spawn-protection, which made spawn camping bloodier). The game-START
-  ## formation (arrangeHomePositions) stays fixed: only respawns scatter.
-  ## NOTE this makes the episode seed CAUSAL for the first time — two games
-  ## of the same pairing on different seeds now diverge at the first respawn.
+proc randomEndzonePosition*(sim: var SimServer, team: Team):
+    tuple[x, y: int] =
+  ## Returns a random walkable position inside a team's endzone (the home
+  ## capture column, full map height), drawn from the deterministic sim RNG.
   let
-    team = sim.players[playerIndex].team
     zone = sim.captureZoneXRange(team)
-    lo = max(zone.lo, ArenaBorder + CollisionW)
-    hi = min(zone.hi, MapWidth - 1 - ArenaBorder - CollisionW)
-    yLo = ArenaBorder + CollisionH
-    yHi = MapHeight - 1 - ArenaBorder - CollisionH
-  var h = 0x9E3779B9'u32 xor uint32(sim.config.seed)
-  h = (h xor uint32(sim.tickCount)) * 0x85EBCA6B'u32
-  h = (h xor uint32(playerIndex)) * 0xC2B2AE35'u32
-  h = h xor (h shr 15)
-  let
-    x = lo + int(h mod uint32(max(1, hi - lo + 1)))
-    y = yLo + int((h shr 12) mod uint32(max(1, yHi - yLo + 1)))
-  sim.nearestWalkable(x, y)
+    inset = ArenaBorder + PlayerHalf
+    xLo = max(zone.lo, inset)
+    xHi = min(zone.hi, MapWidth - 1 - inset)
+    yLo = inset
+    yHi = MapHeight - 1 - inset
+  sim.nearestWalkable(
+    xLo + sim.rng.rand(xHi - xLo),
+    yLo + sim.rng.rand(yHi - yLo))
+
+proc placePlayer(sim: var SimServer, playerIndex, x, y: int) =
+  ## Moves one player to (x, y) with all motion state cleared.
+  sim.players[playerIndex].x = x
+  sim.players[playerIndex].y = y
+  sim.players[playerIndex].velX = 0
+  sim.players[playerIndex].velY = 0
+  sim.players[playerIndex].carryX = 0
+  sim.players[playerIndex].carryY = 0
 
 proc resetPlayerToHome*(sim: var SimServer, playerIndex: int) =
   ## Moves one player back to its team home spawn position.
   if playerIndex < 0 or playerIndex >= sim.players.len:
     return
-  sim.players[playerIndex].x = sim.players[playerIndex].homeX
-  sim.players[playerIndex].y = sim.players[playerIndex].homeY
-  sim.players[playerIndex].velX = 0
-  sim.players[playerIndex].velY = 0
-  sim.players[playerIndex].carryX = 0
-  sim.players[playerIndex].carryY = 0
+  sim.placePlayer(playerIndex,
+    sim.players[playerIndex].homeX, sim.players[playerIndex].homeY)
 
 proc arrangeHomePositions*(sim: var SimServer) =
   ## Saves and applies team home spawn positions for all players.
@@ -4805,7 +4799,7 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     sy = shooter.y + CollisionH div 2
   sim.players[shooterIndex].fireCooldown =
     if shooter.hasShield or shooter.carryingFlag:
-      # GV25: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
+      # GV26: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
       # shield+heart takes the max multiplier, never the product.
       sim.config.fireCooldownTicks * max(ShieldFireSlowdown, CarrierFireSlowdown)
     else:
@@ -5933,7 +5927,8 @@ proc stepLobby(sim: var SimServer) {.measure.} =
     sim.logLobbyCountdown()
 
 proc respawnPlayers(sim: var SimServer) =
-  ## Ticks respawn timers and brings dead players back at home.
+  ## Ticks respawn timers and brings dead players back at a random spot in
+  ## their endzone, so a fixed respawn point can't be camped.
   for i in 0 ..< sim.players.len:
     if sim.players[i].alive:
       continue
@@ -5942,15 +5937,8 @@ proc respawnPlayers(sim: var SimServer) =
     if sim.players[i].respawnTimer > 0:
       dec sim.players[i].respawnTimer
       if sim.players[i].respawnTimer <= 0:
-        # GV25: respawn at a pseudo-random endzone spot (respawnPosition),
-        # never the fixed home point — spawn camping loses its pre-aim.
-        let spot = sim.respawnPosition(i)
-        sim.players[i].x = spot.x
-        sim.players[i].y = spot.y
-        sim.players[i].velX = 0
-        sim.players[i].velY = 0
-        sim.players[i].carryX = 0
-        sim.players[i].carryY = 0
+        let spawn = sim.randomEndzonePosition(sim.players[i].team)
+        sim.placePlayer(i, spawn.x, spawn.y)
         sim.players[i].alive = true
         sim.players[i].hp = sim.config.hitPoints
         sim.players[i].aimBrads = spawnAimBrads(sim.players[i].team)

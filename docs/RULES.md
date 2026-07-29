@@ -28,7 +28,7 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   slalom.
 - In the outermost stub column of each half, the **second wall stub from the
   top, the second from the bottom (GameVersion 15), and the fifth from the top
-  (GameVersion 25) are glass windows**: they block movement, bullets, and
+  (GameVersion 26) are glass windows**: they block movement, bullets, and
   spray cones exactly like stone, but **vision passes straight through them**.
   Glass draws as a pale pane with diagonal sheen — cover you can be seen
   behind is not cover.
@@ -55,12 +55,9 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   player means seeing who it is. Existing `player <color> <side>` labels are
   unchanged.
 - Each team has a **home edge**: Red = left, Blue = right.
-- Players spawn just inside their home edge at game start. **Respawns scatter
-  (since GameVersion 25):** a killed player returns at a pseudo-random walkable
-  spot anywhere inside its team's endzone (the home capture-zone strip), never
-  at a fixed, pre-aimable point — camping "the spawn spot" no longer works,
-  though the endzone itself can still be contested. The scatter is drawn
-  deterministically from the episode seed, so replays reproduce it exactly.
+- Players start just inside their home edge. When killed they respawn at a
+  **random spot inside their own endzone** (GameVersion 25) — the respawn
+  point cannot be camped.
 
 ## Movement
 
@@ -132,7 +129,7 @@ always drawn — but moving entities are fogged:
   offset by up to ~20px, so it tells you something was hit *roughly there*
   — never the exact spot, the shot's line, or which team.
 - **Another soldier's drawn gun angle is approximate (since GameVersion 24;
-  self exempted since 25).** Every OTHER soldier sprite in a player's view —
+  self exempted since 26).** Every OTHER soldier sprite in a player's view —
   enemies, teammates, and corpses — renders its gun rotated by the true aim
   plus a deterministic pseudo-random offset of up to **±20°**, re-rolled about
   twice a second: watching another bot never reveals its exact aim. Your OWN
@@ -190,7 +187,7 @@ The full life of one shot, at 24 ticks/second:
    your position at release, along the angle locked at the pull**. All
    movement for the tick happens first; every shot releasing that tick then
    resolves at once against the post-movement snapshot.
-4. **Cooldown (12 ticks, ~0.5s; 3x that for a shield carrier — and, since GameVersion 25, 3x for a HEART carrier too: carrying the heart no longer means free full-rate fire; shield+heart take the max multiplier, not the product).** The
+4. **Cooldown (12 ticks, ~0.5s; 3x that for a shield carrier — and, since GameVersion 26, 3x for a HEART carrier too: carrying the heart no longer means free full-rate fire; shield+heart take the max multiplier, not the product).** The
    cooldown starts at release, so the sustained rate is one shot per
    cooldown — the windup does not slow your cadence.
 
@@ -345,8 +342,10 @@ What that means in practice:
 ## Lives & respawn
 
 - Each player has a fixed number of **lives**.
-- When you die, you **respawn at your home edge** after a short delay — as long as
-  you have lives remaining.
+- When you die, you **respawn at a random spot in your endzone** after a short
+  delay — as long as you have lives remaining (GameVersion 25; the spot is
+  drawn fresh each death, anywhere in the home capture column, full map
+  height, so campers can't sit on a known respawn point).
 - When you run out of lives, you are **out for the rest of the round**.
 
 ## The hearts
@@ -414,7 +413,7 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Players | 16 (8v8) | All standard Coworld slots |
 | Lives per player | 3 | Out of lives = out for the round |
 | Hit points per life (`hitPoints`) | 3 | Shots to kill; reset to full on respawn |
-| Respawn delay | ~3s | Time dead before respawning at home |
+| Respawn delay | ~3s | Time dead before respawning at a random endzone spot |
 | Gun range | 1300px | Effectively map-wide; aim precision and line of sight are the real limits |
 | Fire windup | ~0.2s | Trigger pull to bullet release; aim locks at the pull |
 | Fire cooldown | ~0.5s | Minimum time between shots |

@@ -1248,7 +1248,7 @@ proc fuzzedAimBrads(sim: SimServer, targetIndex: int): int =
   ## aim plus a deterministic pseudo-random offset within ±AimRenderFuzzBrads
   ## (~±20°), held for AimRenderFuzzWindow ticks per target then re-rolled.
   ## Stable across frames, viewers, and replays — but never the exact aim
-  ## (GameVersion 24; SELF exempted since 25): looking at ANOTHER bot — enemy
+  ## (GameVersion 24; SELF exempted since 26): looking at ANOTHER bot — enemy
   ## or teammate — must not reveal where its gun truly points. Your own self
   ## marker renders TRUE aim: your gun is your own state, not a leak. The
   ## broadcast board is unaffected (spectators see true aim). Same hash
@@ -4531,7 +4531,7 @@ proc buildSpriteProtocolPlayerUpdates*(
         )
       elif i == playerIndex and not viewerIsGhost:
         # Yourself reads as a distinct white-outlined soldier rotated to your
-        # TRUE aim (GV25): you know your own gun exactly — the fuzz exists to
+        # TRUE aim (GV26): you know your own gun exactly — the fuzz exists to
         # hide OTHERS' aim, and your self marker is your own state, not a leak.
         let rot = soldierRotIndex(other.aimBrads)
         spriteId = selfSoldierSpriteId(other.skin, rot)
