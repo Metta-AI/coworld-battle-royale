@@ -10,7 +10,7 @@
   "visionConeDeg": 60,
   "visionBubble": 90,
   "maxTicks": 5000,
-  "mapPath": "arena",
+  "mapPath": "pool",
   "tokens": [
     "0xBADA55_0",
     "0xBADA55_1",
