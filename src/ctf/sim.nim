@@ -9,7 +9,9 @@ when not defined(emscripten):
 
 const
   GameName* = "ctf"
-  GameVersion* = "24"  ## GV24: soldier sprites in PLAYER views render with
+  GameVersion* = "25"  ## GV25: the SELF marker renders TRUE aim again — the
+                       ## fuzz hides OTHERS' aim, never your own state.
+                       ## GV24: soldier sprites in PLAYER views render with
                        ## FUZZED gun rotation (±~20°, deterministic, both
                        ## sides, self included) — exact aim is never readable
                        ## off a sprite; broadcast board unaffected.
@@ -184,6 +186,10 @@ const
                               ## and never heals base damage.
   ShieldFireSlowdown* = 3     ## a shield carrier's fire cooldown is this many
                               ## times longer (3x slower fire rate).
+  CarrierFireSlowdown* = 3    ## a HEART carrier's fire cooldown multiplier
+                              ## (GV25): carriers can shoot, at a third the
+                              ## rate. Shield+heart do not stack (max, not
+                              ## product).
 
   BubbleImpactTicks* = 8      ## ~0.33s the bubble's blink/dent impact FX
                               ## lasts (cosmetic only, like HitFlashTicks).
@@ -4761,8 +4767,10 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
   sim.players[shooterIndex].fireCooldown =
-    if shooter.hasShield:
-      sim.config.fireCooldownTicks * ShieldFireSlowdown
+    if shooter.hasShield or shooter.carryingFlag:
+      # GV25: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
+      # shield+heart takes the max multiplier, never the product.
+      sim.config.fireCooldownTicks * max(ShieldFireSlowdown, CarrierFireSlowdown)
     else:
       sim.config.fireCooldownTicks
   sim.players[shooterIndex].windupBrads = -1

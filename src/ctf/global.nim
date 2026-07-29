@@ -1248,11 +1248,11 @@ proc fuzzedAimBrads(sim: SimServer, targetIndex: int): int =
   ## aim plus a deterministic pseudo-random offset within ±AimRenderFuzzBrads
   ## (~±20°), held for AimRenderFuzzWindow ticks per target then re-rolled.
   ## Stable across frames, viewers, and replays — but never the exact aim
-  ## (GameVersion 24): looking at a bot — enemy, teammate, or your own self
-  ## marker — must not reveal where its gun truly points; a bot knows its own
-  ## aim only by tracking the commands it issued. The broadcast board is
-  ## unaffected (spectators see true aim). Same hash family as
-  ## shotImpactOffset.
+  ## (GameVersion 24; SELF exempted since 25): looking at ANOTHER bot — enemy
+  ## or teammate — must not reveal where its gun truly points. Your own self
+  ## marker renders TRUE aim: your gun is your own state, not a leak. The
+  ## broadcast board is unaffected (spectators see true aim). Same hash
+  ## family as shotImpactOffset.
   var h = 0x9E3779B9'u32 xor 0x5F356495'u32
   h = (h xor uint32(targetIndex)) * 0x85EBCA6B'u32
   h = (h xor uint32(sim.tickCount div AimRenderFuzzWindow)) * 0xC2B2AE35'u32
@@ -4516,9 +4516,9 @@ proc buildSpriteProtocolPlayerUpdates*(
           continue
       elif not viewerIsGhost:
         continue
-      # GV24: every soldier sprite in a player view — enemy, teammate, corpse,
-      # and the self marker alike — renders with FUZZED aim (fuzzedAimBrads):
-      # exact aim is never readable off a sprite (both sides, by design).
+      # GV24/25: every OTHER soldier sprite in a player view — enemy,
+      # teammate, corpse — renders with FUZZED aim (fuzzedAimBrads): exact
+      # aim is never readable off another bot. The self marker is exact.
       let fuzzedRot = soldierRotIndex(sim.fuzzedAimBrads(i))
       var spriteId = soldierPlayerSpriteId(other.team, other.skin, fuzzedRot)
       if not other.alive:
@@ -4530,10 +4530,10 @@ proc buildSpriteProtocolPlayerUpdates*(
           fuzzedRot
         )
       elif i == playerIndex and not viewerIsGhost:
-        # Yourself reads as a distinct white-outlined soldier — rotated to the
-        # FUZZED aim like everyone else: your true aim is knowable only from
-        # the commands you issued, never from the pixels.
-        let rot = fuzzedRot
+        # Yourself reads as a distinct white-outlined soldier rotated to your
+        # TRUE aim (GV25): you know your own gun exactly — the fuzz exists to
+        # hide OTHERS' aim, and your self marker is your own state, not a leak.
+        let rot = soldierRotIndex(other.aimBrads)
         spriteId = selfSoldierSpriteId(other.skin, rot)
         result.addSpriteChanged(
           nextState.spriteDefs,

@@ -125,13 +125,13 @@ always drawn — but moving entities are fogged:
   the paint lands. The ring is randomly (but deterministically, per shot)
   offset by up to ~20px, so it tells you something was hit *roughly there*
   — never the exact spot, the shot's line, or which team.
-- **A soldier's drawn gun angle is approximate (since GameVersion 24).** Every
-  soldier sprite in a player's view — enemies, teammates, corpses, and your own
-  self marker alike — renders its gun rotated by the true aim plus a
-  deterministic pseudo-random offset of up to **±20°**, re-rolled about twice a
-  second. Watching a bot never reveals its exact aim; a bot can know its own
-  aim only by tracking the turn commands it issued. (The spectator broadcast
-  board still shows true aim — this fuzz exists in player observations only.)
+- **Another soldier's drawn gun angle is approximate (since GameVersion 24;
+  self exempted since 25).** Every OTHER soldier sprite in a player's view —
+  enemies, teammates, and corpses — renders its gun rotated by the true aim
+  plus a deterministic pseudo-random offset of up to **±20°**, re-rolled about
+  twice a second: watching another bot never reveals its exact aim. Your OWN
+  self marker shows your TRUE aim — your gun is your own state, not a leak.
+  (The spectator broadcast board also shows true aim.)
 - There is **no global heart tracking**: once a thief carries your heart into the
   fog, finding it again takes eyes on it.
 - Death does not lift the fog: a dead player sees the whole map fogged —
@@ -184,7 +184,7 @@ The full life of one shot, at 24 ticks/second:
    your position at release, along the angle locked at the pull**. All
    movement for the tick happens first; every shot releasing that tick then
    resolves at once against the post-movement snapshot.
-4. **Cooldown (12 ticks, ~0.5s; 3x that for a shield carrier).** The
+4. **Cooldown (12 ticks, ~0.5s; 3x that for a shield carrier — and, since GameVersion 25, 3x for a HEART carrier too: carrying the heart no longer means free full-rate fire; shield+heart take the max multiplier, not the product).** The
    cooldown starts at release, so the sustained rate is one shot per
    cooldown — the windup does not slow your cadence.
 
