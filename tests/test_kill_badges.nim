@@ -26,8 +26,10 @@ proc badgeGame(redCount, blueCount: int): SimServer =
     result.players[i].team = Red
   for i in redCount ..< result.players.len:
     result.players[i].team = Blue
-  for i in 0 ..< result.players.len:
-    result.players[i].spawnProtect = 0
+  # (Spawn protection used to be cleared here. ab27fc8 removed the mechanic
+  # outright — exposure-sampled partial cover replaced it — so there is nothing
+  # left to clear. This file still referenced the dead field until 2026-07-28:
+  # it was never imported by tests/tests.nim, so nothing ever compiled it.)
 
 proc none(sim: SimServer): seq[InputState] =
   newSeq[InputState](sim.players.len)
@@ -55,7 +57,9 @@ proc landGrenade(sim: var SimServer) =
 
 # The left capture column is protected floor — never walled — so these tests
 # anchor the actors there for guaranteed line of sight (like test_plasma_arc).
-const
+# `let`, not `const`: MapHeight is a `var` now (arenas are loadable at runtime),
+# so it cannot initialize a compile-time constant. Same as test_plasma_arc.
+let
   ClearX = 60
   ClearY = MapHeight div 2
 
