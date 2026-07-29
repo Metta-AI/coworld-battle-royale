@@ -23,6 +23,25 @@ proc twoTeamGame(): SimServer =
   result.players[0].team = Red
   result.players[1].team = Blue
 
+proc openGround(sim: var SimServer) =
+  ## All-open floor with both players apart and at rest, so held movement
+  ## input produces real, deterministic displacement.
+  for i in 0 ..< sim.walkMask.len:
+    sim.walkMask[i] = true
+  for (index, x, y) in [(0, 100, 100), (1, 400, 300)]:
+    sim.players[index].x = x
+    sim.players[index].y = y
+    sim.players[index].velX = 0
+    sim.players[index].velY = 0
+    sim.players[index].carryX = 0
+    sim.players[index].carryY = 0
+
+proc sansShoutTick(player: Player, matching: Player): Player =
+  ## The player with lastShoutTick copied over, so everything else can be
+  ## compared for exact equality.
+  result = player
+  result.lastShoutTick = matching.lastShoutTick
+
 suite "shouts":
   test "a shout is stored with player, team, and shout-time coordinates":
     var sim = twoTeamGame()
@@ -89,6 +108,51 @@ suite "shouts":
     sim.players[1].x = shout.x - CollisionW div 2
     sim.players[1].alive = false
     check not sim.shoutAudibleTo(1, shout)
+
+  test "shouting is parallel: it never blocks or alters same-tick movement and fire":
+    # Two identical worlds, identical held inputs (move right + trigger
+    # pull); one of them also shouts. Talking is free: it must never
+    # consume, delay, or modify any other same-tick action.
+    var
+      talker = twoTeamGame()
+      silent = twoTeamGame()
+    talker.openGround()
+    silent.openGround()
+
+    # applyShout on its own changes nothing in the player state except
+    # lastShoutTick.
+    let before = talker.players[0]
+    check talker.applyShout(0, "on my mark")
+    check talker.recentShouts.len == 1
+    check talker.recentShouts[0].text == "on my mark"
+    check talker.players[0].lastShoutTick == talker.tickCount
+    check talker.players[0].sansShoutTick(before) == before
+
+    # With the shout in flight, movement and fire advance in lockstep with
+    # the silent world: every tick, the full player state matches exactly
+    # (lastShoutTick aside).
+    var inputs = newSeq[InputState](talker.players.len)
+    inputs[0] = InputState(right: true, attack: true)
+    var prev = newSeq[InputState](talker.players.len)
+    let startX = talker.players[0].x
+    for _ in 0 ..< 10:
+      talker.step(inputs, prev)
+      silent.step(inputs, prev)
+      prev = inputs
+      check talker.players[0].sansShoutTick(silent.players[0]) ==
+        silent.players[0]
+    check talker.players[0].x > startX      # the shouter really moved
+
+    # A second shout inside the cooldown is rejected — and the rejection,
+    # too, leaves movement and fire untouched.
+    check not talker.applyShout(0, "too soon")
+    check talker.recentShouts.len == 1
+    check talker.recentShouts[0].text == "on my mark"
+    for _ in 0 ..< 5:
+      talker.step(inputs, prev)
+      silent.step(inputs, prev)
+      check talker.players[0].sansShoutTick(silent.players[0]) ==
+        silent.players[0]
 
   test "shouts are part of the game hash":
     var sim1 = twoTeamGame()

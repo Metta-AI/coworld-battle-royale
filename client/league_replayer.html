@@ -214,9 +214,35 @@
     pointer-events:none; z-index:2}
   .beat-marker{position:absolute; top:0; width:calc(2*var(--u)); height:calc(13*var(--u));
     transform:translateX(-1px); z-index:2}
-  .beat-marker.kill{background:var(--paper-dim)}
+  /* kill ticks: short, colored by the killer's team (team-kill/ambiguous stay
+     neutral). Flag beats: colored by the flag's team — steal = full tick with
+     a flag head, return = dimmed (heart snapped home), capture = chunky match
+     point in the capturing team's color. */
+  .beat-marker.kill{background:var(--paper-dim); height:calc(8*var(--u))}
+  .beat-marker.kill.red{background:var(--red)}
+  .beat-marker.kill.blue{background:var(--blue)}
   .beat-marker.steal{background:var(--amber)}
-  .beat-marker.capture{background:var(--red)}
+  .beat-marker.steal.red{background:var(--red)}
+  .beat-marker.steal.blue{background:var(--blue)}
+  .beat-marker.steal::after{content:''; position:absolute; left:0; top:0;
+    width:calc(6*var(--u)); height:calc(4*var(--u)); background:inherit}
+  .beat-marker.return{background:var(--paper-dim); opacity:.45}
+  .beat-marker.return.red{background:var(--red)}
+  .beat-marker.return.blue{background:var(--blue)}
+  .beat-marker.capture{background:var(--red); width:calc(3*var(--u)); height:calc(16*var(--u))}
+  .beat-marker.capture.blue{background:var(--blue)}
+  /* winner cap past the track's right end + "RED WINS" chip in the tbar. */
+  .scrub-win{display:none; position:absolute; right:calc(-6*var(--u)); top:calc(4*var(--u));
+    width:calc(8*var(--u)); height:calc(14*var(--u)); z-index:3; border-radius:calc(2*var(--u))}
+  .scrub-win.red{display:block; background:var(--red)}
+  .scrub-win.blue{display:block; background:var(--blue)}
+  .scrub-win.draw{display:block; background:linear-gradient(180deg, var(--red) 50%, var(--blue) 50%)}
+  .win-chip{display:none; font-family:var(--pixfont); font-size:calc(10*var(--u));
+    padding:0 calc(6*var(--u)); white-space:nowrap}
+  .win-chip.show{display:inline}
+  .win-chip.red{color:var(--red)}
+  .win-chip.blue{color:var(--blue)}
+  .win-chip.draw{color:var(--paper-dim)}
 
   /* connection status toast */
   #status{position:absolute; z-index:9; left:50%; top:calc(50% - 10px); transform:translate(-50%,-50%);
@@ -286,6 +312,7 @@
       <button class="tbtn" id="btn-loop" title="Loop (r)">↻</button>
       <button class="tbtn" id="btn-skip" title="Auto-skip lulls (f)">▸▸</button>
       <span class="ffwd-chip" id="ffwd-chip">▸▸ SKIPPING LULL</span>
+      <span class="win-chip" id="win-chip"></span>
       <span class="tick-clock" id="tick-clock">0 / 0</span>
       <span class="tsep"></span>
       <div class="speedchips" id="speedchips"></div>
@@ -297,6 +324,7 @@
       <div class="scrub-track"></div>
       <div class="scrub-fill" id="scrub-fill"></div>
       <div id="lulls"></div>
+      <div class="scrub-win" id="scrub-win"></div>
       <div class="scrub-head" id="scrub-head"></div>
     </div>
   </div>
@@ -748,22 +776,64 @@
   // ---- scrubber beat markers -----------------------------------------------
   var scrubEl=$('scrub');
   var seenMarkers={}, pendingMarkers=[];
-  function markBeat(tick, kind){
+  function markBeat(tick, kind, team){
     var mk=tick+'|'+kind;
     if (seenMarkers[mk]) return;
-    seenMarkers[mk]={tick:tick,kind:kind};
-    pendingMarkers.push({tick:tick,kind:kind});
+    seenMarkers[mk]={tick:tick,kind:kind,team:team||''};
+    pendingMarkers.push(seenMarkers[mk]);
   }
+  function teamOf(s, slot){
+    if (slot<0 || !s.roster) return null;
+    for (var i=0;i<s.roster.length;i++) if (s.roster[i].s===slot) return s.roster[i].team;
+    return null;
+  }
+  // A kill tick is colored by the KILLER's team; a team-kill or an
+  // unattributable same-tick pileup stays honestly neutral.
+  function killMarkerTeam(e, s){
+    if (e.amb || e.tk || e.killer<0) return '';
+    return teamOf(s, e.killer)||'';
+  }
+  function otherTeam(t){ return t==='red'?'blue':t==='blue'?'red':''; }
   function renderBeatMarkers(st, mx){
     if (!pendingMarkers.length) return;
     var span=Math.max(1, mx-st);
     pendingMarkers.forEach(function(m){
       var el=document.createElement('div');
-      el.className='beat-marker '+m.kind;
+      el.className='beat-marker '+m.kind+(m.team?' '+m.team:'');
       el.style.left = (Math.min(1,Math.max(0,(m.tick-st)/span))*100)+'%';
       scrubEl.appendChild(el);
     });
     pendingMarkers=[];
+  }
+
+  // ---- full-match flag beats + verdict (shipped once; placed up front) -----
+  // Same first HUD frame as the lead series: every steal/return/capture marker
+  // and the winner cap land before playback gets there. Kill markers stay
+  // accumulate-as-played. markBeat dedups tick|kind, so live events re-firing
+  // over these is harmless.
+  var beatTimeline=null;
+  function ingestBeats(s){
+    if (!s.beats || beatTimeline) return;
+    beatTimeline = s.beats;
+    for (var i=0;i<beatTimeline.length;i++){
+      var b=beatTimeline[i];
+      if (b.k==='steal' || b.k==='return') markBeat(b.t, b.k, b.flag);
+      else if (b.k==='capture') markBeat(b.t, 'capture', otherTeam(b.flag));
+      else if (b.k==='gameover') setVerdict(b);
+    }
+  }
+  // Winner cap + "RED WINS" chip; fed by the beat timeline, with the
+  // game-over state as a fallback for servers that ship no beats. Idempotent.
+  function setVerdict(v){
+    var cls = v.draw ? 'draw' : (v.winner==='red'||v.winner==='blue' ? v.winner : '');
+    if (!cls) return;
+    var label = v.draw ? 'DRAW' : v.winner.toUpperCase()+' WINS';
+    var cap=$('scrub-win');
+    cap.className='scrub-win '+cls;
+    cap.title=label;
+    var chip=$('win-chip');
+    chip.textContent=label;
+    chip.className='win-chip show '+cls;
   }
 
   // ---- momentum graph (lives-lead over the WHOLE timeline) -----------------
@@ -862,14 +932,17 @@
     if (s.events && s.events.length && !jumped){
       for (var i=0;i<s.events.length;i++){
         var e=s.events[i];
-        if (e.k==='kill') markBeat(e.t,'kill');
-        else if (e.k==='steal') markBeat(e.t,'steal');
-        else if (e.k==='capture') markBeat(e.t,'capture');
+        if (e.k==='kill') markBeat(e.t,'kill', killMarkerTeam(e, s));
+        else if (e.k==='steal') markBeat(e.t,'steal', e.flag);
+        else if (e.k==='return') markBeat(e.t,'return', e.flag);
+        else if (e.k==='capture') markBeat(e.t,'capture', otherTeam(e.flag));
       }
     }
     ingestLeadSeries(s);
     ingestLullSpans(s);
+    ingestBeats(s);
     recordMomentum(s);
+    if (s.ph==='gameover' && s.over) setVerdict(s.over);
 
     lastTick = s.t;
     hideStatus();

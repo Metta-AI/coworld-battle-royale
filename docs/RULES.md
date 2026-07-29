@@ -286,6 +286,9 @@ What that means in practice:
   **3 seconds**. Dead players cannot shout and hear nothing.
 - The global/replay view draws every bubble at the shouter's actual
   position, following them while they live.
+- **Shouting is free**: it never consumes, delays, or modifies any other
+  same-tick action — you move, aim, and fire exactly as if you had said
+  nothing; its only limit is its own one-per-second cooldown.
 
 ## Med kits
 
