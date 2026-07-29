@@ -2,7 +2,7 @@ import
   std/[algorithm, math, os, strutils, tables],
   bitworld/pixelfonts, bitworld/profile, bitworld/spriteprotocol, bitworld/server,
   pixie,
-  sim
+  labels, sim
 
 const
   BroadcastChromeSpriteId* = 4090
@@ -3120,7 +3120,7 @@ proc buildSpriteProtocolPlayerInit(
     sim.gameMap.width,
     sim.gameMap.height,
     sim.buildWalkabilitySpritePixels(),
-    "walkability map"
+    LabelWalkabilityMap
   )
   sim.addFlagSprites(spriteDefs, result)
   result.addSpriteChanged(
@@ -3129,7 +3129,7 @@ proc buildSpriteProtocolPlayerInit(
     sim.flagSprite.width,
     sim.flagSprite.height,
     buildSpriteProtocolRawSprite(sim.flagSprite),
-    "fire icon"
+    LabelFireIcon
   )
   result.addSpriteChanged(
     spriteDefs,
@@ -3677,7 +3677,7 @@ proc addPlasmaArcs(
         PlasmaArcPickupSize,
         PlasmaArcPickupSize,
         loadSprayCanSprite(PlasmaArcPickupSize * boardScale),
-        "spray can",
+        LabelSprayCan,
         native = boardScale
       )
     let objectId = PlasmaArcPickupObjectBase + i
@@ -3705,7 +3705,7 @@ proc addPlasmaArcs(
         PlasmaArcCarrySize,
         PlasmaArcCarrySize,
         loadSprayCanSprite(PlasmaArcCarrySize * boardScale),
-        "spray can carried",
+        LabelSprayCanCarried,
         native = boardScale
       )
     let objectId = PlasmaArcCarryObjectBase + i
@@ -3770,7 +3770,7 @@ proc addPlasmaArcFlashes(
           diameter,
           diameter,
           buildPlasmaPulseSprite(colorIndex, stage, pulse),
-          "spray paint puff"
+          LabelSprayPaintPuff
         )
       let objectId = PlasmaArcFxObjectBase + i * PlasmaArcFxPulses + pulse
       currentIds.add(objectId)
@@ -3803,7 +3803,7 @@ proc addMedKits(
       packet.addBoardSpriteChanged(
         spriteDefs, MedKitSpriteId,
         MedKitSize, MedKitSize,
-        loadMedKitSprite(MedKitSize * boardScale), "med kit",
+        loadMedKitSprite(MedKitSize * boardScale), LabelMedKit,
         native = boardScale
       )
     let objectId = MedKitObjectBase + i
@@ -3838,7 +3838,7 @@ proc addShields(
       packet.addBoardSpriteChanged(
         spriteDefs, ShieldSpriteId,
         ShieldSize, ShieldSize,
-        loadShieldSprite(ShieldSize * boardScale), "shield",
+        loadShieldSprite(ShieldSize * boardScale), LabelShield,
         native = boardScale
       )
     let objectId = ShieldObjectBase + i
@@ -3862,7 +3862,7 @@ proc addShields(
       packet.addBoardSpriteChanged(
         spriteDefs, ShieldCarrySpriteId,
         ShieldCarrySize, ShieldCarrySize,
-        loadShieldSprite(ShieldCarrySize * boardScale), "shield carried",
+        loadShieldSprite(ShieldCarrySize * boardScale), LabelShieldCarried,
         native = boardScale
       )
     let objectId = ShieldCarryObjectBase + i
@@ -3955,7 +3955,7 @@ proc addGrenades(
       packet.addBoardSpriteChanged(
         spriteDefs, PaintBombPickupSpriteId,
         PaintBombPickupSize, PaintBombPickupSize,
-        loadPaintBombSprite(PaintBombPickupSize * boardScale), "grenade",
+        loadPaintBombSprite(PaintBombPickupSize * boardScale), LabelGrenade,
         native = boardScale
       )
     let objectId = PaintBombPickupObjectBase + i
@@ -3976,7 +3976,7 @@ proc addGrenades(
       packet.addBoardSpriteChanged(
         spriteDefs, PaintBombAirSpriteId,
         PaintBombAirSize, PaintBombAirSize,
-        loadPaintBombSprite(PaintBombAirSize * boardScale), "grenade air",
+        loadPaintBombSprite(PaintBombAirSize * boardScale), LabelGrenadeAir,
         native = boardScale
       )
     let objectId = PaintBombAirObjectBase + i
@@ -4003,7 +4003,7 @@ proc addGrenades(
         packet.addBoardSpriteChanged(
           spriteDefs, PaintBombCarrySpriteId,
           PaintBombCarrySize, PaintBombCarrySize,
-          loadPaintBombSprite(PaintBombCarrySize * boardScale), "grenade carried",
+          loadPaintBombSprite(PaintBombCarrySize * boardScale), LabelGrenadeCarried,
           native = boardScale
         )
       let objectId = PaintBombCarryObjectBase + i
@@ -4027,7 +4027,7 @@ proc addGrenades(
         packet.addBoardSpriteChanged(
           spriteDefs, ThrowTargetSpriteId,
           ThrowTargetSize, ThrowTargetSize,
-          buildThrowTargetSprite(), "throw target"
+          buildThrowTargetSprite(), LabelThrowTarget
         )
       let objectId = ThrowTargetObjectBase + i
       currentIds.add(objectId)
@@ -4067,7 +4067,7 @@ proc addGrenades(
       if spriteDefs.spriteDefinitionIndex(SoundRingSpriteId) < 0:
         packet.addBoardSpriteChanged(
           spriteDefs, SoundRingSpriteId, SoundRingSize, SoundRingSize,
-          buildSoundRingSprite(), "grenade sound"
+          buildSoundRingSprite(), LabelGrenadeSound
         )
       var h = 0x9E3779B9'u32
       h = (h xor uint32(blast.tick)) * 0x85EBCA6B'u32
