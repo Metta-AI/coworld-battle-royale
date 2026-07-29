@@ -582,6 +582,20 @@ type
     Heal        ## hit points restored (med kit or shield pickup).
     PhaseChange ## the game phase moved (lobby / playing / gameover):
                 ## weapon = the new phase name, amount = its ordinal.
+    GunTrigger  ## a player pulled the gun trigger and locked their aim.
+    ShotImpact  ## a released shot ended at a player, wall, or range limit.
+    GrenadeThrow
+    GrenadeImpact
+    SprayUse    ## one active spray-cone tick and the damage it dealt.
+    Pickup      ## a player picked up an item; item names the pickup.
+    ShoutEvent  ## a player shouted; content is the sanitized text.
+
+  EventDamage* = object
+    ## One victim damaged by a primary impact/use event.
+    slot*: int
+    amount*: int
+    hp*: int
+    blocked*: int
 
   SimEvent* = object
     ## One tier-2 analysis event; never enters gameHash (replay-safe).
@@ -609,6 +623,12 @@ type
                                ## when the victim held no shield hp, and on every
                                ## non-Damage kind (n/a).
     x*, y*: float              ## map position where the event happened.
+    actionId*: int64           ## ties stages of one weapon action together.
+    headingBrads*: int         ## native aim heading (0..255), -1 = n/a.
+    distance*: float           ## throw/shot distance in map pixels.
+    item*: string              ## pickup item name, "" = n/a.
+    content*: string           ## sanitized shout content, "" = n/a.
+    damages*: seq[EventDamage] ## victims damaged by this impact/use.
 
   Shout* = object
     ## One short player message, audible within ShoutRange of where it was
@@ -633,7 +653,9 @@ type
     tx*, ty*: int
     launchTick*: int
     flightTicks*: int
-    thrower*: int
+    thrower*: int              ## live index retained for replay-hash compatibility.
+    throwerSlot*: int          ## immutable analysis identity; never hashed.
+    throwerAccount*: int       ## stable results account; never hashed.
 
   FlagState* = object
     ## One team's flag: provably either sitting on its home pedestal
@@ -3238,6 +3260,12 @@ proc mixHashBool(hash: var uint64, value: bool) =
   ## Mixes one boolean into a deterministic hash.
   hash.mixHashInt(ord(value))
 
+proc grenadeThrowerSlot(
+  sim: SimServer,
+  grenade: AirborneGrenade
+): int {.inline.} =
+  grenade.throwerSlot
+
 proc gameHash*(sim: SimServer): uint64 =
   ## Returns a deterministic hash of gameplay state.
   result = 14695981039346656037'u64
@@ -3430,6 +3458,54 @@ proc eventSlot(sim: SimServer, playerIndex: int): int {.inline.} =
     return sim.players[playerIndex].joinOrder
   -1
 
+type EventActionKind = enum
+  GunAction
+  GrenadeAction
+  SprayAction
+
+proc eventActionId(
+  sim: SimServer,
+  playerIndex: int,
+  kind: EventActionKind,
+  tick = -1
+): int64 {.inline.} =
+  ## Encodes game, tick, action kind, and immutable slot.
+  let
+    eventTick = if tick >= 0: tick else: sim.tickCount
+    slot = max(0, sim.eventSlot(playerIndex))
+  var gameOrdinal = 0
+  for account in sim.rewardAccounts:
+    gameOrdinal += account.gamesRed + account.gamesBlue
+  (int64(gameOrdinal) shl 48) or
+    (int64(eventTick) shl 16) or
+    (int64(ord(kind) + 1) shl 8) or
+    int64(slot and 0xff)
+
+proc eventActionIdForSlot(
+  sim: SimServer,
+  slot: int,
+  kind: EventActionKind,
+  tick: int
+): int64 {.inline.} =
+  var gameOrdinal = 0
+  for account in sim.rewardAccounts:
+    gameOrdinal += account.gamesRed + account.gamesBlue
+  (int64(gameOrdinal) shl 48) or
+    (int64(tick) shl 16) or
+    (int64(ord(kind) + 1) shl 8) or
+    int64(max(0, slot) and 0xff)
+
+proc eventDamage(
+  sim: SimServer,
+  playerIndex, amount, hp, blocked: int
+): EventDamage {.inline.} =
+  EventDamage(
+    slot: sim.eventSlot(playerIndex),
+    amount: amount,
+    hp: hp,
+    blocked: blocked
+  )
+
 proc emitEvent(
   sim: var SimServer,
   kind: SimEventKind,
@@ -3440,7 +3516,15 @@ proc emitEvent(
   hp = -1,
   blocked = 0,
   x = 0.0,
-  y = 0.0
+  y = 0.0,
+  actionId = 0'i64,
+  headingBrads = -1,
+  distance = 0.0,
+  item = "",
+  content = "",
+  damages: seq[EventDamage] = @[],
+  sourceSlot = -1,
+  targetSlot = -1
 ) {.inline.} =
   ## Appends one tier-2 analysis event (see SimEvent); a no-op unless
   ## collectEvents is on, so live servers pay nothing. `source` and `target`
@@ -3450,14 +3534,20 @@ proc emitEvent(
   sim.events.add SimEvent(
     tick: sim.tickCount,
     kind: kind,
-    source: sim.eventSlot(source),
-    target: sim.eventSlot(target),
+    source: (if sourceSlot >= 0: sourceSlot else: sim.eventSlot(source)),
+    target: (if targetSlot >= 0: targetSlot else: sim.eventSlot(target)),
     weapon: weapon,
     amount: amount,
     hp: hp,
     blocked: blocked,
     x: x,
-    y: y
+    y: y,
+    actionId: actionId,
+    headingBrads: headingBrads,
+    distance: distance,
+    item: item,
+    content: content,
+    damages: damages
   )
 
 proc emitPhaseChange(sim: var SimServer, newPhase: GamePhase) {.inline.} =
@@ -3470,6 +3560,20 @@ proc emitPhaseChange(sim: var SimServer, newPhase: GamePhase) {.inline.} =
     PhaseChange,
     weapon = ($newPhase).toLowerAscii,
     amount = ord(newPhase)
+  )
+
+proc emitPickup(
+  sim: var SimServer,
+  playerIndex: int,
+  item: string,
+  x, y: int
+) {.inline.} =
+  sim.emitEvent(
+    Pickup,
+    source = playerIndex,
+    x = float(x),
+    y = float(y),
+    item = item
   )
 
 proc resetFlag*(sim: var SimServer, team: Team) =
@@ -3837,6 +3941,17 @@ proc playerIndexForSlot(sim: SimServer, slotIndex: int): int =
     if sim.players[i].joinOrder == slotIndex:
       return i
   -1
+
+proc legacyGrenadeThrowerIndex(
+  sim: SimServer,
+  grenade: AirborneGrenade
+): int {.inline.} =
+  ## Retains GV24's mutable-index kill counter solely because player.kills is
+  ## hashed. Attribution and results use throwerSlot/throwerAccount instead.
+  if grenade.thrower >= 0 and grenade.thrower < sim.players.len:
+    grenade.thrower
+  else:
+    -1
 
 proc playerResultSlotCount(sim: SimServer): int =
   ## Returns the number of player slots represented in final results.
@@ -4493,7 +4608,12 @@ proc floorGameClock(sim: var SimServer) =
   if remaining < ActionClockFloorTicks:
     sim.overtimeTicks += ActionClockFloorTicks - remaining
 
-proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
+proc killPlayer*(
+  sim: var SimServer,
+  targetIndex,
+  killerIndex: int,
+  killerSlot = -1
+) =
   ## Applies a fatal hit: return any carried flag to its pedestal, decrement
   ## lives, start respawn.
   if targetIndex < 0 or targetIndex >= sim.players.len:
@@ -4551,7 +4671,8 @@ proc killPlayer*(sim: var SimServer, targetIndex, killerIndex: int) =
   sim.emitEvent(
     Death, source = targetIndex, target = killerIndex,
     x = float(sim.players[targetIndex].x + CollisionW div 2),
-    y = float(sim.players[targetIndex].y + CollisionH div 2)
+    y = float(sim.players[targetIndex].y + CollisionH div 2),
+    targetSlot = killerSlot
   )
   if sim.players[targetIndex].lives > 0:
     dec sim.players[targetIndex].lives
@@ -4664,6 +4785,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
     arcFires.add((attackerIndex, sim.selectArcVictims(attackerIndex)))
   for arcFire in arcFires:
     let attacker = sim.players[arcFire.attacker]
+    var damages: seq[EventDamage]
     sim.plasmaArcFlashes.add PlasmaArcFx(
       x: attacker.x + CollisionW div 2,
       y: attacker.y + CollisionH div 2,
@@ -4700,6 +4822,13 @@ proc resolveActiveArcCones*(sim: var SimServer) =
         hp = max(0, sim.players[victimIndex].hp),
         blocked = blocked, x = vx, y = vy
       )
+      if sim.collectEvents:
+        damages.add sim.eventDamage(
+          victimIndex,
+          PlasmaArcDamage,
+          max(0, sim.players[victimIndex].hp),
+          blocked
+        )
       # Floating damage number for the HP loss (cosmetic, not in gameHash).
       sim.damagePops.add DamageFx(
         x: sim.players[victimIndex].x + CollisionW div 2,
@@ -4725,6 +4854,21 @@ proc resolveActiveArcCones*(sim: var SimServer) =
           elif sim.players[arcFire.attacker].arcKillsThisFire == 3:
             dec sim.players[arcFire.attacker].multiKills2
             inc sim.players[arcFire.attacker].multiKills3
+    if sim.collectEvents:
+      sim.emitEvent(
+        SprayUse,
+        source = arcFire.attacker,
+        weapon = "spray",
+        x = float(attacker.x + CollisionW div 2),
+        y = float(attacker.y + CollisionH div 2),
+        actionId = sim.eventActionId(
+          arcFire.attacker,
+          SprayAction,
+          sim.tickCount - (PlasmaArcActiveTicks - attacker.arcTicksLeft)
+        ),
+        headingBrads = attacker.aimBrads,
+        damages = damages
+      )
     if sim.players[arcFire.attacker].arcTicksLeft > 0:
       dec sim.players[arcFire.attacker].arcTicksLeft
 
@@ -4797,6 +4941,15 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     (ux, uy) = sim.fireDirection(shooterIndex)
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
+    shotHeading =
+      if shooter.windupBrads >= 0: shooter.windupBrads
+      else: shooter.aimBrads
+    triggerTick =
+      if shooter.windupBrads >= 0:
+        sim.tickCount - sim.config.fireWindupTicks
+      else:
+        sim.tickCount
+    actionId = sim.eventActionId(shooterIndex, GunAction, triggerTick)
   sim.players[shooterIndex].fireCooldown =
     if shooter.hasShield or shooter.carryingFlag:
       # GV26: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
@@ -4811,7 +4964,13 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
   # tick where the victim already died to a simultaneous shot.
   inc sim.players[shooterIndex].shotsFired
   sim.emitEvent(
-    Shot, source = shooterIndex, weapon = "gun", x = float(sx), y = float(sy)
+    Shot,
+    source = shooterIndex,
+    weapon = "gun",
+    x = float(sx),
+    y = float(sy),
+    actionId = actionId,
+    headingBrads = shotHeading
   )
   # Record a cosmetic tracer for the shot (never enters gameHash). It ends at
   # the victim, so a bullet visibly never travels past its first hit.
@@ -4849,6 +5008,7 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     color: shooter.color,
     hit: targetIndex >= 0
   )
+  var impactReported = false
   if targetIndex >= 0 and sim.players[targetIndex].alive:
     # A carrier whose shield layer is still up at impact absorbs the hit
     # VISUALS on the bubble: it blinks and dents toward the shooter instead of
@@ -4871,6 +5031,27 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
       x = float(sim.players[targetIndex].x + CollisionW div 2),
       y = float(sim.players[targetIndex].y + CollisionH div 2)
     )
+    if sim.collectEvents:
+      sim.emitEvent(
+        ShotImpact,
+        source = shooterIndex,
+        target = targetIndex,
+        weapon = "gun",
+        x = float(ex),
+        y = float(ey),
+        actionId = actionId,
+        headingBrads = shotHeading,
+        distance = hypot(float(ex - sx), float(ey - sy)),
+        damages = @[
+          sim.eventDamage(
+            targetIndex,
+            1,
+            max(0, sim.players[targetIndex].hp),
+            blocked
+          )
+        ]
+      )
+    impactReported = true
     if bubbleUp:
       sim.bubbleImpacts.add BubbleImpactFx(
         playerIndex: targetIndex,
@@ -4920,6 +5101,18 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
           " (" & $(sim.players[targetIndex].hp +
             sim.players[targetIndex].shieldHp) & " hp left)"
       )
+  if sim.collectEvents and not impactReported:
+    sim.emitEvent(
+      ShotImpact,
+      source = shooterIndex,
+      target = targetIndex,
+      weapon = "gun",
+      x = float(ex),
+      y = float(ey),
+      actionId = actionId,
+      headingBrads = shotHeading,
+      distance = hypot(float(ex - sx), float(ey - sy))
+    )
 
 proc tryFire*(sim: var SimServer, shooterIndex: int) =
   ## Fires one shot immediately (the single-shooter path).
@@ -4934,8 +5127,18 @@ proc startFireWindup*(sim: var SimServer, shooterIndex: int) =
     return
   if sim.players[shooterIndex].fireWindup > 0:
     return
+  let actionId = sim.eventActionId(shooterIndex, GunAction)
   sim.players[shooterIndex].fireWindup = sim.config.fireWindupTicks
   sim.players[shooterIndex].windupBrads = sim.players[shooterIndex].aimBrads
+  sim.emitEvent(
+    GunTrigger,
+    source = shooterIndex,
+    weapon = "gun",
+    x = float(sim.players[shooterIndex].x + CollisionW div 2),
+    y = float(sim.players[shooterIndex].y + CollisionH div 2),
+    actionId = actionId,
+    headingBrads = sim.players[shooterIndex].aimBrads
+  )
 
 
 proc grenadePosition*(grenade: AirborneGrenade, tick: int): tuple[x, y: int] =
@@ -4985,6 +5188,7 @@ proc throwGrenade(sim: var SimServer, playerIndex: int) =
     # after release, near or far. The visible arc just moves faster on long
     # throws; the threat window is constant and readable.
     flight = max(1, GrenadeFlightMultiple * sim.config.fireWindupTicks)
+    throwDistance = hypot(float(tx - sx), float(ty - sy))
   sim.airborneGrenades.add AirborneGrenade(
     sx: sx,
     sy: sy,
@@ -4992,7 +5196,20 @@ proc throwGrenade(sim: var SimServer, playerIndex: int) =
     ty: ty,
     launchTick: sim.tickCount,
     flightTicks: flight,
-    thrower: playerIndex
+    thrower: playerIndex,
+    throwerSlot: player.joinOrder,
+    throwerAccount: sim.rewardAccountIndexForSlot(player.joinOrder)
+  )
+  sim.emitEvent(
+    GrenadeThrow,
+    source = playerIndex,
+    weapon = "grenade",
+    x = float(sx),
+    y = float(sy),
+    actionId = sim.eventActionId(playerIndex, GrenadeAction),
+    headingBrads = player.aimBrads,
+    distance = throwDistance,
+    item = "grenade"
   )
   sim.players[playerIndex].hasGrenade = false
   sim.players[playerIndex].throwCharge = 0
@@ -5024,17 +5241,19 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
   # Color the splat by the thrower's TEAM (not their individual slot color), so
   # a landing reads as that team's paint-bomb — and the sprite id stays within
   # the two team-color slots, never colliding with the tracer pool.
-  let throwerColor =
-    if grenade.thrower >= 0 and grenade.thrower < sim.players.len:
-      teamColor(sim.players[grenade.thrower].team)
-    else:
-      RedTeamColor
+  let
+    legacyThrowerIndex = sim.legacyGrenadeThrowerIndex(grenade)
+    throwerSlot = sim.grenadeThrowerSlot(grenade)
+    throwerIndex = sim.playerIndexForSlot(throwerSlot)
+    throwerColor = teamColor(sim.teamForSlot(throwerSlot))
   sim.recentBlasts.add BlastFx(
     x: grenade.tx, y: grenade.ty, tick: sim.tickCount, color: throwerColor
   )
   sim.logGameEvent("grenade landed")
   let radiusSq = GrenadeBlastRadius * GrenadeBlastRadius
-  var blastKills = 0
+  var
+    blastKills = 0
+    damages: seq[EventDamage]
   for i in 0 ..< sim.players.len:
     if not sim.players[i].alive:
       continue
@@ -5048,33 +5267,74 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
     # visor splat fires for this paint hit (gun/grenade; spray stamps its own).
     sim.players[i].paintHitTick = sim.tickCount
     sim.emitEvent(
-      Damage, source = grenade.thrower, target = i, weapon = "grenade",
+      Damage, source = throwerIndex, target = i, weapon = "grenade",
       amount = GrenadeDamage, hp = max(0, sim.players[i].hp),
       blocked = blocked,
-      x = float(px), y = float(py)
+      x = float(px), y = float(py), sourceSlot = throwerSlot
     )
+    if sim.collectEvents:
+      damages.add sim.eventDamage(
+        i,
+        GrenadeDamage,
+        max(0, sim.players[i].hp),
+        blocked
+      )
     # Floating damage number for the blast's HP loss (cosmetic, not in gameHash).
     sim.damagePops.add DamageFx(
       x: px, y: py, tick: sim.tickCount,
       amount: GrenadeDamage, color: sim.players[i].color
     )
     if sim.players[i].hp <= 0:
-      sim.killPlayer(i, grenade.thrower)
-      if grenade.thrower != i:
-        sim.recordKill(grenade.thrower)
-        sim.recordTeamKill(grenade.thrower, i)
+      sim.killPlayer(i, throwerIndex, throwerSlot)
+      if throwerSlot >= 0 and throwerSlot != sim.eventSlot(i):
+        if grenade.throwerAccount >= 0 and
+            grenade.throwerAccount < sim.rewardAccounts.len:
+          inc sim.rewardAccounts[grenade.throwerAccount].kills
+        if legacyThrowerIndex >= 0 and legacyThrowerIndex != i:
+          # Preserve the exact GV24 hash even if compaction made this legacy
+          # live index point at a different player. Results and events above
+          # use the immutable thrower identity.
+          inc sim.players[legacyThrowerIndex].kills
+        if throwerIndex >= 0 and throwerIndex != i:
+          sim.recordTeamKill(throwerIndex, i)
         sim.emitEvent(
-          Kill, source = grenade.thrower, target = i, weapon = "grenade",
-          amount = GrenadeDamage, x = float(px), y = float(py)
+          Kill, source = throwerIndex, target = i, weapon = "grenade",
+          amount = GrenadeDamage, x = float(px), y = float(py),
+          sourceSlot = throwerSlot
         )
-        inc blastKills
+        if throwerIndex >= 0 and throwerIndex != i:
+          inc blastKills
+  if sim.collectEvents:
+    sim.emitEvent(
+      GrenadeImpact,
+      source = throwerIndex,
+      weapon = "grenade",
+      x = float(grenade.tx),
+      y = float(grenade.ty),
+      actionId = sim.eventActionIdForSlot(
+        throwerSlot,
+        GrenadeAction,
+        grenade.launchTick
+      ),
+      headingBrads = bradsOfVector(
+        grenade.tx - grenade.sx,
+        grenade.ty - grenade.sy
+      ),
+      distance = hypot(
+        float(grenade.tx - grenade.sx),
+        float(grenade.ty - grenade.sy)
+      ),
+      item = "grenade",
+      damages = damages,
+      sourceSlot = throwerSlot
+    )
   # Multi-kill accounting per BLAST: one landing that kills 2 mints a double,
   # 3+ a triple (a self-kill in the blast never counts toward either).
-  if grenade.thrower >= 0 and grenade.thrower < sim.players.len:
+  if throwerIndex >= 0:
     if blastKills >= 3:
-      inc sim.players[grenade.thrower].multiKills3
+      inc sim.players[throwerIndex].multiKills3
     elif blastKills == 2:
-      inc sim.players[grenade.thrower].multiKills2
+      inc sim.players[throwerIndex].multiKills2
 
 proc updateGrenades(sim: var SimServer) =
   ## Refills corner pickups whose timer elapsed and lands due grenades.
@@ -5107,6 +5367,7 @@ proc tryPickupGrenades*(sim: var SimServer, playerIndex: int) =
       spawn.present = false
       spawn.respawnAt = sim.tickCount + GrenadeRespawnTicks
       sim.players[playerIndex].hasGrenade = true
+      sim.emitPickup(playerIndex, "grenade", spawn.x, spawn.y)
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
           " picked up a grenade"
@@ -5143,6 +5404,7 @@ proc tryPickupMedKits*(sim: var SimServer, playerIndex: int) =
       spawn.respawnAt = sim.tickCount + MedKitRespawnTicks
       let healed = sim.config.hitPoints - sim.players[playerIndex].hp
       sim.players[playerIndex].hp = sim.config.hitPoints
+      sim.emitPickup(playerIndex, "med_kit", spawn.x, spawn.y)
       sim.emitEvent(
         Heal, source = playerIndex, amount = healed,
         hp = sim.players[playerIndex].hp, x = float(px), y = float(py)
@@ -5182,6 +5444,7 @@ proc tryPickupShields*(sim: var SimServer, playerIndex: int) =
       spawn.respawnAt = sim.tickCount + ShieldRespawnTicks
       sim.players[playerIndex].hasShield = true
       sim.players[playerIndex].shieldHp = ShieldLayerHp
+      sim.emitPickup(playerIndex, "shield", spawn.x, spawn.y)
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
           " picked up a shield"
@@ -5203,6 +5466,7 @@ proc tryPickupPlasmaArcs*(sim: var SimServer, playerIndex: int) =
       sim.players[playerIndex].hasPlasmaArc = true
       sim.players[playerIndex].fireWindup = 0
       sim.players[playerIndex].windupBrads = -1
+      sim.emitPickup(playerIndex, "spray_can", spawn.x, spawn.y)
       sim.logGameEvent(
         playerColorText(sim.players[playerIndex].color) &
           " picked up a spray can"
@@ -5242,7 +5506,7 @@ proc applyShout*(sim: var SimServer, playerIndex: int, text: string): bool {.dis
   for shout in sim.recentShouts:
     if shout.address != address:
       kept.add shout
-  kept.add Shout(
+  let shout = Shout(
     address: address,
     team: sim.players[playerIndex].team,
     text: shoutText,
@@ -5250,7 +5514,15 @@ proc applyShout*(sim: var SimServer, playerIndex: int, text: string): bool {.dis
     x: sim.players[playerIndex].x + CollisionW div 2,
     y: sim.players[playerIndex].y + CollisionH div 2
   )
+  kept.add shout
   sim.recentShouts = kept
+  sim.emitEvent(
+    ShoutEvent,
+    source = playerIndex,
+    x = float(shout.x),
+    y = float(shout.y),
+    content = shoutText
+  )
   true
 
 proc shoutAudibleTo*(sim: SimServer, viewerIndex: int, shout: Shout): bool =
@@ -6005,6 +6277,7 @@ proc step*(
       else:
         if sim.config.fireWindupTicks <= 0:
           if sim.canFire(playerIndex) and sim.players[playerIndex].fireWindup == 0:
+            sim.startFireWindup(playerIndex)
             firing.add(playerIndex)
         else:
           sim.startFireWindup(playerIndex)

@@ -26,6 +26,13 @@ proc key(kind: SimEventKind): string =
   of Respawn: "respawn"
   of Heal: "heal"
   of PhaseChange: "phase"
+  of GunTrigger: "gun_trigger"
+  of ShotImpact: "shot_impact"
+  of GrenadeThrow: "grenade_throw"
+  of GrenadeImpact: "grenade_impact"
+  of SprayUse: "spray_use"
+  of Pickup: "item_pickup"
+  of ShoutEvent: "shout"
 
 let params = commandLineParams()
 if params.len < 2:

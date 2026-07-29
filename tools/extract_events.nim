@@ -72,6 +72,13 @@ proc key*(kind: SimEventKind): string =
   of Respawn: "respawn"
   of Heal: "heal"
   of PhaseChange: "phase"
+  of GunTrigger: "gun_trigger"
+  of ShotImpact: "shot_impact"
+  of GrenadeThrow: "grenade_throw"
+  of GrenadeImpact: "grenade_impact"
+  of SprayUse: "spray_use"
+  of Pickup: "item_pickup"
+  of ShoutEvent: "shout"
 
 proc jsonRow*(event: SimEvent): JsonNode =
   ## Returns one JSON-lines row for a tier-2 sim event.
@@ -86,6 +93,19 @@ proc jsonRow*(event: SimEvent): JsonNode =
   result["blocked"] = %event.blocked
   result["x"] = %event.x
   result["y"] = %event.y
+  result["action_id"] = %event.actionId
+  result["heading_brads"] = %event.headingBrads
+  result["distance"] = %event.distance
+  result["item"] = %event.item
+  result["content"] = %event.content
+  result["damages"] = newJArray()
+  for damage in event.damages:
+    result["damages"].add(%*{
+      "slot": damage.slot,
+      "amount": damage.amount,
+      "hp": damage.hp,
+      "blocked": damage.blocked
+    })
 
 type
   ExtractResult* = object

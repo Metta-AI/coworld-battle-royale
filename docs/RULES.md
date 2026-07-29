@@ -486,6 +486,18 @@ instead of `"plasma"`, and the broadcast item token is `spray`. The internal
 `flag`→`heart` rename kept `sim.flags`), so `gameHash` and replays are
 unaffected — no GameVersion bump.
 
+The analysis stream reports `gun_trigger` when A locks the aim and `shot` when
+the paintball actually leaves after the windup. A correlated `shot_impact`
+records where that paintball stopped, including misses. `grenade_throw` and
+`grenade_impact` share the same correlation contract; active cone ticks emit
+`spray_use`. These weapon events carry a deterministic `action_id`, native
+`heading_brads` (0 east, 64 north), map-space `x`/`y`, and distance where
+applicable. Damage-capable `shot_impact`, `grenade_impact`, and `spray_use`
+events always carry `damages`, an array of `{slot, amount, hp, blocked}` rows;
+a miss has an empty array. The stream also emits `item_pickup` with the item
+name and player, and `shout` with the sanitized content and player. The older
+flat `hit` and `damage` rows remain for compatibility.
+
 **Since 0.7.5:** shouts (see the Shouts section) add the label
 `<team> shout <player>: <text>`; chat packets, previously ignored, are now
 applied as shouts and recorded in replays (GameVersion 3 — older replays are
