@@ -146,6 +146,14 @@ changes, movement, shots, kills, flag pickups/returns/captures, and score change
 nim r tools/expand_replay.nim tests/replays/<replay>.bitreplay
 ```
 
+Use `tools/extract_events.nim` for the analysis JSONL stream. It includes
+correlated gun trigger/fire/impact stages, grenade throws and impacts, spray
+uses, pickups, shouts, and the existing damage/kill/objective events:
+
+```sh
+nim r tools/extract_events.nim tests/replays/<replay>.bitreplay
+```
+
 Start with replays where your bot scored poorly, died early, stood still, missed
 shots, or failed to escort/defend the flag carrier. Expand the timeline, name the
 failed capability, then find the function in `players/baseline/` that controls it.
