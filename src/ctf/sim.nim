@@ -9,7 +9,13 @@ when not defined(emscripten):
 
 const
   GameName* = "ctf"
-  GameVersion* = "25"  ## GV25: dead players respawn at a RANDOM spot in
+  GameVersion* = "26"  ## GV26 (three operator rules): (a) the SELF marker
+                       ## renders TRUE aim again — the fuzz hides OTHERS'
+                       ## aim, never your own state; (b) HEART carriers fire
+                       ## at 1/3 rate (CarrierFireSlowdown, shield-pattern);
+                       ## (c) column-1's FIFTH vertical bar (y=395 +
+                       ## x-mirror) is a glass window.
+                       ## GV25: dead players respawn at a RANDOM spot in
                        ## their endzone (uniform over the home capture
                        ## column, deterministic sim RNG) — a fixed respawn
                        ## point can no longer be camped.
@@ -188,6 +194,10 @@ const
                               ## and never heals base damage.
   ShieldFireSlowdown* = 3     ## a shield carrier's fire cooldown is this many
                               ## times longer (3x slower fire rate).
+  CarrierFireSlowdown* = 3    ## a HEART carrier's fire cooldown multiplier
+                              ## (GV26): carriers can shoot, at a third the
+                              ## rate. Shield+heart do not stack (max, not
+                              ## product).
 
   BubbleImpactTicks* = 8      ## ~0.33s the bubble's blink/dent impact FX
                               ## lasts (cosmetic only, like HitFlashTicks).
@@ -1537,7 +1547,10 @@ const
       rect: MapRect(x: 268, y: 108, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 204, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 300, w: 18, h: 59)),
-    ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 395, w: 18, h: 60)),
+    # GV26: the FIFTH stub from the top is a GLASS WINDOW too (operator rule)
+    # — windows at stubs 2, 5, and 6; x-mirrored like every column-1 shape.
+    ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: 268, y: 395, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, window: true,
       rect: MapRect(x: 268, y: 491, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 587, w: 18, h: 62)),
@@ -4785,8 +4798,10 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
   sim.players[shooterIndex].fireCooldown =
-    if shooter.hasShield:
-      sim.config.fireCooldownTicks * ShieldFireSlowdown
+    if shooter.hasShield or shooter.carryingFlag:
+      # GV26: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
+      # shield+heart takes the max multiplier, never the product.
+      sim.config.fireCooldownTicks * max(ShieldFireSlowdown, CarrierFireSlowdown)
     else:
       sim.config.fireCooldownTicks
   sim.players[shooterIndex].windupBrads = -1
