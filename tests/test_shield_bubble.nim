@@ -6,6 +6,7 @@ import
 const
   GameDir = currentSourcePath.parentDir.parentDir
   ShieldBubbleObjectBase = 19680
+  ShieldCarryObjectBase = 19620
 
 proc initCtfForTest(config: GameConfig): SimServer =
   ## Initializes the CTF sim from the game directory.
@@ -59,31 +60,38 @@ suite "shield carrier bubble":
     game.startGame()
 
     var state = initGlobalViewerState()
-    # No shield yet: no bubble.
+    # No shield yet: no bubble, and no overhead carry marker either.
     var messages = game.buildGlobalMessages(state)
     check not messages.hasObject(ShieldBubbleObjectBase + red)
+    check not messages.hasObject(ShieldCarryObjectBase + red)
 
-    # A fresh carrier (full shield layer) shows the bubble.
+    # A fresh carrier (full shield layer) shows the bubble — and ONLY the
+    # bubble: the overhead carry marker would double-report the same state.
     game.players[red].hasShield = true
     game.players[red].shieldHp = ShieldLayerHp
     messages = game.buildGlobalMessages(state)
     check messages.hasObject(ShieldBubbleObjectBase + red)
+    check not messages.hasObject(ShieldCarryObjectBase + red)
 
     # Worn down but still holding shield hp: the bubble stays at exactly 1.
     game.players[red].shieldHp = 1
     messages = game.buildGlobalMessages(state)
     check messages.hasObject(ShieldBubbleObjectBase + red)
+    check not messages.hasObject(ShieldCarryObjectBase + red)
 
-    # A spent layer pops the bubble (the small carry marker may remain).
+    # A spent layer pops the bubble; the small carry marker takes over (the
+    # shield's fire slowdown is still on, so the state stays readable).
     game.players[red].shieldHp = 0
     messages = game.buildGlobalMessages(state)
     check not messages.hasObject(ShieldBubbleObjectBase + red)
+    check messages.hasObject(ShieldCarryObjectBase + red)
 
-    # Dead carriers never show a bubble.
+    # Dead carriers never show a bubble — nor the marker.
     game.players[red].shieldHp = ShieldLayerHp
     game.players[red].alive = false
     messages = game.buildGlobalMessages(state)
     check not messages.hasObject(ShieldBubbleObjectBase + red)
+    check not messages.hasObject(ShieldCarryObjectBase + red)
 
   test "a hit on the bubble blinks the bubble instead of the body FX":
     var game = initCtfForTest(defaultGameConfig())

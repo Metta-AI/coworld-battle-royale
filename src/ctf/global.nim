@@ -3858,22 +3858,29 @@ proc addShields(
       sim.playerVisibleTo(viewerIndex, i)
     if not seeMe:
       continue
-    if spriteDefs.spriteDefinitionIndex(ShieldCarrySpriteId) < 0:
-      packet.addBoardSpriteChanged(
-        spriteDefs, ShieldCarrySpriteId,
-        ShieldCarrySize, ShieldCarrySize,
-        loadShieldSprite(ShieldCarrySize * boardScale), LabelShieldCarried,
-        native = boardScale
+    # Never both: the forcefield bubble and the little overhead marker report the
+    # SAME state, so showing them together double-reports it and the marker just
+    # adds clutter over an already-unmissable bubble. While the layer holds
+    # (shieldHp > 0) the bubble speaks for itself; once it is spent the bubble
+    # pops and the marker takes over, because the shield's fire slowdown is still
+    # in effect and the state has to stay readable.
+    if player.shieldHp <= 0:
+      if spriteDefs.spriteDefinitionIndex(ShieldCarrySpriteId) < 0:
+        packet.addBoardSpriteChanged(
+          spriteDefs, ShieldCarrySpriteId,
+          ShieldCarrySize, ShieldCarrySize,
+          loadShieldSprite(ShieldCarrySize * boardScale), LabelShieldCarried,
+          native = boardScale
+        )
+      let objectId = ShieldCarryObjectBase + i
+      currentIds.add(objectId)
+      packet.addBoardObject(
+        objectId,
+        player.x + CollisionW div 2 - HpBarWidth div 2 - ShieldCarrySize div 2,
+        player.overheadAnchorY() - OverheadYOffset - ShieldCarrySize,
+        30006, MapLayerId, ShieldCarrySpriteId
       )
-    let objectId = ShieldCarryObjectBase + i
-    currentIds.add(objectId)
-    packet.addBoardObject(
-      objectId,
-      player.x + CollisionW div 2 - HpBarWidth div 2 - ShieldCarrySize div 2,
-      player.overheadAnchorY() - OverheadYOffset - ShieldCarrySize,
-      30006, MapLayerId, ShieldCarrySpriteId
-    )
-    if player.shieldHp > 0:
+    else:
       # A fresh impact swaps the idle bubble for a blink/dent variant keyed by
       # the impact direction and age — the newest impact wins if several
       # shooters connected within the FX window.
