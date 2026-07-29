@@ -150,6 +150,31 @@ proc fullFeatureGame(): SimServer =
   result.recentBlasts.add BlastFx(
     x: 40, y: MapHeight - 40, tick: result.tickCount, color: teamColor(Blue)
   )
+  # The DEATH FX families. All four are emitted to living player views
+  # (fog-gated: addSplatters / addDamagePops in global.nim) and are the only
+  # on-map record of a kill a policy can read — but no posed frame produces
+  # them, so until this kill was added none of them ever entered the manifest
+  # and a rename of any of them would have slipped through the guard.
+  #   A REAL kill, so the death path itself feeds the sweep: seat 5 (Blue,
+  #   otherwise unposed) dies next to the viewer, leaving the long-dwelling
+  #   death `splatter` and the floating `damage pop <color> KO` kill marker.
+  #   Both outlive the sweep's few ticks by seconds of game time. keepPlaying()
+  #   revives the seat; the FX persist independently of the victim.
+  result.players[5].x = cx - 40
+  result.players[5].y = cy + 30
+  result.killPlayer(5, 0)
+  #   The NON-fatal halves of the same two pools: the short-lived `hit splat`
+  #   paint spark and the floating `-N` damage number. Injected directly like
+  #   the shot/blast FX above — a real graze needs a windup and a live
+  #   trajectory, and the fatal path just above covers the real mechanism.
+  result.splatters.add SplatterFx(
+    x: cx - 40, y: cy - 30, tick: result.tickCount,
+    color: teamColor(Blue), hit: true
+  )
+  result.damagePops.add DamageFx(
+    x: cx - 30, y: cy - 20, tick: result.tickCount,
+    amount: 1, color: teamColor(Blue), kill: false
+  )
 
 proc normalizeLabel(label: string): string =
   ## Collapses one emitted label to its stable PATTERN, so the manifest is a
