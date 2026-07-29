@@ -73,6 +73,7 @@
 import
   std/[algorithm, heapqueue, math, net, os, random, strutils],
   bitworld/spriteprotocol,
+  ctf/labels,
   whisky,
   baseline/protocols,
   baseline/artlog
@@ -507,7 +508,7 @@ proc actorsFor(client: ProtocolClient, color: string): seq[Actor] =
     for o in client.spriteObjectsWithLabel(label):
       result.add(Actor(pos: client.mapPos(o), facingRight: facingRight))
   for hp in 1 .. MaxHp:
-    for o in client.spriteObjectsWithLabel("hp " & $hp & "/" & $MaxHp):
+    for o in client.spriteObjectsWithLabel(labelHp(hp)):
       let p = client.mapPos(o)
       var best = -1
       var bestD = HpPipRadius
@@ -1256,27 +1257,27 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       bot.shieldPos.add(spot)
       bot.shieldAbsentAt.add(-1)
   var plasmaSeen, shieldSeen: seq[Vec]
-  for o in client.spriteObjectsWithLabel("spray can"):
+  for o in client.spriteObjectsWithLabel(LabelSprayCan):
     plasmaSeen.add(client.mapPos(o))
-  for o in client.spriteObjectsWithLabel("shield"):
+  for o in client.spriteObjectsWithLabel(LabelShield):
     shieldSeen.add(client.mapPos(o))
   trackPickups(bot.plasmaPos, bot.plasmaAbsentAt, plasmaSeen, me, bot.tick)
   trackPickups(bot.shieldPos, bot.shieldAbsentAt, shieldSeen, me, bot.tick)
   # Own carry state: the carried markers float over their carrier, and a
   # shield carrier's HUD reads 6 hp (the marker is the fallback).
   var hasPlasma = false
-  for o in client.spriteObjectsWithLabel("spray can carried"):
+  for o in client.spriteObjectsWithLabel(LabelSprayCanCarried):
     if dist(client.mapPos(o), me) <= 30.0:
       hasPlasma = true
       break
   var hasShield = bot.hp > MaxHp
   if not hasShield:
-    for o in client.spriteObjectsWithLabel("shield carried"):
+    for o in client.spriteObjectsWithLabel(LabelShieldCarried):
       if dist(client.mapPos(o), me) <= 30.0:
         hasShield = true
         break
   let
-    shotReady = client.spriteObjectsWithLabel("fire icon").len > 0 and
+    shotReady = client.spriteObjectsWithLabel(LabelFireIcon).len > 0 and
       not hasPlasma                      # the spray can replaces the gun; a shield
                                          # only slows it (3x cooldown)
     seenEnemies = client.actorsFor(enemyColor)
@@ -1303,14 +1304,14 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # split into distinct pedestal/carried sprites: "<color> flag planted" is
     # the always-visible pedestal banner, "<color> flag" the carried banner
     # centered exactly on its carrier (fogged with the carrier).
-    enemyPlanted = client.spriteObjectsWithLabel(enemyColor & " flag planted")
-    enemyFlags = client.spriteObjectsWithLabel(enemyColor & " flag")
-    ownPlanted = client.spriteObjectsWithLabel(myColor & " flag planted")
-    ownFlags = client.spriteObjectsWithLabel(myColor & " flag")
+    enemyPlanted = client.spriteObjectsWithLabel(labelFlagPlanted(enemyColor))
+    enemyFlags = client.spriteObjectsWithLabel(labelFlag(enemyColor))
+    ownPlanted = client.spriteObjectsWithLabel(labelFlagPlanted(myColor))
+    ownFlags = client.spriteObjectsWithLabel(labelFlag(myColor))
   # Own hit points from the HUD "lives <hp>hp x<lives>" text sprite.
   for o in client.spriteObjects():
-    if o.label.startsWith("lives "):
-      let text = o.label[6 .. ^1]
+    if o.label.startsWith(LabelPrefixLives):
+      let text = o.label[LabelPrefixLives.len .. ^1]
       let cut = text.find("hp")
       if cut > 0:
         try:
@@ -1324,7 +1325,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # fog-gated, so an empty spot only counts as TAKEN when we pass close
   # enough that the bubble would show it.
   var kitSeen: seq[Vec]
-  for o in client.spriteObjectsWithLabel("med kit"):
+  for o in client.spriteObjectsWithLabel(LabelMedKit):
     kitSeen.add(client.mapPos(o))
   for p in kitSeen:
     var known = false
@@ -2171,7 +2172,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # corner pickup is a short detour away; spend it on a wall-blocked fresh
   # track (value the gun cannot collect) or on a tight enemy pair in range.
   var carryingNade = false
-  for o in client.spriteObjectsWithLabel("grenade carried"):
+  for o in client.spriteObjectsWithLabel(LabelGrenadeCarried):
     # The marker floats above-right of its carrier (+8 x, ~-20 y from center).
     if dist(client.mapPos(o), me) <= 30.0:
       carryingNade = true
@@ -2372,7 +2373,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # flankers own their lane's friendly-side corner spawn — it sits right on
     # their border route, so they arm up on the way out every respawn cycle.
     var pickupSet = false
-    for o in client.spriteObjectsWithLabel("grenade"):
+    for o in client.spriteObjectsWithLabel(LabelGrenade):
       let p = client.mapPos(o)
       if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
           p.y > float(MapH - 40):
