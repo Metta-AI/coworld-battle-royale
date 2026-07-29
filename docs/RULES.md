@@ -438,8 +438,17 @@ player sprite in frame, labeled `corpse <color> <side>` instead of
 `player <color> <side>`, so a policy scanning for `player` labels never
 mistakes a body for a live enemy.
 
-**Label changes since 0.7.0:** the capture objects are hearts — their sprites
-are labeled `red heart` / `blue heart` (formerly `red flag` / `blue flag`).
+**The capture object is a HEART in the fiction but `flag` in its LABEL.** Every
+rule, banner, and end-card above calls it a heart, and that is the real name of
+the thing. Its sprite labels, however, are `<color> flag`, `<color> flag planted`,
+`<color> flag carried`, and `<color> flag carrier glow` — scan for **`flag`**, not
+`heart`. The history: 0.7.0 renamed the object heart and renamed the labels to
+match, then a later renderer restore brought the *labels* back to `flag` while
+the fiction stayed heart. This document claimed `red heart` / `blue heart` until
+2026-07-28; a policy written from that claim saw no objectives at all. The
+generated `tests/label_manifest.txt` is the ground truth if this text and the
+engine ever disagree again.
+
 Grenades add the labels documented in the Grenades section, and the throw
 button is input mask bit 128.
 
@@ -477,7 +486,18 @@ high-definition soldier is a pure visual upgrade — living players are still
 `<side>` is the coarse `right`/`left` the aim falls into. The floating
 `aim dot <color>` indicator has been **retired**; facing is read from the
 sprite's swept gun and the vision cone, so a label-scanning policy sees the
-same vocabulary it always has.
+same vocabulary it always has. **Nothing carries a player's aim angle any
+more** — there is no absolute readback of where anyone (including a teammate) is
+pointing, only what you infer from a body's rendered facing. The reference bot
+scanned this retired label for months and got an empty answer every tick.
+
+**The labels are enforced, not just documented.** `tests/label_manifest.txt` is
+the generated list of every label the engine actually emits, and
+`tests/test_label_contract.nim` fails if that set drifts or if a label the
+reference policy scans for stops being emitted. When this prose and the engine
+disagree, the manifest is right and this document is stale — that is exactly how
+the `heart`/`flag` claim above went wrong. The label vocabulary itself lives in
+`src/ctf/labels.nim`, shared by the engine and the reference policy.
 
 **Identity badges:** every living player carries a separate badge object
 labeled `identity <color> <name>` (`alpha`..`theta` — see Teams & spawns).

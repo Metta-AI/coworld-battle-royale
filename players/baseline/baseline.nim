@@ -73,6 +73,7 @@
 import
   std/[algorithm, heapqueue, math, net, os, random, strutils],
   bitworld/spriteprotocol,
+  ctf/labels,
   whisky,
   baseline/protocols,
   baseline/artlog
@@ -117,8 +118,6 @@ const
   AimBrads = 256              # aim angle units per full turn
   AimRate = 5                 # brads/tick a held rotate button turns the aim
                               # (matches the server's aimTurnRate default)
-  AimDotRadius = 16.0         # own aim-indicator dots sit within this radius
-  AimResyncBrads = 4          # trust dead reckoning inside this error
   MaxHp = 3                   # hitPoints per life (config default); pip labels
                               # read "hp <n>/<MaxHp>"
   HpPipRadius = 22.0          # a player's overhead hp bar sits within this
@@ -129,15 +128,10 @@ const
   ThiefFocusBonus = 400.0     # px of credit for the enemy RUNNING OUR FLAG:
                               # dominates every positional tiebreak — killing
                               # the thief returns the flag instantly
-  FocusFireBonus = 45.0       # px of credit when a visible mate's aim line
-                              # already covers the target (finish together)
   TraversePxPerBrad = 1.6     # px of effective distance per brad of turret
                               # swing needed to lay on the target: err/AimRate
                               # ticks of traverse at ~8px of enemy closing
                               # motion per tick = 8/5 px per brad
-  MateAimRayLen = 700.0       # trust a mate's aim line out to this range
-  MateAimHitSlack = 22.0      # enemy within this perpendicular distance of a
-                              # mate's aim ray counts as mate-targeted
   ButtonC = 1'u8 shl 7        # grenade charge/throw (input mask bit 128)
   NadeMaxRange = 240.0        # full-charge throw distance (~fifth of the field)
   NadeMinRange = 72.0         # never lob inside this — the 52px blast + drift
@@ -504,22 +498,6 @@ proc findSelf(
     for o in client.spriteObjectsWithLabel(label):
       return (alive: true, pos: client.mapPos(o))
 
-proc observedAim(client: ProtocolClient, me: Vec, color: string): int =
-  ## Our actual aim read back from our own rendered aim-indicator dots: the
-  ## farthest "aim dot <color>" object within the indicator radius points
-  ## along the aim. Returns -1 when no dot is close enough (teammate dots
-  ## share our color but hug their own player). Resolution is ~2 brads —
-  ## an absolute fix that caps dead-reckoning drift.
-  result = -1
-  var bestD = 0.0
-  for o in client.spriteObjectsWithLabel("aim dot " & color):
-    let
-      p = client.mapPos(o)
-      d = dist(p, me)
-    if d <= AimDotRadius and d > bestD:
-      bestD = d
-      result = bradsOf(p - me)
-
 proc actorsFor(client: ProtocolClient, color: string): seq[Actor] =
   ## Visible players of one color in map coordinates plus horizontal facing
   ## and hit points. The overhead "hp <n>/<max>" pip bar is fog-culled with
@@ -530,7 +508,7 @@ proc actorsFor(client: ProtocolClient, color: string): seq[Actor] =
     for o in client.spriteObjectsWithLabel(label):
       result.add(Actor(pos: client.mapPos(o), facingRight: facingRight))
   for hp in 1 .. MaxHp:
-    for o in client.spriteObjectsWithLabel("hp " & $hp & "/" & $MaxHp):
+    for o in client.spriteObjectsWithLabel(labelHp(hp)):
       let p = client.mapPos(o)
       var best = -1
       var bestD = HpPipRadius
@@ -541,22 +519,6 @@ proc actorsFor(client: ProtocolClient, color: string): seq[Actor] =
           best = i
       if best >= 0:
         result[best].hp = hp
-
-proc mateAimBrads(client: ProtocolClient, mate, me: Vec, color: string): int =
-  ## A visible mate's aim angle read from ITS rendered aim-indicator dots
-  ## (the same absolute readback observedAim does for our own turret).
-  ## Returns -1 when the mate is too close to us to attribute dots safely.
-  if dist(mate, me) <= 2.0 * AimDotRadius:
-    return -1
-  result = -1
-  var bestD = 0.0
-  for o in client.spriteObjectsWithLabel("aim dot " & color):
-    let
-      p = client.mapPos(o)
-      d = dist(p, mate)
-    if d <= AimDotRadius and d > bestD and dist(p, me) > AimDotRadius:
-      bestD = d
-      result = bradsOf(p - mate)
 
 proc walkableAt(client: ProtocolClient, x, y: int): bool =
   if x < 0 or y < 0 or x >= client.walkabilityWidth or
@@ -1275,12 +1237,10 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # Respawned: the server points the aim back at the enemy side.
     bot.wasDead = false
     bot.estAim = spawnAim(bot.team)
-  # Absolute turret fix: our own rendered aim-indicator dots show the actual
-  # aim every frame, capping any dead-reckoning drift (mask-apply races).
-  block resync:
-    let seen = client.observedAim(me, myColor)
-    if seen >= 0 and abs(bradsErr(seen, bot.estAim)) > AimResyncBrads:
-      bot.estAim = seen
+  # Our own aim is PURE dead reckoning: the observation carries no absolute
+  # readback of it. (The old "aim dot <color>" line was that readback; the
+  # engine retired it — see RULES.md label changes. Restoring the drift cap
+  # would need a new engine-emitted facing label.)
   # Plasma arcs and shields share the endzone back columns (inset 50)
   # but are vertically SEPARATED: spray cans in the top half (quarter height),
   # shields in the bottom half (three-quarter height). Seed the spots up
@@ -1297,27 +1257,27 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       bot.shieldPos.add(spot)
       bot.shieldAbsentAt.add(-1)
   var plasmaSeen, shieldSeen: seq[Vec]
-  for o in client.spriteObjectsWithLabel("spray can"):
+  for o in client.spriteObjectsWithLabel(LabelSprayCan):
     plasmaSeen.add(client.mapPos(o))
-  for o in client.spriteObjectsWithLabel("shield"):
+  for o in client.spriteObjectsWithLabel(LabelShield):
     shieldSeen.add(client.mapPos(o))
   trackPickups(bot.plasmaPos, bot.plasmaAbsentAt, plasmaSeen, me, bot.tick)
   trackPickups(bot.shieldPos, bot.shieldAbsentAt, shieldSeen, me, bot.tick)
   # Own carry state: the carried markers float over their carrier, and a
   # shield carrier's HUD reads 6 hp (the marker is the fallback).
   var hasPlasma = false
-  for o in client.spriteObjectsWithLabel("spray can carried"):
+  for o in client.spriteObjectsWithLabel(LabelSprayCanCarried):
     if dist(client.mapPos(o), me) <= 30.0:
       hasPlasma = true
       break
   var hasShield = bot.hp > MaxHp
   if not hasShield:
-    for o in client.spriteObjectsWithLabel("shield carried"):
+    for o in client.spriteObjectsWithLabel(LabelShieldCarried):
       if dist(client.mapPos(o), me) <= 30.0:
         hasShield = true
         break
   let
-    shotReady = client.spriteObjectsWithLabel("fire icon").len > 0 and
+    shotReady = client.spriteObjectsWithLabel(LabelFireIcon).len > 0 and
       not hasPlasma                      # the spray can replaces the gun; a shield
                                          # only slows it (3x cooldown)
     seenEnemies = client.actorsFor(enemyColor)
@@ -1344,14 +1304,14 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # split into distinct pedestal/carried sprites: "<color> flag planted" is
     # the always-visible pedestal banner, "<color> flag" the carried banner
     # centered exactly on its carrier (fogged with the carrier).
-    enemyPlanted = client.spriteObjectsWithLabel(enemyColor & " flag planted")
-    enemyFlags = client.spriteObjectsWithLabel(enemyColor & " flag")
-    ownPlanted = client.spriteObjectsWithLabel(myColor & " flag planted")
-    ownFlags = client.spriteObjectsWithLabel(myColor & " flag")
+    enemyPlanted = client.spriteObjectsWithLabel(labelFlagPlanted(enemyColor))
+    enemyFlags = client.spriteObjectsWithLabel(labelFlag(enemyColor))
+    ownPlanted = client.spriteObjectsWithLabel(labelFlagPlanted(myColor))
+    ownFlags = client.spriteObjectsWithLabel(labelFlag(myColor))
   # Own hit points from the HUD "lives <hp>hp x<lives>" text sprite.
   for o in client.spriteObjects():
-    if o.label.startsWith("lives "):
-      let text = o.label[6 .. ^1]
+    if o.label.startsWith(LabelPrefixLives):
+      let text = o.label[LabelPrefixLives.len .. ^1]
       let cut = text.find("hp")
       if cut > 0:
         try:
@@ -1365,7 +1325,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # fog-gated, so an empty spot only counts as TAKEN when we pass close
   # enough that the bubble would show it.
   var kitSeen: seq[Vec]
-  for o in client.spriteObjectsWithLabel("med kit"):
+  for o in client.spriteObjectsWithLabel(LabelMedKit):
     kitSeen.add(client.mapPos(o))
   for p in kitSeen:
     var known = false
@@ -2135,27 +2095,10 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     elif rushing: RushEngageRange
     elif mateCarry: EscortEngageRange
     else: FireRange
-  # Focus-fire intel: which remembered enemies sit on a visible mate's aim
-  # line right now. A mate's rendered aim dots are an absolute readback of
-  # where it is about to shoot; piling our shot onto the same target converts
-  # two 1-damage hits into a kill instead of two wounded runners.
-  var mateTargeted = newSeq[bool](bot.enemies.len)
-  for m in bot.mates:
-    if bot.tick - m.lastSeen > 2:
-      continue                          # dots exist only while the mate is visible
-    let mAim = client.mateAimBrads(m.pos, me, myColor)
-    if mAim < 0:
-      continue
-    let dir = bradsDir(mAim)
-    for i in 0 ..< bot.enemies.len:
-      if bot.tick - bot.enemies[i].lastSeen > FreshShotTicks:
-        continue
-      let rel = bot.enemies[i].pos - m.pos
-      let along = dot(rel, dir)
-      if along <= 0.0 or along > MateAimRayLen:
-        continue
-      if abs(cross(rel, dir)) <= MateAimHitSlack:
-        mateTargeted[i] = true
+  # No focus-fire intel: piling our shot onto the target a mate is already
+  # lined up on needs that mate's AIM ANGLE, and the observation no longer
+  # carries one (the "aim dot <color>" readback was retired engine-side; a
+  # mate's sprite side label is a left/right flip, far too coarse to ray).
 
   var
     engage = -1
@@ -2177,15 +2120,12 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # target (the traverse is slow, so a target near the current aim line
     # dies sooner than a nearer one behind us), discounted for wounded
     # targets (a 1-hp enemy dies to one shot — finish it before it resets on
-    # respawn) and for targets a visible mate is already lined up on (focus
-    # fire). The discounts are tiebreaks between comparably-engageable
+    # respawn). The discounts are tiebreaks between comparably-engageable
     # targets, deliberately smaller than a real positional difference.
     var prio = d +
       float(abs(bradsErr(bradsOf(predicted - me), bot.estAim))) * TraversePxPerBrad
     if t.hp in 1 ..< MaxHp:
       prio -= float(MaxHp - t.hp) * HpFocusBonus
-    if mateTargeted[i]:
-      prio -= FocusFireBonus
     block thiefPrio:
       let fixAge = bot.tick - bot.carrierSeen
       if ownStolen and fixAge <= thiefChaseTtl:
@@ -2232,7 +2172,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # corner pickup is a short detour away; spend it on a wall-blocked fresh
   # track (value the gun cannot collect) or on a tight enemy pair in range.
   var carryingNade = false
-  for o in client.spriteObjectsWithLabel("grenade carried"):
+  for o in client.spriteObjectsWithLabel(LabelGrenadeCarried):
     # The marker floats above-right of its carrier (+8 x, ~-20 y from center).
     if dist(client.mapPos(o), me) <= 30.0:
       carryingNade = true
@@ -2433,7 +2373,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     # flankers own their lane's friendly-side corner spawn — it sits right on
     # their border route, so they arm up on the way out every respawn cycle.
     var pickupSet = false
-    for o in client.spriteObjectsWithLabel("grenade"):
+    for o in client.spriteObjectsWithLabel(LabelGrenade):
       let p = client.mapPos(o)
       if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
           p.y > float(MapH - 40):
