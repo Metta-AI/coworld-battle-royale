@@ -132,6 +132,24 @@ proc fullFeatureGame(): SimServer =
   result.flags[Blue].carrier = 0
   result.flags[Blue].x = result.players[0].x
   result.flags[Blue].y = result.players[0].y
+  # The two AUDIO families. Both are player-observation only and both need an
+  # event to have just happened, which no posed frame produces on its own — so
+  # they were missing from the vocabulary until this was added, and a rename of
+  # either would have slipped through the guard.
+  #   `shot impact` — every recent shot leaves every living viewer a landing
+  #   ring, in or out of sight. Injected as FX rather than fired for real: a real
+  #   shot needs a windup and would also mint tracers/hit flashes that move with
+  #   whoever it struck.
+  result.recentShots.add ShotFx(
+    x0: cx - 40, y0: cy, x1: cx + 40, y1: cy,
+    firedTick: result.tickCount, color: teamColor(Red), hit: false
+  )
+  #   `grenade sound` — the jittered ring a viewer gets for a blast they could
+  #   NOT see. Placed far away, out of seat 0's cone and bubble, because a blast
+  #   in view renders `blast stage <n>` instead and never the sound ring.
+  result.recentBlasts.add BlastFx(
+    x: 40, y: MapHeight - 40, tick: result.tickCount, color: teamColor(Blue)
+  )
 
 proc normalizeLabel(label: string): string =
   ## Collapses one emitted label to its stable PATTERN, so the manifest is a

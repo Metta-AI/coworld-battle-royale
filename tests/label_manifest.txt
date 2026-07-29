@@ -11,6 +11,7 @@
 Room Blue Base
 Room Center
 Room Red Base
+blast stage <n>
 cog arm <color>
 cog gun <color>
 cog leg <color>
@@ -25,6 +26,7 @@ fog
 grenade
 grenade air
 grenade carried
+grenade sound
 hp <n>/3
 identity <color> <name> gun
 identity <color> <name> nade gun
@@ -35,6 +37,7 @@ lives <n>hp x<n>
 map
 map band <n>
 med kit
+muzzle bloom stage <n>
 name p<n>
 name p<n> flag <n>
 player <color>
@@ -45,6 +48,9 @@ selected player <color> <side>
 self <color> <side>
 shield
 shield carried
+shot head <color> stage <n>
+shot impact
+shot trail <color> stage <n> bucket <n>
 spray can
 spray can carried
 spray paint puff
