@@ -54,7 +54,9 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   player means seeing who it is. Existing `player <color> <side>` labels are
   unchanged.
 - Each team has a **home edge**: Red = left, Blue = right.
-- Players spawn just inside their home edge and respawn there when killed.
+- Players start just inside their home edge. When killed they respawn at a
+  **random spot inside their own endzone** (GameVersion 25) — the respawn
+  point cannot be camped.
 
 ## Movement
 
@@ -339,8 +341,10 @@ What that means in practice:
 ## Lives & respawn
 
 - Each player has a fixed number of **lives**.
-- When you die, you **respawn at your home edge** after a short delay — as long as
-  you have lives remaining.
+- When you die, you **respawn at a random spot in your endzone** after a short
+  delay — as long as you have lives remaining (GameVersion 25; the spot is
+  drawn fresh each death, anywhere in the home capture column, full map
+  height, so campers can't sit on a known respawn point).
 - When you run out of lives, you are **out for the rest of the round**.
 
 ## The hearts
@@ -408,7 +412,7 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Players | 16 (8v8) | All standard Coworld slots |
 | Lives per player | 3 | Out of lives = out for the round |
 | Hit points per life (`hitPoints`) | 3 | Shots to kill; reset to full on respawn |
-| Respawn delay | ~3s | Time dead before respawning at home |
+| Respawn delay | ~3s | Time dead before respawning at a random endzone spot |
 | Gun range | 1300px | Effectively map-wide; aim precision and line of sight are the real limits |
 | Fire windup | ~0.2s | Trigger pull to bullet release; aim locks at the pull |
 | Fire cooldown | ~0.5s | Minimum time between shots |
