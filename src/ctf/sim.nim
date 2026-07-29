@@ -17,7 +17,9 @@ const
                        ## (c) respawns land at a pseudo-random spot inside
                        ## the team ENDZONE (seed-deterministic, replay-safe)
                        ## — spawn camping loses its pre-aim; the episode
-                       ## seed is CAUSAL now.
+                       ## seed is CAUSAL now;
+                       ## (d) column-1's FIFTH vertical bar (y=395, and its
+                       ## x-mirror) is a glass window.
                        ## GV24: soldier sprites in PLAYER views render with
                        ## FUZZED gun rotation (±~20°, deterministic, both
                        ## sides, self included) — exact aim is never readable
@@ -1546,7 +1548,10 @@ const
       rect: MapRect(x: 268, y: 108, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 204, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 300, w: 18, h: 59)),
-    ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 395, w: 18, h: 60)),
+    # GV25: the FIFTH stub from the top is a GLASS WINDOW too (operator rule)
+    # — windows at stubs 2, 5, and 6; x-mirrored like every column-1 shape.
+    ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: 268, y: 395, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, window: true,
       rect: MapRect(x: 268, y: 491, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 587, w: 18, h: 62)),

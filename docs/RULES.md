@@ -27,10 +27,11 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   the disc column to every other disc, opening real gaps in the mid-field
   slalom.
 - In the outermost stub column of each half, the **second wall stub from the
-  top and from the bottom are glass windows** (GameVersion 15): they block
-  movement, bullets, and spray cones exactly like stone, but **vision passes
-  straight through them**. Glass draws as a pale pane with diagonal sheen —
-  cover you can be seen behind is not cover.
+  top, the second from the bottom (GameVersion 15), and the fifth from the top
+  (GameVersion 25) are glass windows**: they block movement, bullets, and
+  spray cones exactly like stone, but **vision passes straight through them**.
+  Glass draws as a pale pane with diagonal sheen — cover you can be seen
+  behind is not cover.
 - The old midline chevron zigzag is now a **square-bracket wall pair framing
   the flag ring** (`[ … ]`, GameVersion 16), and the middle of each bracket's
   bar — dead on the center row — is a **glass window**: the mid lane stays
