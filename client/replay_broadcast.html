@@ -1310,6 +1310,15 @@ body[data-embed] #board { top: 0; height: 100%; }
   var EMBED = false;
   try { EMBED = new URLSearchParams(location.search).get('embed') === '1'; } catch (e) {}
   if (EMBED) document.body.setAttribute('data-embed', '1');
+
+  // Tick deep-link (?t=<tick>): seek there on load, paused, via the same s:
+  // command the scrubber uses (the sim clamps out-of-range ticks). One-shot,
+  // fired on the first ingested frame so the replay runtime is ready.
+  var SEEK_T = null;
+  try {
+    var seekRaw = new URLSearchParams(location.search).get('t');
+    if (seekRaw != null && /^\d+$/.test(seekRaw)) SEEK_T = parseInt(seekRaw, 10);
+  } catch (e) {}
   function postToShell(type, payload) {
     if (!EMBED || window.parent === window) return;
     try { window.parent.postMessage({ src: 'ctf-replay', type: type, data: payload }, '*'); } catch (e) {}
@@ -1403,6 +1412,8 @@ body[data-embed] #board { top: 0; height: 100%; }
     var s;
     try { s = JSON.parse(txt); } catch (e) { return; }
     lastState = s;
+
+    if (SEEK_T != null) { send('s:' + SEEK_T); SEEK_T = null; }
 
     // Stream the parsed frame to the League Replayer shell (embed mode). The
     // shell reads roster/KDA, clock, lives, flags and pov straight off this to
