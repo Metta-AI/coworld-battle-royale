@@ -9,7 +9,11 @@ when not defined(emscripten):
 
 const
   GameName* = "ctf"
-  GameVersion* = "24"  ## GV24: soldier sprites in PLAYER views render with
+  GameVersion* = "25"  ## GV25: dead players respawn at a RANDOM spot in
+                       ## their endzone (uniform over the home capture
+                       ## column, deterministic sim RNG) — a fixed respawn
+                       ## point can no longer be camped.
+                       ## GV24: soldier sprites in PLAYER views render with
                        ## FUZZED gun rotation (±~20°, deterministic, both
                        ## sides, self included) — exact aim is never readable
                        ## off a sprite; broadcast board unaffected.
@@ -3364,16 +3368,36 @@ proc captureZoneXRange(sim: SimServer, team: Team): tuple[lo, hi: int] =
     let lo = sim.teamHomeX(Blue) - CaptureZoneWidth div 2
     (lo, MapWidth - 1)
 
-proc resetPlayerToHome*(sim: var SimServer, playerIndex: int) =
-  ## Moves one player back to its team home spawn position.
-  if playerIndex < 0 or playerIndex >= sim.players.len:
-    return
-  sim.players[playerIndex].x = sim.players[playerIndex].homeX
-  sim.players[playerIndex].y = sim.players[playerIndex].homeY
+proc randomEndzonePosition*(sim: var SimServer, team: Team):
+    tuple[x, y: int] =
+  ## Returns a random walkable position inside a team's endzone (the home
+  ## capture column, full map height), drawn from the deterministic sim RNG.
+  let
+    zone = sim.captureZoneXRange(team)
+    inset = ArenaBorder + PlayerHalf
+    xLo = max(zone.lo, inset)
+    xHi = min(zone.hi, MapWidth - 1 - inset)
+    yLo = inset
+    yHi = MapHeight - 1 - inset
+  sim.nearestWalkable(
+    xLo + sim.rng.rand(xHi - xLo),
+    yLo + sim.rng.rand(yHi - yLo))
+
+proc placePlayer(sim: var SimServer, playerIndex, x, y: int) =
+  ## Moves one player to (x, y) with all motion state cleared.
+  sim.players[playerIndex].x = x
+  sim.players[playerIndex].y = y
   sim.players[playerIndex].velX = 0
   sim.players[playerIndex].velY = 0
   sim.players[playerIndex].carryX = 0
   sim.players[playerIndex].carryY = 0
+
+proc resetPlayerToHome*(sim: var SimServer, playerIndex: int) =
+  ## Moves one player back to its team home spawn position.
+  if playerIndex < 0 or playerIndex >= sim.players.len:
+    return
+  sim.placePlayer(playerIndex,
+    sim.players[playerIndex].homeX, sim.players[playerIndex].homeY)
 
 proc arrangeHomePositions*(sim: var SimServer) =
   ## Saves and applies team home spawn positions for all players.
@@ -5888,7 +5912,8 @@ proc stepLobby(sim: var SimServer) {.measure.} =
     sim.logLobbyCountdown()
 
 proc respawnPlayers(sim: var SimServer) =
-  ## Ticks respawn timers and brings dead players back at home.
+  ## Ticks respawn timers and brings dead players back at a random spot in
+  ## their endzone, so a fixed respawn point can't be camped.
   for i in 0 ..< sim.players.len:
     if sim.players[i].alive:
       continue
@@ -5897,7 +5922,8 @@ proc respawnPlayers(sim: var SimServer) =
     if sim.players[i].respawnTimer > 0:
       dec sim.players[i].respawnTimer
       if sim.players[i].respawnTimer <= 0:
-        sim.resetPlayerToHome(i)
+        let spawn = sim.randomEndzonePosition(sim.players[i].team)
+        sim.placePlayer(i, spawn.x, spawn.y)
         sim.players[i].alive = true
         sim.players[i].hp = sim.config.hitPoints
         sim.players[i].aimBrads = spawnAimBrads(sim.players[i].team)

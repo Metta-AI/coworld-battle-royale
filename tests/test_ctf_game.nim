@@ -115,6 +115,40 @@ suite "ctf game":
     check sim.players[1].alive
     check sim.players[1].hp == sim.config.hitPoints
 
+  test "respawns land at random spots inside the team endzone":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+      zoneLo = sim.gameMap.teamHomeX(Blue) - CaptureZoneWidth div 2
+      noInput = newSeq[InputState](sim.players.len)
+    var spots: seq[tuple[x, y: int]] = @[]
+    for round in 1 .. 4:
+      sim.players[0].x = cx
+      sim.players[0].y = cy
+      sim.players[0].aimBrads = 0
+      sim.players[0].fireCooldown = 0
+      sim.players[0].fireWindup = 0
+      sim.players[1].x = cx + 6
+      sim.players[1].y = cy
+      sim.players[1].hp = 1
+      sim.players[1].lives = 2
+      sim.tryFire(0)
+      check not sim.players[1].alive
+      for _ in 1 .. sim.config.respawnTicks + 1:
+        sim.step(noInput, noInput)
+      check sim.players[1].alive
+      # Inside Blue's endzone column (small slack for the walkability nudge).
+      check sim.players[1].x >= zoneLo - PlayerHalf
+      check sim.players[1].x < MapWidth - ArenaBorder
+      spots.add((sim.players[1].x, sim.players[1].y))
+    # The respawn point moves around instead of being campable.
+    var distinctSpots: seq[tuple[x, y: int]] = @[]
+    for spot in spots:
+      if spot notin distinctSpots:
+        distinctSpots.add(spot)
+    check distinctSpots.len >= 2
+
   test "a bullet stops at the first target in its path":
     var sim = twoTeamGame()
     discard sim.addPlayer("blue1")
