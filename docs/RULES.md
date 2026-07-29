@@ -125,6 +125,13 @@ always drawn — but moving entities are fogged:
   the paint lands. The ring is randomly (but deterministically, per shot)
   offset by up to ~20px, so it tells you something was hit *roughly there*
   — never the exact spot, the shot's line, or which team.
+- **A soldier's drawn gun angle is approximate (since GameVersion 24).** Every
+  soldier sprite in a player's view — enemies, teammates, corpses, and your own
+  self marker alike — renders its gun rotated by the true aim plus a
+  deterministic pseudo-random offset of up to **±20°**, re-rolled about twice a
+  second. Watching a bot never reveals its exact aim; a bot can know its own
+  aim only by tracking the turn commands it issued. (The spectator broadcast
+  board still shows true aim — this fuzz exists in player observations only.)
 - There is **no global heart tracking**: once a thief carries your heart into the
   fog, finding it again takes eyes on it.
 - Death does not lift the fog: a dead player sees the whole map fogged —

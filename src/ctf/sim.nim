@@ -9,7 +9,11 @@ when not defined(emscripten):
 
 const
   GameName* = "ctf"
-  GameVersion* = "23"  ## GV23: a depleted shield layer breaks the shield
+  GameVersion* = "24"  ## GV24: soldier sprites in PLAYER views render with
+                       ## FUZZED gun rotation (±~20°, deterministic, both
+                       ## sides, self included) — exact aim is never readable
+                       ## off a sprite; broadcast board unaffected.
+                       ## GV23: a depleted shield layer breaks the shield
                        ## outright (icon + fire slowdown end with the bubble),
                        ## and kills/heart-steals floor the game clock at
                        ## ActionClockFloorTicks remaining.
