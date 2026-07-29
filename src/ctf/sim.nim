@@ -1711,6 +1711,21 @@ const
     ArenaShape(kind: shapeRect, rect: MapRect(x: 726, y: 761, w: 18, h: 66)),
   ]
 
+proc defaultCtfRooms(gameMap: CtfMap): seq[Room] =
+  ## The three-room annotation set every map shares: an informal center zone
+  ## plus the two base strips spanning the spawn pockets. Derives entirely
+  ## from the map's dimensions and clearances.
+  @[
+    Room(name: "Center", x: gameMap.width div 2 - 80,
+         y: gameMap.height div 2 - 80, w: 160, h: 160),
+    Room(name: "Red Base", x: 0,
+         y: gameMap.height div 2 - gameMap.spawnClearH,
+         w: gameMap.captureClear, h: 2 * gameMap.spawnClearH),
+    Room(name: "Blue Base", x: gameMap.width - gameMap.captureClear,
+         y: gameMap.height div 2 - gameMap.spawnClearH,
+         w: gameMap.captureClear, h: 2 * gameMap.spawnClearH),
+  ]
+
 proc arenaCtfMap(): CtfMap =
   ## The default arena: the procedurally-defined symmetric 1235x659 map.
   result.name = ArenaName
@@ -1732,14 +1747,7 @@ proc arenaCtfMap(): CtfMap =
     MapPoint(x: result.width div 2, y: 2 * result.height div 3),
   ]
   result.medKitCandidates = result.medKitSpawns
-  result.rooms = @[
-    Room(name: "Center", x: result.width div 2 - 80,
-         y: result.height div 2 - 80, w: 160, h: 160),
-    Room(name: "Red Base", x: 0, y: result.height div 2 - 130,
-         w: result.captureClear, h: 260),
-    Room(name: "Blue Base", x: result.width - result.captureClear,
-         y: result.height div 2 - 130, w: result.captureClear, h: 260),
-  ]
+  result.rooms = result.defaultCtfRooms()
   result.validateMap()
 
 proc arenaLargeCtfMap(): CtfMap =
@@ -1765,14 +1773,7 @@ proc arenaLargeCtfMap(): CtfMap =
     MapPoint(x: result.width div 2, y: 2 * result.height div 3),
   ]
   result.medKitCandidates = result.medKitSpawns
-  result.rooms = @[
-    Room(name: "Center", x: result.width div 2 - 80,
-         y: result.height div 2 - 80, w: 160, h: 160),
-    Room(name: "Red Base", x: 0, y: result.height div 2 - 169,
-         w: result.captureClear, h: 338),
-    Room(name: "Blue Base", x: result.width - result.captureClear,
-         y: result.height div 2 - 169, w: result.captureClear, h: 338),
-  ]
+  result.rooms = result.defaultCtfRooms()
   result.validateMap()
 
 proc teamHomeX*(gameMap: CtfMap, team: Team): int =
@@ -2026,16 +2027,7 @@ proc scaledGenShell(sizeName: string): CtfMap =
   result.spawnClearW = s(70)
   result.spawnClearH = s(130)
   result.gunRange = s(1300)
-  result.rooms = @[
-    Room(name: "Center", x: result.width div 2 - 80,
-         y: result.height div 2 - 80, w: 160, h: 160),
-    Room(name: "Red Base", x: 0,
-         y: result.height div 2 - result.spawnClearH,
-         w: result.captureClear, h: 2 * result.spawnClearH),
-    Room(name: "Blue Base", x: result.width - result.captureClear,
-         y: result.height div 2 - result.spawnClearH,
-         w: result.captureClear, h: 2 * result.spawnClearH),
-  ]
+  result.rooms = result.defaultCtfRooms()
 
 proc mapProtectedFloorAt*(gameMap: CtfMap, x, y: int): bool =
   ## isProtectedFloor for a map that is NOT installed as the process map:
@@ -2526,16 +2518,7 @@ proc mapFromSpecJson*(text: string): CtfMap =
   result.medKitCandidates = pointsFromNode(node["medKitCandidates"])
   for item in node["leftObstacles"]:
     result.leftObstacles.add item.shapeFromSpecNode()
-  result.rooms = @[
-    Room(name: "Center", x: result.width div 2 - 80,
-         y: result.height div 2 - 80, w: 160, h: 160),
-    Room(name: "Red Base", x: 0,
-         y: result.height div 2 - result.spawnClearH,
-         w: result.captureClear, h: 2 * result.spawnClearH),
-    Room(name: "Blue Base", x: result.width - result.captureClear,
-         y: result.height div 2 - result.spawnClearH,
-         w: result.captureClear, h: 2 * result.spawnClearH),
-  ]
+  result.rooms = result.defaultCtfRooms()
   result.validateMap()
 
 proc resolveCtfMapMetadata*(config: GameConfig): CtfMap =
