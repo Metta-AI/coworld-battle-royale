@@ -230,6 +230,12 @@ const
                                ## (grenade landings; shots use the impact ring).
   SoundRingSize = 12           ## px diameter of the sound rings.
   SoundRingJitter = 20         ## max px a ring strays from the true spot.
+  AimRenderFuzzBrads = 14      ## max brads (±14 ≈ ±19.7°) a soldier sprite's
+                               ## gun rotation strays from the true aim in
+                               ## PLAYER views — sprites are never aim oracles.
+  AimRenderFuzzWindow = 12     ## ticks (~0.5s) an aim-fuzz offset holds before
+                               ## re-rolling: too brief to learn, too long to
+                               ## average away inside a 5-tick windup.
   ShotImpactSpriteId = 831     ## the hollow shot "impact" ring sprite.
   ShotImpactObjectBase = 19120 ## impact ring object-id pool: 19120..19135
                                ## (clear of the retired muzzle sound-ring pool
@@ -1236,6 +1242,24 @@ proc buildShotImpactSprite(): seq[uint8] {.measure.} =
         (float(y) - c) * (float(y) - c))
       if d <= c and d >= c - 1.5:
         result.putRawRgbaPixel(y * SoundRingSize + x, 255, 255, 255, 150)
+
+proc fuzzedAimBrads(sim: SimServer, targetIndex: int): int =
+  ## The aim angle a soldier sprite RENDERS with in PLAYER views: the true
+  ## aim plus a deterministic pseudo-random offset within ±AimRenderFuzzBrads
+  ## (~±20°), held for AimRenderFuzzWindow ticks per target then re-rolled.
+  ## Stable across frames, viewers, and replays — but never the exact aim
+  ## (GameVersion 24): looking at a bot — enemy, teammate, or your own self
+  ## marker — must not reveal where its gun truly points; a bot knows its own
+  ## aim only by tracking the commands it issued. The broadcast board is
+  ## unaffected (spectators see true aim). Same hash family as
+  ## shotImpactOffset.
+  var h = 0x9E3779B9'u32 xor 0x5F356495'u32
+  h = (h xor uint32(targetIndex)) * 0x85EBCA6B'u32
+  h = (h xor uint32(sim.tickCount div AimRenderFuzzWindow)) * 0xC2B2AE35'u32
+  h = h xor (h shr 15)
+  let span = uint32(2 * AimRenderFuzzBrads + 1)
+  (sim.players[targetIndex].aimBrads + int(h mod span) - AimRenderFuzzBrads +
+    AimBradsTurn) mod AimBradsTurn
 
 proc shotImpactOffset(shot: ShotFx): (int, int) =
   ## A deterministic pseudo-random offset for one shot's impact ring: stable
@@ -4492,19 +4516,24 @@ proc buildSpriteProtocolPlayerUpdates*(
           continue
       elif not viewerIsGhost:
         continue
-      var spriteId = other.spriteActorSpriteId(-1)
+      # GV24: every soldier sprite in a player view — enemy, teammate, corpse,
+      # and the self marker alike — renders with FUZZED aim (fuzzedAimBrads):
+      # exact aim is never readable off a sprite (both sides, by design).
+      let fuzzedRot = soldierRotIndex(sim.fuzzedAimBrads(i))
+      var spriteId = soldierPlayerSpriteId(other.team, other.skin, fuzzedRot)
       if not other.alive:
         # A body (ghost view only): grey corpse sprite + `corpse <color> <side>`
         # so it never reads as a live soldier to a label-scanning policy.
         spriteId = corpseSoldierSpriteId(
           other.team,
           other.skin,
-          soldierRotIndex(other.aimBrads)
+          fuzzedRot
         )
       elif i == playerIndex and not viewerIsGhost:
-        # Yourself reads as a distinct white-outlined soldier, pre-rotated to
-        # your aim so the gun points where you're looking.
-        let rot = soldierRotIndex(other.aimBrads)
+        # Yourself reads as a distinct white-outlined soldier — rotated to the
+        # FUZZED aim like everyone else: your true aim is knowable only from
+        # the commands you issued, never from the pixels.
+        let rot = fuzzedRot
         spriteId = selfSoldierSpriteId(other.skin, rot)
         result.addSpriteChanged(
           nextState.spriteDefs,
