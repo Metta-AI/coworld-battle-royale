@@ -115,7 +115,7 @@
           "default": false
         },
         "seed": {
-          "description": "Random seed.",
+          "description": "Random seed. Omitted (or left at the legacy default 679961): the server draws a fresh crypto-random seed at startup so respawn locations cannot be pre-computed. Pin any other value for reproducible runs.",
           "type": "integer",
           "default": 679961
         },
@@ -477,7 +477,6 @@
             "team": "blue"
           }
         ],
-        "seed": 679961,
         "num_agents": 16,
         "minPlayers": 16,
         "lives": 3,
@@ -650,7 +649,6 @@
           "team": "blue"
         }
       ],
-      "seed": 679961,
       "num_agents": 16,
       "minPlayers": 16,
       "lives": 1,
