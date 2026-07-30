@@ -10,6 +10,7 @@ import
   test_replay,
   test_replay_requests,
   test_replay_controls,
+  test_debug_overlay,
   test_ctf_game,
   test_grenades,
   test_plasma_arc,
