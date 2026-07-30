@@ -34,6 +34,12 @@ proc cornerPixel(spot: tuple[cx, cy, radius: int]):
   ## vacates: at rest it is stone, half a quarter-turn later it is open floor.
   (spot.cx + spot.radius - 2, spot.cy)
 
+proc turnedCornerPixel(spot: tuple[cx, cy, radius: int]):
+    tuple[x, y: int] =
+  ## Inside the 45° frame's southeast corner, outside the resting diamond.
+  let offset = spot.radius * 2 div 3
+  (spot.cx + offset, spot.cy + offset)
+
 suite "spinning center diamonds are real geometry":
   test "every diamond turns and its silhouette IS the collision mask":
     var sim = twoTeamGame()
@@ -48,11 +54,10 @@ suite "spinning center diamonds are real geometry":
         let spotFrame = diamondSpinFrame(spot.cx, tick)
         for y in spot.cy - spot.radius - 1 .. spot.cy + spot.radius + 1:
           for x in spot.cx - spot.radius - 1 .. spot.cx + spot.radius + 1:
-            if animatedDiamondCovers(spot, spotFrame, x, y):
-              # Drawn stone must block. (The converse does not hold: a
-              # neighbouring wall may share the box.)
-              check sim.isWall(x, y)
-              check not sim.canOccupy(x, y)
+            let expected = sim.isArtWall(x, y) or
+              animatedDiamondCovers(spot, spotFrame, x, y)
+            check sim.isWall(x, y) == expected
+            check sim.isWalkable(x, y) == not expected
 
   test "a vertex that rotates away stops blocking movement and bullets":
     var sim = twoTeamGame()
@@ -61,14 +66,17 @@ suite "spinning center diamonds are real geometry":
       (px, py) = cornerPixel(spot)
       restTick = tickOfFrame(spot.cx, 0)
       turnedTick = tickOfFrame(spot.cx, DiamondSpinFrames div 2)
+      rayTop = spot.cy - spot.radius - 6
+      rayBottom = spot.cy + spot.radius + 6
     sim.applyDiamondGeometry(restTick)
     check sim.isWall(px, py)
-    check not sim.lineOfSightClear(
-      spot.cx - spot.radius - 6, py, spot.cx + spot.radius + 6, py)
+    check not sim.lineOfSightClear(px, rayTop, px, rayBottom)
     # Half a quarter-turn later the vertex has swung off this row: the pixel
     # the player sees as floor really is floor, and the shot goes through.
     sim.applyDiamondGeometry(turnedTick)
     check not sim.isWall(px, py)
+    check sim.canOccupy(px, py)
+    check sim.lineOfSightClear(px, rayTop, px, rayBottom)
 
   test "the fog occlusion grid follows the spin":
     var sim = twoTeamGame()
@@ -131,3 +139,33 @@ suite "spinning center diamonds are real geometry":
     let tick = DiamondSpinTicksPerFrame       # frame 1 on the left half.
     check diamondSpinFrame(left.cx, tick) == 1
     check diamondSpinFrame(right.cx, tick) == DiamondSpinFrames - 1
+
+  test "paint follows the live footprint, including pixels outside frame zero":
+    var sim = twoTeamGame()
+    let
+      spot = AnimatedDiamonds[0]
+      tick = tickOfFrame(spot.cx, DiamondSpinFrames div 2)
+      (px, py) = turnedCornerPixel(spot)
+    sim.tickCount = tick
+    sim.applyDiamondGeometry(tick)
+    check not isAnimatedDiamondPixel(px, py)
+    check sim.isWall(px, py)
+    check sim.animatedDiamondAt(px, py) == 0
+    sim.addPaintStain(px, py, RedTeamColor, onWall = true)
+    check sim.diamondStains.len == 1
+    check sim.paintStains.len == 0
+
+  test "resetting the tick also resets the live geometry":
+    var sim = twoTeamGame()
+    let
+      spot = AnimatedDiamonds[0]
+      tick = tickOfFrame(spot.cx, DiamondSpinFrames div 2)
+      (turnedX, turnedY) = turnedCornerPixel(spot)
+      (restX, restY) = cornerPixel(spot)
+    sim.tickCount = tick
+    sim.applyDiamondGeometry(tick)
+    check sim.isWall(turnedX, turnedY)
+    sim.resetToLobby()
+    check sim.tickCount == 0
+    check not sim.isWall(turnedX, turnedY)
+    check sim.isWall(restX, restY)

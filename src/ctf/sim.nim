@@ -663,17 +663,11 @@ type
     aimBrads*: int
     visible*: seq[bool]
 
-  DiamondPatch* = object
-    ## One spinning center diamond's live geometry window. `base*` holds the
-    ## masks with NO diamond in them (everything else in the box — a
-    ## neighbouring stub, the border — survives untouched), so each new spin
-    ## frame is stamped as base OR rotated-diamond instead of being carved out
-    ## of the previous frame. The box is the diamond's circumscribed square:
-    ## an L1 ball of radius r never leaves radius r as it turns.
-    cx*, cy*, radius*: int
-    x0*, y0*, w*, h*: int
-    frame*: int                ## spin frame currently stamped into the masks.
-    baseWall*, baseWalk*: seq[bool]
+  DiamondPatch = object
+    ## Diamond-free wall pixels for one live geometry window.
+    x0, y0, w, h: int
+    frame: int
+    baseWall: seq[bool]
 
   ShotFx* = object
     ## A cosmetic shot tracer segment; never enters gameHash (replay-safe).
@@ -880,7 +874,7 @@ type
     wallMask*: seq[bool]
     fovBlocked*: seq[bool]     ## FovGridW x FovGridH; a cell is opaque when mostly wall.
     fovCaches: seq[PlayerFov]
-    diamondPatches*: seq[DiamondPatch]  ## live geometry of the spinning diamonds.
+    diamondPatches: seq[DiamondPatch]
     rng*: Rand
     nextJoinOrder*: int
     tickCount*: int
@@ -2415,7 +2409,7 @@ proc buildArenaObstacles*(gameMap: CtfMap): seq[ArenaShape] =
       result.add shape.rot180(gameMap.width, gameMap.height)
       result.add quarter.rot180(gameMap.width, gameMap.height)
 
-proc isSpinningDiamond*(gameMap: CtfMap, shape: ArenaShape): bool {.inline.} =
+proc isSpinningDiamond(gameMap: CtfMap, shape: ArenaShape): bool {.inline.} =
   ## The diamonds close to the center are the ones drawn — and, since GV28,
   ## COLLIDED — as spinning stone.
   shape.kind == shapeDiamond and abs(shape.cx - gameMap.center.x) < 80
@@ -2543,7 +2537,13 @@ proc mapProtectedFloorAt*(gameMap: CtfMap, x, y: int): bool =
       return true
   false
 
-proc mapWallAt*(gameMap: CtfMap, obstacles: seq[ArenaShape], x, y: int): bool =
+proc mapWallAt*(
+  gameMap: CtfMap,
+  obstacles: seq[ArenaShape],
+  x, y: int,
+  includeSpinning = true,
+  sweepSpinning = false
+): bool =
   ## Uninstalled-map wall test, matching isArenaWall's border + carve rules.
   if x < ArenaBorder or y < ArenaBorder or
       x >= gameMap.width - ArenaBorder or y >= gameMap.height - ArenaBorder:
@@ -2551,26 +2551,17 @@ proc mapWallAt*(gameMap: CtfMap, obstacles: seq[ArenaShape], x, y: int): bool =
   if mapProtectedFloorAt(gameMap, x, y):
     return false
   for shape in obstacles:
+    if gameMap.isSpinningDiamond(shape):
+      if not includeSpinning:
+        continue
+      if sweepSpinning:
+        let
+          dx = x - shape.cx
+          dy = y - shape.cy
+        if dx * dx + dy * dy <= shape.radius * shape.radius:
+          return true
+        continue
     if inShape(x, y, shape):
-      return true
-  false
-
-proc mapSpinSweptAt*(
-  gameMap: CtfMap, obstacles: seq[ArenaShape], x, y: int
-): bool =
-  ## True where a spinning diamond's stone can be at SOME angle: an L1 ball of
-  ## radius r turns inside — and fills — its circumscribed disc of radius r.
-  ## Layout validation measures this worst case, because a corridor that only
-  ## exists at one spin frame is not a corridor.
-  if mapProtectedFloorAt(gameMap, x, y):
-    return false
-  for shape in obstacles:
-    if not gameMap.isSpinningDiamond(shape):
-      continue
-    let
-      dx = x - shape.cx
-      dy = y - shape.cy
-    if dx * dx + dy * dy <= shape.radius * shape.radius:
       return true
   false
 
@@ -3105,8 +3096,8 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
     for x in 0 ..< w:
       ## Spinning diamonds count at their WIDEST: validation must hold at
       ## every frame of the turn, not just at rest (GV28).
-      let isWall = mapWallAt(gameMap, obstacles, x, y) or
-        mapSpinSweptAt(gameMap, obstacles, x, y)
+      let isWall =
+        mapWallAt(gameMap, obstacles, x, y, sweepSpinning = true)
       wallMask[y * w + x] = isWall
       ## The cover-budget interior. Sides maps keep the historical x-band
       ## definition EXACTLY (the curated pool seeds validate first-attempt
@@ -3902,30 +3893,16 @@ const
   DiamondSpinTicksPerFrame* = 4  ## ~2.7s per quarter turn at 24 ticks/s.
   DiamondRotShift = 16         ## fixed-point fraction bits of the spin table.
   DiamondRotOne = 1'i64 shl DiamondRotShift
-  ## cos/sin of frame · 5.625°, scaled by 2^16 and HARDCODED. The rotated
-  ## footprint is collision geometry now, so it may never depend on the host
-  ## libm: these literals make the mask bit-identical on every target
-  ## (native, wasm) and across every compiler.
-  DiamondRot: array[DiamondSpinFrames, tuple[ca, sa: int64]] = [
-    (65536'i64, 0'i64),        #  0.000 deg
-    (65220'i64, 6424'i64),     #  5.625 deg
-    (64277'i64, 12785'i64),    # 11.250 deg
-    (62714'i64, 19024'i64),    # 16.875 deg
-    (60547'i64, 25080'i64),    # 22.500 deg
-    (57798'i64, 30893'i64),    # 28.125 deg
-    (54491'i64, 36410'i64),    # 33.750 deg
-    (50660'i64, 41576'i64),    # 39.375 deg
-    (46341'i64, 46341'i64),    # 45.000 deg
-    (41576'i64, 50660'i64),    # 50.625 deg
-    (36410'i64, 54491'i64),    # 56.250 deg
-    (30893'i64, 57798'i64),    # 61.875 deg
-    (25080'i64, 60547'i64),    # 67.500 deg
-    (19024'i64, 62714'i64),    # 73.125 deg
-    (12785'i64, 64277'i64),    # 78.750 deg
-    (6424'i64, 65220'i64)      # 84.375 deg
+  ## cos(frame * 5.625°), scaled by 2^16. Geometry must not use host libm.
+  ## sin(frame) is the same table read from the other end.
+  DiamondCos: array[DiamondSpinFrames + 1, int64] = [
+    65536'i64, 65220'i64, 64277'i64, 62714'i64, 60547'i64,
+    57798'i64, 54491'i64, 50660'i64, 46341'i64, 41576'i64,
+    36410'i64, 30893'i64, 25080'i64, 19024'i64, 12785'i64,
+    6424'i64, 0'i64
   ]
 
-proc diamondFrameIndex*(frame: int): int {.inline.} =
+proc diamondFrameIndex(frame: int): int {.inline.} =
   ## Wraps any signed frame counter into 0 ..< DiamondSpinFrames.
   ((frame mod DiamondSpinFrames) + DiamondSpinFrames) mod DiamondSpinFrames
 
@@ -3946,9 +3923,11 @@ proc rotatedDiamondCovers*(
   ## +0.5) and the scale× art rasterizer (denom = 2·scale) share ONE
   ## predicate, so the drawn silhouette and the geometry cannot drift apart.
   let
-    rot = DiamondRot[diamondFrameIndex(frame)]
-    rx = int64(dxNum) * rot.ca + int64(dyNum) * rot.sa
-    ry = -int64(dxNum) * rot.sa + int64(dyNum) * rot.ca
+    index = diamondFrameIndex(frame)
+    ca = DiamondCos[index]
+    sa = DiamondCos[DiamondSpinFrames - index]
+    rx = int64(dxNum) * ca + int64(dyNum) * sa
+    ry = -int64(dxNum) * sa + int64(dyNum) * ca
   abs(rx) + abs(ry) <= int64(radius) * int64(denom) * DiamondRotOne
 
 proc animatedDiamondCovers*(
@@ -4206,6 +4185,8 @@ proc renderArenaRgbaPair*(
       for x in bRight ..< ow:
         artMask[y * ow + x] = true
   for shape in ArenaObstacles:
+    if gameMap.isSpinningDiamond(shape):
+      continue
     let
       (sx0, sy0, sx1, sy1) = shapeLogicalBounds(shape)
       ox0 = max(0, sx0 * scale)
@@ -4220,18 +4201,6 @@ proc renderArenaRgbaPair*(
           artMask[y * ow + x] = true
           if shape.window:
             windowMask[y * ow + x] = true
-  for spot in AnimatedDiamonds:
-    let
-      pad = spot.radius + 2
-      ox0 = max(0, (spot.cx - pad) * scale)
-      oy0 = max(0, (spot.cy - pad) * scale)
-      ox1 = min(ow, (spot.cx + pad) * scale)
-      oy1 = min(oh, (spot.cy + pad) * scale)
-    for y in oy0 ..< oy1:
-      for x in ox0 ..< ox1:
-        let i = y * ow + x
-        if artMask[i] and isAnimatedDiamondPixel(x div scale, y div scale):
-          artMask[i] = false
   # The flagstone tiles the board with a period of exactly texW×texH LOGICAL
   # pixels, so the bilinear floor repeats every texW·scale × texH·scale output
   # pixels — bake ONE tile block and index it, instead of bilinear-sampling
@@ -4367,14 +4336,14 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
   for y in 0 ..< h:
     for x in 0 ..< w:
       wallMask[y * w + x] = isArenaWall(x, y, cx, cy)
-  ## The art mask drops the rotating center diamonds: their pixels paint as
-  ## floor here and the live renderer draws them as spinning objects. The
-  ## COLLISION masks below keep using the unmodified wallMask.
+  ## The static mask drops only the spinning shapes themselves. Any overlapping
+  ## wall from another obstacle remains baked under the live sprite.
   var artMask = wallMask
   for y in 0 ..< h:
     for x in 0 ..< w:
       if artMask[y * w + x] and isAnimatedDiamondPixel(x, y):
-        artMask[y * w + x] = false
+        artMask[y * w + x] =
+          mapWallAt(gameMap, ArenaObstacles, x, y, includeSpinning = false)
   ## The capture endzones: the exact score-columns from checkWinConditions'
   ## captureZoneXRange (Red's inclusive right threshold, Blue's inclusive left),
   ## painted into the FLOOR below so a carrier can read where to run.
@@ -4414,7 +4383,7 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
       ## the art does: their footprint is not static. initSimServer keeps this
       ## diamond-free bake as the BASE and stamps the live rotated footprint
       ## over it every time the spin frame advances (applyDiamondGeometry).
-      let collisionWall = wall and not isAnimatedDiamondPixel(x, y)
+      let collisionWall = artWall
       result.walkImage[x, y] = if collisionWall: clear else: opaque
       result.wallImage[x, y] = if collisionWall: opaque else: clear
   ## Carved team pedestal under each flag home (walkable — sits inside the
@@ -6547,34 +6516,27 @@ proc isWall*(sim: SimServer, mx, my: int): bool =
   sim.wallMask[mapIndex(mx, my)]
 
 proc isArtWall*(sim: SimServer, mx, my: int): bool =
-  ## True when (mx, my) is drawn as WALL in the baked arena art. This is NOT
-  ## `isWall`: the collision mask includes the rotating center diamonds, whose
-  ## pixels the art bake deliberately paints as FLOOR (the live renderer draws
-  ## them as spinning sprites instead — see renderArenaRgbaPair's artMask). A
-  ## paint stain masked against collision instead of art therefore smeared
-  ## across floor wherever a diamond stood. Stains must mask against what the
-  ## viewer can actually see.
-  sim.isWall(mx, my) and not isAnimatedDiamondPixel(mx, my)
+  ## Static baked wall at this point, excluding the live diamonds.
+  if mx < 0 or my < 0 or mx >= MapWidth or my >= MapHeight:
+    return true
+  for patch in sim.diamondPatches:
+    if mx >= patch.x0 and mx < patch.x0 + patch.w and
+        my >= patch.y0 and my < patch.y0 + patch.h:
+      return patch.baseWall[(my - patch.y0) * patch.w + mx - patch.x0]
+  sim.isWall(mx, my)
 
-proc animatedDiamondAt*(x, y: int): int =
-  ## Index of the rotating diamond covering (x, y), or -1. Paint that lands
-  ## here has to ride the spin, so it is stored per-diamond rather than as a
-  ## static terrain stain.
+proc animatedDiamondAt*(sim: SimServer, x, y: int): int =
+  ## Index of the live diamond covering (x, y), or -1.
   for i in 0 ..< AnimatedDiamonds.len:
     let spot = AnimatedDiamonds[i]
-    if abs(x - spot.cx) + abs(y - spot.cy) <= spot.radius:
+    if animatedDiamondCovers(
+        spot, diamondSpinFrame(spot.cx, sim.tickCount), x, y):
       return i
   -1
 
 proc diamondSpinAngle*(sim: SimServer, diamond: int): float =
-  ## The spin angle of one diamond this tick, matching addRotatingDiamonds'
-  ## frame math exactly so stored paint lines up with the drawn stone.
-  let
-    spot = AnimatedDiamonds[diamond]
-    dir = if spot.cx < MapWidth div 2: 1 else: -1
-    step = sim.tickCount div DiamondSpinTicksPerFrame
-    frame = ((step * dir) mod DiamondSpinFrames + DiamondSpinFrames) mod
-      DiamondSpinFrames
+  ## Cosmetic angle derived from the geometry/render frame source of truth.
+  let frame = diamondSpinFrame(AnimatedDiamonds[diamond].cx, sim.tickCount)
   float(frame) / float(DiamondSpinFrames) * PI / 2.0
 
 proc seatInWall*(sim: SimServer, x, y: int, ux, uy: float): (int, int) =
@@ -6615,7 +6577,7 @@ proc addPaintStain*(sim: var SimServer, x, y: int, color: uint8,
   # store it in the diamond's own frame so it turns with the spin. (A static
   # terrain stain here would also be invisible — the diamond sprite draws over
   # it — and would smear onto the floor the art bakes under the diamond.)
-  let diamond = animatedDiamondAt(x, y)
+  let diamond = sim.animatedDiamondAt(x, y)
   if diamond >= 0:
     if sim.diamondStains.len >= StainMaxCount:
       return
@@ -8326,17 +8288,14 @@ proc initDiamondPatches(sim: var SimServer) =
       x1 = min(MapWidth, spot.cx + pad + 1)
       y1 = min(MapHeight, spot.cy + pad + 1)
     var patch = DiamondPatch(
-      cx: spot.cx, cy: spot.cy, radius: spot.radius,
       x0: x0, y0: y0, w: x1 - x0, h: y1 - y0,
       frame: -1                       # nothing stamped yet.
     )
     patch.baseWall = newSeq[bool](patch.w * patch.h)
-    patch.baseWalk = newSeq[bool](patch.w * patch.h)
     for py in 0 ..< patch.h:
       for px in 0 ..< patch.w:
         let index = mapIndex(patch.x0 + px, patch.y0 + py)
         patch.baseWall[py * patch.w + px] = sim.wallMask[index]
-        patch.baseWalk[py * patch.w + px] = sim.walkMask[index]
     sim.diamondPatches.add patch
 
 proc refreshFovCells(sim: var SimServer, x0, y0, x1, y1: int) =
@@ -8372,11 +8331,7 @@ proc stampDiamondPatch(sim: var SimServer, index, frame: int) =
     y0 = sim.diamondPatches[index].y0
     w = sim.diamondPatches[index].w
     h = sim.diamondPatches[index].h
-    spot = (
-      cx: sim.diamondPatches[index].cx,
-      cy: sim.diamondPatches[index].cy,
-      radius: sim.diamondPatches[index].radius
-    )
+    spot = AnimatedDiamonds[index]
   for py in 0 ..< h:
     for px in 0 ..< w:
       let
@@ -8385,10 +8340,8 @@ proc stampDiamondPatch(sim: var SimServer, index, frame: int) =
         key = py * w + px
         mapAt = mapIndex(x, y)
         stone = animatedDiamondCovers(spot, frame, x, y)
-      sim.wallMask[mapAt] =
-        sim.diamondPatches[index].baseWall[key] or stone
-      sim.walkMask[mapAt] =
-        sim.diamondPatches[index].baseWalk[key] and not stone
+      sim.wallMask[mapAt] = sim.diamondPatches[index].baseWall[key] or stone
+      sim.walkMask[mapAt] = not sim.wallMask[mapAt]
   sim.diamondPatches[index].frame = frame
   sim.refreshFovCells(x0, y0, x0 + w, y0 + h)
 
@@ -8399,7 +8352,7 @@ proc applyDiamondGeometry*(sim: var SimServer, tick: int): bool
   ## diamondSpinFrame — the same call the renderer makes — so geometry and art
   ## are the same shape by construction, and a replay re-derives both.
   for index in 0 ..< sim.diamondPatches.len:
-    let frame = diamondSpinFrame(sim.diamondPatches[index].cx, tick)
+    let frame = diamondSpinFrame(AnimatedDiamonds[index].cx, tick)
     if frame == sim.diamondPatches[index].frame:
       continue
     sim.stampDiamondPatch(index, frame)
@@ -8422,8 +8375,15 @@ proc pushPlayersOutOfDiamonds(sim: var SimServer) =
       py = sim.players[i].y
     if sim.canOccupy(px, py):
       continue
-    let free = sim.nearestWalkable(px, py)
-    sim.placePlayer(i, free.x, free.y)
+    block displace:
+      for spot in AnimatedDiamonds:
+        let frame = diamondSpinFrame(spot.cx, sim.tickCount)
+        for dy in -PlayerHalf .. PlayerHalf:
+          for dx in -PlayerHalf .. PlayerHalf:
+            if animatedDiamondCovers(spot, frame, px + dx, py + dy):
+              let free = sim.nearestWalkable(px, py)
+              sim.placePlayer(i, free.x, free.y)
+              break displace
 
 proc updateAnimatedDiamonds*(sim: var SimServer) =
   ## One tick of diamond rotation: geometry first, then anyone it engulfed.
@@ -8531,6 +8491,7 @@ proc resetToLobby*(sim: var SimServer) =
   sim.damagePops = @[]
   sim.nextJoinOrder = 0
   sim.tickCount = 0
+  sim.applyDiamondGeometry(0)
   sim.gameStartTick = -1
   sim.startWaitTimer = 0
   sim.timeLimitReached = false

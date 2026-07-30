@@ -1,6 +1,4 @@
-import
-  std/os,
-  ctf/sim
+import ../src/ctf/sim
 
 ## Verifies the rotating center diamonds block movement, shots, and vision AT
 ## EVERY SPIN FRAME, and that the mask they stamp is exactly the silhouette the
@@ -26,13 +24,13 @@ when isMainModule:
         fovOpaque = simServer.fovBlocked[
           (spot.cy div FovCellSize) * FovGridW + spot.cx div FovCellSize]
         walkable = simServer.walkMask[mapIndex(spot.cx, spot.cy)]
-      ## Every pixel the sprite paints must be wall, at this exact frame.
-      var drawnButOpen = 0
+      var maskMismatch = 0
       for py in spot.cy - spot.radius - 1 .. spot.cy + spot.radius + 1:
         for px in spot.cx - spot.radius - 1 .. spot.cx + spot.radius + 1:
-          if animatedDiamondCovers(spot, spotFrame, px, py) and
-              not simServer.wallMask[mapIndex(px, py)]:
-            inc drawnButOpen
+          let expected = simServer.isArtWall(px, py) or
+            animatedDiamondCovers(spot, spotFrame, px, py)
+          if simServer.wallMask[mapIndex(px, py)] != expected:
+            inc maskMismatch
       if frame == 0:
         echo "diamond (", spot.cx, ",", spot.cy, ") r=", spot.radius,
           " wall=", centerWall,
@@ -40,9 +38,9 @@ when isMainModule:
           " fovBlocked=", fovOpaque,
           " walkable=", walkable
       if not centerWall or losClear or not fovOpaque or walkable or
-          drawnButOpen > 0:
+          maskMismatch > 0:
         echo "  FAIL frame ", spotFrame, " at (", spot.cx, ",", spot.cy,
-          "): drawn-but-open pixels=", drawnButOpen
+          "): mask mismatches=", maskMismatch
         inc bad
   if bad > 0:
     echo "PROBLEM: ", bad, " diamond/frame pairs are not full cover"
