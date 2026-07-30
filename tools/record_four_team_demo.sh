@@ -19,9 +19,19 @@ cfg["mapPath"] = "gen"
 cfg["mapLayout"] = sys.argv[2]
 cfg["mapSeed"] = int(sys.argv[3])
 # Drop the classic config's explicit red/blue slot assignments so the seats
-# deal round all four teams (slot mod 4).
+# deal round all four teams (slot mod 4). Seat names are hosted-style — one
+# POLICY per team, each seated four times with the "_(N)" per-connection
+# suffix — so the viewer headlines policy names instead of falling back to
+# the team colors.
 cfg.pop("slots", None)
-cfg["players"] = [{"name": f"bot-{i}"} for i in range(16)]
+pols = ["redshift:v1", "bluesteel:v1", "greenhorn:v1", "goldrush:v1"]
+counts = [0, 0, 0, 0]
+players = []
+for slot in range(16):
+    team = slot % 4
+    counts[team] += 1
+    players.append({"name": f"{pols[team]}_({counts[team]})"})
+cfg["players"] = players
 json.dump(cfg, open(sys.argv[1], "w"))
 PY
 LOG="${LOG:-/tmp/ctf-four-team-demo-server.log}"

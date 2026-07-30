@@ -383,10 +383,16 @@ type
     x*, y*: int
 
   CaptureZone* = object
-    ## One team's home capture region: an inclusive axis-aligned box. Sides
-    ## maps use full-height columns (the classic zones); corner and plus
-    ## layouts bound the second axis too.
+    ## One team's home capture region. Sides maps use the classic
+    ## full-height columns; plus arms are boxes bounded on both axes; corner
+    ## teams get a DIAGONAL zone — everything within an L1 radius of their
+    ## map corner, whose threshold edge is a 45-degree line cut across the
+    ## corner. The box fields always hold the zone's bounding box (the strip
+    ## and diff-box machinery scan it); `diag` refines membership.
     xLo*, xHi*, yLo*, yHi*: int
+    diag*: bool                ## L1 corner zone instead of the full box.
+    cornerX*, cornerY*: int    ## the map corner the diagonal zone hugs.
+    diagLimit*: int            ## inclusive L1 radius from that corner.
 
   MapSymmetry* = enum
     ## How a map's full obstacle set derives from its authored/generated
@@ -1986,28 +1992,51 @@ proc captureZone*(gameMap: CtfMap, team: Team): CaptureZone =
     else:
       result.xLo = anchor.x - half
   of layoutCorners:
+    ## The threshold edge is the 45-degree line through the anchor (plus
+    ## half slack): everything within that L1 radius of the team's map
+    ## corner scores. The box fields are its bounding box.
+    result.diag = true
+    result.cornerX = if anchor.x < gameMap.center.x: 0 else: w - 1
+    result.cornerY = if anchor.y < gameMap.center.y: 0 else: h - 1
+    result.diagLimit = abs(anchor.x - result.cornerX) +
+      abs(anchor.y - result.cornerY) + half
     if anchor.x < gameMap.center.x:
-      result.xHi = anchor.x + half
+      result.xHi = min(w - 1, result.diagLimit)
     else:
-      result.xLo = anchor.x - half
+      result.xLo = max(0, w - 1 - result.diagLimit)
     if anchor.y < gameMap.center.y:
-      result.yHi = anchor.y + half
+      result.yHi = min(h - 1, result.diagLimit)
     else:
-      result.yLo = anchor.y - half
+      result.yLo = max(0, h - 1 - result.diagLimit)
   of layoutPlus:
+    ## An arm-mouth box: past the anchor on the home axis, bounded to the
+    ## arm span on the other (the corners are open field, not endzone).
+    let arm = gameMap.plusArmHalf()
     case team
     of Red:
       result.xHi = anchor.x + half
+      result.yLo = gameMap.center.y - arm
+      result.yHi = gameMap.center.y + arm
     of Blue:
       result.xLo = anchor.x - half
+      result.yLo = gameMap.center.y - arm
+      result.yHi = gameMap.center.y + arm
     of Green:
       result.yHi = anchor.y + half
+      result.xLo = gameMap.center.x - arm
+      result.xHi = gameMap.center.x + arm
     of Yellow:
       result.yLo = anchor.y - half
+      result.xLo = gameMap.center.x - arm
+      result.xHi = gameMap.center.x + arm
 
 proc inCaptureZone*(zone: CaptureZone, x, y: int): bool =
   ## Returns whether a map point sits inside one capture zone.
-  x >= zone.xLo and x <= zone.xHi and y >= zone.yLo and y <= zone.yHi
+  if x < zone.xLo or x > zone.xHi or y < zone.yLo or y > zone.yHi:
+    return false
+  if zone.diag:
+    return abs(x - zone.cornerX) + abs(y - zone.cornerY) <= zone.diagLimit
+  true
 
 proc mirrorX(rect: MapRect, width: int): MapRect =
   ## Mirrors one rectangle across the vertical center line of a width-px map.
@@ -2410,13 +2439,6 @@ proc generateMapAttempt*(
       else:
         raise newException(
           CtfError, "Unknown map layout: " & overrides.layout)
-    if result.layout == layoutPlus:
-      ## One corner blocker as a quadrant seed shape; its rot90 orbit walls
-      ## all four corners, leaving the open plus of arms + center.
-      let arm = result.plusArmHalf()
-      result.leftObstacles.add ArenaShape(kind: shapeRect,
-        rect: MapRect(x: 0, y: 0,
-          w: result.center.x - arm, h: result.center.y - arm))
   else:
     let symDraw = if rng.coin(): symRot180 else: symMirror
     result.symmetry =
@@ -2460,13 +2482,11 @@ proc generateMapAttempt*(
       case result.layout
       of layoutSides:
         (lo: ArenaBorder + 30, hi: result.height - ArenaBorder - 30)
-      of layoutCorners:
+      of layoutCorners, layoutPlus:
         ## Crosses the centerline: the rot90 images fill the other side, and
-        ## slots near cy are what covers the central horizontal band.
+        ## slots near cy are what covers the central horizontal band. Plus
+        ## maps use the same full quadrant — their corners are open field.
         (lo: ArenaBorder + 30, hi: cy + 60)
-      of layoutPlus:
-        (lo: cy - result.plusArmHalf() + 20,
-         hi: cy + result.plusArmHalf() - 20)
   ## Window-eligible shapes: (obstacle index, column, slot y).
   var eligible: seq[tuple[idx, col, y: int]]
 
@@ -2524,12 +2544,11 @@ proc generateMapAttempt*(
         ## anyway and reads as a wart.
         var top = sy - 30
         var bottom = sy + 30
-        if result.layout != layoutPlus:
-          if i == 0 and top - ArenaBorder < MinCorridorWidth:
-            top = ArenaBorder
-          if i == slotYs.len - 1 and result.layout == layoutSides and
-              result.height - ArenaBorder - bottom < MinCorridorWidth:
-            bottom = result.height - ArenaBorder
+        if i == 0 and top - ArenaBorder < MinCorridorWidth:
+          top = ArenaBorder
+        if i == slotYs.len - 1 and result.layout == layoutSides and
+            result.height - ArenaBorder - bottom < MinCorridorWidth:
+          bottom = result.height - ArenaBorder
         result.leftObstacles.add ArenaShape(kind: shapeRect,
           rect: MapRect(x: colX - 9, y: top, w: 18, h: bottom - top))
         eligible.add (result.leftObstacles.high, col, sy)
@@ -2665,10 +2684,7 @@ proc generateMapAttempt*(
   if teams == 4:
     let
       ringLo = result.flagRing + 40
-      ringHi =
-        case result.layout
-        of layoutPlus: result.plusArmHalf() - 30
-        else: result.center.x - result.captureClear - 60
+      ringHi = result.center.x - result.captureClear - 60
       d = rng.pickRange(ringLo, max(ringLo + 1, ringHi))
       orbit = rot90Orbit((result.center.x + d, result.center.y), result.width)
     result.medKitCandidates = @[]
@@ -2703,7 +2719,6 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
     obstacles = buildArenaObstacles(gameMap)
   var wallMask = newSeq[bool](w * h)
   var coverPixels, interiorPixels = 0
-  let arm = gameMap.plusArmHalf()
   for y in 0 ..< h:
     for x in 0 ..< w:
       let isWall = mapWallAt(gameMap, obstacles, x, y)
@@ -2718,16 +2733,10 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
         of layoutSides:
           x >= gameMap.captureClear and x < w - gameMap.captureClear and
             y >= ArenaBorder and y < h - ArenaBorder
-        of layoutCorners:
+        of layoutCorners, layoutPlus:
           x >= ArenaBorder and x < w - ArenaBorder and
             y >= ArenaBorder and y < h - ArenaBorder and
             not mapProtectedFloorAt(gameMap, x, y)
-        of layoutPlus:
-          x >= ArenaBorder and x < w - ArenaBorder and
-            y >= ArenaBorder and y < h - ArenaBorder and
-            not mapProtectedFloorAt(gameMap, x, y) and
-            not (abs(x - gameMap.center.x) > arm and
-              abs(y - gameMap.center.y) > arm)
       if interior:
         inc interiorPixels
         if isWall:
@@ -3551,6 +3560,18 @@ proc endzoneColorAt(
     var
       onLine = false
       near = 1.0
+    if tint.zone.diag:
+      ## Diagonal corner zone: the threshold edge is the 45-degree L1
+      ## shell; the ember is brightest at the line and eases toward the
+      ## corner. The line band is one pixel wider in L1 so its diagonal
+      ## stripe carries the same optical weight as the axis lines.
+      let d = abs(x - tint.zone.cornerX) + abs(y - tint.zone.cornerY)
+      if d > tint.zone.diagLimit - EndzoneLineW - 1:
+        return overTint(base, rgba(tint.color.r, tint.color.g,
+          tint.color.b, EndzoneLineAlpha))
+      return emberThroughCracks(base, tint.color,
+        EndzoneGlowFloor + (1.0 - EndzoneGlowFloor) *
+          clamp(d.float / max(1, tint.zone.diagLimit).float, 0.0, 1.0))
     if tint.boundHiX:
       if x > tint.zone.xHi - EndzoneLineW:
         onLine = true
@@ -4723,9 +4744,23 @@ proc randomEndzonePosition*(sim: var SimServer, team: Team):
     xHi = min(zone.xHi, MapWidth - 1 - inset)
     yLo = max(zone.yLo, inset)
     yHi = min(zone.yHi, MapHeight - 1 - inset)
-  sim.nearestWalkable(
-    xLo + sim.rng.rand(xHi - xLo),
-    yLo + sim.rng.rand(yHi - yLo))
+  var
+    x = xLo + sim.rng.rand(xHi - xLo)
+    y = yLo + sim.rng.rand(yHi - yLo)
+  if zone.diag:
+    ## A diagonal corner zone fills half its bounding box: redraw until the
+    ## point falls inside (deterministic — pure rng sequence), with the
+    ## anchor as a guaranteed landing spot if the draws run cold.
+    var attempts = 0
+    while not zone.inCaptureZone(x, y) and attempts < 16:
+      x = xLo + sim.rng.rand(xHi - xLo)
+      y = yLo + sim.rng.rand(yHi - yLo)
+      inc attempts
+    if not zone.inCaptureZone(x, y):
+      let anchor = sim.gameMap.teamAnchor(team)
+      x = anchor.x
+      y = anchor.y
+  sim.nearestWalkable(x, y)
 
 proc placePlayer(sim: var SimServer, playerIndex, x, y: int) =
   ## Moves one player to (x, y) with all motion state cleared.

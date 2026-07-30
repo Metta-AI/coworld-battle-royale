@@ -79,10 +79,12 @@ square map:
 
 - **Layouts** (`"mapLayout"`, or drawn from the map seed): `"corners"` puts a
   team in each corner (Red top-left, Blue top-right, Green bottom-left,
-  Yellow bottom-right); `"plus"` walls off the four corners and puts a team
-  at the end of each arm (Red west, Blue east, Green north, Yellow south).
-  Terrain replicates a generated quadrant by 90-degree rotation, so all four
-  quarters are exactly fair.
+  Yellow bottom-right) with a DIAGONAL endzone — a 45-degree threshold line
+  cut across the corner; `"plus"` puts a team at each edge midpoint (Red
+  west, Blue east, Green north, Yellow south) with an arm-mouth endzone —
+  the corners are open battlefield. Both are fully open square boards whose
+  terrain replicates a generated quadrant by 90-degree rotation, so all
+  four quarters are exactly fair.
 - **Every team has its own heart** on its own pedestal, and its own capture
   zone behind it. Steal ANY other team's heart and carry it into your own
   zone to win. Allies do not exist: 4-team play is pure free-for-all, and a
@@ -100,8 +102,8 @@ square map:
   `yellow` simply appear as team color tokens alongside `red` and `blue`.
 - Med kits become a rot90-fair diamond of four; each team gets one shield
   and one spray-can pickup near its endzone; the four grenade pickups move
-  to the edge midpoints (corners layout) or the center-intersection corners
-  (plus layout).
+  to the edge midpoints (corners layout) or a rot90 orbit around the
+  center (plus layout).
 
 ## Movement
 

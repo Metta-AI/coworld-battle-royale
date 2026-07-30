@@ -123,10 +123,26 @@ suite "four team ctf":
     check blue.x > gameMap.center.x and blue.y == gameMap.center.y
     check green.y < gameMap.center.y and green.x == gameMap.center.x
     check yellow.y > gameMap.center.y and yellow.x == gameMap.center.x
-    # North team's capture zone bounds y, not x.
-    let zone = gameMap.captureZone(Green)
-    check zone.xLo == 0 and zone.xHi == gameMap.width - 1
+    # North team's capture zone is the arm mouth: bounded on y by the
+    # anchor threshold and on x by the arm span (the corners are open
+    # field, not endzone).
+    let
+      zone = gameMap.captureZone(Green)
+      arm = gameMap.plusArmHalf()
     check zone.yHi < gameMap.height - 1
+    check zone.xLo == gameMap.center.x - arm
+    check zone.xHi == gameMap.center.x + arm
+
+  test "corner endzones are diagonal":
+    let sim = fourTeamGame()
+    let zone = sim.gameMap.captureZone(Red)
+    check zone.diag
+    # The map corner itself is deep inside; the anchor is inside; a point
+    # past the 45-degree threshold on one axis alone is not.
+    check zone.inCaptureZone(ArenaBorder, ArenaBorder)
+    let anchor = sim.gameMap.teamAnchor(Red)
+    check zone.inCaptureZone(anchor.x, anchor.y)
+    check not zone.inCaptureZone(zone.diagLimit - 5, zone.diagLimit - 5)
 
   test "classic 2-team configs reject green and yellow slots":
     var config = defaultGameConfig()

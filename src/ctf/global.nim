@@ -1009,7 +1009,10 @@ proc applyGlobalViewerMessage*(
           state.povSelectPending = slot
       else:
         state.replayCommands.add(item.text)
-    of SpriteClientInputMessage:
+    else:
+      # Input, ready, and any future client message kinds: nothing for the
+      # global viewer to do (an `else` keeps this compiling across bitworld
+      # protocol additions — the shared nimby checkout moves underneath us).
       discard
 
 proc applyPlayerViewerMessage*(
@@ -1027,7 +1030,7 @@ proc applyPlayerViewerMessage*(
     of SpriteClientInputMessage:
       pressedMask = pressedMask or (item.mask and not inputMask)
       inputMask = item.mask
-    of SpriteClientMouseMoveMessage, SpriteClientMouseButtonMessage:
+    else:
       discard
 
 proc isSolid(sprite: Sprite, x, y: int, flipH: bool): bool =

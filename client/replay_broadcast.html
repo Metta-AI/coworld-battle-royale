@@ -169,9 +169,10 @@ html, body {
   box-shadow: inset 0 calc(-1 * var(--u)) 0 rgba(242, 232, 216, 0.06);
 }
 
-/* One side of the scorebug: 1-2 plates stacked vertically (2-team play keeps
-   one plate per side, exactly the old layout; 3-4 teams stack a second plate
-   under the first on each side, flanking the same center clock). */
+/* One side of the scorebug: one plate per side for classic red/blue (exactly
+   the old layout); a 3-4 team game puts BOTH of a side's plates on the same
+   row (outer team at the screen edge, inner team beside the clock), so all
+   four teams read on one line across the band. */
 .plates {
   display: flex;
   flex-direction: column;
@@ -179,6 +180,8 @@ html, body {
   gap: calc(5 * var(--u));
   min-width: 0;
 }
+.plates.row { flex-direction: row; align-items: center; gap: calc(18 * var(--u)); }
+.plates.row .plate { flex: 1 1 0; }
 .plate {
   display: flex;
   align-items: center;
@@ -293,6 +296,12 @@ html, body {
   white-space: nowrap;
   color: var(--amber);
   text-transform: uppercase;
+  /* An outermost flag icon sits at the screen edge; an unclamped centered
+     tag would poke past it (seen as stray clipped names at the band edges
+     in 4-team games). */
+  max-width: calc(58 * var(--u));
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* center clock pill + phase */
@@ -1617,6 +1626,8 @@ body[data-embed] #board { top: 0; height: 100%; }
     var sides = [$('plates-l'), $('plates-r')];
     sides[0].innerHTML = '';
     sides[1].innerHTML = '';
+    sides[0].classList.toggle('row', teams.length > 2);
+    sides[1].classList.toggle('row', teams.length > 2);
     teams.forEach(function (team, i) {
       var plate = document.createElement('div');
       plate.className = 'plate ' + team + ' ' + (i % 2 === 0 ? 'side-l' : 'side-r');

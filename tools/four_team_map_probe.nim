@@ -29,7 +29,7 @@ proc renderMap(gameMap: CtfMap, path: string) =
         of Yellow: rgba(221, 197, 49, 255)
     for y in zone.yLo .. zone.yHi:
       for x in zone.xLo .. zone.xHi:
-        if (x + y) mod 7 == 0:
+        if (x + y) mod 7 == 0 and zone.inCaptureZone(x, y):
           image[x, y] = c
     for dy in -6 .. 6:
       for dx in -6 .. 6:
