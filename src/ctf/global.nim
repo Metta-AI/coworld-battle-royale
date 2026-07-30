@@ -317,12 +317,8 @@ const
   RigLegObjectBase = 32060     ## 3 leg objects per player: 32060..32107.
   RigWheelObjectBase = 32120   ## 3 wheel objects per player: 32120..32167.
   RigGunObjectBase = 32168     ## 1 gun object per player: 32168..32183.
-  AimDotSpriteBase = 780       ## per-color aim indicator dot sprites: 780..795.
-  AimDotObjectBase = 18000     ## aim dot object-id pool: 18000..18063.
-  AimDotSize = 2
-  AimDotsPerPlayer = 4         ## dots along each player's aim line.
-  AimDotStart = 5              ## px from the player center to the first dot.
-  AimDotSpacing = 3            ## px between aim dots (line reaches ~14px out).
+  ## The retired aim-dot indicator left sprites 780..795 and objects
+  ## 18000..18063 unallocated; both ranges are free to reuse.
   PlayerNameSpriteBase = 7000
   PlayerNameObjectBase = 7000
   PlayerNameZ = 30002
@@ -349,7 +345,7 @@ const
   ## (one per run width in cells), map markers 20000. Objects: flags 6500..6501
   ## (map view) / 5009..5010 (player view), team score text 9600..9601,
   ## muzzle blooms 16800..16815, tracer heads 16820..16835, splatters
-  ## 17000..17031, aim dots 18000..18063, identity badges 19040..19055,
+  ## 17000..17031, identity badges 19040..19055,
   ## map markers 20000, fog runs 21000..23047, tracer dots 24000..29263.
   ## Player debug sprites and objects use per-player pools in 40000..56383.
   SpritePlayerFireSpriteId = 5000
@@ -1886,20 +1882,6 @@ proc buildTracerHeadSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
         uint8(clamp(bb, 0, 255)),
         alpha
       )
-
-proc buildAimDotSprite(colorIndex: int): seq[uint8] {.measure.} =
-  ## Builds one aim-indicator dot sprite: the player's palette color mixed
-  ## halfway toward white, matching the tracer-dot styling.
-  result = newRgbaPixels(AimDotSize, AimDotSize)
-  let base = Palette[PlayerColors[colorIndex and 0x0f] and 0x0f]
-  for i in 0 ..< AimDotSize * AimDotSize:
-    result.putRawRgbaPixel(
-      i,
-      uint8((base.r.int + 255) div 2),
-      uint8((base.g.int + 255) div 2),
-      uint8((base.b.int + 255) div 2),
-      255
-    )
 
 proc buildSplatterSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
   ## Builds one death-splatter blob: a dense irregular blob of the victim's
