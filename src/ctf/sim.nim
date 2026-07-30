@@ -11,10 +11,12 @@ import map_pool
 
 const
   GameName* = "ctf"
-  GameVersion* = "27"  ## GV27: procedural terrain — canonical play draws a
-                       ## seeded, validated, left-right-symmetric (mirror or
-                       ## 180°-rotation) map from a curated pool; med-kit
-                       ## spawn points move per map.
+  GameVersion* = "26"  ## Procedural terrain (mapPath "gen"/"pool", curated
+                       ## pool in map_pool.nim) is CONFIG-GATED and ships
+                       ## without a version bump: the default arena and its
+                       ## rules are unchanged, and a league that enables it
+                       ## does so through its own config. Replays carry the
+                       ## exact geometry (mapSpec) either way.
                        ## GV26 (three operator rules): (a) the SELF marker
                        ## renders TRUE aim again — the fuzz hides OTHERS'
                        ## aim, never your own state; (b) HEART carriers fire

@@ -77,3 +77,11 @@ gun-range default in `config.update` resolves through the same path.
 GameVersion bump (25). Obsoletes geometry-memorizing bots including our
 champion; champion pre-adaptation happens before the canonical merge. Merge
 gated on daveey's pool review.
+
+## Ship addendum (2026-07-29, post-review)
+
+daveey's final call: merge WITHOUT flipping the default — `config.json`
+stays on the hand-authored arena and there is NO GameVersion bump (default
+gameplay is byte-identical; main's GV26 fixtures re-simulate clean).
+Procedural terrain ships config-gated (`mapPath: "pool"` / `"gen"`) for a
+separate league to enable through its own config.

@@ -20,32 +20,34 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   **right edge**.
 - **Two team hearts**, one on each team's **home pedestal** inside its spawn
   pocket (classic two-object CTF, with hearts for flags).
-- **The terrain is procedurally generated** (GameVersion 27): each match
-  draws a seeded, validated map from a curated pool instead of one fixed
-  arena. A map picks a **size class** (small / standard / large), a column
-  layout of **staggered cover** (offset wall stubs, diamonds, discs, and
-  diagonal chevron walls), which slots in each column are cleared, a
-  **center feature** (the windowed square bracket framing the flag ring, an
-  open ring, or a solid wall pair), and its glass-window placements. Every
-  layout is **exactly team-symmetric** — the right half is the left half
-  either mirrored or rotated 180° about the center — so neither team has a
-  positional advantage.
-- Every pool map passes the same play invariants the hand-tuned arena was
-  built to: **no straight shot crosses the field** (every approach is a
-  series of corners), every corridor a player is forced through is **at
-  least twice the player footprint**, both hearts and the center connect,
-  and the cover budget stays inside a fixed band (neither open field nor
-  maze).
-- Some cover shapes are **glass windows** (GameVersion 15; placements drawn
-  per map since GameVersion 27): they block movement, bullets, and spray
-  cones exactly like stone, but **vision passes straight through them**.
+- The arena is filled with **staggered cover** (a slalom of offset wall
+  stubs, diamonds, discs, and diagonal chevron walls, mirrored symmetrically so
+  neither team has a positional advantage): **no straight shot crosses the
+  field**, so every approach is a series of corners. GameVersion 16 thinned
+  the disc column to every other disc, opening real gaps in the mid-field
+  slalom.
+- In the outermost stub column of each half, the **second wall stub from the
+  top, the second from the bottom (GameVersion 15), and the fifth from the top
+  (GameVersion 26) are glass windows**: they block movement, bullets, and
+  spray cones exactly like stone, but **vision passes straight through them**.
   Glass draws as a pale pane with diagonal sheen — cover you can be seen
-  behind is not cover. On bracket-center maps the middle of each bracket's
-  bar — dead on the center row — is glass: the mid lane stays closed to
-  movement and fire, but both teams can watch the center corridor through
-  it.
-- The exact geometry of a match's map is **static knowledge**: it is pinned
-  in the match config/replay (`mapSpec`) and never changes mid-match.
+  behind is not cover.
+- The old midline chevron zigzag is now a **square-bracket wall pair framing
+  the flag ring** (`[ … ]`, GameVersion 16), and the middle of each bracket's
+  bar — dead on the center row — is a **glass window**: the mid lane stays
+  closed to movement and fire, but both teams can watch the center corridor
+  through the glass.
+- **Procedurally generated terrain is available as a config option**
+  (`mapPath: "pool"` draws from a curated 20-map pool, `"gen"` + `mapSeed`
+  generates directly; `mapSize` / `mapSymmetry` / `mapColumns` /
+  `mapWindows` / `mapCenterFeature` lock individual draws). Generated
+  layouts keep every arena invariant — exact team symmetry (vertical mirror
+  or 180° rotation), no straight cross-field shot, corridors at least twice
+  the player footprint, a bounded cover budget — and draw their size class,
+  obstacle columns, glass placements, center feature, and med-kit pair per
+  map. The exact geometry is pinned into the match config/replay as
+  `mapSpec`. The default league map remains the hand-tuned arena described
+  above; leagues opt in through their own config.
 - A round ends when a team **captures the enemy heart** or is **wiped out**.
 
 ## Teams & spawns
@@ -110,8 +112,8 @@ always drawn — but moving entities are fogged:
   ±60°) around your **aim angle**, with **unlimited range**, plus a small
   **omnidirectional bubble** of `visionBubble` (default ~90px) around you.
 - **Stone walls block vision** — the same walls that block bullets — with one
-  exception: **glass windows** (placements drawn per map, biased to the
-  outer columns and the midline) block bullets but NOT vision. A long open
+  exception: **glass windows** (the second stub from the top and bottom of
+  each half's outer stub column) block bullets but NOT vision. A long open
   lane is visible (and lethal) end to end; anything behind stone is not;
   anything behind glass is **seen but safe from direct fire**.
 - **Your aim carries your vision.** You look where you aim, not where you walk,
@@ -311,10 +313,8 @@ What that means in practice:
 
 ## Med kits
 
-- **Two med kits sit on the center line**, as a top/bottom pair placed
-  symmetrically around the middle row. The pair's position is drawn per map
-  (GameVersion 27; the map spec also lists the unused candidate pair) and
-  nudged to the nearest walkable floor.
+- **Two med kits sit on the center line** — at one third and two thirds of
+  the field height, nudged to the nearest walkable floor.
 - **Touching one while hurt restores your hit points back to full.** A
   healthy player walks over it untouched — a kit is never wasted.
 - **A taken kit respawns 30 seconds later** in the same spot.
@@ -425,7 +425,7 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Lives per player | 3 | Out of lives = out for the round |
 | Hit points per life (`hitPoints`) | 3 | Shots to kill; reset to full on respawn |
 | Respawn delay | ~3s | Time dead before respawning at a random endzone spot |
-| Gun range | 1300px on the standard size (scales with map size class) | Effectively map-wide; aim precision and line of sight are the real limits |
+| Gun range | 1300px | Effectively map-wide; aim precision and line of sight are the real limits |
 | Fire windup | ~0.2s | Trigger pull to bullet release; aim locks at the pull |
 | Fire cooldown | ~0.5s | Minimum time between shots |
 | Carrier speed | ~70% | Movement penalty while holding the heart |
@@ -442,7 +442,7 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Paint puff lifetime (`PlasmaArcFxTicks`) | 4 ticks | Cosmetic fade of each per-tick cone snapshot |
 | Heart auto-return | instant | A heart snaps back to its own pedestal the moment its carrier dies |
 | Time limit (`MaxTicks`) | 5000 ticks (~3.5 min) | Round length cap before the lose-lose draw |
-| Map size | 1050×560 / 1235×659 / 1606×857 | Size class drawn per map (GameVersion 27); gun range and clearances scale with it |
+| Map size | 1235×659 | Inherited from Crewrift; may change |
 
 Engine tick rate is **24 ticks/sec** (inherited from Crewrift); all
 second-based values above convert at that rate.

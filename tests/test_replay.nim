@@ -11,7 +11,7 @@ const
   # (tests/replays/ctf.bitreplay is the event-substrate fixture:
   # GameVersion 25, seed 281, lives 9, kills by all three weapons — see
   # test_extract_events.)
-  CtfReplayPath = GameDir / "tests" / "fixtures" / "capture-seed11.bitreplay"
+  CtfReplayPath = GameDir / "tests" / "fixtures" / "capture-seed7.bitreplay"
 
 proc initReplaySim(data: ReplayData): SimServer =
   ## Initializes a replay simulation from the replay config JSON.
