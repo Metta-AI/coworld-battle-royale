@@ -3786,15 +3786,15 @@ proc addRotatingDiamonds(
   ## Draws the center diamonds as slowly spinning carved-stone sprites over
   ## the floor the art bake left under them. Map geometry is always visible
   ## (never fog-gated), and the halves spin in mirrored directions. The spin
-  ## angle derives from tickCount, so replays and every viewer agree; the
-  ## collision masks still hold the static diamond — decoration only.
+  ## angle derives from tickCount, so replays and every viewer agree — and
+  ## since GV28 the sim stamps THIS frame's silhouette into the collision,
+  ## bullet, and vision masks (applyDiamondGeometry), so the shape drawn here
+  ## is the shape that blocks. Both sides call diamondSpinFrame; there is no
+  ## second copy of the angle math to drift.
   for i in 0 ..< AnimatedDiamonds.len:
     let
       spot = AnimatedDiamonds[i]
-      dir = if spot.cx < MapWidth div 2: 1 else: -1
-      step = sim.tickCount div DiamondSpinTicksPerFrame
-      frame = ((step * dir) mod DiamondSpinFrames + DiamondSpinFrames) mod
-        DiamondSpinFrames
+      frame = diamondSpinFrame(spot.cx, sim.tickCount)
       (size, pixels) = rotatingDiamondPixels(spot.radius, frame, boardScale)
       spriteId = RotDiamondSpriteBase + frame
     if spriteDefs.spriteDefinitionIndex(spriteId) < 0:

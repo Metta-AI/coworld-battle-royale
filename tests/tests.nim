@@ -16,6 +16,7 @@ import
   test_plasma_arc,
   test_shouts,
   test_medkits,
+  test_spinning_diamonds,
   test_trenches,
   test_shields,
   test_shield_bubble,
