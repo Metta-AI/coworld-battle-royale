@@ -41,12 +41,13 @@ type
       ## PLAYERS" span before this is dead air a spectator should never have to
       ## watch). Playback auto-starts here, loops back here, and the scrubber /
       ## tick clock are offset by it so the shown timeline is 0 = first action.
-    livesLeadSeries*: seq[array[2, int]]
-      ## [tick, redLives - blueLives] change-points across the WHOLE match,
-      ## precomputed on the deterministic keyframe walk so the momentum graph
-      ## can draw its full-timeline shape immediately (not accumulate as it
-      ## plays). Only points where the lead CHANGES are stored (compact step
-      ## series); the client holds each value to the next point and to maxTick.
+    livesSeries*: seq[seq[int]]
+      ## [tick, livesPerTeam…] change-points across the WHOLE match (one lives
+      ## count per team, in Team order), precomputed on the deterministic
+      ## keyframe walk so the momentum graph can draw its full-timeline shape
+      ## immediately (not accumulate as it plays). Only points where some
+      ## team's lives CHANGE are stored (compact step series); the client holds
+      ## each value to the next point and to maxTick.
     endHoldFrames*: int
       ## Real-time frames left to HOLD on the final game-over frame before a
       ## looping replay restarts, so the end segment (winner, win condition,
@@ -365,14 +366,20 @@ proc buildReplayKeyframes*(
   builder.mismatchQuit = replay.mismatchQuit
   replay.keyframes.add(builder.saveReplayKeyframe(sim))
   let maxTick = builder.replayMaxTick()
-  # Record the lives-lead change-points across the full match so the momentum
-  # graph draws its whole-timeline shape up front (deterministic replay: a
-  # tick's lead is fixed). Store only where the lead changes to keep it compact.
-  replay.livesLeadSeries = @[]
-  proc livesLead(sim: SimServer): int =
-    sim.teamLivesRemaining(Red) - sim.teamLivesRemaining(Blue)
-  var lastLead = livesLead(sim)
-  replay.livesLeadSeries.add([sim.tickCount, lastLead])
+  # Record the per-team lives change-points across the full match so the
+  # momentum graph draws its whole-timeline shape up front (deterministic
+  # replay: a tick's lives are fixed). One count per team, in Team order, so
+  # the series reads the same for any team count. Store only where some
+  # team's lives change to keep it compact.
+  replay.livesSeries = @[]
+  proc teamLives(sim: SimServer): seq[int] =
+    for team in Team:
+      result.add(sim.teamLivesRemaining(team))
+  proc seriesPoint(tick: int, lives: seq[int]): seq[int] =
+    result = @[tick]
+    result.add(lives)
+  var lastLives = teamLives(sim)
+  replay.livesSeries.add(seriesPoint(sim.tickCount, lastLives))
   # Beat ticks for the lull map, derived by the SAME tracker the broadcast
   # channel uses, so "nothing happens here" agrees with the story the kill
   # feed and banners tell. Respawns are excluded: they trail kills on a fixed
@@ -389,10 +396,10 @@ proc buildReplayKeyframes*(
     builder.stepReplay(sim)
     if replay.startTick < 0 and sim.phase == Playing:
       replay.startTick = sim.gameStartTick
-    let lead = livesLead(sim)
-    if lead != lastLead:
-      replay.livesLeadSeries.add([sim.tickCount, lead])
-      lastLead = lead
+    let lives = teamLives(sim)
+    if lives != lastLives:
+      replay.livesSeries.add(seriesPoint(sim.tickCount, lives))
+      lastLives = lives
     var stepBeats = newJArray()
     sim.stepEvents(beatTracker, stepBeats)
     for event in stepBeats:
@@ -407,9 +414,9 @@ proc buildReplayKeyframes*(
     if sim.tickCount mod max(interval, 1) == 0 or sim.tickCount == maxTick:
       replay.keyframes.add(builder.saveReplayKeyframe(sim))
   # Anchor the final tick so the client can hold the last value to the end.
-  if replay.livesLeadSeries.len == 0 or
-      replay.livesLeadSeries[^1][0] != sim.tickCount:
-    replay.livesLeadSeries.add([sim.tickCount, lastLead])
+  if replay.livesSeries.len == 0 or
+      replay.livesSeries[^1][0] != sim.tickCount:
+    replay.livesSeries.add(seriesPoint(sim.tickCount, lastLives))
   replay.lullSpans = buildLullSpans(
     beatTicks,
     replay.replayStartTick(),

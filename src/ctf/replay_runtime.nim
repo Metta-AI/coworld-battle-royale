@@ -99,7 +99,7 @@ proc buildReplayViewerPacket*(
       true,
       replay.hashMismatchTick,
       nextState.selectedJoinOrder,
-      if sendLead: replay.livesLeadSeries else: @[],
+      if sendLead: replay.livesSeries else: @[],
       replay.replayStartTick(),
       replay.endHoldSecondsLeft(),
       sendFpMap,
