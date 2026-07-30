@@ -182,6 +182,13 @@ proc fullFeatureGame(teams4 = false): SimServer =
     x: cx - 30, y: cy - 20, tick: result.tickCount,
     amount: 1, color: teamColor(Blue), kill: false
   )
+  # PERMANENT terrain paint (`paint stain <color> variant <n>`) — the dried
+  # marks left where shots/sprays/grenades hit the map. Board-stream only, and
+  # unlike every other FX family these never expire, so a posed frame that
+  # doesn't seed one leaves the whole family out of the vocabulary. Two colors
+  # and two variants, so the sweep covers the color and variant axes.
+  result.addPaintStain(cx + 20, cy - 40, teamColor(Red))
+  result.addPaintStain(cx + 44, cy + 36, teamColor(Blue))
 
 proc normalizeLabel(label: string): string =
   ## Collapses one emitted label to its stable PATTERN, so the manifest is a

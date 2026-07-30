@@ -87,3 +87,38 @@ state = next
 let glowChrome = game.buildStateJson(newJArray(), true, 1, 2432, false, true, -1, -1, @[], 0)
 report("GLOW TRANSITION (both hearts taken, full strips in-packet)",
   glowPacket, glowChrome)
+
+# --- A SATURATED-PAINT frame: the arena carrying the maximum permanent terrain
+# stains (StainMaxCount) with NONE yet sent to this viewer, so every stain
+# ships its own masked sprite plus an object placement in a single packet. This
+# is the wire worst case for the paint family: a fresh viewer joining (or
+# returning from POV) late in a heavily-fought match receives the whole backlog
+# in one frame. Stains are emitted once and never re-sent, so the STEADY-state
+# cost afterward is zero; this frame is the spike.
+#
+# addPaintStain ROUTES: paint landing on a rotating center diamond is stored per
+# diamond (it has to turn with the stone) and baked into that diamond's sprite
+# instead of becoming a standalone terrain stain. So the pool total is the sum
+# of both stores — asserting on paintStains alone under-fills as soon as any
+# synthetic coordinate lands on a diamond.
+for i in 0 ..< StainMaxCount:
+  game.addPaintStain(
+    (i * 37) mod MapWidth,
+    (i * 53) mod MapHeight,
+    if i mod 2 == 0: teamColor(Red) else: teamColor(Blue)
+  )
+doAssert game.paintStains.len + game.diamondStains.len == StainMaxCount,
+  "saturation case must actually fill the stain pool, got " &
+    $game.paintStains.len & " terrain + " & $game.diamondStains.len &
+    " diamond"
+echo "  (paint split: ", game.paintStains.len, " terrain stains, ",
+  game.diamondStains.len, " on rotating diamonds)"
+var stainState = initGlobalViewerState()
+var stainNext: GlobalViewerState
+let stainPacket = game.buildSpriteProtocolUpdates(
+  stainState, stainNext, replayTick = 200, replayEnabled = true,
+  replayMaxTick = 2432)
+let stainChrome = game.buildStateJson(
+  newJArray(), true, 1, 2432, false, true, -1, -1, @[], 0)
+report("PAINT SATURATION (init + " & $StainMaxCount &
+  " permanent stains backlogged)", stainPacket, stainChrome)
