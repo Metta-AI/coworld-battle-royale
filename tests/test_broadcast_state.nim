@@ -9,8 +9,11 @@ const
   # Fixtures are recorded against the CURRENT gameplay rules and must be
   # re-recorded on every GameVersion bump (tools/record_fixture.sh):
   #   capture-seed7:  record_fixture.sh <out> 7
-  #   wipe-lives1:    record_fixture.sh <out> 7 10000 \
+  #   wipe-lives1:    record_fixture.sh <out> 11 10000 \
   #                     '{"lives":1,"hitPoints":1,"carrierSpeedPct":1}'
+  #                   (seed 11: seeds 7-10 stall to timeout draws under the
+  #                   GV27 trench meta — verify "game over: <team> wins"
+  #                   with no capture line before pinning a new seed.)
   #   draw-nokill:    record_fixture.sh <out> 7 1500 \
   #                     '{"hitPoints":1000,"carrierSpeedPct":1}'
   # (carrierSpeedPct 1 pins the flag so the wipe/draw endings cannot be
@@ -143,7 +146,7 @@ suite "broadcast state channel":
       # seed 7: Red captures).
       check state["over"]["draw"].getBool == false
       check state["over"]["timeLimit"].getBool == false
-      check state["over"]["winner"].getStr == "red"
+      check state["over"]["winner"].getStr == "blue"
       # The scorebug axis is lives + flag state, never a kill score.
       check state["teams"]["red"].hasKey("lives")
       check state["teams"]["blue"]["flag"].getStr in ["home", "taken"]
@@ -175,7 +178,7 @@ suite "broadcast state channel":
       let verdicts = replay.beatEvents.elems.filterIt(it["k"].getStr == "gameover")
       check verdicts.len == 1
       check verdicts[0]["draw"].getBool == false
-      check verdicts[0]["winner"].getStr == "red"
+      check verdicts[0]["winner"].getStr == "blue"
       # The chrome frame ships the timeline when (and only when) asked.
       let withBeats = parseJson(sim.buildStateJson(
         newJArray(), false, 1, replay.replayMaxTick(), false, true, -1, -1,

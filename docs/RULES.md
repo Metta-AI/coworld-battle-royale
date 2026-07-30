@@ -37,6 +37,8 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   bar — dead on the center row — is a **glass window**: the mid lane stays
   closed to movement and fire, but both teams can watch the center corridor
   through the glass.
+- A **trench** — a walkable dug-pit square — sits at the exact center of
+  the field (GameVersion 27). See the Trenches section for its rules.
 - A round ends when a team **captures the enemy heart** or is **wiped out**.
 
 ## Teams & spawns
@@ -300,6 +302,34 @@ What that means in practice:
   same-tick action — you move, aim, and fire exactly as if you had said
   nothing; its only limit is its own one-per-second cooldown.
 
+## Trenches
+
+- **One trench — a 56×56 px walkable dug-pit square — sits at the exact
+  center of the field** (GameVersion 27), inside the open flag ring. It
+  draws as a recessed dark pit in the floor. It is **not a wall**: it never
+  blocks movement, bullets, or vision.
+- You are "in" the trench exactly while your body center is inside the
+  square; every effect below applies instantly on entry and ends instantly
+  on exit.
+- **Occupants move at 1/5 speed.** Both the speed cap and acceleration
+  divide by five, and momentum carried in is clamped immediately — you
+  cannot sprint through at full speed.
+- **Occupants fire their gun at 1/3 rate** (each shot's cooldown is three
+  times the normal length). This composes with the shield/heart-carrier
+  slowdown by taking the maximum, never the product.
+- **70% of gun shots that would hit an occupant fly straight over
+  instead**: the occupant is below grade, so the bullet misses, deals no
+  damage, counts as a miss for the shooter, and **carries on down the ray**
+  — it can land on an exposed body behind the trench, or on the far wall.
+  The duck is rolled per crossed occupant on the deterministic sim RNG.
+- **Shots fired from inside the same trench are never ducked** — the
+  protection is against fire from outside; two players inside the same
+  trench duel normally.
+- The fly-over protection applies to **gun shots only**. Grenade blasts,
+  spray cones, and every other damage source are unaffected by the trench.
+- Occupants are still subject to normal fog-of-war visibility — the trench
+  itself grants no concealment.
+
 ## Med kits
 
 - **Two med kits sit on the center line** — at one third and two thirds of
@@ -430,6 +460,10 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Spray can respawn | 30s | Taken pickups refill after this interval |
 | Paint puff lifetime (`PlasmaArcFxTicks`) | 4 ticks | Cosmetic fade of each per-tick cone snapshot |
 | Heart auto-return | instant | A heart snaps back to its own pedestal the moment its carrier dies |
+| Trench size (`TrenchSize`) | 56px | Side of the walkable center trench pit |
+| Trench speed divisor (`TrenchSpeedDivisor`) | 5 | Occupants move at 1/5 speed (cap, accel, and an entry clamp) |
+| Trench fire slowdown (`TrenchFireSlowdown`) | 3 | Occupant gun cooldown multiplier; max-composed with shield/carrier |
+| Trench miss chance (`TrenchMissPct`) | 70% | Incoming gun shots that fly over an occupant and carry on (same-trench shots exempt) |
 | Time limit (`MaxTicks`) | 5000 ticks (~3.5 min) | Round length cap before the lose-lose draw |
 | Map size | 1235×659 | Inherited from Crewrift; may change |
 

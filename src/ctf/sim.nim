@@ -1,5 +1,5 @@
 import
-  std/[json, math, os, random, strutils],
+  std/[algorithm, json, math, os, random, strutils],
   bitworld/aseprite, bitworld/pixelfonts, bitworld/profile, bitworld/spriteprotocol,
   bitworld/server,
   jsony, pixie
@@ -9,7 +9,17 @@ when not defined(emscripten):
 
 const
   GameName* = "ctf"
-  GameVersion* = "26"  ## GV26 (three operator rules): (a) the SELF marker
+  GameVersion* = "27"  ## GV27: TRENCHES — a walkable dug-pit square at the
+                       ## center of the field. It never blocks movement,
+                       ## bullets, or vision. Standing in it slows movement
+                       ## to 1/5 (TrenchSpeedDivisor) and gun fire to 1/3
+                       ## rate (TrenchFireSlowdown, max-composed with the
+                       ## shield/carrier multiplier), and TrenchMissPct
+                       ## percent of gun shots that would hit an occupant
+                       ## fly straight over instead — the bullet continues
+                       ## down the ray and can hit a body behind (shots
+                       ## fired from inside the same trench are exempt).
+                       ## GV26 (three operator rules): (a) the SELF marker
                        ## renders TRUE aim again — the fuzz hides OTHERS'
                        ## aim, never your own state; (b) HEART carriers fire
                        ## at 1/3 rate (CarrierFireSlowdown, shield-pattern);
@@ -199,6 +209,24 @@ const
                               ## rate. Shield+heart do not stack (max, not
                               ## product).
 
+  TrenchSize* = 56            ## side length of the walkable trench square
+                              ## (GV27). The center trench sits inside the
+                              ## open flag ring (corner reach ~40px < the
+                              ## 70px ring), so it never touches a wall.
+  TrenchSpeedDivisor* = 5     ## an occupant moves at 1/5 speed: max speed
+                              ## and accel divide by this, and velocity is
+                              ## clamped every tick while inside, so running
+                              ## in slows you immediately.
+  TrenchFireSlowdown* = 3     ## an occupant's gun fire cooldown multiplier
+                              ## (1/3 fire rate). Max-composed with the
+                              ## shield/carrier slowdown, never the product —
+                              ## same rule as shield+heart (GV26).
+  TrenchMissPct* = 70         ## percent of gun shots that would hit a trench
+                              ## occupant that fly straight over instead
+                              ## (deterministic sim RNG); the bullet carries
+                              ## on down the ray. Shots fired from inside the
+                              ## same trench never miss this way.
+
   BubbleImpactTicks* = 8      ## ~0.33s the bubble's blink/dent impact FX
                               ## lasts (cosmetic only, like HitFlashTicks).
 
@@ -374,6 +402,9 @@ type
     spawnClearH*: int          ## half-height of the open spawn pockets.
     gunRange*: int             ## default gun range on this map (px).
     leftObstacles*: seq[ArenaShape]
+    trenches*: seq[MapRect]    ## walkable dug-pit squares (GV27): standing
+                               ## inside slows movement and fire, and most
+                               ## incoming gun shots fly straight over.
 
   CrewSprite* = ref object
     width*, height*: int
@@ -1509,6 +1540,8 @@ proc validateMap(gameMap: CtfMap) =
       gameMap.width,
       gameMap.height
     )
+  for i, trench in gameMap.trenches:
+    validateMapRect("trench " & $i, trench, gameMap.width, gameMap.height)
 
 const
   ArenaName = "arena"
@@ -1674,6 +1707,16 @@ const
     ArenaShape(kind: shapeRect, rect: MapRect(x: 726, y: 761, w: 18, h: 66)),
   ]
 
+proc centerTrench(width, height: int): MapRect =
+  ## The TrenchSize×TrenchSize trench square centered on the field (GV27).
+  ## It sits fully inside the open flag ring, so it is always walkable floor.
+  MapRect(
+    x: width div 2 - TrenchSize div 2,
+    y: height div 2 - TrenchSize div 2,
+    w: TrenchSize,
+    h: TrenchSize
+  )
+
 proc arenaCtfMap(): CtfMap =
   ## The default arena: the procedurally-defined symmetric 1235x659 map.
   result.name = ArenaName
@@ -1690,6 +1733,7 @@ proc arenaCtfMap(): CtfMap =
   result.spawnClearH = 130
   result.gunRange = 1300
   result.leftObstacles = @ArenaLeftObstacles
+  result.trenches = @[centerTrench(result.width, result.height)]
   result.rooms = @[
     Room(name: "Center", x: result.width div 2 - 80,
          y: result.height div 2 - 80, w: 160, h: 160),
@@ -1718,6 +1762,7 @@ proc arenaLargeCtfMap(): CtfMap =
   result.spawnClearH = 169
   result.gunRange = 1690
   result.leftObstacles = @ArenaLargeLeftObstacles
+  result.trenches = @[centerTrench(result.width, result.height)]
   result.rooms = @[
     Room(name: "Center", x: result.width div 2 - 80,
          y: result.height div 2 - 80, w: 160, h: 160),
@@ -1853,6 +1898,7 @@ var
   ArenaBlueHomeX = 1049
   ArenaObstacles*: seq[ArenaShape]
   AnimatedDiamonds*: seq[tuple[cx, cy, radius: int]]
+  ArenaTrenches*: seq[MapRect]
 
 proc selectCtfMap(gameMap: CtfMap) =
   ## Installs one map as THE map for this process: dimensions, fog grid,
@@ -1874,6 +1920,7 @@ proc selectCtfMap(gameMap: CtfMap) =
   ArenaBlueHomeX = gameMap.teamHomeX(Blue)
   ArenaObstacles = buildArenaObstacles(gameMap)
   AnimatedDiamonds = buildAnimatedDiamonds(gameMap, ArenaObstacles)
+  ArenaTrenches = gameMap.trenches
 
 selectCtfMap(arenaCtfMap())
 
@@ -1891,6 +1938,23 @@ proc loadCtfMap*(path = ""): CtfMap =
   ## 30%-larger variant) and installs it as this process's arena.
   result = loadCtfMapMetadata(path)
   selectCtfMap(result)
+
+proc trenchIndexAt*(x, y: int): int =
+  ## Returns the index of the trench containing map pixel (x, y), or -1 when
+  ## the point is in the open field.
+  for i, trench in ArenaTrenches:
+    if inRect(x, y, trench):
+      return i
+  -1
+
+proc playerTrench*(sim: SimServer, playerIndex: int): int =
+  ## Returns the index of the trench the player's center is standing in,
+  ## or -1 in the open field. Occupancy is instantaneous: the slowdowns and
+  ## the fly-over shot misses apply exactly while the center is inside.
+  trenchIndexAt(
+    sim.players[playerIndex].x + CollisionW div 2,
+    sim.players[playerIndex].y + CollisionH div 2
+  )
 
 proc isAnimatedDiamondPixel*(x, y: int): bool =
   ## Returns true when (x, y) lies inside one of the rotating center
@@ -2008,6 +2072,40 @@ proc overTint(base, tint: ColorRGBA): ColorRGBA =
     uint8((base.b.int * (255 - a) + tint.b.int * a) div 255),
     255
   )
+
+const
+  TrenchBevelPx = 8                          ## width of the pit's inner
+                                             ## shadow bevel, px.
+  TrenchLipColor = rgba(30, 22, 12, 255)     ## crisp dark cut line around
+                                             ## the pit lip.
+  TrenchLipAlpha = 185                       ## shadow strength at the lip...
+  TrenchFloorAlpha = 95                      ## ...easing to this over the
+                                             ## bevel and holding on the pit
+                                             ## floor.
+
+proc trenchArtColorAt(base: ColorRGBA, x, y: int): ColorRGBA =
+  ## Returns the floor color with the trench art applied at logical (x, y):
+  ## a dug pit — a crisp dark lip line on the square's edge, an inner shadow
+  ## bevel easing down from the lip, and a uniformly darkened sunken floor,
+  ## so the recess reads at a glance. Cosmetic only — the collision masks
+  ## never see trenches, and the art is axis-aligned so it upscales crisply
+  ## at any render scale.
+  let t = trenchIndexAt(x, y)
+  if t < 0:
+    return base
+  let
+    trench = ArenaTrenches[t]
+    edge = min(
+      min(x - trench.x, trench.x + trench.w - 1 - x),
+      min(y - trench.y, trench.y + trench.h - 1 - y)
+    )
+  if edge == 0:
+    return TrenchLipColor
+  let
+    depth = min(edge, TrenchBevelPx)
+    alpha = TrenchLipAlpha -
+      (TrenchLipAlpha - TrenchFloorAlpha) * depth div TrenchBevelPx
+  overTint(base, rgba(12, 9, 5, uint8(alpha)))
 
 proc tileSample(tex: Image, x, y: int): ColorRGBA =
   ## Samples a seamless texture tiled across the arena (opaque source).
@@ -2455,6 +2553,10 @@ proc renderArenaRgbaPair*(
       else:
         coldColor = tileBlock[tileRow + x mod tileW]
         hotColor = endzoneColorAt(coldColor, lx, redHi, blueLo, playLo, playHi)
+        # The trench pit (GV27) paints over the finished floor on both
+        # variants; it sits at the center, well clear of the endzone glow.
+        coldColor = trenchArtColorAt(coldColor, lx, ly)
+        hotColor = trenchArtColorAt(hotColor, lx, ly)
       if onBorder:
         hotColor = overTint(hotColor, ArenaBorderColor)
         coldColor = overTint(coldColor, ArenaBorderColor)
@@ -2568,6 +2670,10 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
         elif withEndzoneGlow: endzoneColorAt(tileSample(floorTex, x, y), x,
           redHi, blueLo, playLo, playHi)
         else: tileSample(floorTex, x, y)
+      if not wall:
+        # The trench pit (GV27) paints over the finished floor; it never
+        # overlaps a wall (it sits inside the open center ring).
+        color = trenchArtColorAt(color, x, y)
       if onBorder:
         color = overTint(color, ArenaBorderColor)
       result.mapImage[x, y] = color
@@ -4745,10 +4851,15 @@ proc fireDirection(sim: SimServer, shooterIndex: int): tuple[x, y: float] =
   else:
     aimVector(shooter.aimBrads)
 
-proc selectFireTarget(sim: SimServer, shooterIndex: int): int =
-  ## Returns the FIRST player along the shot ray — the bullet travels down
-  ## the locked aim direction and stops at the first body it crosses
-  ## (friendly fire on) or the first wall — or -1 for a miss.
+proc selectFireTarget(sim: var SimServer, shooterIndex: int): int =
+  ## Returns the player the shot lands on: the bullet travels down the
+  ## locked aim direction toward the FIRST body it crosses (friendly fire
+  ## on), stopping at walls — or -1 for a miss. A trench occupant crossed
+  ## by the ray ducks under TrenchMissPct of the shots fired from outside
+  ## their trench (GV27): the bullet flies straight over them and carries
+  ## on down the ray to the next exposed body, exactly as if the occupant
+  ## were not there. The duck is rolled per occupant on the deterministic
+  ## sim RNG at shot release.
   ##
   ## A target's body is sampled across its silhouette (perpendicular to the
   ## ray, ±PlayerHalf): a sample connects only when the bullet corridor
@@ -4763,7 +4874,9 @@ proc selectFireTarget(sim: SimServer, shooterIndex: int): int =
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
     maxRange = float(sim.config.gunRange)
-  var bestT = maxRange + 1.0
+    shooterTrench = sim.playerTrench(shooterIndex)
+  # Every body the bullet corridor crosses, at its distance along the ray.
+  var crossed: seq[tuple[t: float, index: int]] = @[]
   for i in 0 ..< sim.players.len:
     if i == shooterIndex or not sim.players[i].alive:
       continue
@@ -4783,10 +4896,17 @@ proc selectFireTarget(sim: SimServer, shooterIndex: int): int =
         continue
       if not sim.lineOfSightClear(sx, sy, int(round(px)), int(round(py))):
         continue
-      if t < bestT:
-        bestT = t
-        result = i
+      crossed.add((t, i))
       break
+  # Walk the crossed bodies in ray order (index breaks exact ties, so the
+  # walk is deterministic); the first body that does not duck is the hit.
+  crossed.sort()
+  for candidate in crossed:
+    let targetTrench = sim.playerTrench(candidate.index)
+    if targetTrench >= 0 and targetTrench != shooterTrench and
+        sim.rng.rand(99) < TrenchMissPct:
+      continue
+    return candidate.index
 
 proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
   ## Applies one selected shot: cooldown, tracer, and the kill. The target
@@ -4797,13 +4917,16 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     (ux, uy) = sim.fireDirection(shooterIndex)
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
+  # GV26: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
+  # GV27: trench occupants fire at TrenchFireSlowdown. Every slowdown
+  # composes by MAX, never the product.
+  var cooldownScale = 1
+  if shooter.hasShield or shooter.carryingFlag:
+    cooldownScale = max(ShieldFireSlowdown, CarrierFireSlowdown)
+  if sim.playerTrench(shooterIndex) >= 0:
+    cooldownScale = max(cooldownScale, TrenchFireSlowdown)
   sim.players[shooterIndex].fireCooldown =
-    if shooter.hasShield or shooter.carryingFlag:
-      # GV26: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
-      # shield+heart takes the max multiplier, never the product.
-      sim.config.fireCooldownTicks * max(ShieldFireSlowdown, CarrierFireSlowdown)
-    else:
-      sim.config.fireCooldownTicks
+    sim.config.fireCooldownTicks * cooldownScale
   sim.players[shooterIndex].windupBrads = -1
   # Accuracy bookkeeping (analysis-only, excluded from gameHash): every call
   # here is one released shot; a shot that locked onto a live enemy on the ray
@@ -5361,8 +5484,17 @@ proc applyInput*(
   let
     speedScale =
       if player.carryingFlag: sim.config.carrierSpeedPct else: 100
-    maxSpeed = sim.config.maxSpeed * speedScale div 100
-    accel = sim.config.accel * speedScale div 100
+    # A trench occupant moves at 1/5 speed (GV27): both the cap and the
+    # accel divide, and the cap is enforced on the velocity below even
+    # without input, so momentum from outside is shed on entry.
+    trenchDiv =
+      if sim.playerTrench(playerIndex) >= 0: TrenchSpeedDivisor else: 1
+    maxSpeed = sim.config.maxSpeed * speedScale div (100 * trenchDiv)
+    accel = max(1, sim.config.accel * speedScale div (100 * trenchDiv))
+
+  if trenchDiv > 1:
+    player.velX = clamp(player.velX, -maxSpeed, maxSpeed)
+    player.velY = clamp(player.velY, -maxSpeed, maxSpeed)
 
   if inputX != 0:
     player.velX = clamp(
