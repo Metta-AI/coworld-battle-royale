@@ -4,6 +4,7 @@ import
   test_fov,
   test_player_fog,
   test_map_los,
+  test_mapgen,
   test_movement_slide,
   test_player_collision,
   test_replay,

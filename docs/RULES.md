@@ -37,6 +37,17 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   bar — dead on the center row — is a **glass window**: the mid lane stays
   closed to movement and fire, but both teams can watch the center corridor
   through the glass.
+- **Procedurally generated terrain is available as a config option**
+  (`mapPath: "pool"` draws from a curated 20-map pool, `"gen"` + `mapSeed`
+  generates directly; `mapSize` / `mapSymmetry` / `mapColumns` /
+  `mapWindows` / `mapCenterFeature` lock individual draws). Generated
+  layouts keep every arena invariant — exact team symmetry (vertical mirror
+  or 180° rotation), no straight cross-field shot, corridors at least twice
+  the player footprint, a bounded cover budget — and draw their size class,
+  obstacle columns, glass placements, center feature, and med-kit pair per
+  map. The exact geometry is pinned into the match config/replay as
+  `mapSpec`. The default league map remains the hand-tuned arena described
+  above; leagues opt in through their own config.
 - A round ends when a team **captures the enemy heart** or is **wiped out**.
 
 ## Teams & spawns

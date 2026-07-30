@@ -7,9 +7,17 @@ import
 when not defined(emscripten):
   import bitworld/client as bitworldClient
 
+import map_pool
+
 const
   GameName* = "ctf"
-  GameVersion* = "26"  ## GV26 (three operator rules): (a) the SELF marker
+  GameVersion* = "26"  ## Procedural terrain (mapPath "gen"/"pool", curated
+                       ## pool in map_pool.nim) is CONFIG-GATED and ships
+                       ## without a version bump: the default arena and its
+                       ## rules are unchanged, and a league that enables it
+                       ## does so through its own config. Replays carry the
+                       ## exact geometry (mapSpec) either way.
+                       ## GV26 (three operator rules): (a) the SELF marker
                        ## renders TRUE aim again — the fuzz hides OTHERS'
                        ## aim, never your own state; (b) HEART carriers fire
                        ## at 1/3 rate (CarrierFireSlowdown, shield-pattern);
@@ -358,6 +366,13 @@ type
   MapPoint* = object
     x*, y*: int
 
+  MapSymmetry* = enum
+    ## How a map's right half derives from its authored/generated left half.
+    ## Both are exactly team-fair; rot180 keeps diagonal lanes diagonal
+    ## instead of folding them into chevrons.
+    symMirror
+    symRot180
+
   CtfMap* = object
     name*: string
     path*: string
@@ -373,6 +388,12 @@ type
     spawnClearW*: int          ## half-width of the open spawn pockets.
     spawnClearH*: int          ## half-height of the open spawn pockets.
     gunRange*: int             ## default gun range on this map (px).
+    symmetry*: MapSymmetry
+    genSeed*: int              ## generator seed; 0 for hand-authored maps.
+    medKitSpawns*: seq[MapPoint]     ## the two ACTIVE med-kit points.
+    medKitCandidates*: seq[MapPoint] ## the drawn candidate set (4 on
+                                     ## generated maps; equals the active
+                                     ## pair on hand-authored maps).
     leftObstacles*: seq[ArenaShape]
 
   CrewSprite* = ref object
@@ -404,6 +425,16 @@ type
     hasTeam*: bool
     hasColor*: bool
 
+  MapGenOverrides* = object
+    ## Per-parameter locks for the terrain generator. Zero-value ("" / 0,
+    ## windows -1) = unlocked, drawn from the map seed. Locking a parameter
+    ## replaces its draw without shifting the other draws.
+    size*: string          ## "small" | "standard" | "large"
+    symmetry*: string      ## "mirror" | "rot180"
+    columns*: int          ## obstacle column count per half, 3..8
+    windows*: int          ## glass-window count per half, 0..6; -1 = draw
+    centerFeature*: string ## "bracket" | "ring" | "walls"
+
   GameConfig* = object
     motionScale*: int
     accel*: int
@@ -434,6 +465,14 @@ type
                               ## sent the Sprite v1 ready packet; pacing only,
                               ## never in gameHash.
     mapPath*: string
+    mapSeed*: int             ## terrain seed for "gen"/"pool"; -1 = derive
+                              ## from the game seed.
+    mapPoolIndex*: int        ## explicit pool pick; -1 = mapSeed mod pool.
+    mapGen*: MapGenOverrides
+    mapSpec*: string          ## expanded map geometry JSON. Filled once at
+                              ## config parse for generated maps and written
+                              ## into replays, so playback reuses the EXACT
+                              ## geometry and never re-runs the generator.
     closedRoster*: bool
     slots*: seq[PlayerSlotConfig]
 
@@ -1696,6 +1735,21 @@ const
     ArenaShape(kind: shapeRect, rect: MapRect(x: 726, y: 761, w: 18, h: 66)),
   ]
 
+proc defaultCtfRooms(gameMap: CtfMap): seq[Room] =
+  ## The three-room annotation set every map shares: an informal center zone
+  ## plus the two base strips spanning the spawn pockets. Derives entirely
+  ## from the map's dimensions and clearances.
+  @[
+    Room(name: "Center", x: gameMap.width div 2 - 80,
+         y: gameMap.height div 2 - 80, w: 160, h: 160),
+    Room(name: "Red Base", x: 0,
+         y: gameMap.height div 2 - gameMap.spawnClearH,
+         w: gameMap.captureClear, h: 2 * gameMap.spawnClearH),
+    Room(name: "Blue Base", x: gameMap.width - gameMap.captureClear,
+         y: gameMap.height div 2 - gameMap.spawnClearH,
+         w: gameMap.captureClear, h: 2 * gameMap.spawnClearH),
+  ]
+
 proc arenaCtfMap(): CtfMap =
   ## The default arena: the procedurally-defined symmetric 1235x659 map.
   result.name = ArenaName
@@ -1712,14 +1766,12 @@ proc arenaCtfMap(): CtfMap =
   result.spawnClearH = 130
   result.gunRange = 1300
   result.leftObstacles = @ArenaLeftObstacles
-  result.rooms = @[
-    Room(name: "Center", x: result.width div 2 - 80,
-         y: result.height div 2 - 80, w: 160, h: 160),
-    Room(name: "Red Base", x: 0, y: result.height div 2 - 130,
-         w: result.captureClear, h: 260),
-    Room(name: "Blue Base", x: result.width - result.captureClear,
-         y: result.height div 2 - 130, w: result.captureClear, h: 260),
+  result.medKitSpawns = @[
+    MapPoint(x: result.width div 2, y: result.height div 3),
+    MapPoint(x: result.width div 2, y: 2 * result.height div 3),
   ]
+  result.medKitCandidates = result.medKitSpawns
+  result.rooms = result.defaultCtfRooms()
   result.validateMap()
 
 proc arenaLargeCtfMap(): CtfMap =
@@ -1740,14 +1792,12 @@ proc arenaLargeCtfMap(): CtfMap =
   result.spawnClearH = 169
   result.gunRange = 1690
   result.leftObstacles = @ArenaLargeLeftObstacles
-  result.rooms = @[
-    Room(name: "Center", x: result.width div 2 - 80,
-         y: result.height div 2 - 80, w: 160, h: 160),
-    Room(name: "Red Base", x: 0, y: result.height div 2 - 169,
-         w: result.captureClear, h: 338),
-    Room(name: "Blue Base", x: result.width - result.captureClear,
-         y: result.height div 2 - 169, w: result.captureClear, h: 338),
+  result.medKitSpawns = @[
+    MapPoint(x: result.width div 2, y: result.height div 3),
+    MapPoint(x: result.width div 2, y: 2 * result.height div 3),
   ]
+  result.medKitCandidates = result.medKitSpawns
+  result.rooms = result.defaultCtfRooms()
   result.validateMap()
 
 proc teamHomeX*(gameMap: CtfMap, team: Team): int =
@@ -1800,12 +1850,68 @@ proc mirrorX(shape: ArenaShape, width: int): ArenaShape =
       thickness: shape.thickness
     )
 
+proc `==`*(a, b: ArenaShape): bool =
+  ## Field-wise equality (Nim derives no `==` for case objects); lets whole
+  ## CtfMap values compare, which the map-spec round-trip tests rely on.
+  if a.kind != b.kind or a.window != b.window:
+    return false
+  case a.kind
+  of shapeRect:
+    a.rect == b.rect
+  of shapeDisc, shapeDiamond:
+    a.cx == b.cx and a.cy == b.cy and a.radius == b.radius
+  of shapeDiagonal:
+    a.x0 == b.x0 and a.y0 == b.y0 and a.x1 == b.x1 and a.y1 == b.y1 and
+      a.thickness == b.thickness
+
+proc rot180(rect: MapRect, width, height: int): MapRect =
+  ## Rotates one rectangle 180 degrees about the map center.
+  MapRect(
+    x: width - rect.x - rect.w,
+    y: height - rect.y - rect.h,
+    w: rect.w,
+    h: rect.h
+  )
+
+proc rot180(shape: ArenaShape, width, height: int): ArenaShape =
+  ## Rotates one arena shape 180 degrees about the map center.
+  case shape.kind
+  of shapeRect:
+    ArenaShape(kind: shapeRect, window: shape.window,
+      rect: shape.rect.rot180(width, height))
+  of shapeDisc:
+    ArenaShape(
+      kind: shapeDisc,
+      window: shape.window,
+      cx: width - 1 - shape.cx,
+      cy: height - 1 - shape.cy,
+      radius: shape.radius
+    )
+  of shapeDiamond:
+    ArenaShape(
+      kind: shapeDiamond,
+      window: shape.window,
+      cx: width - 1 - shape.cx,
+      cy: height - 1 - shape.cy,
+      radius: shape.radius
+    )
+  of shapeDiagonal:
+    ArenaShape(
+      kind: shapeDiagonal,
+      window: shape.window,
+      x0: width - 1 - shape.x0,
+      y0: height - 1 - shape.y0,
+      x1: width - 1 - shape.x1,
+      y1: height - 1 - shape.y1,
+      thickness: shape.thickness
+    )
+
 proc inRect(x, y: int, rect: MapRect): bool =
   ## Returns true when (x, y) lies inside the rectangle.
   x >= rect.x and x < rect.x + rect.w and
     y >= rect.y and y < rect.y + rect.h
 
-proc inShape(x, y: int, shape: ArenaShape): bool =
+proc inShape*(x, y: int, shape: ArenaShape): bool =
   ## Returns true when (x, y) lies inside one arena shape.
   case shape.kind
   of shapeRect:
@@ -1843,13 +1949,17 @@ proc inShape(x, y: int, shape: ArenaShape): bool =
       dx * dx + dy * dy <=
         int64(shape.thickness) * int64(shape.thickness) * len2 * len2 div 4
 
-proc buildArenaObstacles(gameMap: CtfMap): seq[ArenaShape] =
-  ## The full obstacle set: every left-half shape plus its x-mirror,
-  ## precomputed once per map selection so the per-pixel wall test never
-  ## re-mirrors.
+proc buildArenaObstacles*(gameMap: CtfMap): seq[ArenaShape] =
+  ## The full obstacle set: every left-half shape plus its image under the
+  ## map's symmetry (x-mirror or 180° rotation), precomputed once per map
+  ## selection so the per-pixel wall test never re-mirrors.
   for shape in gameMap.leftObstacles:
     result.add shape
-    result.add shape.mirrorX(gameMap.width)
+    case gameMap.symmetry
+    of symMirror:
+      result.add shape.mirrorX(gameMap.width)
+    of symRot180:
+      result.add shape.rot180(gameMap.width, gameMap.height)
 
 proc buildAnimatedDiamonds(
   gameMap: CtfMap, obstacles: seq[ArenaShape]
@@ -1862,6 +1972,597 @@ proc buildAnimatedDiamonds(
     if shape.kind == shapeDiamond and
         abs(shape.cx - gameMap.center.x) < 80:
       result.add((shape.cx, shape.cy, shape.radius))
+
+## ---------------------------------------------------------------------------
+## Procedural terrain (GameVersion 25). Canonical play draws a validated map
+## from the curated pool (map_pool.nim); mapPath "gen" generates straight from
+## a seed. Every layout is authored for the LEFT half only and completed by
+## the map's symmetry, so team fairness is structural. The generator is fully
+## deterministic (own splitmix64, never std/random) so one seed names one map
+## on every platform, including wasm.
+## ---------------------------------------------------------------------------
+
+const
+  GenMapName* = "gen"
+  PoolMapName* = "pool"
+  MinCorridorWidth = 26      ## narrowest corridor for the 13px footprint.
+  MapGenMaxAttempts = 100
+  MapSizeNames = ["small", "standard", "large"]
+  CenterFeatureNames = ["bracket", "ring", "walls"]
+  ## Interior cover budget, in permille of the non-protected interior that is
+  ## obstacle wall. The hand-tuned arena sits inside this band; layouts
+  ## outside it play too open or too clogged and are re-rolled.
+  CoverPermilleMin = 40
+  CoverPermilleMax = 170
+
+type
+  MapRng = object
+    state: uint64
+
+  ColumnFamily = enum
+    colStubs        ## 18px-wide rect stubs, border-anchored at the ends.
+    colDiamonds
+    colDiscs
+    colChevrons     ## 45-degree zigzag wall segments.
+
+proc next(rng: var MapRng): uint64 =
+  ## splitmix64: tiny, statistically solid, identical on every target.
+  rng.state = rng.state + 0x9E3779B97F4A7C15'u64
+  var z = rng.state
+  z = (z xor (z shr 30)) * 0xBF58476D1CE4E5B9'u64
+  z = (z xor (z shr 27)) * 0x94D049BB133111EB'u64
+  z xor (z shr 31)
+
+proc pick(rng: var MapRng, bound: int): int =
+  ## Uniform 0..bound-1 (modulo bias is immaterial at these bounds).
+  int(rng.next() mod uint64(bound))
+
+proc pickRange(rng: var MapRng, lo, hi: int): int =
+  lo + rng.pick(hi - lo + 1)
+
+proc coin(rng: var MapRng): bool =
+  (rng.next() and 1'u64) == 1
+
+proc shuffle[T](rng: var MapRng, items: var seq[T]) =
+  for i in countdown(items.high, 1):
+    let j = rng.pick(i + 1)
+    swap(items[i], items[j])
+
+proc scaledGenShell(sizeName: string): CtfMap =
+  ## Field dimensions and clearances for one size class: the standard-arena
+  ## numbers scaled by the class factor. Obstacle SIZES never scale — bigger
+  ## fields get roomier corridors, exactly like arena-large.
+  let scale =
+    case sizeName
+    of "small": 0.85
+    of "standard": 1.0
+    of "large": 1.3
+    else:
+      raise newException(CtfError, "Unknown map size: " & sizeName)
+  proc s(value: int): int = int(round(float(value) * scale))
+  result.width = s(1235)
+  result.height = s(659)
+  result.mapLayer = 0
+  result.walkLayer = 1
+  result.wallLayer = 2
+  result.center = MapPoint(x: result.width div 2, y: result.height div 2)
+  result.flagRing = s(70)
+  result.captureClear = s(210)
+  result.spawnClearW = s(70)
+  result.spawnClearH = s(130)
+  result.gunRange = s(1300)
+  result.rooms = result.defaultCtfRooms()
+
+proc mapProtectedFloorAt*(gameMap: CtfMap, x, y: int): bool =
+  ## isProtectedFloor for a map that is NOT installed as the process map:
+  ## the generator and validators run on candidates before any selection.
+  if x < gameMap.captureClear or x >= gameMap.width - gameMap.captureClear:
+    return true
+  let
+    dx = x - gameMap.center.x
+    dy = y - gameMap.center.y
+  if dx * dx + dy * dy <= gameMap.flagRing * gameMap.flagRing:
+    return true
+  for team in Team:
+    if abs(x - gameMap.teamHomeX(team)) <= gameMap.spawnClearW and
+        abs(y - gameMap.center.y) <= gameMap.spawnClearH:
+      return true
+  false
+
+proc mapWallAt*(gameMap: CtfMap, obstacles: seq[ArenaShape], x, y: int): bool =
+  ## Uninstalled-map wall test, matching isArenaWall's border + carve rules.
+  if x < ArenaBorder or y < ArenaBorder or
+      x >= gameMap.width - ArenaBorder or y >= gameMap.height - ArenaBorder:
+    return true
+  if mapProtectedFloorAt(gameMap, x, y):
+    return false
+  for shape in obstacles:
+    if inShape(x, y, shape):
+      return true
+  false
+
+proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
+  ## One UNVALIDATED draw. Every top-level parameter is drawn unconditionally
+  ## and THEN overridden if locked, so locking one knob never shifts the
+  ## other draws for the same seed.
+  var rng = MapRng(state: uint64(seed))
+
+  let sizeDraw = MapSizeNames[rng.pick(3)]
+  result = scaledGenShell(
+    if overrides.size.len > 0: overrides.size else: sizeDraw)
+  result.name = "gen-" & $seed
+  result.path = GenMapName
+  result.genSeed = seed
+
+  let symDraw = if rng.coin(): symRot180 else: symMirror
+  result.symmetry =
+    case overrides.symmetry
+    of "": symDraw
+    of "mirror": symMirror
+    of "rot180": symRot180
+    else:
+      raise newException(
+        CtfError, "Unknown map symmetry: " & overrides.symmetry)
+
+  let featureDraw = CenterFeatureNames[rng.pick(3)]
+  let feature =
+    if overrides.centerFeature.len > 0: overrides.centerFeature
+    else: featureDraw
+  if feature notin CenterFeatureNames:
+    raise newException(CtfError, "Unknown map center feature: " & feature)
+
+  let columnsDraw = rng.pickRange(4, 6)
+  let columns =
+    if overrides.columns > 0: overrides.columns else: columnsDraw
+  if columns < 3 or columns > 8:
+    raise newException(CtfError, "Config field mapColumns must be 3..8.")
+
+  let
+    cy = result.center.y
+    ## Obstacle columns live between the capture column and the flag-ring
+    ## flank; the ring itself carves any overlap back out of the wall mask.
+    xMin = result.captureClear + 50
+    xMax = result.center.x - 52
+  ## Window-eligible shapes: (obstacle index, column, slot y).
+  var eligible: seq[tuple[idx, col, y: int]]
+
+  for col in 0 ..< columns:
+    let
+      colX = xMin + ((2 * col + 1) * (xMax - xMin)) div (2 * columns)
+      family = ColumnFamily(rng.pick(4))
+      period = rng.pickRange(88, 120)
+      ## Phases are STRATIFIED across columns (like the hand-authored
+      ## arena's 0/+48/+24/+72 ladder) with a half-period jitter: fully
+      ## random phases leave rows every column misses, which the sightline
+      ## validator rejects — mirror-symmetric maps almost never survived.
+      phase = (period * col div columns +
+        rng.pick(max(1, period div 2))) mod period
+    var slotYs: seq[int]
+    var slotY = ArenaBorder + 30 + phase
+    while slotY <= result.height - ArenaBorder - 30:
+      slotYs.add slotY
+      slotY += period
+    if slotYs.len < 3:
+      continue
+
+    ## Clear-mask: drop each slot with probability 1/4, then guarantee at
+    ## least one gap (a solid picket walls the lane off) and at least half
+    ## the slots kept (a bare column gives no cover).
+    var cleared = newSeq[bool](slotYs.len)
+    var clearedCount = 0
+    for i in 0 ..< slotYs.len:
+      if rng.pick(4) == 0:
+        cleared[i] = true
+        inc clearedCount
+    if clearedCount == 0:
+      cleared[rng.pick(slotYs.len)] = true
+      clearedCount = 1
+    let minKept = (slotYs.len + 1) div 2
+    while slotYs.len - clearedCount < minKept and clearedCount > 1:
+      var idx = rng.pick(slotYs.len)
+      while not cleared[idx]:
+        idx = (idx + 1) mod slotYs.len
+      cleared[idx] = false
+      dec clearedCount
+
+    var zig = rng.coin()
+    for i, sy in slotYs:
+      if cleared[i]:
+        continue
+      case family
+      of colStubs:
+        ## Stub ends whose border gap would drop under the corridor minimum
+        ## anchor to the border instead — a sub-26px slit is impassable
+        ## anyway and reads as a wart.
+        var top = sy - 30
+        var bottom = sy + 30
+        if i == 0 and top - ArenaBorder < MinCorridorWidth:
+          top = ArenaBorder
+        if i == slotYs.len - 1 and
+            result.height - ArenaBorder - bottom < MinCorridorWidth:
+          bottom = result.height - ArenaBorder
+        result.leftObstacles.add ArenaShape(kind: shapeRect,
+          rect: MapRect(x: colX - 9, y: top, w: 18, h: bottom - top))
+        eligible.add (result.leftObstacles.high, col, sy)
+      of colDiamonds:
+        result.leftObstacles.add ArenaShape(
+          kind: shapeDiamond, cx: colX, cy: sy, radius: 28)
+        eligible.add (result.leftObstacles.high, col, sy)
+      of colDiscs:
+        result.leftObstacles.add ArenaShape(
+          kind: shapeDisc, cx: colX, cy: sy, radius: 28)
+        eligible.add (result.leftObstacles.high, col, sy)
+      of colChevrons:
+        let (ya, yb) = if zig: (sy - 14, sy + 14) else: (sy + 14, sy - 14)
+        result.leftObstacles.add ArenaShape(kind: shapeDiagonal,
+          x0: colX - 14, y0: ya, x1: colX + 14, y1: yb, thickness: 12)
+        zig = not zig
+
+  ## Center feature, straddling the horizontal midline just outside the
+  ## flag ring ("[" here; its symmetry image closes the right side).
+  let bx = result.center.x - 138
+  case feature
+  of "bracket":
+    ## The GV16 windowed bracket: mid lane closed to movement and fire,
+    ## glass pane over the midline for a fogless center sightline.
+    result.leftObstacles.add ArenaShape(kind: shapeRect,
+      rect: MapRect(x: bx, y: cy - 53, w: 28, h: 12))
+    result.leftObstacles.add ArenaShape(kind: shapeRect,
+      rect: MapRect(x: bx, y: cy - 41, w: 12, h: 24))
+    result.leftObstacles.add ArenaShape(kind: shapeRect, window: true,
+      rect: MapRect(x: bx, y: cy - 17, w: 12, h: 36))
+    result.leftObstacles.add ArenaShape(kind: shapeRect,
+      rect: MapRect(x: bx, y: cy + 19, w: 12, h: 23))
+    result.leftObstacles.add ArenaShape(kind: shapeRect,
+      rect: MapRect(x: bx, y: cy + 42, w: 28, h: 12))
+  of "walls":
+    ## Solid bar pair with an open (glassless) midline gap.
+    result.leftObstacles.add ArenaShape(kind: shapeRect,
+      rect: MapRect(x: bx, y: cy - 100, w: 12, h: 80))
+    result.leftObstacles.add ArenaShape(kind: shapeRect,
+      rect: MapRect(x: bx, y: cy + 20, w: 12, h: 80))
+  else:
+    discard  # "ring": the center stays fully open.
+
+  ## Sightline repair. A horizontal ray survives when no obstacle blocks its
+  ## row: under MIRROR the right half repeats the left, so the LEFT half
+  ## alone must cover every row; under ROT180 the right half contributes the
+  ## flipped rows, so row y needs cover at y or height-1-y. Random layouts
+  ## almost never satisfy the mirror condition on their own (the first pool
+  ## scan came out 100% rot180), so plug the uncovered rows with diamonds in
+  ## drawn columns; the validators still judge the repaired result.
+  block sightlineRepair:
+    proc rowBlocked(gameMap: CtfMap, y: int): bool =
+      for x in gameMap.captureClear + 5 .. gameMap.center.x:
+        if mapWallAt(gameMap, gameMap.leftObstacles, x, y):
+          return true
+      false
+    var plugsLeft = 40
+    while plugsLeft > 0:
+      var uncovered = -1
+      var y = ArenaBorder + 2
+      while y < result.height - ArenaBorder:
+        let covered =
+          case result.symmetry
+          of symMirror:
+            result.rowBlocked(y)
+          of symRot180:
+            result.rowBlocked(y) or
+              result.rowBlocked(result.height - 1 - y)
+        if not covered:
+          uncovered = y
+          break
+        y += 4
+      if uncovered < 0:
+        break sightlineRepair
+      let
+        plugCol = rng.pick(columns)
+        plugX = xMin + ((2 * plugCol + 1) * (xMax - xMin)) div (2 * columns)
+        plugY = clamp(
+          uncovered + 24, ArenaBorder + 12, result.height - ArenaBorder - 12)
+      result.leftObstacles.add ArenaShape(
+        kind: shapeDiamond, cx: plugX, cy: plugY, radius: 28)
+      dec plugsLeft
+
+  ## Glass windows: fog sees through them, nothing passes them. Biased to
+  ## the outermost column and the midline band, where sightlines matter.
+  let windowsDraw = rng.pickRange(2, 4)
+  let windowCount =
+    if overrides.windows >= 0: overrides.windows else: windowsDraw
+  if windowCount > 6:
+    raise newException(CtfError, "Config field mapWindows must be 0..6.")
+  var preferred, rest: seq[tuple[idx, col, y: int]]
+  for entry in eligible:
+    if entry.col == 0 or abs(entry.y - cy) < 70:
+      preferred.add entry
+    else:
+      rest.add entry
+  rng.shuffle(preferred)
+  rng.shuffle(rest)
+  let ranked = preferred & rest
+  for i in 0 ..< min(windowCount, ranked.len):
+    result.leftObstacles[ranked[i].idx].window = true
+
+  ## Med kits: two complementary (y, H-1-y) center-line pairs are drawn as
+  ## candidates and ONE pair goes active. A top/bottom pair on x = W/2 is
+  ## invariant under both mirror and rot180, so pickup fairness is exact.
+  let
+    mid = result.width div 2
+    y1 = rng.pickRange(result.height * 16 div 100, result.height * 34 div 100)
+    y2 = rng.pickRange(result.height * 36 div 100, result.height * 47 div 100)
+  result.medKitCandidates = @[
+    MapPoint(x: mid, y: y1),
+    MapPoint(x: mid, y: result.height - 1 - y1),
+    MapPoint(x: mid, y: y2),
+    MapPoint(x: mid, y: result.height - 1 - y2),
+  ]
+  result.medKitSpawns =
+    if rng.coin():
+      @[result.medKitCandidates[0], result.medKitCandidates[1]]
+    else:
+      @[result.medKitCandidates[2], result.medKitCandidates[3]]
+  result.validateMap()
+
+proc validateGeneratedMap*(gameMap: CtfMap): string =
+  ## Returns "" when the layout passes every play-quality invariant, else a
+  ## human-readable failure reason. The generator's design intent lives HERE,
+  ## not in the draws: anything that passes is fair game.
+  let
+    w = gameMap.width
+    h = gameMap.height
+    obstacles = buildArenaObstacles(gameMap)
+  var wallMask = newSeq[bool](w * h)
+  var coverPixels, interiorPixels = 0
+  for y in 0 ..< h:
+    for x in 0 ..< w:
+      let isWall = mapWallAt(gameMap, obstacles, x, y)
+      wallMask[y * w + x] = isWall
+      if x >= gameMap.captureClear and x < w - gameMap.captureClear and
+          y >= ArenaBorder and y < h - ArenaBorder:
+        inc interiorPixels
+        if isWall:
+          inc coverPixels
+
+  ## Cover budget: neither an open field nor a clogged maze.
+  let permille = coverPixels * 1000 div max(1, interiorPixels)
+  if permille < CoverPermilleMin:
+    return "too open: " & $permille & " permille cover"
+  if permille > CoverPermilleMax:
+    return "too clogged: " & $permille & " permille cover"
+
+  ## With map-wide guns no straight horizontal ray may survive between the
+  ## capture columns (the property tests/test_map_los.nim pins for arena).
+  block sightlines:
+    let
+      ax = gameMap.captureClear + 5
+      bx = w - gameMap.captureClear - 5
+    var y = ArenaBorder + 2
+    while y < h - ArenaBorder:
+      var blocked = false
+      for x in ax .. bx:
+        if wallMask[y * w + x]:
+          blocked = true
+          break
+      if not blocked:
+        return "open horizontal sightline at y=" & $y
+      y += 4
+
+  ## Corridor + connectivity: chamfer 3-4 distance to the nearest wall,
+  ## eroded by half the corridor minimum, then a flood fill — both flags and
+  ## the center must connect through corridors the player footprint can
+  ## actually use.
+  var dist = newSeq[int32](w * h)
+  for i in 0 ..< w * h:
+    dist[i] = if wallMask[i]: 0'i32 else: int32.high div 2
+  for y in 0 ..< h:
+    for x in 0 ..< w:
+      let i = y * w + x
+      if dist[i] == 0:
+        continue
+      var d = dist[i]
+      if x > 0: d = min(d, dist[i - 1] + 3)
+      if y > 0: d = min(d, dist[i - w] + 3)
+      if x > 0 and y > 0: d = min(d, dist[i - w - 1] + 4)
+      if x < w - 1 and y > 0: d = min(d, dist[i - w + 1] + 4)
+      dist[i] = d
+  for y in countdown(h - 1, 0):
+    for x in countdown(w - 1, 0):
+      let i = y * w + x
+      if dist[i] == 0:
+        continue
+      var d = dist[i]
+      if x < w - 1: d = min(d, dist[i + 1] + 3)
+      if y < h - 1: d = min(d, dist[i + w] + 3)
+      if x < w - 1 and y < h - 1: d = min(d, dist[i + w + 1] + 4)
+      if x > 0 and y < h - 1: d = min(d, dist[i + w - 1] + 4)
+      dist[i] = d
+  let minChamfer = int32((MinCorridorWidth div 2) * 3)
+  var open = newSeq[bool](w * h)
+  for i in 0 ..< w * h:
+    open[i] = dist[i] >= minChamfer
+
+  let
+    redHome = gameMap.flagHome(Red)
+    blueHome = gameMap.flagHome(Blue)
+    startIndex = redHome.y * w + redHome.x
+  var
+    reached = newSeq[bool](w * h)
+    queue = @[startIndex]
+  if not open[startIndex]:
+    return "red flag home is not on open floor"
+  reached[startIndex] = true
+  var head = 0
+  while head < queue.len:
+    let i = queue[head]
+    inc head
+    for step in [-1, 1, -w, w]:
+      let j = i + step
+      if j >= 0 and j < w * h and open[j] and not reached[j]:
+        ## Row wrap at the border can't happen: the border ring is wall,
+        ## so open[] is false along every edge.
+        reached[j] = true
+        queue.add j
+  if not reached[blueHome.y * w + blueHome.x]:
+    return "no " & $MinCorridorWidth & "px route between the flags"
+  if not reached[gameMap.center.y * w + gameMap.center.x]:
+    return "no " & $MinCorridorWidth & "px route to the center"
+  ""
+
+proc generateCtfMap*(
+  seed: int, overrides = MapGenOverrides(windows: -1)
+): CtfMap =
+  ## Generates a VALIDATED map: attempts seeds seed, seed+1, ... until one
+  ## passes every validator. A locked-parameter combination that can never
+  ## pass errors out after MapGenMaxAttempts.
+  for attempt in 0 ..< MapGenMaxAttempts:
+    let candidate = generateMapAttempt(seed + attempt, overrides)
+    if validateGeneratedMap(candidate).len == 0:
+      return candidate
+  raise newException(
+    CtfError,
+    "Map generation found no valid layout in " & $MapGenMaxAttempts &
+      " attempts from seed " & $seed & " (over-constrained overrides?)."
+  )
+
+proc poolCtfMap*(
+  index: int, overrides = MapGenOverrides(windows: -1)
+): CtfMap =
+  ## One curated-pool map; the index wraps around the pool.
+  let n = MapPoolSeeds.len
+  generateCtfMap(MapPoolSeeds[((index mod n) + n) mod n], overrides)
+
+proc shapeSpecNode(shape: ArenaShape): JsonNode =
+  ## One obstacle as replay-spec JSON.
+  result = newJObject()
+  case shape.kind
+  of shapeRect:
+    result["kind"] = %"rect"
+    result["x"] = %shape.rect.x
+    result["y"] = %shape.rect.y
+    result["w"] = %shape.rect.w
+    result["h"] = %shape.rect.h
+  of shapeDisc, shapeDiamond:
+    result["kind"] = %(if shape.kind == shapeDisc: "disc" else: "diamond")
+    result["cx"] = %shape.cx
+    result["cy"] = %shape.cy
+    result["r"] = %shape.radius
+  of shapeDiagonal:
+    result["kind"] = %"diagonal"
+    result["x0"] = %shape.x0
+    result["y0"] = %shape.y0
+    result["x1"] = %shape.x1
+    result["y1"] = %shape.y1
+    result["t"] = %shape.thickness
+  if shape.window:
+    result["window"] = %true
+
+proc shapeFromSpecNode(node: JsonNode): ArenaShape =
+  ## One obstacle parsed back from replay-spec JSON.
+  let window = node{"window"}.getBool(false)
+  case node["kind"].getStr()
+  of "rect":
+    ArenaShape(kind: shapeRect, window: window, rect: MapRect(
+      x: node["x"].getInt(), y: node["y"].getInt(),
+      w: node["w"].getInt(), h: node["h"].getInt()))
+  of "disc":
+    ArenaShape(kind: shapeDisc, window: window,
+      cx: node["cx"].getInt(), cy: node["cy"].getInt(),
+      radius: node["r"].getInt())
+  of "diamond":
+    ArenaShape(kind: shapeDiamond, window: window,
+      cx: node["cx"].getInt(), cy: node["cy"].getInt(),
+      radius: node["r"].getInt())
+  of "diagonal":
+    ArenaShape(kind: shapeDiagonal, window: window,
+      x0: node["x0"].getInt(), y0: node["y0"].getInt(),
+      x1: node["x1"].getInt(), y1: node["y1"].getInt(),
+      thickness: node["t"].getInt())
+  else:
+    raise newException(
+      CtfError, "Unknown map spec shape: " & node["kind"].getStr())
+
+proc pointsNode(points: seq[MapPoint]): JsonNode =
+  result = newJArray()
+  for p in points:
+    result.add %*[p.x, p.y]
+
+proc pointsFromNode(node: JsonNode): seq[MapPoint] =
+  for item in node:
+    result.add MapPoint(x: item[0].getInt(), y: item[1].getInt())
+
+proc mapSpecJson*(gameMap: CtfMap): string =
+  ## The FULL expanded geometry of one map as JSON. Replays pin this, so
+  ## playback rebuilds the exact map even if the generator changes later.
+  var shapes = newJArray()
+  for shape in gameMap.leftObstacles:
+    shapes.add shape.shapeSpecNode()
+  $(%*{
+    "name": gameMap.name,
+    "genSeed": gameMap.genSeed,
+    "width": gameMap.width,
+    "height": gameMap.height,
+    "flagRing": gameMap.flagRing,
+    "captureClear": gameMap.captureClear,
+    "spawnClearW": gameMap.spawnClearW,
+    "spawnClearH": gameMap.spawnClearH,
+    "gunRange": gameMap.gunRange,
+    "symmetry": (
+      if gameMap.symmetry == symMirror: "mirror" else: "rot180"),
+    "medKitSpawns": pointsNode(gameMap.medKitSpawns),
+    "medKitCandidates": pointsNode(gameMap.medKitCandidates),
+    "leftObstacles": shapes,
+  })
+
+proc mapFromSpecJson*(text: string): CtfMap =
+  ## Rebuilds one map from its expanded replay spec. Rooms are derived from
+  ## the clearances the same way the generator derives them.
+  var node: JsonNode
+  try:
+    node = fromJson(text)
+  except jsony.JsonError as e:
+    raise newException(CtfError, "Could not parse map spec JSON: " & e.msg)
+  result.name = node["name"].getStr()
+  result.path = GenMapName
+  result.genSeed = node{"genSeed"}.getInt(0)
+  result.width = node["width"].getInt()
+  result.height = node["height"].getInt()
+  result.mapLayer = 0
+  result.walkLayer = 1
+  result.wallLayer = 2
+  result.center = MapPoint(x: result.width div 2, y: result.height div 2)
+  result.flagRing = node["flagRing"].getInt()
+  result.captureClear = node["captureClear"].getInt()
+  result.spawnClearW = node["spawnClearW"].getInt()
+  result.spawnClearH = node["spawnClearH"].getInt()
+  result.gunRange = node["gunRange"].getInt()
+  result.symmetry =
+    if node{"symmetry"}.getStr("mirror") == "rot180": symRot180
+    else: symMirror
+  result.medKitSpawns = pointsFromNode(node["medKitSpawns"])
+  result.medKitCandidates = pointsFromNode(node["medKitCandidates"])
+  for item in node["leftObstacles"]:
+    result.leftObstacles.add item.shapeFromSpecNode()
+  result.rooms = result.defaultCtfRooms()
+  result.validateMap()
+
+proc resolveCtfMapMetadata*(config: GameConfig): CtfMap =
+  ## The effective map for one config: an explicit mapSpec wins (replay
+  ## exactness), then the named maps, then the generator / curated pool.
+  if config.mapSpec.len > 0:
+    return mapFromSpecJson(config.mapSpec)
+  let
+    name = if config.mapPath.len == 0: DefaultMapPath else: config.mapPath
+    genSeed = if config.mapSeed != -1: config.mapSeed else: config.seed
+  case name
+  of ArenaName: arenaCtfMap()
+  of ArenaLargeName: arenaLargeCtfMap()
+  of GenMapName: generateCtfMap(genSeed, config.mapGen)
+  of PoolMapName:
+    let index =
+      if config.mapPoolIndex >= 0: config.mapPoolIndex else: genSeed
+    poolCtfMap(index, config.mapGen)
+  else:
+    raise newException(CtfError, "Unknown map: " & name)
 
 ## The SELECTED map's layout, installed once per process by loadCtfMap and
 ## initialized to the default arena below so tooling that never selects a
@@ -1901,17 +2602,44 @@ selectCtfMap(arenaCtfMap())
 
 proc loadCtfMapMetadata*(path = ""): CtfMap =
   ## Returns one map's metadata WITHOUT installing it as the process map.
+  ## Accepts "arena", "arena-large", "gen[:seed]", and "pool[:index]" (the
+  ## suffix-less generated forms use seed/index 0); tooling convenience —
+  ## servers resolve through the GameConfig overload instead.
   let name = if path.len == 0: DefaultMapPath else: path
   case name
   of ArenaName: arenaCtfMap()
   of ArenaLargeName: arenaLargeCtfMap()
   else:
-    raise newException(CtfError, "Unknown map: " & name)
+    let parts = name.split(':')
+    var suffix = 0
+    if parts.len == 2:
+      try:
+        suffix = parseInt(parts[1])
+      except ValueError:
+        raise newException(CtfError, "Unknown map: " & name)
+    if parts.len <= 2 and parts[0] == GenMapName:
+      generateCtfMap(suffix)
+    elif parts.len <= 2 and parts[0] == PoolMapName:
+      poolCtfMap(suffix)
+    else:
+      raise newException(CtfError, "Unknown map: " & name)
+
+proc loadCtfMapMetadata*(config: GameConfig): CtfMap =
+  ## GameConfig-driven metadata: honors mapSpec, mapSeed, pool picks, and
+  ## the generator overrides.
+  resolveCtfMapMetadata(config)
 
 proc loadCtfMap*(path = ""): CtfMap =
   ## Returns the named map ("arena" is the default; "arena-large" is the
-  ## 30%-larger variant) and installs it as this process's arena.
+  ## 30%-larger variant; "gen:<seed>"/"pool:<index>" the generated forms)
+  ## and installs it as this process's arena.
   result = loadCtfMapMetadata(path)
+  selectCtfMap(result)
+
+proc loadCtfMap*(config: GameConfig): CtfMap =
+  ## Resolves the config's effective map and installs it as this process's
+  ## arena.
+  result = resolveCtfMapMetadata(config)
   selectCtfMap(result)
 
 proc isAnimatedDiamondPixel*(x, y: int): bool =
@@ -2694,6 +3422,10 @@ proc defaultGameConfig*(): GameConfig =
     showPlayerLabels: true,
     fastMode: true,
     mapPath: DefaultMapPath,
+    mapSeed: -1,
+    mapPoolIndex: -1,
+    mapGen: MapGenOverrides(windows: -1),
+    mapSpec: "",
     closedRoster: false,
     slots: @[]
   )
@@ -3050,10 +3782,27 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigBool("fastMode", config.fastMode)
   node.readConfigString("map", config.mapPath)
   node.readConfigString("mapPath", config.mapPath)
-  ## The gun range follows the selected map unless the config sets it
-  ## explicitly: each map def carries its own map-wide default.
+  node.readConfigInt("mapSeed", config.mapSeed)
+  node.readConfigInt("mapPoolIndex", config.mapPoolIndex)
+  node.readConfigString("mapSize", config.mapGen.size)
+  node.readConfigString("mapSymmetry", config.mapGen.symmetry)
+  node.readConfigInt("mapColumns", config.mapGen.columns)
+  node.readConfigInt("mapWindows", config.mapGen.windows)
+  node.readConfigString("mapCenterFeature", config.mapGen.centerFeature)
+  if node.hasKey("mapSpec"):
+    if node["mapSpec"].kind != JObject:
+      raise newException(CtfError, "Config field mapSpec must be an object.")
+    config.mapSpec = $node["mapSpec"]
+  ## Resolve the effective map ONCE: a generated map is expanded and pinned
+  ## as mapSpec here, so the replay carries the exact geometry and playback
+  ## never re-runs the generator. The gun range follows the selected map
+  ## unless the config sets it explicitly: each map def carries its own
+  ## map-wide default.
+  let mapMeta = resolveCtfMapMetadata(config)
+  if config.mapSpec.len == 0 and mapMeta.path == GenMapName:
+    config.mapSpec = mapSpecJson(mapMeta)
   if not node.hasKey("gunRange"):
-    config.gunRange = loadCtfMapMetadata(config.mapPath).gunRange
+    config.gunRange = mapMeta.gunRange
   node.readConfigSlots(config.slots)
   node.readConfigBool("closedRoster", config.closedRoster)
   node.readConfigTokens(config.slots, config.closedRoster)
@@ -3131,6 +3880,13 @@ proc configJson*(config: GameConfig): string =
     "maxGameTicks": config.maxTicks,
     "maxGames": config.maxGames,
     "mapPath": config.mapPath,
+    "mapSeed": config.mapSeed,
+    "mapPoolIndex": config.mapPoolIndex,
+    "mapSize": config.mapGen.size,
+    "mapSymmetry": config.mapGen.symmetry,
+    "mapColumns": config.mapGen.columns,
+    "mapWindows": config.mapGen.windows,
+    "mapCenterFeature": config.mapGen.centerFeature,
     "closedRoster": config.closedRoster,
     "showPlayerLabels": config.showPlayerLabels,
     "fastMode": config.fastMode,
@@ -3139,6 +3895,8 @@ proc configJson*(config: GameConfig): string =
   }
   if includePlayers:
     node["players"] = players
+  if config.mapSpec.len > 0:
+    node["mapSpec"] = fromJson(config.mapSpec)
   $node
 
 proc lobbyIsStarting*(sim: SimServer): bool =
@@ -4253,12 +5011,20 @@ proc resetGrenades*(sim: var SimServer) =
     sim.players[i].throwCharge = 0
 
 proc resetMedKits*(sim: var SimServer) =
-  ## Places both med kits on the center line (a third and two thirds of the
-  ## field height, nudged to the nearest walkable floor) and refills them.
-  let targets = [
-    (MapWidth div 2, MapHeight div 3),
-    (MapWidth div 2, 2 * MapHeight div 3)
-  ]
+  ## Places both med kits on the map's active spawn points (generated maps
+  ## draw the pair per map; hand-authored maps carry the classic center-line
+  ## thirds), nudged to the nearest walkable floor, and refills them.
+  let targets =
+    if sim.gameMap.medKitSpawns.len >= 2:
+      [
+        (sim.gameMap.medKitSpawns[0].x, sim.gameMap.medKitSpawns[0].y),
+        (sim.gameMap.medKitSpawns[1].x, sim.gameMap.medKitSpawns[1].y),
+      ]
+    else:
+      [
+        (MapWidth div 2, MapHeight div 3),
+        (MapWidth div 2, 2 * MapHeight div 3),
+      ]
   for i in 0 ..< sim.medKitSpawns.len:
     let spot = sim.nearestWalkable(targets[i][0], targets[i][1])
     sim.medKitSpawns[i] = PickupSpawn(
@@ -6086,7 +6852,7 @@ proc initSimServer*(config: GameConfig): SimServer =
     sheet.subImage(SpriteSize * 4, 0, SpriteSize, SpriteSize)
   )
 
-  result.gameMap = loadCtfMap(config.mapPath)
+  result.gameMap = loadCtfMap(config)
   result.rooms = result.gameMap.rooms
 
   let (mapImage, walkImage, wallImage) = loadMapLayers(result.gameMap)

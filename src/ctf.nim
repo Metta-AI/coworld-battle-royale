@@ -31,6 +31,19 @@ proc randomSeed(): int =
   (int(buf[0]) shl 24 or int(buf[1]) shl 16 or
     int(buf[2]) shl 8 or int(buf[3])) and 0x7FFF_FFFF
 
+proc stripUnpinnedSeed(configJson: string): string =
+  ## Drops the legacy sentinel seed from an unpinned config so it cannot
+  ## clobber the randomized seed injected before config.update.
+  if configJson.len == 0:
+    return configJson
+  try:
+    let node = parseJson(configJson)
+    if node.kind == JObject and node.hasKey("seed"):
+      node.delete("seed")
+    $node
+  except CatchableError:
+    configJson  # config.update reports the real parse error.
+
 proc limitText(value: int): string =
   ## Returns a readable text value for a numeric limit.
   if value > 0:
@@ -64,9 +77,15 @@ when isMainModule:
         ""
 
   var config = defaultGameConfig()
-  config.update(runtimeConfig.config)
-  if not seedPinned(runtimeConfig.config):
+  if seedPinned(runtimeConfig.config):
+    config.update(runtimeConfig.config)
+  else:
+    ## Randomize BEFORE parsing: config.update resolves everything
+    ## seed-derived — the terrain pick and its replay-pinned mapSpec, and
+    ## the map-default gun range — so the randomized seed must already be
+    ## in place or every process would draw the same pool map.
     config.seed = randomSeed()
+    config.update(stripUnpinnedSeed(runtimeConfig.config))
     echo "seed not pinned; randomized"
   config.echoStartupConfig(runtimeConfig)
   echo "Using map file: " & config.mapPath
