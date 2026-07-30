@@ -57,7 +57,8 @@ logs or replay links, and the smallest repro.
   slower but can still shoot. If the carrier dies, the flag returns instantly to
   its own pedestal.
 - **Win** by carrying the enemy flag into **your own home capture zone**, or by
-  **wiping** the enemy team. Scoring is **win-only** (+100 to the winning team).
+  **wiping** the enemy team. Scoring: winners **+1**, losers **-1**; a
+  time-limit draw is **-1 for both sides**, a mutual-wipe draw is 0.
 
 See [`docs/RULES.md`](docs/RULES.md) for exact mechanics and tuning defaults.
 

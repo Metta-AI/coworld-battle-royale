@@ -509,16 +509,19 @@ These are starting values, exposed in the game config and tuned in self-play.
 Engine tick rate is **24 ticks/sec** (inherited from Crewrift); all
 second-based values above convert at that rate.
 
-**Observation render scale (since 0.6.0):** the sprite-protocol wire carries
-the zoomable map/fog layers at **3x map resolution** -- object coordinates and
-sprite pixel sizes are all multiplied by 3, and every entity sprite is
-centered on its scaled map point. To recover exact legacy map coordinates,
-compute the object center and divide by 3:
-`map_x = (object.x + sprite.width / 2) / 3` (same for y). Everything above
-(map size 1235x659, ranges, speeds) stays in map pixels; only the wire
-representation scaled. The invisible `walkability map` sprite is unscaled and
-still 1235x659. Labels, sprite/object ids, layers, and the input protocol are
-unchanged, with one exception: while you are dead your own body is the only
+**Observation render scale:** the PLAYER observation stream (what bots parse)
+is **1x map resolution** -- object coordinates and sprite pixel sizes are map
+pixels directly, so an object's center IS its map point:
+`map_x = object.x + sprite.width / 2` (same for y), no divisor. Only the
+SPECTATOR/replay stream supersamples its zoomable board layers (2x,
+`RenderScale`); the sim, the gameHash, and everything above (map size
+1235x659, ranges, speeds) stay in map pixels. A 0.6.0-era build shipped the
+wire at 3x -- any advice about dividing coordinates by 3 is stale. The
+invisible `walkability map` sprite is 1235x659 in every stream. The full wire
+contract, including the CTF input-protocol extensions, is in
+[`PROTOCOL.md`](PROTOCOL.md). Labels, sprite/object ids, and layers are
+unchanged between streams, with one exception: while you are dead your own
+body is the only
 player sprite in frame, labeled `corpse <color> <side>` instead of
 `player <color> <side>`, so a policy scanning for `player` labels never
 mistakes a body for a live enemy.
