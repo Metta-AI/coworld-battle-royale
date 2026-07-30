@@ -15,7 +15,7 @@ const
   BlueColor = rgba(60, 110, 220, 255)
   KitColor = rgba(200, 30, 30, 255)
   KitIdleColor = rgba(120, 100, 80, 255)
-  TrenchColor = rgba(120, 96, 62, 255)   ## dug pits (GV27): walkable, dark.
+  TrenchColor = rgba(120, 96, 62, 255)   ## dug pits (config-gated): walkable, dark.
   TrenchRimColor = rgba(88, 66, 38, 255)
 
 proc fillDisc(img: Image, cx, cy, r: int, color: ColorRGBA) =

@@ -475,11 +475,14 @@ type
     columns*: int          ## obstacle column count per half, 3..8
     windows*: int          ## glass-window count per half, 0..6; -1 = draw
     centerFeature*: string ## "bracket" | "ring" | "walls"
-    pits*: int             ## exact TOTAL trench count, 0..64; -1 = density
-                           ## draw. Even counts place symmetric pairs; an
-                           ## odd count anchors its extra pit dead center
-                           ## (self-symmetric under mirror AND rot180), so
-                           ## both parities stay exactly team-fair.
+    pits*: int             ## requested TOTAL trench count, 0..64; -1 =
+                           ## density draw. Best-effort: when the candidate
+                           ## spots can't host the full request, the map
+                           ## places as many as fit. Even counts place
+                           ## symmetric pairs; an odd count anchors its
+                           ## extra pit dead center (self-symmetric under
+                           ## mirror AND rot180), so both parities stay
+                           ## exactly team-fair.
     pitDensity*: int       ## percent multiplier on the default per-class
                            ## pit chances (100 = default feel, 0 = none,
                            ## 200 = twice as digging-happy); -1 = default.
@@ -2163,16 +2166,24 @@ proc rectOnOpenFloor(
 ): bool =
   ## Returns true when every pixel of the rectangle is walkable floor on an
   ## uninstalled candidate map. Sampled on a 3px grid — finer than the
-  ## thinnest wall feature (12px), so no wall can slip between samples.
+  ## thinnest wall feature (12px) — with the far edge column and row always
+  ## included, so no wall can slip past the samples on any side.
+  var xs, ys: seq[int]
+  var x = rect.x
+  while x < rect.x + rect.w - 1:
+    xs.add x
+    x += 3
+  xs.add rect.x + rect.w - 1
   var y = rect.y
-  while y < rect.y + rect.h:
-    var x = rect.x
-    while x < rect.x + rect.w:
-      if mapWallAt(gameMap, obstacles, x, y):
-        return false
-      x += 3
+  while y < rect.y + rect.h - 1:
+    ys.add y
     y += 3
-  not mapWallAt(gameMap, obstacles, rect.x + rect.w - 1, rect.y + rect.h - 1)
+  ys.add rect.y + rect.h - 1
+  for sy in ys:
+    for sx in xs:
+      if mapWallAt(gameMap, obstacles, sx, sy):
+        return false
+  true
 
 proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
   ## One UNVALIDATED draw. Every top-level parameter is drawn unconditionally
@@ -2499,7 +2510,11 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
       gameMap: CtfMap, digs: var seq[MapRect], trench: MapRect
     ): bool =
       ## Accepts one left-half dig plus its symmetry image when both sit
-      ## on open floor clear of every accepted dig.
+      ## on open floor clear of every accepted dig. Count-mode parity
+      ## rests on every candidate being distinct from its own image —
+      ## true because column candidates cap at center.x - 52 and endzone
+      ## candidates hug the red home; a future center-adjacent candidate
+      ## class would break the exact-count accounting here.
       let image =
         case gameMap.symmetry
         of symMirror: trench.mirrorX(gameMap.width)
@@ -2723,7 +2738,7 @@ proc rectsNode(rects: seq[MapRect]): JsonNode =
     result.add %*[r.x, r.y, r.w, r.h]
 
 proc rectsFromNode(node: JsonNode): seq[MapRect] =
-  if node.isNil:
+  if node.isNil or node.kind != JArray:
     return
   for item in node:
     result.add MapRect(
