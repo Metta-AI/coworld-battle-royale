@@ -290,6 +290,48 @@ const
   HitSpriteBase = 16100        ## per-color-and-stage hit-splat sprites: 16100..16163.
   HitSplatSize = 21            ## on-hit paint-splat canvas (~1.3x a 16px player).
   HitSplatCoreR = 6.0          ## px radius of the splat's main wet blob.
+  ## --- Permanent dried terrain paint (SPECTATOR/BOARD ONLY) ---
+  ## Stains never expire, so unlike every other FX family they are emitted ONCE
+  ## and then left on the client forever — the same trick the map bands use
+  ## (never tracked in objectIds, so the per-frame delete diff can't reap them).
+  ## That makes a thousand decals cost nothing per frame; see addPaintStains.
+  StainSpriteBase = 34000      ## ONE sprite per stain: 34000..35199. Not shared
+                               ## per color×variant, because each blot is masked
+                               ## to the surface it actually hit (see
+                               ## buildPaintStainSprite) and that mask depends on
+                               ## the map under that exact spot. Lives in the gap
+                               ## between the kill pops (..31191) and the rig
+                               ## pools (40000..): the 4-team rig legs alone span
+                               ## 41000..72679, so anything above 40000 is both
+                               ## taken and past the u16 id ceiling.
+  DiamondPaintSpriteBase = 35300 ## per-(diamond, frame) painted stone:
+                               ## 35300..35427 (8 diamonds x 16 frames). A
+                               ## diamond claims ids here only once paint lands
+                               ## on it; clean ones keep sharing the 16 plain
+                               ## frames at RotDiamondSpriteBase. Only the frame
+                               ## currently on screen is ever emitted, so a
+                               ## painted diamond costs one sprite per spin
+                               ## step, not 16 at once.
+  StainObjectBase = 33000      ## one object per stain: 33000..34199, clear of the
+                               ## rig object pool (32000..32183).
+  StainVariants = 8            ## distinct blot shapes, picked by the stain's own
+                               ## hash so a lane of paint never reads as one
+                               ## rubber-stamped sprite repeated.
+  StainSize = 27               ## px canvas, ~1.7x a cog body. Sized UP from a
+                               ## single-mark read to a coverage read: a match
+                               ## lands only a few hundred stains, so at cog size
+                               ## they scattered as confetti instead of pooling
+                               ## into painted ground.
+  StainZ = low(int16) + 2      ## floor decal: above the map bands AND above the
+                               ## endzone glow fade (low(int16)+1), below every
+                               ## actor. Above the fade because paint lies ON the
+                               ## floor while the fade is floor LIGHTING — under
+                               ## it, the fade's near-opaque column crop would
+                               ## erase every endzone stain whenever that heart
+                               ## was out. Must also stay clear of low(int16) so
+                               ## the client's static-band cache stays valid (it
+                               ## requires every dynamic object to sort strictly
+                               ## above the bands).
   DamagePopSpriteBase = 31000  ## floating "-N" damage-number sprites keyed
                                ## color×amount×stage: 31000..31127 (above tracers).
   DamagePopObjectBase = 31200  ## one drawn damage pop per object: 31200..31215.
@@ -483,6 +525,11 @@ type
     cogDriveTick*: int           ## sim.tickCount at the last cogDrive step; a
                                  ## non-sequential jump snaps the pose instead of
                                  ## integrating across it (scrub-safe).
+    stainsSent*: int             ## how many permanent paint stains this viewer
+                                 ## already holds. Stains are append-only and
+                                 ## emitted once each (addPaintStains), so this
+                                 ## is the incremental cursor into
+                                 ## sim.paintStains — never a re-send.
     spriteDefs: seq[SpriteDefinition]
 
   PlayerViewerState* = ref object
@@ -1593,6 +1640,16 @@ proc plasmaPulseDiameter(pulse, stage: int): int =
     slot = PlasmaArcMaxWidth * forward div max(1, PlasmaArcReach)
   max(10, int(round(float(slot) * SprayPuffOverlap)))
 
+## --- Team-colored PAINT art: always tint from teamPaintRgba ---
+## Every paint visual below (spray mist, grenade blast, paintball tracer + head,
+## on-hit splat, dried terrain stain, damage/KO pop) resolves its team color
+## through `teamPaintRgba`, NOT `Palette[...]`. The 16-entry retro palette a
+## sprite's `color: uint8` indexes has a blue slot (BlueTeamColor = 13) of
+## (131,118,156) — a muted lavender that matches nothing else on screen: the
+## blue soldier art is (116,168,255) and the blue endzone floor is (63,124,196).
+## So palette-tinted blue paint read as a washed-out grey-violet, as if it
+## belonged to some third team. teamPaintRgba maps the two TEAM colors to their
+## true display values and passes individual player-slot colors through.
 proc buildPlasmaPulseSprite(
   colorIndex, stage, pulse: int
 ): seq[uint8] {.measure.} =
@@ -1606,7 +1663,7 @@ proc buildPlasmaPulseSprite(
   ## ragged and gassy instead of a ring of hard circles.
   let
     size = plasmaPulseDiameter(pulse, stage)
-    base = Palette[PlayerColors[colorIndex and 0x0f] and 0x0f]
+    base = teamPaintRgba(PlayerColors[colorIndex and 0x0f])
     center = float(size - 1) / 2
     radius = max(center, 1.0)
     fade = 1.0 - 0.72 * (stage.float /
@@ -1651,7 +1708,7 @@ proc buildBlastSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
   ## vivid (never muddies toward brown) so a landing is unmistakably one team's.
   result = newRgbaPixels(BlastSize, BlastSize)
   let
-    base = Palette[PlayerColors[colorIndex and 0x0f] and 0x0f]
+    base = teamPaintRgba(PlayerColors[colorIndex and 0x0f])
     paintR = uint8((base.r.int * 3 + 255) div 4)
     paintG = uint8((base.g.int * 3 + 255) div 4)
     paintB = uint8((base.b.int * 3 + 255) div 4)
@@ -1731,7 +1788,7 @@ proc buildTracerDotSprite(colorIndex, stage, bucket: int): seq[uint8] {.measure.
   ## interior is solid with a ~1px soft rim so overlaps merge cleanly.
   result = newRgbaPixels(TracerDotSize, TracerDotSize)
   let
-    base = Palette[PlayerColors[colorIndex and 0x0f] and 0x0f]
+    base = teamPaintRgba(PlayerColors[colorIndex and 0x0f])
     c = float(TracerDotSize - 1) / 2
     r = c + 0.5                ## blob radius reaches the canvas edge.
     stageFade = 1.0 - stage.float / float(TracerStages)
@@ -1870,7 +1927,7 @@ proc buildTracerHeadSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
   ## and tail die together.
   result = newRgbaPixels(TracerHeadSize, TracerHeadSize)
   let
-    base = Palette[PlayerColors[colorIndex and 0x0f] and 0x0f]
+    base = teamPaintRgba(PlayerColors[colorIndex and 0x0f])
     c = float(TracerHeadSize - 1) / 2
     r = c + 0.5
     stageFade = 1.0 - stage.float / float(TracerStages)
@@ -1935,7 +1992,7 @@ proc buildHitSparkSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
   ## friendly fire). Centered on a HitSplatSize canvas.
   result = newRgbaPixels(HitSplatSize, HitSplatSize)
   let
-    base = Palette[PlayerColors[colorIndex and 0x0f] and 0x0f]
+    base = teamPaintRgba(PlayerColors[colorIndex and 0x0f])
     # Paint stays bright: lighten the team color a touch so it never muddies,
     # and keep a wet-highlight color near white for the sheen.
     paintR = uint8((base.r.int * 3 + 255) div 4)
@@ -1999,6 +2056,157 @@ proc buildHitSparkSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
         y * HitSplatSize + x, r, g, b,
         uint8(clamp(255.0 * fade, 0.0, 255.0))
       )
+
+proc buildPaintStainSprite(
+  sim: SimServer,
+  stain: PaintStain,
+  colorIndex, variant: int,
+  maskToSurface = true
+): seq[uint8] {.measure.} =
+  ## Builds one DRIED terrain stain: a flat, matte splat of team paint soaked
+  ## into the floor. Deliberately NOT the wet on-hit splat — no sheen, no bright
+  ## contour, and a muted alpha — because a stain is old paint, and a floor
+  ## covered in wet-looking blobs would out-shout the players. Reads as
+  ## coverage when several overlap; keeps the team hue unambiguous so a lane's
+  ## color says who owns it.
+  ##
+  ## Analytic: rasterized AT the emission scale (boardScale), per the board
+  ## sprite rule, so the ragged edges stay crisp instead of blocky-upscaled.
+  let
+    k = max(1, boardScale)
+    outSize = StainSize * k
+  result = newRgbaPixels(outSize, outSize)
+  let
+    base = teamPaintRgba(PlayerColors[colorIndex and 0x0f])
+    # Keep the hue saturated and let ALPHA do all the subtlety. The stain has to
+    # stay translucent enough that the floor's stonework — grout lines, cracks,
+    # grain — reads straight through it, which is the whole difference between
+    # "paint soaked into terrain" and "a colored blob dropped on top of it".
+    paintR = uint8(min(255, base.r.int * 92 div 100))
+    paintG = uint8(min(255, base.g.int * 92 div 100))
+    paintB = uint8(min(255, base.b.int * 92 div 100))
+    c = float(outSize - k) / 2
+    fs = float(outSize)
+    v = float(variant)
+  # A splat is a MAIN GOB plus a few smaller satellite blobs — overlapping
+  # circles, the same construction as the wet on-hit splat. (An earlier pass
+  # modulated one radius by sin(angle * lobes), which does not read as paint at
+  # all: it renders as a spiky star/asterisk. Never shape a blot that way.)
+  # Offsets/radii are in units of the 19px canvas, scaled to the emission size,
+  # and are fixed per variant so the sprite stays deterministic.
+  const gobs = [
+    # (dx, dy, r) per variant, main gob first.
+    [(0.00, 0.00, 0.30), (0.19, -0.13, 0.16), (-0.17, 0.15, 0.13),
+     (0.13, 0.20, 0.10)],
+    [(-0.03, 0.02, 0.31), (-0.20, -0.16, 0.15), (0.20, 0.10, 0.14),
+     (0.04, -0.23, 0.09)],
+    [(0.02, -0.02, 0.28), (0.21, 0.14, 0.17), (-0.15, -0.19, 0.12),
+     (-0.21, 0.12, 0.10)],
+    [(0.00, 0.03, 0.32), (-0.22, 0.09, 0.14), (0.16, -0.18, 0.13),
+     (0.19, 0.19, 0.09)],
+    [(-0.02, -0.01, 0.29), (0.18, -0.20, 0.15), (0.14, 0.21, 0.12),
+     (-0.20, -0.10, 0.11)],
+    [(0.03, 0.00, 0.30), (-0.18, -0.18, 0.16), (-0.13, 0.21, 0.11),
+     (0.22, 0.08, 0.12)],
+    [(-0.01, 0.02, 0.27), (0.22, 0.02, 0.16), (-0.19, 0.16, 0.14),
+     (0.05, -0.22, 0.11)],
+    [(0.01, -0.03, 0.31), (0.15, 0.20, 0.15), (-0.21, -0.13, 0.13),
+     (-0.09, 0.22, 0.10)]
+  ]
+  let shape = gobs[variant mod gobs.len]
+  for y in 0 ..< outSize:
+    for x in 0 ..< outSize:
+      let
+        px = float(x)
+        py = float(y)
+      # `density` is 0..1 coverage of wet paint at this pixel, taken as the
+      # strongest of three splat features. It drives ALPHA only — never a
+      # color swap — so the mark is one translucent film over the stonework.
+      var density = 0.0
+      # 1. The main mass: overlapping gobs, with a flat CORE. A purely radial
+      # falloff makes each gob a soft ball; holding density at 1 until the
+      # outer third makes it a blot with a soft rim, which is what paint is.
+      for (ox, oy, rr) in shape:
+        let
+          gx = px - (c + ox * fs)
+          gy = py - (c + oy * fs)
+          gr = rr * fs
+          gd = sqrt(gx * gx + gy * gy)
+        if gd < gr:
+          density = max(density, clamp((1.0 - gd / gr) / 0.38, 0.0, 1.0))
+      # Everything thrown clear of the mass leaves in ONE direction — paint
+      # arrives on a trajectory. Spraying features evenly around the circle is
+      # what turned an earlier pass into asterisks/spiders; keeping them inside
+      # a narrow arc is what makes the mark read as thrown.
+      let throwAng = v * 2.39
+      # 2. Short tapered FINGERS creeping off the mass edge, not long spokes.
+      for f in 0 ..< 2:
+        let
+          fa = throwAng + (float(f) - 0.5) * 0.62
+          flen = fs * (0.15 + 0.06 * abs(sin(v * 0.7 + float(f) * 1.9)))
+          fwid = fs * (0.062 + 0.020 * abs(cos(v * 1.4 + float(f))))
+          dirX = cos(fa)
+          dirY = sin(fa)
+          relX = px - c
+          relY = py - c
+          t = clamp((relX * dirX + relY * dirY) / flen, 0.0, 1.0)
+          perp = abs(relX * dirY - relY * dirX)
+          wid = fwid * (1.0 - 0.70 * t)      ## tapers to a point
+        if wid > 0.0 and perp < wid:
+          density = max(density, (1.0 - perp / wid) * (1.0 - 0.45 * t))
+      # 3. Flung DROPLETS — sparse specks downrange of the throw, the giveaway
+      # detail that separates a splat from a blob.
+      for s in 0 ..< 6:
+        let
+          sa = throwAng + (float(s) - 2.5) * 0.34
+          sd = fs * (0.26 + 0.13 * abs(sin(v + float(s) * 2.6)))
+          sr = fs * (0.016 + 0.017 * abs(cos(v * 1.7 + float(s) * 1.3)))
+          dx2 = px - (c + cos(sa) * sd)
+          dy2 = py - (c + sin(sa) * sd)
+          dd = sqrt(dx2 * dx2 + dy2 * dy2)
+        if dd < sr:
+          density = max(density, (1.0 - dd / sr) * 0.85)
+      if density <= 0.0:
+        continue
+      # Per-pixel grain, the same deterministic hash idiom as the other splat
+      # art. It both frays the outline (so no shape shows a clean analytic
+      # edge) and mottles the interior, so the paint looks absorbed unevenly
+      # into stone rather than airbrushed on.
+      var noise = uint32(x) * 374761393'u32 + uint32(y) * 668265263'u32 +
+        uint32(variant) * 2246822519'u32
+      noise = (noise xor (noise shr 13)) * 1274126177'u32
+      let
+        grain = float(int((noise shr 16) mod 1000)) / 1000.0
+        frayed = density - 0.30 * grain      ## ragged, never analytic
+      if frayed <= 0.02:
+        continue
+      # THE key number: a single stain is a faint tint, not a sticker. Peak
+      # opacity stays low so the floor reads through every mark; coverage comes
+      # from many marks LAYERING (each is composited over the last), which is
+      # how a fought-over lane ends up saturated while a quiet one stays clean.
+      const StainPeakAlpha = 104.0
+      let alpha = uint8(clamp(
+        StainPeakAlpha * pow(min(1.0, frayed), 0.75) * (0.74 + 0.26 * grain),
+        0.0, 255.0
+      ))
+      if alpha <= 3:
+        continue
+      # SURFACE MASK. Paint clings to the thing it hit: a blot that struck a
+      # wall must stop at that wall's edge instead of draping over the floor
+      # beside it (and a blot on the floor must not climb the wall). Map this
+      # sprite pixel back to its map cell and drop it unless that cell is the
+      # same surface the paint actually landed on. This is why stains cannot
+      # share one sprite per color×variant — the mask is specific to the spot.
+      if maskToSurface:
+        let
+          mapX = stain.x - StainSize div 2 + x div k
+          mapY = stain.y - StainSize div 2 + y div k
+        # isArtWall, not isWall: the collision mask counts the rotating
+        # diamonds as wall while the art bakes them as floor, so masking
+        # against collision painted the floor under every diamond.
+        if sim.isArtWall(mapX, mapY) != stain.onWall:
+          continue
+      result.putRawRgbaPixel(y * outSize + x, paintR, paintG, paintB, alpha)
 
 ## --- Smooth (vector) board text — spectator supersample only ---
 ## Every 1× stream keeps the retro pixel fonts byte-for-byte (the player
@@ -2138,7 +2346,7 @@ proc buildFloatingPopSprite(
     glyphH = max(1, font.height)
     width = textW + 2          # 1px contour margin on each side
     height = glyphH + 2
-    base = Palette[PlayerColors[colorIndex and 0x0f] and 0x0f]
+    base = teamPaintRgba(PlayerColors[colorIndex and 0x0f])
     inkR = uint8((base.r.int + 255 * 2) div 3)
     inkG = uint8((base.g.int + 255 * 2) div 3)
     inkB = uint8((base.b.int + 255 * 2) div 3)
@@ -3777,6 +3985,71 @@ proc addShotImpactRings(
       ShotImpactSpriteId
     )
 
+proc buildPaintedDiamondPixels(
+  sim: SimServer,
+  diamond, frame, size: int,
+  base: seq[uint8]
+): seq[uint8] {.measure.} =
+  ## One spin frame of a diamond with its accumulated paint baked ON. The paint
+  ## is stored in the diamond's un-rotated frame, so here it is rotated FORWARD
+  ## into this frame's screen offsets — the mark turns with the stone.
+  ##
+  ## Compositing into the stone sprite (rather than drawing paint as separate
+  ## objects over it) is what keeps the paint clipped to the silhouette while it
+  ## spins: a blot near the rim is cut by the stone's own alpha, so paint never
+  ## hangs off the edge of a turning diamond.
+  result = base
+  let
+    k = max(1, boardScale)
+    outSize = size * k
+    center = float(size) / 2.0
+    angle = float(frame) / float(DiamondSpinFrames) * PI / 2.0
+    ca = cos(angle)
+    sa = sin(angle)
+  for stain in sim.diamondStains:
+    if int(stain.diamond) != diamond:
+      continue
+    let
+      colorIndex = playerColorIndex(stain.color)
+      variant = int(stain.seed shr 7) mod StainVariants
+      # Un-rotated frame -> this frame's screen offset (the inverse of the
+      # transform applied when the hit was recorded).
+      dx = float(stain.lx) * ca - float(stain.ly) * sa
+      dy = float(stain.lx) * sa + float(stain.ly) * ca
+      # Blot art, unmasked: the diamond's own alpha does the clipping below.
+      blot = sim.buildPaintStainSprite(
+        PaintStain(x: 0, y: 0, color: stain.color, onWall: true,
+                   seed: stain.seed),
+        colorIndex, variant, maskToSurface = false
+      )
+      blotSize = StainSize * k
+      originX = int(round((center + dx) * float(k))) - blotSize div 2
+      originY = int(round((center + dy) * float(k))) - blotSize div 2
+    for by in 0 ..< blotSize:
+      let ty = originY + by
+      if ty < 0 or ty >= outSize:
+        continue
+      for bx in 0 ..< blotSize:
+        let tx = originX + bx
+        if tx < 0 or tx >= outSize:
+          continue
+        let
+          src = (by * blotSize + bx) * 4
+          srcA = blot[src + 3]
+        if srcA == 0:
+          continue
+        let dst = (ty * outSize + tx) * 4
+        if result[dst + 3] == 0:
+          continue                    ## off the stone: clipped by its alpha.
+        # Source-over onto opaque stone, so the carved shading still reads
+        # through the translucent paint.
+        let a = float(srcA) / 255.0
+        for c in 0 .. 2:
+          result[dst + c] = uint8(clamp(
+            float(blot[src + c]) * a + float(result[dst + c]) * (1.0 - a),
+            0.0, 255.0
+          ))
+
 proc addRotatingDiamonds(
   sim: SimServer,
   spriteDefs: var seq[SpriteDefinition],
@@ -3796,8 +4069,29 @@ proc addRotatingDiamonds(
       spot = AnimatedDiamonds[i]
       frame = diamondSpinFrame(spot.cx, sim.tickCount)
       (size, pixels) = rotatingDiamondPixels(spot.radius, frame, boardScale)
-      spriteId = RotDiamondSpriteBase + frame
-    if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
+    # A diamond that has been shot carries its paint baked into the stone, so
+    # the marks turn with it and stay clipped to its silhouette. Only the frame
+    # on screen right now is built/emitted; the rest arrive as the spin reaches
+    # them, so paint costs one sprite per step rather than all 16 at once.
+    var paintCount = 0
+    for stain in sim.diamondStains:
+      if int(stain.diamond) == i:
+        inc paintCount
+    let spriteId =
+      if paintCount > 0: DiamondPaintSpriteBase + i * DiamondSpinFrames + frame
+      else: RotDiamondSpriteBase + frame
+    if paintCount > 0:
+      # The label carries the paint count, so a NEW hit on this diamond
+      # invalidates the viewer's cached frame and re-ships the repainted stone.
+      let label = "diamond " & $i & " paint " & $paintCount
+      let defIndex = spriteDefs.spriteDefinitionIndex(spriteId)
+      if defIndex < 0 or spriteDefs[defIndex].label != label:
+        packet.addBoardSpriteChanged(
+          spriteDefs, spriteId, size, size,
+          sim.buildPaintedDiamondPixels(i, frame, size, pixels), label,
+          native = boardScale
+        )
+    elif spriteDefs.spriteDefinitionIndex(spriteId) < 0:
       packet.addBoardSpriteChanged(
         spriteDefs, spriteId, size, size, pixels, "diamond",
         native = boardScale
@@ -4482,6 +4776,60 @@ proc addSplatters(
       MapLayerId,
       spriteId
     )
+
+proc addPaintStains(
+  sim: SimServer,
+  state: var GlobalViewerState,
+  packet: var seq[uint8]
+) {.measure.} =
+  ## Emits the PERMANENT dried paint on the terrain — the marks left where shots,
+  ## sprays and grenades hit the map, which never expire, so the lanes players
+  ## keep running end the match visibly coated in their colors.
+  ##
+  ## INCREMENTAL BY DESIGN. `sim.paintStains` is append-only within a match, so
+  ## this ships only the stains a viewer hasn't seen yet and never re-sends or
+  ## re-places an old one. Like the map bands, stain objects are deliberately
+  ## NOT added to `currentIds`: the per-frame delete diff only reaps ids it has
+  ## seen in a previous frame's list, so leaving them out is what makes them
+  ## stick forever at zero per-frame cost. A thousand decals therefore cost one
+  ## object message each, once — not a thousand messages per frame.
+  ##
+  ## Spectator/board only: the POV/RL observation stream never receives these
+  ## (a policy must not start reading floor art as terrain), and `mapRgba` — the
+  ## surface the RL view shares — is never touched.
+  if state.stainsSent > sim.paintStains.len:
+    # The match restarted (startGame cleared the list) while this viewer held
+    # the previous match's paint: drop the stale marks and re-arm from empty.
+    for i in 0 ..< min(state.stainsSent, StainMaxCount):
+      packet.addDeleteObject(StainObjectBase + i)
+    state.stainsSent = 0
+  while state.stainsSent < min(sim.paintStains.len, StainMaxCount):
+    let
+      index = state.stainsSent
+      stain = sim.paintStains[index]
+      colorIndex = playerColorIndex(stain.color)
+      variant = int(stain.seed shr 7) mod StainVariants
+      # One sprite id per stain: the blot is masked to the surface under THIS
+      # spot, so it cannot be shared across stains of the same color/variant.
+      spriteId = StainSpriteBase + index
+    packet.addBoardSpriteChanged(
+      state.spriteDefs,
+      spriteId,
+      StainSize,
+      StainSize,
+      sim.buildPaintStainSprite(stain, colorIndex, variant),
+      "paint stain " & playerColorName(colorIndex) & " variant " & $variant,
+      native = boardScale
+    )
+    packet.addBoardObject(
+      StainObjectBase + index,
+      stain.x - StainSize div 2,
+      stain.y - StainSize div 2,
+      StainZ,
+      MapLayerId,
+      spriteId
+    )
+    inc state.stainsSent
 
 proc addDamagePops(
   sim: SimServer,
@@ -5397,6 +5745,11 @@ proc buildSpriteProtocolUpdates*(
     # across both modes — so a mode switch must forget the def cache, or the
     # re-init would dedup-skip sprites the other mode overwrote client-side.
     nextState.spriteDefs.setLen(0)
+    # Permanent stains are emitted once and never re-sent, so a mode switch —
+    # which forgets the sprite defs above and (entering POV) clears the client's
+    # objects — must re-arm the cursor, or the board would come back with every
+    # stain object referencing a sprite id the client no longer has defined.
+    nextState.stainsSent = 0
     if not povActive:
       nextState.initialized = false
   nextState.povActive = povActive
@@ -5476,6 +5829,9 @@ proc buildSpriteProtocolUpdates*(
   )
   sim.addEndzonePrewarm(nextState, result)
   sim.addEndzoneGlowFade(nextState, currentIds, result)
+  # Permanent terrain paint: incremental (only stains this viewer lacks) and
+  # intentionally NOT tracked in currentIds, so it persists like the map bands.
+  sim.addPaintStains(nextState, result)
   sim.addSplatters(nextState.spriteDefs, currentIds, result)
   sim.addDamagePops(nextState.spriteDefs, currentIds, result)
   sim.addShotTracers(nextState.spriteDefs, currentIds, result)

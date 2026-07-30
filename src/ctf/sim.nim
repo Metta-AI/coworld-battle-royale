@@ -160,6 +160,21 @@ const
                               ## in the spectator view (cosmetic only).
   SplatterFxTicks* = 120      ## ~5s a death splatter stays visible (cosmetic only).
   HitFxTicks* = 34            ## ~1.4s a non-fatal hit's paint splat stays visible.
+  StainChancePct* = 100       ## % of paint landing on TERRAIN that dries into a
+                              ## permanent stain. 100 = every miss marks the wall
+                              ## it hit, so the lanes players actually run get
+                              ## visibly repainted over a match; lower it to thin
+                              ## the buildup. Cosmetic only, never in gameHash.
+  StainSeatDepth* = 6         ## px a wall stain is pushed past the wall's
+                              ## leading edge so the masked blot lands on the
+                              ## face rather than half-overhanging the floor.
+  StainMaxCount* = 1200       ## most dried stains kept for a match. A 5000-tick
+                              ## game with 16 cogs firing every FireCooldownTicks
+                              ## tops out near 6600 shots, so this caps unbounded
+                              ## growth (and the wire) while still reading as
+                              ## "this corridor is covered in paint". Oldest wins:
+                              ## once full, new paint stops sticking rather than
+                              ## evicting the history the viewer already saw.
   DamageFxTicks* = 26         ## ~1.1s a floating "-1" damage pop rises and fades
                               ## after a hit (cosmetic only, never in gameHash).
   KillFxTicks* = 44           ## ~1.8s a floating "KO" kill marker rises and fades
@@ -696,6 +711,34 @@ type
     color*: uint8
     hit*: bool
 
+  PaintStain* = object
+    ## A DRIED paint stain on the terrain: cosmetic, permanent for the rest of
+    ## the match, and never in gameHash (replay-safe). Where SplatterFx marks
+    ## where a cog was HIT and fades over a few seconds, a stain is the paint
+    ## that missed and hit the map — so the lanes players fight over slowly
+    ## accumulate their colors. Emitted once per stain and then left on the
+    ## client forever (see addPaintStains), so this is nearly free per frame.
+    x*, y*: int
+    color*: uint8              ## the SHOOTER's paint, so a lane's color says
+                               ## which team keeps running it.
+    onWall*: bool              ## true when the paint struck WALL geometry. The
+                               ## renderer masks the blot to pixels of this same
+                               ## surface, so a splat on a wall stays on the wall
+                               ## instead of spilling onto the floor beside it.
+    seed*: uint32              ## picks the blot shape/rotation variant, derived
+                               ## from the impact site so a replay re-derives
+                               ## the identical mark.
+
+  DiamondStain* = object
+    ## Paint that landed on a ROTATING center diamond. Stored in the diamond's
+    ## OWN un-rotated frame (lx, ly) rather than in map pixels, so the mark
+    ## turns with the stone it stuck to instead of hanging in the air where the
+    ## shot happened to hit. Cosmetic; never enters gameHash.
+    diamond*: uint8            ## index into AnimatedDiamonds.
+    lx*, ly*: float32          ## offset from the diamond center, un-rotated.
+    color*: uint8
+    seed*: uint32
+
   BlastFx* = object
     ## A cosmetic grenade blast flash; never enters gameHash (replay-safe).
     ## Landing is audible: views also derive their landing sound rings here.
@@ -845,6 +888,13 @@ type
     hitFlashes*: seq[HitFlashFx]  ## cosmetic struck-target flashes; excluded from gameHash.
     bubbleImpacts*: seq[BubbleImpactFx]  ## cosmetic shield-bubble impact blinks; excluded from gameHash.
     splatters*: seq[SplatterFx]  ## cosmetic death splatters; excluded from gameHash.
+    diamondStains*: seq[DiamondStain]  ## permanent paint riding the spinning
+                               ## center diamonds; excluded from gameHash.
+    paintStains*: seq[PaintStain]  ## permanent dried terrain paint; excluded from
+                               ## gameHash. Append-only within a match and reset
+                               ## on startGame/resetToLobby, so a replay rebuilds
+                               ## the exact same buildup as it re-simulates and a
+                               ## keyframe scrub restores the paint of that tick.
     recentBlasts*: seq[BlastFx]  ## cosmetic grenade blasts; excluded from gameHash.
     damagePops*: seq[DamageFx]  ## cosmetic floating "-N" damage numbers; excluded from gameHash.
     recentShouts*: seq[Shout]  ## live shouts; observable state, in gameHash.
@@ -3976,10 +4026,16 @@ const
   EndzoneFaceLevel = 66          ## lit stone face floor luminance (glow = 0).
   EndzoneCrackLevel = 34         ## grout/seam luminance (glow = full).
   EndzoneGlowFloor = 0.82        ## min home-falloff so the far end still glows.
-  RedEndzoneColor = rgba(224, 82, 58, 255)    ## team vermillion (§4).
-  BlueEndzoneColor = rgba(63, 124, 196, 255)  ## team cerulean (§4).
-  GreenEndzoneColor = rgba(69, 168, 94, 255)  ## matches the viewer --green.
-  YellowEndzoneColor = rgba(221, 197, 49, 255)  ## matches the viewer --yellow.
+  RedEndzoneColor* = rgba(224, 82, 58, 255)    ## team vermillion (§4).
+  BlueEndzoneColor* = rgba(63, 124, 196, 255)  ## team cerulean (§4).
+  GreenEndzoneColor* = rgba(69, 168, 94, 255)  ## matches the viewer --green.
+  YellowEndzoneColor* = rgba(221, 197, 49, 255)  ## matches the viewer --yellow.
+    ## Exported as THE team display colors. The 16-entry `Palette` a sprite's
+    ## `color: uint8` indexes is the retro engine palette, and its blue slot
+    ## (BlueTeamColor = 13) is a muted lavender (131,118,156) that reads nothing
+    ## like the vivid cerulean the soldier art (116,168,255) and this endzone
+    ## floor actually show. Any NEW team-colored art should tint from these four
+    ## so it matches what a viewer sees on the board.
 
 proc emberThroughCracks(base, ember: ColorRGBA, strength: float): ColorRGBA =
   ## Lets a team ember glow seep UP ONLY through the DARK crack/grout pixels of
@@ -5014,6 +5070,25 @@ proc spawnFlipH*(gameMap: CtfMap, team: Team): bool =
   ## Blue` on sides maps.
   let brads = gameMap.spawnAimBrads(team)
   brads > AimBradsTurn div 4 and brads < 3 * AimBradsTurn div 4
+
+proc teamPaintRgba*(color: uint8): ColorRGBA =
+  ## Maps a sprite's palette team color to the TRUE team display color — the
+  ## vivid hues the soldier art and endzone floors actually show — rather than
+  ## the retro palette slot. Use this for any new true-color team art:
+  ## `Palette[BlueTeamColor]` is a muted lavender (131,118,156) that matches the
+  ## blue a viewer sees nowhere else on the board. A non-team color (an
+  ## individual player slot) falls back to its palette entry.
+  if color == RedTeamColor:
+    RedEndzoneColor
+  elif color == BlueTeamColor:
+    BlueEndzoneColor
+  elif color == GreenTeamColor:
+    GreenEndzoneColor
+  elif color == YellowTeamColor:
+    YellowEndzoneColor
+  else:
+    Palette[color and 0x0f]
+
 
 proc aimVector*(brads: int): tuple[x, y: float] =
   ## Returns the unit vector for one aim angle in brads (256 per turn):
@@ -6214,6 +6289,8 @@ proc startGame*(sim: var SimServer) =
   sim.hitFlashes = @[]
   sim.bubbleImpacts = @[]
   sim.splatters = @[]
+  sim.paintStains = @[]        ## each match starts on a clean arena.
+  sim.diamondStains = @[]
   sim.damagePops = @[]
   sim.recentShouts = @[]
   sim.arrangeHomePositions()
@@ -6469,6 +6546,98 @@ proc isWall*(sim: SimServer, mx, my: int): bool =
     return true
   sim.wallMask[mapIndex(mx, my)]
 
+proc isArtWall*(sim: SimServer, mx, my: int): bool =
+  ## True when (mx, my) is drawn as WALL in the baked arena art. This is NOT
+  ## `isWall`: the collision mask includes the rotating center diamonds, whose
+  ## pixels the art bake deliberately paints as FLOOR (the live renderer draws
+  ## them as spinning sprites instead — see renderArenaRgbaPair's artMask). A
+  ## paint stain masked against collision instead of art therefore smeared
+  ## across floor wherever a diamond stood. Stains must mask against what the
+  ## viewer can actually see.
+  sim.isWall(mx, my) and not isAnimatedDiamondPixel(mx, my)
+
+proc animatedDiamondAt*(x, y: int): int =
+  ## Index of the rotating diamond covering (x, y), or -1. Paint that lands
+  ## here has to ride the spin, so it is stored per-diamond rather than as a
+  ## static terrain stain.
+  for i in 0 ..< AnimatedDiamonds.len:
+    let spot = AnimatedDiamonds[i]
+    if abs(x - spot.cx) + abs(y - spot.cy) <= spot.radius:
+      return i
+  -1
+
+proc diamondSpinAngle*(sim: SimServer, diamond: int): float =
+  ## The spin angle of one diamond this tick, matching addRotatingDiamonds'
+  ## frame math exactly so stored paint lines up with the drawn stone.
+  let
+    spot = AnimatedDiamonds[diamond]
+    dir = if spot.cx < MapWidth div 2: 1 else: -1
+    step = sim.tickCount div DiamondSpinTicksPerFrame
+    frame = ((step * dir) mod DiamondSpinFrames + DiamondSpinFrames) mod
+      DiamondSpinFrames
+  float(frame) / float(DiamondSpinFrames) * PI / 2.0
+
+proc seatInWall*(sim: SimServer, x, y: int, ux, uy: float): (int, int) =
+  ## Nudges a wall impact from the FIRST wall pixel a little deeper along the
+  ## shot's heading, staying inside the wall. The blot is masked to wall pixels,
+  ## so a mark centered exactly on the wall's leading edge loses the half that
+  ## overhangs the floor and survives as a thin sliver; seating it into the face
+  ## it struck keeps the splat whole. Never crosses back out, so paint on a thin
+  ## pillar stays on that pillar.
+  result = (x, y)
+  for step in 1 .. StainSeatDepth:
+    let
+      nx = x + int(round(ux * float(step)))
+      ny = y + int(round(uy * float(step)))
+    if not sim.isWall(nx, ny):
+      break
+    result = (nx, ny)
+
+proc addPaintStain*(sim: var SimServer, x, y: int, color: uint8,
+                    onWall = false) =
+  ## Records one DRIED terrain stain at an impact site, if it wins the
+  ## StainChancePct roll. Cosmetic only — so this must NOT touch `sim.rng`
+  ## (that stream drives gameplay, and drawing from it here would shift every
+  ## later roll). Instead the roll and the blot variant come from a hash of the
+  ## impact site + tick, the same idiom as shotImpactOffset/fuzzedAimBrads: a
+  ## replay re-deriving this tick gets the identical stain, and a viewer that
+  ## scrubs sees the paint that existed at that tick.
+  if sim.paintStains.len >= StainMaxCount:
+    return
+  var h = 0x9E3779B9'u32 xor 0x85EBCA6B'u32
+  h = (h xor uint32(x)) * 0xC2B2AE35'u32
+  h = (h xor uint32(y)) * 0x27D4EB2F'u32
+  h = (h xor uint32(sim.tickCount)) * 0x165667B1'u32
+  h = h xor (h shr 15)
+  if StainChancePct < 100 and int(h mod 100'u32) >= StainChancePct:
+    return
+  # Paint that hit a ROTATING diamond sticks to that stone, not to the map:
+  # store it in the diamond's own frame so it turns with the spin. (A static
+  # terrain stain here would also be invisible — the diamond sprite draws over
+  # it — and would smear onto the floor the art bakes under the diamond.)
+  let diamond = animatedDiamondAt(x, y)
+  if diamond >= 0:
+    if sim.diamondStains.len >= StainMaxCount:
+      return
+    let
+      spot = AnimatedDiamonds[diamond]
+      a = sim.diamondSpinAngle(diamond)
+      dx = float(x - spot.cx)
+      dy = float(y - spot.cy)
+    sim.diamondStains.add DiamondStain(
+      diamond: uint8(diamond),
+      # Screen offset -> the diamond's un-rotated frame, the same transform
+      # rotatingDiamondPixels uses to carve its mask.
+      lx: float32(dx * cos(a) + dy * sin(a)),
+      ly: float32(-dx * sin(a) + dy * cos(a)),
+      color: color,
+      seed: h
+    )
+    return
+  sim.paintStains.add PaintStain(
+    x: x, y: y, color: color, onWall: onWall, seed: h
+  )
+
 proc lineOfSightClear*(sim: SimServer, ax, ay, bx, by: int): bool =
   ## Returns true when no wall blocks the segment between two map points.
   let
@@ -6548,6 +6717,9 @@ proc killPlayer*(
     color: sim.players[targetIndex].color,
     hit: false
   )
+  # No permanent stain at the death spot either: the paint that killed this cog
+  # landed ON the cog, and the fading splatter above is the record of it. Only
+  # paint that MISSED and reached terrain leaves a mark on terrain.
   # A floating "KO" kill marker rises and fades from the death spot — the same
   # mechanism as the "-1" damage pops, so a kill reads at a glance in the
   # spectator/replay view (cosmetic only, never in gameHash).
@@ -6693,6 +6865,23 @@ proc resolveActiveArcCones*(sim: var SimServer) =
       tick: sim.tickCount,
       color: teamColor(attacker.team)
     )
+    # A can sprayed at the terrain coats it. March the cone's center ray to the
+    # first wall inside reach and dry a stain there — so spraying down a
+    # corridor leaves the corridor painted, not just the cogs in it. One stain
+    # per tick of the cone (its site moves with the owner).
+    block sprayStain:
+      let
+        ax = attacker.x + CollisionW div 2
+        ay = attacker.y + CollisionH div 2
+        (ux, uy) = aimVector(attacker.aimBrads)
+      for step in 1 .. PlasmaArcReach:
+        let
+          rx = ax + int(round(ux * float(step)))
+          ry = ay + int(round(uy * float(step)))
+        if sim.isWall(rx, ry):
+          let (sxw, syw) = sim.seatInWall(rx, ry, ux, uy)
+          sim.addPaintStain(sxw, syw, teamColor(attacker.team), onWall = true)
+          break sprayStain
     for victimIndex in arcFire.victims:
       if victimIndex < 0 or victimIndex >= sim.players.len:
         continue
@@ -6926,16 +7115,31 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
     # March along the unit aim to the last wall-free pixel or max range
     # (checking each sampled pixel keeps this O(range) at 1300px).
     let maxRange = sim.config.gunRange
-    var lastClear = 0
+    var
+      lastClear = 0
+      wallX = 0
+      wallY = 0
+      struckWall = false
     for step in 1 .. maxRange:
       let
         rx = sx + int(round(ux * float(step)))
         ry = sy + int(round(uy * float(step)))
       if sim.isWall(rx, ry):
+        struckWall = true
+        wallX = rx
+        wallY = ry
         break
       lastClear = step
     ex = sx + int(round(ux * float(lastClear)))
     ey = sy + int(round(uy * float(lastClear)))
+    # Paint that MISSES every cog carries on until it hits geometry, and dries
+    # there for the rest of the match. The mark goes on the WALL PIXEL it
+    # struck — not the last clear pixel in front of it, which would leave the
+    # paint hanging on the floor beside the wall it visibly hit. A shot that
+    # simply ran out of range hit nothing and marks nothing.
+    if struckWall:
+      let (stainX, stainY) = sim.seatInWall(wallX, wallY, ux, uy)
+      sim.addPaintStain(stainX, stainY, shooter.color, onWall = true)
   sim.recentShots.add ShotFx(
     x0: sx,
     y0: sy,
@@ -7032,6 +7236,10 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
           color: shooter.color,
           hit: true
         )
+        # NO terrain stain here: a paintball that connects spends its paint ON
+        # THE COG (the splat above). Only shots that MISS reach terrain and
+        # mark it — that is the whole fiction, and staining hit sites too made
+        # the arena read as painted wherever cogs merely stood.
       sim.logGameEvent(
         playerColorText(sim.players[targetIndex].color) &
           " hit by " & sim.playerText(shooterIndex) &
@@ -7186,6 +7394,19 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
   sim.recentBlasts.add BlastFx(
     x: grenade.tx, y: grenade.ty, tick: sim.tickCount, color: throwerColor
   )
+  # A paint bomb repaints the ground it lands on permanently: a cluster of
+  # dried stains across the blast footprint, so a contested chokepoint that
+  # eats grenades ends the match visibly coated. Offsets are fixed (and each
+  # stain re-hashes its own site) so a replay rebuilds the identical cluster.
+  const stainRing = [(0, 0), (-26, -14), (24, -20), (30, 12),
+                     (-18, 24), (6, 32), (-32, 4), (14, -32)]
+  for (ox, oy) in stainRing:
+    let
+      bx = grenade.tx + ox
+      by = grenade.ty + oy
+    if bx < 0 or by < 0 or bx >= MapWidth or by >= MapHeight:
+      continue
+    sim.addPaintStain(bx, by, throwerColor)
   sim.logGameEvent("grenade landed")
   let radiusSq = GrenadeBlastRadius * GrenadeBlastRadius
   var
@@ -8305,6 +8526,8 @@ proc resetToLobby*(sim: var SimServer) =
   sim.hitFlashes = @[]
   sim.bubbleImpacts = @[]
   sim.splatters = @[]
+  sim.paintStains = @[]
+  sim.diamondStains = @[]
   sim.damagePops = @[]
   sim.nextJoinOrder = 0
   sim.tickCount = 0
