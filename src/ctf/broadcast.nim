@@ -74,7 +74,7 @@ proc snapshot(tracker: var BroadcastTracker, sim: SimServer) =
     tracker.kills[i] = p.kills
     tracker.deaths[i] = p.deaths
     tracker.captures[i] = p.captures
-  for team in Team:
+  for team in sim.teams():
     tracker.carriers[team] = sim.flags[team].carrier
   tracker.prevTick = sim.tickCount
   tracker.prevPhase = sim.phase
@@ -173,7 +173,7 @@ proc stepEvents*(
 
   # Flag steals and returns, diffed per team like expand_replay. A carrier
   # losing a flag for any reason but capture returns it home instantly.
-  for team in Team:
+  for team in sim.teams():
     let carrier = sim.flags[team].carrier
     if carrier == tracker.carriers[team]:
       continue
@@ -187,14 +187,23 @@ proc stepEvents*(
         "by": sim.slotOf(carrier)
       })
 
-  # Captures, diffed per player. A player always captures the enemy flag.
+  # Captures, diffed per player: the captured flag is whichever one the
+  # capturer STILL carries — a capture ends the game without resetting the
+  # flag, and with 4 teams "the enemy flag" is no longer unique. A capture
+  # event with no carried flag would mean corrupted state; crash honestly
+  # rather than ship a nameless banner.
   for i, p in sim.players:
     if i < tracker.captures.len and p.captures > tracker.captures[i]:
+      var captured = ""
+      for team in sim.teams():
+        if sim.flags[team].carrier == i:
+          captured = teamText(team)
+      doAssert captured.len > 0, "capture event with no carried flag"
       events.add(%*{
         "t": tick,
         "k": "capture",
         "by": sim.slotOf(i),
-        "flag": teamText(enemy(p.team))
+        "flag": captured
       })
 
   tracker.snapshot(sim)
@@ -223,7 +232,7 @@ proc teamStateJson(sim: SimServer, team: Team): JsonNode =
     "lives": sim.teamLivesRemaining(team),
     "flag": (if taken: "taken" else: "home"),
     "carrier": (if taken: sim.slotOf(flag.carrier) else: -1),
-    "prog": sim.teamFlagProgress(enemy(team)),
+    "prog": sim.flagCarryProgress(team),
     "policies": sim.teamPoliciesJson(team)
   }
 
@@ -432,7 +441,7 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
       )
     # Hearts on their pedestals are billboards; a carried heart rides its
     # carrier (already drawn as that player, tagged carry), so skip it here.
-    for team in Team:
+    for team in sim.teams():
       if sim.flags[team].carrier >= 0:
         continue
       if not sim.flagVisibleTo(playerIndex, team):
@@ -506,7 +515,7 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
         # is the stable contract and reads identically).
         "team": (block:
           var shotTeam = ""
-          for team in Team:
+          for team in sim.teams():
             if shot.color == teamColor(team):
               shotTeam = teamText(team)
               break
@@ -565,7 +574,7 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
       "carry": p.carryingFlag
     })
   var mapHearts = newJArray()
-  for team in Team:
+  for team in sim.teams():
     mapHearts.add(%*{
       "x": sim.flags[team].x,
       "y": sim.flags[team].y,
@@ -631,7 +640,7 @@ proc buildStateJson*(
   ## flags, roster, verdict) is always present, so even a frame reached by a
   ## seek still hydrates the scorebug and end-card with no events.
   var teams = newJObject()
-  for team in Team:
+  for team in sim.teams():
     teams[teamText(team)] = sim.teamStateJson(team)
 
   var state = %*{
@@ -676,7 +685,7 @@ proc buildStateJson*(
   # every later frame — the client caches it.
   if livesSeries.len > 0:
     var teamNames = newJArray()
-    for team in Team:
+    for team in sim.teams():
       teamNames.add(%teamText(team))
     var pts = newJArray()
     for point in livesSeries:
@@ -717,7 +726,7 @@ proc buildStateJson*(
     # to any team count. The legacy redLives/blueLives scalars stay for
     # anything external still reading them.
     var overTeams = newJObject()
-    for team in Team:
+    for team in sim.teams():
       overTeams[teamText(team)] = %*{
         "lives": sim.teamLivesRemaining(team),
         "prog": sim.teamFlagProgress(team)

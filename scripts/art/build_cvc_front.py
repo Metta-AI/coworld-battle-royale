@@ -46,6 +46,8 @@ DATA = ROOT / "data"
 # team in the PiP as on the board.
 RED = np.array([255, 70, 60], np.float32)
 BLUE = np.array([70, 140, 255], np.float32)
+GREEN = np.array([70, 200, 110], np.float32)
+YELLOW = np.array([240, 210, 60], np.float32)
 STRENGTH = 0.75
 
 # Checkerboard knockout (see knockout-bg.py): a pixel belongs to the cog if it is
@@ -170,7 +172,9 @@ def main():
     # the plain pose stays for downed/unarmed reads).
     out = {}
     for label, src in (("", "agent_front.png"), ("_gun", "agent_front_gun.png")):
-        for team, colour in (("red", RED), ("blue", BLUE)):
+        for team, colour in (
+                ("red", RED), ("blue", BLUE),
+                ("green", GREEN), ("yellow", YELLOW)):
             im = build(colour, src)
             im.save(DATA / f"soldier_{team}_front{label}.png")
             out[f"{team}{label}"] = im

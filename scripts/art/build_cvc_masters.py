@@ -31,6 +31,9 @@ DATA = ROOT / "data"
 # brown floor and 34px scale; shading still comes through the multiply.
 RED = np.array([255, 70, 60], np.float32)
 BLUE = np.array([70, 140, 255], np.float32)
+GREEN = np.array([70, 200, 110], np.float32)
+YELLOW = np.array([240, 210, 60], np.float32)
+TEAMS = (("red", RED), ("blue", BLUE), ("green", GREEN), ("yellow", YELLOW))
 STRENGTH = 0.75
 
 SOLID = 200          # alpha >= SOLID = the cog body proper.
@@ -130,13 +133,14 @@ def build_gun():
 
 
 def main():
-    red = build_body(RED)
-    blue = build_body(BLUE)
+    bodies = [(name, build_body(colour)) for name, colour in TEAMS]
     gun = build_gun()
-    red.save(DATA / "soldier_red.png")
-    blue.save(DATA / "soldier_blue.png")
+    for name, im in bodies:
+        im.save(DATA / f"soldier_{name}.png")
     gun.save(DATA / "paintgun.png")
-    print("red", red.size, "blue", blue.size, "gun", gun.size)
+    print(" ".join(f"{name} {im.size}" for name, im in bodies),
+          "gun", gun.size)
+    red, blue = bodies[0][1], bodies[1][1]
 
     paper = (238, 236, 229, 255)
     prev = Image.new("RGBA", (1150, 560), paper)

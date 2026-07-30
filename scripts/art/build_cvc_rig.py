@@ -35,6 +35,8 @@ OUT = ROOT / "data" / "rig_real"
 
 RED = np.array([255, 70, 60], np.float32)
 BLUE = np.array([70, 140, 255], np.float32)
+GREEN = np.array([70, 200, 110], np.float32)
+YELLOW = np.array([240, 210, 60], np.float32)
 STRENGTH = 0.75
 SOLID = 200
 FRAME = 192
@@ -180,7 +182,9 @@ def main():
         return np.asarray(im.rotate(180, resample=Image.NEAREST, center=HUB,
                                     expand=False))
 
-    for team_name, team_rgb in (("red", RED), ("blue", BLUE)):
+    for team_name, team_rgb in (
+            ("red", RED), ("blue", BLUE),
+            ("green", GREEN), ("yellow", YELLOW)):
         d = OUT / team_name
         d.mkdir(parents=True, exist_ok=True)
         T = lambda f: tint(apply_alpha(base, f), team_rgb, mask)

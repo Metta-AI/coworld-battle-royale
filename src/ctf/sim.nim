@@ -264,19 +264,20 @@ const
   MapObjectId* = 1
   MapLayerId* = 0
   MapLayerType* = 0
-  ScoreboardLayerId* = 1       ## red team roster panel.
+  ScoreboardLayerId* = 1       ## left roster panel (red; +green on 4-team maps).
   ScoreboardLayerType* = 1     ## top-left anchor.
-  ScoreboardRightLayerId* = 12 ## blue team roster panel.
+  ScoreboardRightLayerId* = 12 ## right roster panel (blue; +yellow on 4-team maps).
   ScoreboardRightLayerType* = 2  ## top-right anchor.
   BottomRightLayerId* = 3
   BottomRightLayerType* = 3
   ZoomableLayerFlag* = 1
   UiLayerFlag* = 2
   PlayerSpriteBase* = 100
-  FlagSpriteBase* = 700       ## team flag sprites: 700 red flag, 701 blue flag.
+  FlagSpriteBase* = 700       ## team flag sprites: 700..703 by team.
   SelectedPlayerSpriteBase* = 6000  ## outlined selected-soldier pool:
-                              ## default 6000..6031, crown 6032..6063. Moved
-                              ## from 800: that pool swallowed the hp pips
+                              ## 4 teams x 16 rotations per skin — default
+                              ## 6000..6063, crown 6064..6127. Moved from
+                              ## 800: that pool swallowed the hp pips
                               ## (820..823) and the sound/impact rings
                               ## (830/831) — same collision class as the
                               ## 2026-07-22 unit-tag/fire-icon incident.
@@ -321,9 +322,12 @@ const
     "dark navy",
     "black"
   ]
-  ## Team colors: Red team = palette red (3), Blue team = palette blue (13).
+  ## Team colors: Red team = palette red (3), Blue team = palette blue (13),
+  ## Green team = palette green (10), Yellow team = palette yellow (8).
   RedTeamColor* = 3'u8
   BlueTeamColor* = 13'u8
+  GreenTeamColor* = 10'u8
+  YellowTeamColor* = 8'u8
   ShadowMap* = [
     0'u8,  #  0 black       -> black
     12,    #  1 gray         -> dark navy
@@ -365,8 +369,21 @@ var
 
 type
   Team* = enum
+    ## The first two members are the classic pair; a game's ACTIVE teams are
+    ## always a prefix of this enum (`Red .. Team(teamCount - 1)`), so every
+    ## 2-team code path sees exactly the members it always did.
     Red
     Blue
+    Green
+    Yellow
+
+  TeamLayout* = enum
+    ## Where the teams live on the map. `layoutSides` is the classic 2-team
+    ## left/right arena; the two 4-team layouts put a team in each corner or
+    ## at the end of each arm of a plus.
+    layoutSides
+    layoutCorners
+    layoutPlus
 
   Skin* = enum
     DefaultSkin
@@ -410,12 +427,28 @@ type
   MapPoint* = object
     x*, y*: int
 
+  CaptureZone* = object
+    ## One team's home capture region. Sides maps use the classic
+    ## full-height columns; plus arms are boxes bounded on both axes; corner
+    ## teams get a DIAGONAL zone — everything within an L1 radius of their
+    ## map corner, whose threshold edge is a 45-degree line cut across the
+    ## corner. The box fields always hold the zone's bounding box (the strip
+    ## and diff-box machinery scan it); `diag` refines membership.
+    xLo*, xHi*, yLo*, yHi*: int
+    diag*: bool                ## L1 corner zone instead of the full box.
+    cornerX*, cornerY*: int    ## the map corner the diagonal zone hugs.
+    diagLimit*: int            ## inclusive L1 radius from that corner.
+
   MapSymmetry* = enum
-    ## How a map's right half derives from its authored/generated left half.
-    ## Both are exactly team-fair; rot180 keeps diagonal lanes diagonal
+    ## How a map's full obstacle set derives from its authored/generated
+    ## seed set. Mirror and rot180 complete a LEFT-half set across the
+    ## vertical center line (2-team maps); rot90 completes a QUADRANT set by
+    ## rotating it 90/180/270 degrees about the center (4-team maps, square
+    ## only). All are exactly team-fair; rot180 keeps diagonal lanes diagonal
     ## instead of folding them into chevrons.
     symMirror
     symRot180
+    symRot90
 
   CtfMap* = object
     name*: string
@@ -433,6 +466,7 @@ type
     spawnClearH*: int          ## half-height of the open spawn pockets.
     gunRange*: int             ## default gun range on this map (px).
     symmetry*: MapSymmetry
+    layout*: TeamLayout        ## sides (2 teams) / corners / plus (4 teams).
     genSeed*: int              ## generator seed; 0 for hand-authored maps.
     medKitSpawns*: seq[MapPoint]     ## the two ACTIVE med-kit points.
     medKitCandidates*: seq[MapPoint] ## the drawn candidate set (4 on
@@ -455,10 +489,8 @@ type
     won*: bool
     abandoned*: bool
     reward*: int
-    winsRed*: int
-    winsBlue*: int
-    gamesRed*: int
-    gamesBlue*: int
+    wins*: array[Team, int]    ## lifetime wins while seated on each team.
+    games*: array[Team, int]   ## lifetime games seated on each team.
     kills*: int
     deaths*: int
     captures*: int
@@ -481,6 +513,7 @@ type
     columns*: int          ## obstacle column count per half, 3..8
     windows*: int          ## glass-window count per half, 0..6; -1 = draw
     centerFeature*: string ## "bracket" | "ring" | "walls"
+    layout*: string        ## 4-team maps: "corners" | "plus"; "" = draw.
     pits*: int             ## requested TOTAL trench count, 0..64; -1 =
                            ## density draw. Best-effort: when the candidate
                            ## spots can't host the full request, the map
@@ -523,6 +556,11 @@ type
     fastMode*: bool           ## advance frames early when every player has
                               ## sent the Sprite v1 ready packet; pacing only,
                               ## never in gameHash.
+    teams*: int               ## active team count: 2 (classic sides) or 4
+                              ## (corner / plus free-for-all maps). Every
+                              ## team fights for itself; "2v2" is two
+                              ## policies splitting one classic team's
+                              ## seats, not a game mode.
     mapPath*: string
     mapSeed*: int             ## terrain seed for "gen"/"pool"; -1 = derive
                               ## from the game seed.
@@ -788,9 +826,10 @@ type
     damagePops*: seq[DamageFx]  ## cosmetic floating "-N" damage numbers; excluded from gameHash.
     recentShouts*: seq[Shout]  ## live shouts; observable state, in gameHash.
     grenadeSpawns*: array[4, PickupSpawn]
-    medKitSpawns*: array[2, PickupSpawn]
-    shieldSpawns*: array[2, PickupSpawn]  ## one shield per team endzone.
-    plasmaArcSpawns*: array[2, PickupSpawn]
+    medKitSpawns*: seq[PickupSpawn]       ## the map's active med kits (2 on
+                                          ## sides maps, 4 on 4-team maps).
+    shieldSpawns*: seq[PickupSpawn]       ## one shield per team endzone.
+    plasmaArcSpawns*: seq[PickupSpawn]    ## one spray can per team endzone.
     airborneGrenades*: seq[AirborneGrenade]
     plasmaArcFlashes*: seq[PlasmaArcFx]
     gameStartTick*: int
@@ -813,6 +852,58 @@ type
     lastLobbyPlayersLogged*: int
     lastLobbyNeededLogged*: int
     lastLobbySecondsLogged*: int
+
+proc teamCount*(layout: TeamLayout): int =
+  ## Returns how many teams a layout seats.
+  case layout
+  of layoutSides:
+    2
+  of layoutCorners, layoutPlus:
+    4
+
+proc teamCount*(gameMap: CtfMap): int =
+  ## Returns how many teams play on one map.
+  gameMap.layout.teamCount()
+
+proc activeTeams*(count: int): Slice[Team] =
+  ## Returns the active-team slice for one team count. Active teams are
+  ## always a prefix of the enum, so 2-team games iterate exactly Red..Blue
+  ## — every historical loop, hash, and wire frame is unchanged.
+  doAssert count in [2, 4], "team count must be 2 or 4"
+  Red .. Team(count - 1)
+
+proc teams*(gameMap: CtfMap): Slice[Team] =
+  ## Returns the active teams on one map.
+  activeTeams(gameMap.teamCount())
+
+proc teams*(sim: SimServer): Slice[Team] =
+  ## Returns the active teams in one game.
+  sim.gameMap.teams()
+
+
+proc teamText*(team: Team): string =
+  ## Returns the readable team name.
+  case team
+  of Red:
+    "red"
+  of Blue:
+    "blue"
+  of Green:
+    "green"
+  of Yellow:
+    "yellow"
+
+proc teamColor*(team: Team): uint8 =
+  ## Returns the palette color for one team.
+  case team
+  of Red:
+    RedTeamColor
+  of Blue:
+    BlueTeamColor
+  of Green:
+    GreenTeamColor
+  of Yellow:
+    YellowTeamColor
 
 proc gameDir*(): string =
   ## Returns the CTF game directory.
@@ -942,7 +1033,7 @@ proc loadHeartSprite*(team: Team, size: int): seq[uint8] =
   ## Hard alpha edge (cutoff 128) so the bold painted outline stays crisp at the
   ## sprite footprint instead of feathering into a fuzzy halo on the floor.
   loadRgbaSprite(
-    if team == Red: "data/heart_red.png" else: "data/heart_blue.png",
+    "data/heart_" & teamText(team) & ".png",
     size,
     alphaCutoff = 128'u8
   )
@@ -985,11 +1076,15 @@ proc loadSprayCanSprite*(size: int): seq[uint8] =
 const SoldierMasterPaths: array[Skin, array[Team, string]] = [
   DefaultSkin: [
     Red: "data/soldier_red.png",
-    Blue: "data/soldier_blue.png"
+    Blue: "data/soldier_blue.png",
+    Green: "data/soldier_green.png",
+    Yellow: "data/soldier_yellow.png"
   ],
   CrownSkin: [
     Red: "data/soldier_red_crown.png",
-    Blue: "data/soldier_blue_crown.png"
+    Blue: "data/soldier_blue_crown.png",
+    Green: "data/soldier_green_crown.png",
+    Yellow: "data/soldier_yellow_crown.png"
   ]
 ]
 
@@ -1240,7 +1335,7 @@ proc rigSegIsWheel(seg: RigSeg): bool =
 proc ensureRigLoaded(team: Team) =
   if rigLoaded[team]:
     return
-  let dir = gameDir() / "data/rig_real" / (if team == Red: "red" else: "blue")
+  let dir = gameDir() / "data/rig_real" / teamText(team)
   for seg in RigSeg:
     rigSegImg[team][seg] = readImage(dir / rigSegPath(seg) & ".png")
   rigHeadImg[DefaultSkin][team] = rigSegImg[team][rsHead]
@@ -1631,6 +1726,17 @@ proc validateMap(gameMap: CtfMap) =
   ## Raises if a loaded map has invalid geometry.
   if gameMap.width <= 0 or gameMap.height <= 0:
     raise newException(CtfError, "Map dimensions must be positive.")
+  case gameMap.layout
+  of layoutSides:
+    if gameMap.symmetry == symRot90:
+      raise newException(CtfError, "Sides maps cannot use rot90 symmetry.")
+  of layoutCorners, layoutPlus:
+    if gameMap.symmetry != symRot90:
+      raise newException(CtfError, "Corner/plus maps are rot90-only.")
+  if gameMap.symmetry == symRot90 and gameMap.width != gameMap.height:
+    ## rot90 rotates about the center of a SQUARE; a non-square board would
+    ## silently produce team-unfair obstacle images.
+    raise newException(CtfError, "rot90 symmetry needs a square map.")
   validateMapPoint("center", gameMap.center, gameMap.width, gameMap.height)
   for i, room in gameMap.rooms:
     validateMapRect(
@@ -1806,6 +1912,70 @@ const
     ArenaShape(kind: shapeRect, rect: MapRect(x: 726, y: 761, w: 18, h: 66)),
   ]
 
+proc axisHomeLo(center: int): int =
+  ## Returns the low-edge home anchor along one axis: 30% of the way from
+  ## the edge to the center (the classic Red home-x formula).
+  center - (center * 7 div 10)
+
+proc axisHomeHi(center, size: int): int =
+  ## Returns the high-edge home anchor along one axis (the classic Blue
+  ## home-x formula).
+  center + ((size - center) * 7 div 10)
+
+proc teamAnchor*(gameMap: CtfMap, team: Team): MapPoint =
+  ## Returns one team's home anchor: the center of its protected spawn
+  ## pocket, where its pedestal stands.
+  let
+    cx = gameMap.center.x
+    cy = gameMap.center.y
+  case gameMap.layout
+  of layoutSides:
+    case team
+    of Red:
+      MapPoint(x: axisHomeLo(cx), y: cy)
+    else:
+      MapPoint(x: axisHomeHi(cx, gameMap.width), y: cy)
+  of layoutCorners:
+    ## Red top-left, Blue top-right, Green bottom-left, Yellow bottom-right.
+    case team
+    of Red:
+      MapPoint(x: axisHomeLo(cx), y: axisHomeLo(cy))
+    of Blue:
+      MapPoint(x: axisHomeHi(cx, gameMap.width), y: axisHomeLo(cy))
+    of Green:
+      MapPoint(x: axisHomeLo(cx), y: axisHomeHi(cy, gameMap.height))
+    of Yellow:
+      MapPoint(
+        x: axisHomeHi(cx, gameMap.width),
+        y: axisHomeHi(cy, gameMap.height)
+      )
+  of layoutPlus:
+    ## Red west, Blue east, Green north, Yellow south.
+    case team
+    of Red:
+      MapPoint(x: axisHomeLo(cx), y: cy)
+    of Blue:
+      MapPoint(x: axisHomeHi(cx, gameMap.width), y: cy)
+    of Green:
+      MapPoint(x: cx, y: axisHomeLo(cy))
+    of Yellow:
+      MapPoint(x: cx, y: axisHomeHi(cy, gameMap.height))
+
+proc plusArmHalf*(gameMap: CtfMap): int =
+  ## Returns the half-span of a plus map's arms — the width of each team's
+  ## endzone mouth and protected approach: 19% of the map side, comfortably
+  ## wider than the spawn pockets on every size class.
+  19 * min(gameMap.width, gameMap.height) div 100
+
+proc teamHomeX*(gameMap: CtfMap, team: Team): int =
+  ## Returns the home-edge x anchor for one team's spawn strip and pedestal.
+  gameMap.teamAnchor(team).x
+
+proc flagHome*(gameMap: CtfMap, team: Team): MapPoint =
+  ## Returns the pedestal position for one team's flag, at the center of the
+  ## team's protected spawn pocket.
+  gameMap.teamAnchor(team)
+
 proc trenchSquareAt(cx, cy: int): MapRect =
   ## A TrenchSize×TrenchSize dug pit centered on (cx, cy). Like obstacle
   ## sizes, the pit never scales with the map's size class.
@@ -1822,19 +1992,33 @@ proc rectsIntersect(a, b: MapRect): bool =
     a.y < b.y + b.h and b.y < a.y + a.h
 
 proc defaultCtfRooms(gameMap: CtfMap): seq[Room] =
-  ## The three-room annotation set every map shares: an informal center zone
-  ## plus the two base strips spanning the spawn pockets. Derives entirely
-  ## from the map's dimensions and clearances.
-  @[
-    Room(name: "Center", x: gameMap.width div 2 - 80,
-         y: gameMap.height div 2 - 80, w: 160, h: 160),
-    Room(name: "Red Base", x: 0,
-         y: gameMap.height div 2 - gameMap.spawnClearH,
-         w: gameMap.captureClear, h: 2 * gameMap.spawnClearH),
-    Room(name: "Blue Base", x: gameMap.width - gameMap.captureClear,
-         y: gameMap.height div 2 - gameMap.spawnClearH,
-         w: gameMap.captureClear, h: 2 * gameMap.spawnClearH),
-  ]
+  ## The room annotation set every map shares: an informal center zone plus
+  ## one base strip per team spanning its spawn pocket. Derives entirely
+  ## from the map's dimensions and clearances. Sides maps keep the classic
+  ## full-clearance base columns; 4-team layouts box each pocket instead.
+  result.add Room(name: "Center", x: gameMap.width div 2 - 80,
+    y: gameMap.height div 2 - 80, w: 160, h: 160)
+  case gameMap.layout
+  of layoutSides:
+    result.add Room(name: "Red Base", x: 0,
+      y: gameMap.height div 2 - gameMap.spawnClearH,
+      w: gameMap.captureClear, h: 2 * gameMap.spawnClearH)
+    result.add Room(name: "Blue Base",
+      x: gameMap.width - gameMap.captureClear,
+      y: gameMap.height div 2 - gameMap.spawnClearH,
+      w: gameMap.captureClear, h: 2 * gameMap.spawnClearH)
+  of layoutCorners, layoutPlus:
+    for team in gameMap.teams():
+      let
+        anchor = gameMap.teamAnchor(team)
+        name = teamText(team)
+      result.add Room(
+        name: name[0].toUpperAscii() & name[1 .. ^1] & " Base",
+        x: anchor.x - gameMap.spawnClearW,
+        y: anchor.y - gameMap.spawnClearH,
+        w: 2 * gameMap.spawnClearW,
+        h: 2 * gameMap.spawnClearH
+      )
 
 proc arenaCtfMap(): CtfMap =
   ## The default arena: the procedurally-defined symmetric 1235x659 map.
@@ -1886,18 +2070,76 @@ proc arenaLargeCtfMap(): CtfMap =
   result.rooms = result.defaultCtfRooms()
   result.validateMap()
 
-proc teamHomeX*(gameMap: CtfMap, team: Team): int =
-  ## Returns the home-edge x anchor for one team's spawn strip and pedestal.
-  case team
-  of Red:
-    gameMap.center.x - (gameMap.center.x * 7 div 10)
-  of Blue:
-    gameMap.center.x + ((gameMap.width - gameMap.center.x) * 7 div 10)
+proc captureZone*(gameMap: CtfMap, team: Team): CaptureZone =
+  ## Returns one team's home capture zone. Sides maps keep the classic
+  ## full-height home column; corner teams get a DIAGONAL zone (everything
+  ## within an L1 radius of their map corner, its threshold a 45-degree
+  ## line through the anchor); plus teams get an arm-mouth box past the
+  ## anchor, bounded to the arm span — the open corners are battlefield.
+  let
+    anchor = gameMap.teamAnchor(team)
+    half = CaptureZoneWidth div 2
+    w = gameMap.width
+    h = gameMap.height
+  # Start from the full board and pull each bounded edge in to the anchor's
+  # threshold; which edges are bounded is exactly what the layout decides.
+  result = CaptureZone(xLo: 0, xHi: w - 1, yLo: 0, yHi: h - 1)
+  case gameMap.layout
+  of layoutSides:
+    if team == Red:
+      result.xHi = anchor.x + half
+    else:
+      result.xLo = anchor.x - half
+  of layoutCorners:
+    ## The threshold edge is the 45-degree line through the anchor (plus
+    ## half slack): everything within that L1 radius of the team's map
+    ## corner scores. The box fields are its bounding box.
+    result.diag = true
+    result.cornerX = if anchor.x < gameMap.center.x: 0 else: w - 1
+    result.cornerY = if anchor.y < gameMap.center.y: 0 else: h - 1
+    result.diagLimit = abs(anchor.x - result.cornerX) +
+      abs(anchor.y - result.cornerY) + half
+    ## The inset-clamped respawn box must intersect the L1 region, or every
+    ## respawn would silently fall back to the pedestal point.
+    doAssert result.diagLimit >= 2 * (ArenaBorder + PlayerHalf) + 2,
+      "degenerate diagonal capture zone"
+    if anchor.x < gameMap.center.x:
+      result.xHi = min(w - 1, result.diagLimit)
+    else:
+      result.xLo = max(0, w - 1 - result.diagLimit)
+    if anchor.y < gameMap.center.y:
+      result.yHi = min(h - 1, result.diagLimit)
+    else:
+      result.yLo = max(0, h - 1 - result.diagLimit)
+  of layoutPlus:
+    ## An arm-mouth box: past the anchor on the home axis, bounded to the
+    ## arm span on the other (the corners are open field, not endzone).
+    let arm = gameMap.plusArmHalf()
+    case team
+    of Red:
+      result.xHi = anchor.x + half
+      result.yLo = gameMap.center.y - arm
+      result.yHi = gameMap.center.y + arm
+    of Blue:
+      result.xLo = anchor.x - half
+      result.yLo = gameMap.center.y - arm
+      result.yHi = gameMap.center.y + arm
+    of Green:
+      result.yHi = anchor.y + half
+      result.xLo = gameMap.center.x - arm
+      result.xHi = gameMap.center.x + arm
+    of Yellow:
+      result.yLo = anchor.y - half
+      result.xLo = gameMap.center.x - arm
+      result.xHi = gameMap.center.x + arm
 
-proc flagHome*(gameMap: CtfMap, team: Team): MapPoint =
-  ## Returns the pedestal position for one team's flag, at the center of the
-  ## team's protected spawn pocket.
-  MapPoint(x: gameMap.teamHomeX(team), y: gameMap.center.y)
+proc inCaptureZone*(zone: CaptureZone, x, y: int): bool =
+  ## Returns whether a map point sits inside one capture zone.
+  if x < zone.xLo or x > zone.xHi or y < zone.yLo or y > zone.yHi:
+    return false
+  if zone.diag:
+    return abs(x - zone.cornerX) + abs(y - zone.cornerY) <= zone.diagLimit
+  true
 
 proc mirrorX(rect: MapRect, width: int): MapRect =
   ## Mirrors one rectangle across the vertical center line of a width-px map.
@@ -1992,6 +2234,53 @@ proc rot180(shape: ArenaShape, width, height: int): ArenaShape =
       thickness: shape.thickness
     )
 
+proc rot90(rect: MapRect, side: int): MapRect =
+  ## Rotates one rectangle 90 degrees clockwise about the center of a
+  ## side x side square map: pixel (x, y) maps to (side - 1 - y, x).
+  MapRect(
+    x: side - rect.y - rect.h,
+    y: rect.x,
+    w: rect.h,
+    h: rect.w
+  )
+
+proc rot90(shape: ArenaShape, side: int): ArenaShape =
+  ## Rotates one arena shape 90 degrees clockwise about the center of a
+  ## side x side square map. Applying it twice equals rot180, so the rot90
+  ## quadrant replication is an exact 4-fold symmetry group. Diamonds and
+  ## discs are rotation-invariant about their own centers, so only the
+  ## centers move.
+  case shape.kind
+  of shapeRect:
+    ArenaShape(kind: shapeRect, window: shape.window,
+      rect: shape.rect.rot90(side))
+  of shapeDisc:
+    ArenaShape(
+      kind: shapeDisc,
+      window: shape.window,
+      cx: side - 1 - shape.cy,
+      cy: shape.cx,
+      radius: shape.radius
+    )
+  of shapeDiamond:
+    ArenaShape(
+      kind: shapeDiamond,
+      window: shape.window,
+      cx: side - 1 - shape.cy,
+      cy: shape.cx,
+      radius: shape.radius
+    )
+  of shapeDiagonal:
+    ArenaShape(
+      kind: shapeDiagonal,
+      window: shape.window,
+      x0: side - 1 - shape.y0,
+      y0: shape.x0,
+      x1: side - 1 - shape.y1,
+      y1: shape.x1,
+      thickness: shape.thickness
+    )
+
 proc inRect(x, y: int, rect: MapRect): bool =
   ## Returns true when (x, y) lies inside the rectangle.
   x >= rect.x and x < rect.x + rect.w and
@@ -2036,8 +2325,9 @@ proc inShape*(x, y: int, shape: ArenaShape): bool =
         int64(shape.thickness) * int64(shape.thickness) * len2 * len2 div 4
 
 proc buildArenaObstacles*(gameMap: CtfMap): seq[ArenaShape] =
-  ## The full obstacle set: every left-half shape plus its image under the
-  ## map's symmetry (x-mirror or 180° rotation), precomputed once per map
+  ## The full obstacle set: every seed shape plus its image(s) under the
+  ## map's symmetry (x-mirror or 180° rotation of the left half; 90/180/270°
+  ## rotations of the quadrant on rot90 maps), precomputed once per map
   ## selection so the per-pixel wall test never re-mirrors.
   for shape in gameMap.leftObstacles:
     result.add shape
@@ -2046,6 +2336,11 @@ proc buildArenaObstacles*(gameMap: CtfMap): seq[ArenaShape] =
       result.add shape.mirrorX(gameMap.width)
     of symRot180:
       result.add shape.rot180(gameMap.width, gameMap.height)
+    of symRot90:
+      let quarter = shape.rot90(gameMap.width)
+      result.add quarter
+      result.add shape.rot180(gameMap.width, gameMap.height)
+      result.add quarter.rot180(gameMap.width, gameMap.height)
 
 proc buildAnimatedDiamonds(
   gameMap: CtfMap, obstacles: seq[ArenaShape]
@@ -2137,21 +2432,34 @@ proc scaledGenShell(sizeName: string): CtfMap =
   result.spawnClearW = s(70)
   result.spawnClearH = s(130)
   result.gunRange = s(1300)
-  result.rooms = result.defaultCtfRooms()
 
 proc mapProtectedFloorAt*(gameMap: CtfMap, x, y: int): bool =
   ## isProtectedFloor for a map that is NOT installed as the process map:
   ## the generator and validators run on candidates before any selection.
-  if x < gameMap.captureClear or x >= gameMap.width - gameMap.captureClear:
+  let
+    clear = gameMap.captureClear
+    nearX = x < clear or x >= gameMap.width - clear
+    nearY = y < clear or y >= gameMap.height - clear
+    approach =
+      case gameMap.layout
+      of layoutSides:
+        nearX
+      of layoutCorners:
+        nearX and nearY
+      of layoutPlus:
+        (nearX and abs(y - gameMap.center.y) <= gameMap.plusArmHalf()) or
+          (nearY and abs(x - gameMap.center.x) <= gameMap.plusArmHalf())
+  if approach:
     return true
   let
     dx = x - gameMap.center.x
     dy = y - gameMap.center.y
   if dx * dx + dy * dy <= gameMap.flagRing * gameMap.flagRing:
     return true
-  for team in Team:
-    if abs(x - gameMap.teamHomeX(team)) <= gameMap.spawnClearW and
-        abs(y - gameMap.center.y) <= gameMap.spawnClearH:
+  for team in gameMap.teams():
+    let anchor = gameMap.teamAnchor(team)
+    if abs(x - anchor.x) <= gameMap.spawnClearW and
+        abs(y - anchor.y) <= gameMap.spawnClearH:
       return true
   false
 
@@ -2166,6 +2474,40 @@ proc mapWallAt*(gameMap: CtfMap, obstacles: seq[ArenaShape], x, y: int): bool =
     if inShape(x, y, shape):
       return true
   false
+
+proc scaledGenShell4(sizeName: string): CtfMap =
+  ## The 4-team field shell: a SQUARE board (rot90 symmetry needs one) with
+  ## the standard clearances scaled by the same class factors as the 2-team
+  ## shell. The standard side (960) splits the difference between the
+  ## classic arena's width and height so the fight density stays familiar.
+  let scale =
+    case sizeName
+    of "small": 0.85
+    of "standard": 1.0
+    of "large": 1.3
+    else:
+      raise newException(CtfError, "Unknown map size: " & sizeName)
+  proc s(value: int): int = int(round(float(value) * scale))
+  result.width = s(960)
+  result.height = s(960)
+  result.mapLayer = 0
+  result.walkLayer = 1
+  result.wallLayer = 2
+  result.center = MapPoint(x: result.width div 2, y: result.height div 2)
+  result.flagRing = s(70)
+  result.captureClear = s(210)
+  result.spawnClearW = s(70)
+  result.spawnClearH = s(130)
+  result.gunRange = s(1300)
+
+proc rot90Orbit(p: tuple[x, y: int], side: int):
+    array[4, tuple[x, y: int]] =
+  ## The four images of one point under the rot90 symmetry group of a
+  ## side x side square map, in team-orbit order (k = 0..3 quarter turns).
+  var q = p
+  for k in 0 ..< 4:
+    result[k] = q
+    q = (side - 1 - q.y, q.x)
 
 proc rectOnOpenFloor(
   gameMap: CtfMap, obstacles: seq[ArenaShape], rect: MapRect
@@ -2191,28 +2533,57 @@ proc rectOnOpenFloor(
         return false
   true
 
-proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
-  ## One UNVALIDATED draw. Every top-level parameter is drawn unconditionally
+proc generateMapAttempt*(
+  seed: int, overrides: MapGenOverrides, teams = 2
+): CtfMap =  ## One UNVALIDATED draw. Every top-level parameter is drawn unconditionally
   ## and THEN overridden if locked, so locking one knob never shifts the
-  ## other draws for the same seed.
+  ## other draws for the same seed. `teams` selects the family: 2 draws the
+  ## classic left/right half-map, 4 draws a square rot90 corner/plus map.
+  doAssert teams in [2, 4], "team count must be 2 or 4"
   var rng = MapRng(state: uint64(seed))
 
   let sizeDraw = MapSizeNames[rng.pick(3)]
-  result = scaledGenShell(
-    if overrides.size.len > 0: overrides.size else: sizeDraw)
+  let sizeName = if overrides.size.len > 0: overrides.size else: sizeDraw
+  result =
+    if teams == 4: scaledGenShell4(sizeName)
+    else: scaledGenShell(sizeName)
   result.name = "gen-" & $seed
   result.path = GenMapName
   result.genSeed = seed
 
-  let symDraw = if rng.coin(): symRot180 else: symMirror
-  result.symmetry =
-    case overrides.symmetry
-    of "": symDraw
-    of "mirror": symMirror
-    of "rot180": symRot180
-    else:
+  if teams == 4:
+    ## The symmetry draw keeps its slot in the draw order (locking layout
+    ## must not shift later draws), but rot90 is the only 4-team symmetry —
+    ## a config that locks another one is a mistake, not a preference.
+    discard rng.coin()
+    result.symmetry = symRot90
+    if overrides.symmetry notin ["", "rot90"]:
       raise newException(
-        CtfError, "Unknown map symmetry: " & overrides.symmetry)
+        CtfError, "4-team maps are rot90-only; got mapSymmetry: " &
+          overrides.symmetry)
+    let layoutDraw = if rng.coin(): layoutCorners else: layoutPlus
+    result.layout =
+      case overrides.layout
+      of "": layoutDraw
+      of "corners": layoutCorners
+      of "plus": layoutPlus
+      else:
+        raise newException(
+          CtfError, "Unknown map layout: " & overrides.layout)
+  else:
+    let symDraw = if rng.coin(): symRot180 else: symMirror
+    result.symmetry =
+      case overrides.symmetry
+      of "": symDraw
+      of "mirror": symMirror
+      of "rot180": symRot180
+      else:
+        raise newException(
+          CtfError, "Unknown map symmetry: " & overrides.symmetry)
+    if overrides.layout.len > 0 and overrides.layout != "sides":
+      raise newException(
+        CtfError, "Map layout " & overrides.layout & " needs teams: 4.")
+  result.rooms = result.defaultCtfRooms()
 
   let featureDraw = CenterFeatureNames[rng.pick(3)]
   let feature =
@@ -2221,7 +2592,9 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
   if feature notin CenterFeatureNames:
     raise newException(CtfError, "Unknown map center feature: " & feature)
 
-  let columnsDraw = rng.pickRange(4, 6)
+  let columnsDraw =
+    if teams == 4: rng.pickRange(3, 4)
+    else: rng.pickRange(4, 6)
   let columns =
     if overrides.columns > 0: overrides.columns else: columnsDraw
   if columns < 3 or columns > 8:
@@ -2233,6 +2606,19 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
     ## flank; the ring itself carves any overlap back out of the wall mask.
     xMin = result.captureClear + 50
     xMax = result.center.x - 52
+    ## The vertical band the column slots may occupy: the full field on
+    ## sides maps, the top-left quadrant on corner maps (rot90 fills the
+    ## rest), the west arm on plus maps (the corner blocks own the rest).
+    slotBand =
+      case result.layout
+      of layoutSides:
+        (lo: ArenaBorder + 30, hi: result.height - ArenaBorder - 30)
+      of layoutCorners, layoutPlus:
+        ## The full quadrant, crossing the centerline: the rot90 images
+        ## fill the other side, and slots near cy are what covers the
+        ## central horizontal band. Both 4-team layouts are fully open
+        ## square boards — they differ only in where the teams live.
+        (lo: ArenaBorder + 30, hi: cy + 60)
   ## Window-eligible shapes: (obstacle index, column, slot y).
   var eligible: seq[tuple[idx, col, y: int]]
   ## Trench pit candidates, resolved into actual digs after the columns
@@ -2248,7 +2634,11 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
     let
       colX = xMin + ((2 * col + 1) * (xMax - xMin)) div (2 * columns)
       family = ColumnFamily(rng.pick(4))
-      period = rng.pickRange(88, 120)
+      ## 4-team quadrant shapes replicate x4 (not x2), so slots spread out
+      ## to keep the same field density.
+      period =
+        if teams == 4: rng.pickRange(130, 180)
+        else: rng.pickRange(88, 120)
       ## Phases are STRATIFIED across columns (like the hand-authored
       ## arena's 0/+48/+24/+72 ladder) with a half-period jitter: fully
       ## random phases leave rows every column misses, which the sightline
@@ -2256,11 +2646,11 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
       phase = (period * col div columns +
         rng.pick(max(1, period div 2))) mod period
     var slotYs: seq[int]
-    var slotY = ArenaBorder + 30 + phase
-    while slotY <= result.height - ArenaBorder - 30:
+    var slotY = slotBand.lo + phase
+    while slotY <= slotBand.hi:
       slotYs.add slotY
       slotY += period
-    if slotYs.len < 3:
+    if slotYs.len < (if result.layout == layoutSides: 3 else: 2):
       continue
 
     ## Clear-mask: drop each slot with probability 1/4, then guarantee at
@@ -2304,7 +2694,7 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
         var bottom = sy + 30
         if i == 0 and top - ArenaBorder < MinCorridorWidth:
           top = ArenaBorder
-        if i == slotYs.len - 1 and
+        if i == slotYs.len - 1 and result.layout == layoutSides and
             result.height - ArenaBorder - bottom < MinCorridorWidth:
           bottom = result.height - ArenaBorder
         result.leftObstacles.add ArenaShape(kind: shapeRect,
@@ -2353,6 +2743,17 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
     oddCenterPit = overrides.pits >= 0 and overrides.pits mod 2 == 1
     pitPairsWanted = if overrides.pits >= 0: overrides.pits div 2 else: -1
   var obstacleRemoved = newSeq[bool](result.leftObstacles.len)
+  if result.symmetry == symRot90:
+    ## Trenches are a 2-team-map feature for now: the dig/image pair
+    ## accounting assumes one symmetry image per dig, and rot90 maps have
+    ## three. An explicit pit request errors; the density path digs nothing
+    ## (clearing the candidates keeps the loop from writing UNPAIRED digs
+    ## into result.trenches — finalize is what pairs them, and it is
+    ## skipped on rot90).
+    if overrides.pits > 0:
+      raise newException(
+        CtfError, "Trenches are not supported on 4-team maps yet.")
+    pitCandidates.setLen(0)
   if pitPairsWanted >= 0:
     rng.shuffle(pitCandidates)
   for cand in pitCandidates:
@@ -2436,9 +2837,22 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
         if mapWallAt(gameMap, gameMap.leftObstacles, x, y):
           return true
       false
+    proc rowBlockedFull(gameMap: CtfMap, obstacles: seq[ArenaShape],
+        y: int): bool =
+      ## Full-width row scan against the COMPLETE symmetry-expanded set —
+      ## rot90 folds a quadrant into all four quarters, so no single-half
+      ## shortcut exists.
+      for x in gameMap.captureClear + 5 ..
+          gameMap.width - gameMap.captureClear - 5:
+        if mapWallAt(gameMap, obstacles, x, y):
+          return true
+      false
     var plugsLeft = 40
     while plugsLeft > 0:
       var uncovered = -1
+      let fullSet =
+        if result.symmetry == symRot90: buildArenaObstacles(result)
+        else: @[]
       var y = ArenaBorder + 2
       while y < result.height - ArenaBorder:
         let covered =
@@ -2448,6 +2862,8 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
           of symRot180:
             result.rowBlocked(y) or
               result.rowBlocked(result.height - 1 - y)
+          of symRot90:
+            result.rowBlockedFull(fullSet, y)
         if not covered:
           uncovered = y
           break
@@ -2457,15 +2873,25 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
       let
         plugCol = rng.pick(columns)
         plugX = xMin + ((2 * plugCol + 1) * (xMax - xMin)) div (2 * columns)
+        ## Under rot90 a quadrant shape at row y also covers row H-1-y (its
+        ## rot180 image), so an uncovered bottom-half row folds to its top
+        ## reflection before plugging; plugs may sit close to the border.
+        foldedRow =
+          if result.symmetry == symRot90 and uncovered > cy:
+            result.height - 1 - uncovered
+          else:
+            uncovered
         plugY = clamp(
-          uncovered + 24, ArenaBorder + 12, result.height - ArenaBorder - 12)
+          foldedRow + 24, ArenaBorder + 12, result.height - ArenaBorder - 12)
       result.leftObstacles.add ArenaShape(
         kind: shapeDiamond, cx: plugX, cy: plugY, radius: 28)
       dec plugsLeft
 
   ## Glass windows: fog sees through them, nothing passes them. Biased to
   ## the outermost column and the midline band, where sightlines matter.
-  let windowsDraw = rng.pickRange(2, 4)
+  let windowsDraw =
+    if teams == 4: rng.pickRange(1, 2)
+    else: rng.pickRange(2, 4)
   let windowCount =
     if overrides.windows >= 0: overrides.windows else: windowsDraw
   if windowCount > 6:
@@ -2482,30 +2908,44 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
   for i in 0 ..< min(windowCount, ranked.len):
     result.leftObstacles[ranked[i].idx].window = true
 
-  ## Med kits: two complementary (y, H-1-y) center-line pairs are drawn as
-  ## candidates and ONE pair goes active. A top/bottom pair on x = W/2 is
-  ## invariant under both mirror and rot180, so pickup fairness is exact.
-  let
-    mid = result.width div 2
-    y1 = rng.pickRange(result.height * 16 div 100, result.height * 34 div 100)
-    y2 = rng.pickRange(result.height * 36 div 100, result.height * 47 div 100)
-  result.medKitCandidates = @[
-    MapPoint(x: mid, y: y1),
-    MapPoint(x: mid, y: result.height - 1 - y1),
-    MapPoint(x: mid, y: y2),
-    MapPoint(x: mid, y: result.height - 1 - y2),
-  ]
-  result.medKitSpawns =
-    if rng.coin():
-      @[result.medKitCandidates[0], result.medKitCandidates[1]]
-    else:
-      @[result.medKitCandidates[2], result.medKitCandidates[3]]
+  ## Med kits. Sides maps: two complementary (y, H-1-y) center-line pairs
+  ## are drawn as candidates and ONE pair goes active — a top/bottom pair on
+  ## x = W/2 is invariant under both mirror and rot180, so pickup fairness
+  ## is exact. 4-team maps: one kit per team as the rot90 orbit of a single
+  ## drawn ring point, which is fair by the same symmetry argument.
+  if teams == 4:
+    let
+      ringLo = result.flagRing + 40
+      ringHi = result.center.x - result.captureClear - 60
+      d = rng.pickRange(ringLo, max(ringLo + 1, ringHi))
+      orbit = rot90Orbit((result.center.x + d, result.center.y), result.width)
+    result.medKitCandidates = @[]
+    for point in orbit:
+      result.medKitCandidates.add MapPoint(x: point.x, y: point.y)
+    result.medKitSpawns = result.medKitCandidates
+  else:
+    let
+      mid = result.width div 2
+      y1 = rng.pickRange(result.height * 16 div 100, result.height * 34 div 100)
+      y2 = rng.pickRange(result.height * 36 div 100, result.height * 47 div 100)
+    result.medKitCandidates = @[
+      MapPoint(x: mid, y: y1),
+      MapPoint(x: mid, y: result.height - 1 - y1),
+      MapPoint(x: mid, y: y2),
+      MapPoint(x: mid, y: result.height - 1 - y2),
+    ]
+    result.medKitSpawns =
+      if rng.coin():
+        @[result.medKitCandidates[0], result.medKitCandidates[1]]
+      else:
+        @[result.medKitCandidates[2], result.medKitCandidates[3]]
 
   ## Finalize the trenches. Every left-half dig gets its image under
   ## the map's symmetry so neither team has a private pit; a dig that ended
   ## up under a wall (a sightline-repair plug can land on its slot) or on
   ## top of an already-accepted dig is dropped — and a dig whose image is
-  ## blocked drops WITH it, fairness before density.
+  ## blocked drops WITH it, fairness before density. (rot90 maps reach
+  ## here with zero candidates and place nothing — see the guard above.)
   block finalizeTrenches:
     let obstacles = buildArenaObstacles(result)
     var digs: seq[MapRect]
@@ -2525,6 +2965,7 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
         case gameMap.symmetry
         of symMirror: trench.mirrorX(gameMap.width)
         of symRot180: trench.rot180(gameMap.width, gameMap.height)
+        of symRot90: raiseAssert "trenches never place on rot90 maps"
       if not rectOnOpenFloor(gameMap, obstacles, trench) or
           not rectOnOpenFloor(gameMap, obstacles, image):
         return false
@@ -2565,8 +3006,20 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
     for x in 0 ..< w:
       let isWall = mapWallAt(gameMap, obstacles, x, y)
       wallMask[y * w + x] = isWall
-      if x >= gameMap.captureClear and x < w - gameMap.captureClear and
-          y >= ArenaBorder and y < h - ArenaBorder:
+      ## The cover-budget interior. Sides maps keep the historical x-band
+      ## definition EXACTLY (the curated pool seeds validate first-attempt
+      ## against it). 4-team layouts measure the actually-playable field:
+      ## everything inside the border that is not protected floor.
+      let interior =
+        case gameMap.layout
+        of layoutSides:
+          x >= gameMap.captureClear and x < w - gameMap.captureClear and
+            y >= ArenaBorder and y < h - ArenaBorder
+        of layoutCorners, layoutPlus:
+          x >= ArenaBorder and x < w - ArenaBorder and
+            y >= ArenaBorder and y < h - ArenaBorder and
+            not mapProtectedFloorAt(gameMap, x, y)
+      if interior:
         inc interiorPixels
         if isWall:
           inc coverPixels
@@ -2631,7 +3084,6 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
 
   let
     redHome = gameMap.flagHome(Red)
-    blueHome = gameMap.flagHome(Blue)
     startIndex = redHome.y * w + redHome.x
   var
     reached = newSeq[bool](w * h)
@@ -2650,20 +3102,31 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
         ## so open[] is false along every edge.
         reached[j] = true
         queue.add j
-  if not reached[blueHome.y * w + blueHome.x]:
-    return "no " & $MinCorridorWidth & "px route between the flags"
+  for team in gameMap.teams():
+    if team == Red:
+      continue
+    let home = gameMap.flagHome(team)
+    if not reached[home.y * w + home.x]:
+      return
+        if gameMap.teamCount() == 2:
+          "no " & $MinCorridorWidth & "px route between the flags"
+        else:
+          "no " & $MinCorridorWidth & "px route to the " &
+            teamText(team) & " flag"
   if not reached[gameMap.center.y * w + gameMap.center.x]:
     return "no " & $MinCorridorWidth & "px route to the center"
   ""
 
 proc generateCtfMap*(
-  seed: int, overrides = MapGenOverrides(windows: -1, pits: -1, pitDensity: -1)
+  seed: int,
+  overrides = MapGenOverrides(windows: -1, pits: -1, pitDensity: -1),
+  teams = 2
 ): CtfMap =
   ## Generates a VALIDATED map: attempts seeds seed, seed+1, ... until one
   ## passes every validator. A locked-parameter combination that can never
   ## pass errors out after MapGenMaxAttempts.
   for attempt in 0 ..< MapGenMaxAttempts:
-    let candidate = generateMapAttempt(seed + attempt, overrides)
+    let candidate = generateMapAttempt(seed + attempt, overrides, teams)
     if validateGeneratedMap(candidate).len == 0:
       return candidate
   raise newException(
@@ -2769,7 +3232,15 @@ proc mapSpecJson*(gameMap: CtfMap): string =
     "spawnClearH": gameMap.spawnClearH,
     "gunRange": gameMap.gunRange,
     "symmetry": (
-      if gameMap.symmetry == symMirror: "mirror" else: "rot180"),
+      case gameMap.symmetry
+      of symMirror: "mirror"
+      of symRot180: "rot180"
+      of symRot90: "rot90"),
+    "layout": (
+      case gameMap.layout
+      of layoutSides: "sides"
+      of layoutCorners: "corners"
+      of layoutPlus: "plus"),
     "medKitSpawns": pointsNode(gameMap.medKitSpawns),
     "medKitCandidates": pointsNode(gameMap.medKitCandidates),
     # Trenches are FULL-map (both halves), already symmetrized — playback
@@ -2800,9 +3271,27 @@ proc mapFromSpecJson*(text: string): CtfMap =
   result.spawnClearW = node["spawnClearW"].getInt()
   result.spawnClearH = node["spawnClearH"].getInt()
   result.gunRange = node["gunRange"].getInt()
+  ## Missing keys default for pre-4-team pinned specs; an unknown NON-EMPTY
+  ## value is a typo or a spec from a future version — replays pin specs
+  ## precisely so playback is exact, so silently reinterpreting one would
+  ## defeat the point. Raise instead.
+  let symmetryText = node{"symmetry"}.getStr("mirror")
   result.symmetry =
-    if node{"symmetry"}.getStr("mirror") == "rot180": symRot180
-    else: symMirror
+    case symmetryText
+    of "mirror": symMirror
+    of "rot180": symRot180
+    of "rot90": symRot90
+    else:
+      raise newException(
+        CtfError, "Unknown map spec symmetry: " & symmetryText)
+  let layoutText = node{"layout"}.getStr("sides")
+  result.layout =
+    case layoutText
+    of "sides": layoutSides
+    of "corners": layoutCorners
+    of "plus": layoutPlus
+    else:
+      raise newException(CtfError, "Unknown map spec layout: " & layoutText)
   result.medKitSpawns = pointsFromNode(node["medKitSpawns"])
   result.medKitCandidates = pointsFromNode(node["medKitCandidates"])
   ## Optional: specs pinned before trenches existed carry none and replay
@@ -2816,21 +3305,33 @@ proc mapFromSpecJson*(text: string): CtfMap =
 proc resolveCtfMapMetadata*(config: GameConfig): CtfMap =
   ## The effective map for one config: an explicit mapSpec wins (replay
   ## exactness), then the named maps, then the generator / curated pool.
-  if config.mapSpec.len > 0:
-    return mapFromSpecJson(config.mapSpec)
-  let
-    name = if config.mapPath.len == 0: DefaultMapPath else: config.mapPath
-    genSeed = if config.mapSeed != -1: config.mapSeed else: config.seed
-  case name
-  of ArenaName: arenaCtfMap()
-  of ArenaLargeName: arenaLargeCtfMap()
-  of GenMapName: generateCtfMap(genSeed, config.mapGen)
-  of PoolMapName:
-    let index =
-      if config.mapPoolIndex >= 0: config.mapPoolIndex else: genSeed
-    poolCtfMap(index, config.mapGen)
-  else:
-    raise newException(CtfError, "Unknown map: " & name)
+  ## The resolved map's team count must match the config's `teams` knob —
+  ## a 4-team game needs a generated corner/plus map (or a pinned spec).
+  result =
+    if config.mapSpec.len > 0:
+      mapFromSpecJson(config.mapSpec)
+    else:
+      let
+        name = if config.mapPath.len == 0: DefaultMapPath else: config.mapPath
+        genSeed = if config.mapSeed != -1: config.mapSeed else: config.seed
+      case name
+      of ArenaName: arenaCtfMap()
+      of ArenaLargeName: arenaLargeCtfMap()
+      of GenMapName: generateCtfMap(genSeed, config.mapGen, config.teams)
+      of PoolMapName:
+        if config.teams != 2:
+          raise newException(
+            CtfError, "The curated pool is 2-team; use mapPath gen for " &
+              $config.teams & " teams.")
+        let index =
+          if config.mapPoolIndex >= 0: config.mapPoolIndex else: genSeed
+        poolCtfMap(index, config.mapGen)
+      else:
+        raise newException(CtfError, "Unknown map: " & name)
+  if result.teamCount() != config.teams:
+    raise newException(
+      CtfError, "Config asks for " & $config.teams & " teams but map " &
+        result.name & " seats " & $result.teamCount() & ".")
 
 ## The SELECTED map's layout, installed once per process by loadCtfMap and
 ## initialized to the default arena below so tooling that never selects a
@@ -2840,8 +3341,10 @@ var
   ArenaCaptureClear = 210
   ArenaSpawnClearW = 70
   ArenaSpawnClearH = 130
-  ArenaRedHomeX = 186
-  ArenaBlueHomeX = 1049
+  ArenaLayoutG = layoutSides
+  ArenaTeamCount = 2
+  ArenaAnchors: array[Team, MapPoint]
+  ArenaPlusArmHalf = 0
   ArenaObstacles*: seq[ArenaShape]
   AnimatedDiamonds*: seq[tuple[cx, cy, radius: int]]
   ArenaTrenches*: seq[MapRect]
@@ -2862,8 +3365,11 @@ proc selectCtfMap(gameMap: CtfMap) =
   ArenaCaptureClear = gameMap.captureClear
   ArenaSpawnClearW = gameMap.spawnClearW
   ArenaSpawnClearH = gameMap.spawnClearH
-  ArenaRedHomeX = gameMap.teamHomeX(Red)
-  ArenaBlueHomeX = gameMap.teamHomeX(Blue)
+  ArenaLayoutG = gameMap.layout
+  ArenaTeamCount = gameMap.teamCount()
+  for team in gameMap.teams():
+    ArenaAnchors[team] = gameMap.teamAnchor(team)
+  ArenaPlusArmHalf = gameMap.plusArmHalf()
   ArenaObstacles = buildArenaObstacles(gameMap)
   AnimatedDiamonds = buildAnimatedDiamonds(gameMap, ArenaObstacles)
   ArenaTrenches = gameMap.trenches
@@ -2968,17 +3474,30 @@ proc inShapeF*(x, y: float, shape: ArenaShape): bool =
       float(shape.thickness * shape.thickness) * len2 * len2 / 4.0
 
 proc isProtectedFloor(x, y, cx, cy: int): bool =
-  ## Regions that MUST stay walkable: the flag ring, both spawn pockets,
-  ## and the two home capture columns. Walls are never carved here.
-  if x < ArenaCaptureClear or x >= MapWidth - ArenaCaptureClear:
+  ## Regions that MUST stay walkable: the flag ring, every spawn pocket,
+  ## and each team's home capture approach. Walls are never carved here.
+  let
+    nearX = x < ArenaCaptureClear or x >= MapWidth - ArenaCaptureClear
+    nearY = y < ArenaCaptureClear or y >= MapHeight - ArenaCaptureClear
+    approach =
+      case ArenaLayoutG
+      of layoutSides:
+        nearX
+      of layoutCorners:
+        nearX and nearY
+      of layoutPlus:
+        (nearX and abs(y - cy) <= ArenaPlusArmHalf) or
+          (nearY and abs(x - cx) <= ArenaPlusArmHalf)
+  if approach:
     return true
   let
     dx = x - cx
     dy = y - cy
   if dx * dx + dy * dy <= ArenaFlagRing * ArenaFlagRing:
     return true
-  for homeX in [ArenaRedHomeX, ArenaBlueHomeX]:
-    if abs(x - homeX) <= ArenaSpawnClearW and abs(y - cy) <= ArenaSpawnClearH:
+  for team in activeTeams(ArenaTeamCount):
+    if abs(x - ArenaAnchors[team].x) <= ArenaSpawnClearW and
+        abs(y - ArenaAnchors[team].y) <= ArenaSpawnClearH:
       return true
   false
 
@@ -3007,17 +3526,30 @@ proc isArenaWindowPixel*(x, y, cx, cy: int): bool =
 
 proc isProtectedFloorF(x, y: float, cx, cy: int): bool =
   ## Float-coordinate isProtectedFloor for the render-scale rasterizer.
-  if x < float(ArenaCaptureClear) or
-      x >= float(MapWidth - ArenaCaptureClear):
+  let
+    nearX = x < float(ArenaCaptureClear) or
+      x >= float(MapWidth - ArenaCaptureClear)
+    nearY = y < float(ArenaCaptureClear) or
+      y >= float(MapHeight - ArenaCaptureClear)
+    approach =
+      case ArenaLayoutG
+      of layoutSides:
+        nearX
+      of layoutCorners:
+        nearX and nearY
+      of layoutPlus:
+        (nearX and abs(y - float(cy)) <= float(ArenaPlusArmHalf)) or
+          (nearY and abs(x - float(cx)) <= float(ArenaPlusArmHalf))
+  if approach:
     return true
   let
     dx = x - float(cx)
     dy = y - float(cy)
   if dx * dx + dy * dy <= float(ArenaFlagRing * ArenaFlagRing):
     return true
-  for homeX in [float(ArenaRedHomeX), float(ArenaBlueHomeX)]:
-    if abs(x - homeX) <= float(ArenaSpawnClearW) and
-        abs(y - float(cy)) <= float(ArenaSpawnClearH):
+  for team in activeTeams(ArenaTeamCount):
+    if abs(x - float(ArenaAnchors[team].x)) <= float(ArenaSpawnClearW) and
+        abs(y - float(ArenaAnchors[team].y)) <= float(ArenaSpawnClearH):
       return true
   false
 
@@ -3338,6 +3870,8 @@ const
   EndzoneGlowFloor = 0.82        ## min home-falloff so the far end still glows.
   RedEndzoneColor = rgba(224, 82, 58, 255)    ## team vermillion (§4).
   BlueEndzoneColor = rgba(63, 124, 196, 255)  ## team cerulean (§4).
+  GreenEndzoneColor = rgba(69, 168, 94, 255)  ## matches the viewer --green.
+  YellowEndzoneColor = rgba(221, 197, 49, 255)  ## matches the viewer --yellow.
 
 proc emberThroughCracks(base, ember: ColorRGBA, strength: float): ColorRGBA =
   ## Lets a team ember glow seep UP ONLY through the DARK crack/grout pixels of
@@ -3353,32 +3887,89 @@ proc emberThroughCracks(base, ember: ColorRGBA, strength: float): ColorRGBA =
   let a = strength * crack * crack * EndzoneCrackGlow.float
   overTint(base, rgba(ember.r, ember.g, ember.b, uint8(clamp(a, 0.0, 255.0))))
 
-proc endzoneColorAt(base: ColorRGBA, x, redHi, blueLo, playLo, playHi: int):
-    ColorRGBA =
-  ## Tints one floor pixel if it sits inside a capture endzone column. `redHi`
-  ## is Red's inclusive right threshold x; `blueLo` is Blue's inclusive left
-  ## threshold x; `playLo`/`playHi` are the inner playfield edges (for the
-  ## glow falloff). Team ember seeps up through the tile cracks, brightest at the
-  ## pedestal (the inner threshold edge) and floored so the whole zone still
-  ## glows; the exact threshold x a carrier must cross gets a crisp solid line.
-  if x <= redHi:
-    if x > redHi - EndzoneLineW:
-      overTint(base, rgba(RedEndzoneColor.r, RedEndzoneColor.g,
-        RedEndzoneColor.b, EndzoneLineAlpha))
-    else:
-      let near = clamp((x - playLo).float / max(1, redHi - playLo).float, 0.0, 1.0)
-      emberThroughCracks(base, RedEndzoneColor,
-        EndzoneGlowFloor + (1.0 - EndzoneGlowFloor) * near)
-  elif x >= blueLo:
-    if x < blueLo + EndzoneLineW:
-      overTint(base, rgba(BlueEndzoneColor.r, BlueEndzoneColor.g,
-        BlueEndzoneColor.b, EndzoneLineAlpha))
-    else:
-      let near = clamp((playHi - x).float / max(1, playHi - blueLo).float, 0.0, 1.0)
-      emberThroughCracks(base, BlueEndzoneColor,
-        EndzoneGlowFloor + (1.0 - EndzoneGlowFloor) * near)
-  else:
-    base
+proc teamEndzoneColor(team: Team): ColorRGBA =
+  ## Returns the floor-glow ember color for one team's endzone.
+  case team
+  of Red: RedEndzoneColor
+  of Blue: BlueEndzoneColor
+  of Green: GreenEndzoneColor
+  of Yellow: YellowEndzoneColor
+
+type EndzoneTint = object
+  ## One team's precomputed endzone paint job: its capture-zone box, ember
+  ## color, and which box edges are inner THRESHOLD edges (the map-border
+  ## edges of the box are not thresholds and draw no line).
+  zone: CaptureZone
+  color: ColorRGBA
+  boundLoX, boundHiX, boundLoY, boundHiY: bool
+
+proc endzoneTints(gameMap: CtfMap): seq[EndzoneTint] =
+  ## The active teams' endzone paint jobs, computed once per bake.
+  for team in gameMap.teams():
+    let zone = gameMap.captureZone(team)
+    result.add EndzoneTint(
+      zone: zone,
+      color: teamEndzoneColor(team),
+      boundLoX: zone.xLo > 0,
+      boundHiX: zone.xHi < gameMap.width - 1,
+      boundLoY: zone.yLo > 0,
+      boundHiY: zone.yHi < gameMap.height - 1
+    )
+
+proc endzoneColorAt(
+  tints: seq[EndzoneTint], base: ColorRGBA, x, y, playLo, playHi,
+  playLoY, playHiY: int
+): ColorRGBA =
+  ## Tints one floor pixel if it sits inside a capture endzone. Team ember
+  ## seeps up through the tile cracks, brightest at the pedestal (the inner
+  ## threshold edge) and floored so the whole zone still glows; the exact
+  ## threshold a carrier must cross gets a crisp solid line. Sides maps
+  ## reproduce the classic two-column paint exactly; corner boxes fade on
+  ## both axes and line both inner edges.
+  for tint in tints:
+    if not tint.zone.inCaptureZone(x, y):
+      continue
+    var
+      onLine = false
+      near = 1.0
+    if tint.zone.diag:
+      ## Diagonal corner zone: the threshold edge is the 45-degree L1
+      ## shell; the ember is brightest at the line and eases toward the
+      ## corner. The line band is one pixel wider in L1 so its diagonal
+      ## stripe carries the same optical weight as the axis lines.
+      let d = abs(x - tint.zone.cornerX) + abs(y - tint.zone.cornerY)
+      if d > tint.zone.diagLimit - EndzoneLineW - 1:
+        return overTint(base, rgba(tint.color.r, tint.color.g,
+          tint.color.b, EndzoneLineAlpha))
+      return emberThroughCracks(base, tint.color,
+        EndzoneGlowFloor + (1.0 - EndzoneGlowFloor) *
+          clamp(d.float / max(1, tint.zone.diagLimit).float, 0.0, 1.0))
+    if tint.boundHiX:
+      if x > tint.zone.xHi - EndzoneLineW:
+        onLine = true
+      near = min(near, clamp(
+        (x - playLo).float / max(1, tint.zone.xHi - playLo).float, 0.0, 1.0))
+    if tint.boundLoX:
+      if x < tint.zone.xLo + EndzoneLineW:
+        onLine = true
+      near = min(near, clamp(
+        (playHi - x).float / max(1, playHi - tint.zone.xLo).float, 0.0, 1.0))
+    if tint.boundHiY:
+      if y > tint.zone.yHi - EndzoneLineW:
+        onLine = true
+      near = min(near, clamp(
+        (y - playLoY).float / max(1, tint.zone.yHi - playLoY).float, 0.0, 1.0))
+    if tint.boundLoY:
+      if y < tint.zone.yLo + EndzoneLineW:
+        onLine = true
+      near = min(near, clamp(
+        (playHiY - y).float / max(1, playHiY - tint.zone.yLo).float, 0.0, 1.0))
+    if onLine:
+      return overTint(base, rgba(tint.color.r, tint.color.g,
+        tint.color.b, EndzoneLineAlpha))
+    return emberThroughCracks(base, tint.color,
+      EndzoneGlowFloor + (1.0 - EndzoneGlowFloor) * near)
+  base
 
 proc shapeLogicalBounds(shape: ArenaShape): tuple[x0, y0, x1, y1: int] =
   ## A conservative logical-pixel bounding box around one obstacle shape (the
@@ -3426,8 +4017,9 @@ proc renderArenaRgbaPair*(
     cy = gameMap.center.y
     dir = gameDir()
     floorTex = readImage(dir / "data/arena_floor.png")
-    pedRedSpr = readImage(dir / "data/ped_red.png")
-    pedBlueSpr = readImage(dir / "data/ped_blue.png")
+  var pedSprs: array[Team, Image]
+  for team in gameMap.teams():
+    pedSprs[team] = readImage(dir / "data/ped_" & teamText(team) & ".png")
   # The art mask at output resolution: border + obstacle shapes from float
   # geometry, minus the spinning center diamonds (drawn live as objects).
   # Window pixels (glass) get their own mask in the same per-shape pass: wall
@@ -3491,10 +4083,11 @@ proc renderArenaRgbaPair*(
       tileBlock[y * tileW + x] =
         tileSampleF(floorTex, (float(x) + 0.5) / float(scale), fy)
   let
-    redHi = gameMap.teamHomeX(Red) + CaptureZoneWidth div 2
-    blueLo = gameMap.teamHomeX(Blue) - CaptureZoneWidth div 2
+    tints = endzoneTints(gameMap)
     playLo = ArenaBorder
     playHi = w - 1 - ArenaBorder
+    playLoY = ArenaBorder
+    playHiY = h - 1 - ArenaBorder
   # Paint straight into the output byte buffers — the pixie Image round trip
   # (premultiply on write, un-premultiply on pack) was pure overhead for an
   # opaque board.
@@ -3525,7 +4118,8 @@ proc renderArenaRgbaPair*(
         coldColor = hotColor
       else:
         coldColor = tileBlock[tileRow + x mod tileW]
-        hotColor = endzoneColorAt(coldColor, lx, redHi, blueLo, playLo, playHi)
+        hotColor = endzoneColorAt(
+          tints, coldColor, lx, ly, playLo, playHi, playLoY, playHiY)
         # The trench pit (config-gated trenches) paints over the finished floor on both
         # variants; it sits at the center, well clear of the endzone glow.
         coldColor = trenchArtColorAt(coldColor, lx, ly)
@@ -3537,10 +4131,10 @@ proc renderArenaRgbaPair*(
       put(result.cold, i * 4, coldColor)
   # Pedestals: pixie still resizes the painted masters, but the composite onto
   # the board is a manual straight-alpha src-over into the byte buffers.
-  for team in Team:
+  for team in gameMap.teams():
     let
       home = gameMap.flagHome(team)
-      full = if team == Red: pedRedSpr else: pedBlueSpr
+      full = pedSprs[team]
       size = PedestalCoverSize * scale
       scaled = full.resize(size, size)
       dimmed = scaled.pedestalDimmed()
@@ -3600,8 +4194,9 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
     opaque = rgba(255, 255, 255, 255)
     dir = gameDir()
     floorTex = readImage(dir / "data/arena_floor.png")
-    pedRedSpr = readImage(dir / "data/ped_red.png")
-    pedBlueSpr = readImage(dir / "data/ped_blue.png")
+  var pedSprs: array[Team, Image]
+  for team in gameMap.teams():
+    pedSprs[team] = readImage(dir / "data/ped_" & teamText(team) & ".png")
   ## Pass 1: the boolean wall mask (border + obstacles), shared by the shading
   ## bevel and the collision masks so art and geometry can never disagree.
   var wallMask = newSeq[bool](w * h)
@@ -3620,10 +4215,11 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
   ## captureZoneXRange (Red's inclusive right threshold, Blue's inclusive left),
   ## painted into the FLOOR below so a carrier can read where to run.
   let
-    redHi = gameMap.teamHomeX(Red) + CaptureZoneWidth div 2
-    blueLo = gameMap.teamHomeX(Blue) - CaptureZoneWidth div 2
+    tints = endzoneTints(gameMap)
     playLo = ArenaBorder                     # inner playfield edges: the glow
     playHi = w - 1 - ArenaBorder             # anchors home, fades to the line.
+    playLoY = ArenaBorder
+    playHiY = h - 1 - ArenaBorder
   ## Pass 2: paint. Floor pixels sample the flagstone tile; wall pixels are the
   ## carved-stone material shaded from the mask. The perimeter frame is the same
   ## stone darkened so the play space reads as a lit pit. Floor pixels inside a
@@ -3640,8 +4236,8 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
       var color =
         if windowPixel: windowGlassColor(artMask, w, h, x, y)
         elif artWall: carvedStoneColor(artMask, w, h, x, y)
-        elif withEndzoneGlow: endzoneColorAt(tileSample(floorTex, x, y), x,
-          redHi, blueLo, playLo, playHi)
+        elif withEndzoneGlow: endzoneColorAt(tints,
+          tileSample(floorTex, x, y), x, y, playLo, playHi, playLoY, playHiY)
         else: tileSample(floorTex, x, y)
       if not wall:
         # The trench pit (config-gated trenches) paints over the finished floor; it never
@@ -3658,10 +4254,10 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
   ## disc (see pedestalDimmed) so the broadcast crossfade dims the disc along with
   ## the floor glow when the heart is gone — otherwise a hot==cold pedestal never
   ## fades. The RGB/hot map (withEndzoneGlow) keeps the pedestal at full light.
-  for team in Team:
+  for team in gameMap.teams():
     let
       home = gameMap.flagHome(team)
-      full = if team == Red: pedRedSpr else: pedBlueSpr
+      full = pedSprs[team]
       spr = if withEndzoneGlow: full else: full.pedestalDimmed()
     blitCover(result.mapImage, spr, home.x, home.y, PedestalCoverSize)
 
@@ -3750,6 +4346,7 @@ proc defaultGameConfig*(): GameConfig =
     maxGames: MaxGames,
     showPlayerLabels: true,
     fastMode: true,
+    teams: 2,
     mapPath: DefaultMapPath,
     mapSeed: -1,
     mapPoolIndex: -1,
@@ -3793,10 +4390,15 @@ proc readSlotTeam(text: string, slotIndex: int): Team =
     Red
   of "blue":
     Blue
+  of "green":
+    Green
+  of "yellow":
+    Yellow
   else:
     raise newException(
       CtfError,
-      "Config field slots[" & $slotIndex & "].team must be red or blue."
+      "Config field slots[" & $slotIndex &
+        "].team must be red, blue, green, or yellow."
     )
 
 proc normalizedSlotColor(text: string): string =
@@ -4005,6 +4607,15 @@ proc validate(config: GameConfig) =
     raise newException(CtfError, "Config field frictionDen must be positive.")
   if config.minPlayers < 1:
     raise newException(CtfError, "Config field minPlayers must be at least 1.")
+  if config.teams notin [2, 4]:
+    raise newException(CtfError, "Config field teams must be 2 or 4.")
+  for i, slot in config.slots:
+    if slot.hasTeam and ord(slot.team) >= config.teams:
+      raise newException(
+        CtfError,
+        "Config field slots[" & $i & "].team is " & teamText(slot.team) &
+          " but the game seats " & $config.teams & " teams."
+      )
   if config.minPlayers > MaxPlayers:
     raise newException(CtfError, "can't do more than 8 players.")
   if config.lives < 1:
@@ -4109,6 +4720,7 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("maxGames", config.maxGames)
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
   node.readConfigBool("fastMode", config.fastMode)
+  node.readConfigInt("teams", config.teams)
   node.readConfigString("map", config.mapPath)
   node.readConfigString("mapPath", config.mapPath)
   node.readConfigInt("mapSeed", config.mapSeed)
@@ -4120,6 +4732,7 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("mapPits", config.mapGen.pits)
   node.readConfigInt("mapPitDensity", config.mapGen.pitDensity)
   node.readConfigString("mapCenterFeature", config.mapGen.centerFeature)
+  node.readConfigString("mapLayout", config.mapGen.layout)
   if node.hasKey("mapSpec"):
     if node["mapSpec"].kind != JObject:
       raise newException(CtfError, "Config field mapSpec must be an object.")
@@ -4144,11 +4757,7 @@ proc slotTeamText(slot: PlayerSlotConfig): string =
   ## Returns a JSON team string for one slot.
   if not slot.hasTeam:
     return ""
-  case slot.team
-  of Red:
-    "red"
-  of Blue:
-    "blue"
+  teamText(slot.team)
 
 proc slotColorText(slot: PlayerSlotConfig): string =
   ## Returns a JSON color string for one slot.
@@ -4220,9 +4829,11 @@ proc configJson*(config: GameConfig): string =
     "mapPits": config.mapGen.pits,
     "mapPitDensity": config.mapGen.pitDensity,
     "mapCenterFeature": config.mapGen.centerFeature,
+    "mapLayout": config.mapGen.layout,
     "closedRoster": config.closedRoster,
     "showPlayerLabels": config.showPlayerLabels,
     "fastMode": config.fastMode,
+    "teams": config.teams,
     "tokens": tokens,
     "slots": slots
   }
@@ -4252,37 +4863,44 @@ proc lobbyStartSecondsRemaining*(sim: SimServer): int =
     return 0
   max(1, (ticks + TargetFps - 1) div TargetFps)
 
-proc teamText*(team: Team): string =
-  ## Returns the readable team name.
-  case team
-  of Red:
-    "red"
-  of Blue:
-    "blue"
+proc spawnAimBrads*(gameMap: CtfMap, team: Team): int =
+  ## Returns the spawn/respawn aim angle: toward the map center, so every
+  ## team wakes facing the fight. Sides maps keep the classic east/west pair;
+  ## corner teams face the diagonal, plus arms face along their arm.
+  case gameMap.layout
+  of layoutSides:
+    if team == Red:
+      0                        ## east, toward Blue.
+    else:
+      AimBradsTurn div 2       ## west, toward Red.
+  of layoutCorners:
+    ## 0 = east, counter-clockwise: SE 224, SW 160, NE 32, NW 96.
+    case team
+    of Red:
+      AimBradsTurn - AimBradsTurn div 8      ## top-left faces south-east.
+    of Blue:
+      AimBradsTurn div 2 + AimBradsTurn div 8  ## top-right faces south-west.
+    of Green:
+      AimBradsTurn div 8                     ## bottom-left faces north-east.
+    of Yellow:
+      AimBradsTurn div 2 - AimBradsTurn div 8  ## bottom-right faces north-west.
+  of layoutPlus:
+    case team
+    of Red:
+      0                        ## west arm faces east.
+    of Blue:
+      AimBradsTurn div 2       ## east arm faces west.
+    of Green:
+      3 * AimBradsTurn div 4   ## north arm faces south.
+    of Yellow:
+      AimBradsTurn div 4       ## south arm faces north.
 
-proc teamColor*(team: Team): uint8 =
-  ## Returns the palette color for one team.
-  case team
-  of Red:
-    RedTeamColor
-  of Blue:
-    BlueTeamColor
-
-proc enemy*(team: Team): Team =
-  ## Returns the opposing team.
-  case team
-  of Red:
-    Blue
-  of Blue:
-    Red
-
-proc spawnAimBrads*(team: Team): int =
-  ## Returns the spawn/respawn aim angle: toward the enemy side.
-  case team
-  of Red:
-    0                          ## east, toward Blue.
-  of Blue:
-    AimBradsTurn div 2         ## west, toward Red.
+proc spawnFlipH*(gameMap: CtfMap, team: Team): bool =
+  ## Returns whether a team's sprite spawns horizontally flipped: any spawn
+  ## aim with a westward component faces the body left. Exactly `team ==
+  ## Blue` on sides maps.
+  let brads = gameMap.spawnAimBrads(team)
+  brads > AimBradsTurn div 4 and brads < 3 * AimBradsTurn div 4
 
 proc aimVector*(brads: int): tuple[x, y: float] =
   ## Returns the unit vector for one aim angle in brads (256 per turn):
@@ -4371,7 +4989,7 @@ proc gameHash*(sim: SimServer): uint64 =
   result.mixHashBool(sim.isDraw)
   result.mixHashBool(sim.needsReregister)
   result.mixHashInt(sim.nextJoinOrder)
-  for team in Team:
+  for team in sim.teams():
     result.mixHashInt(sim.flags[team].x)
     result.mixHashInt(sim.flags[team].y)
     result.mixHashInt(sim.flags[team].carrier)
@@ -4475,45 +5093,54 @@ proc nearestWalkable(sim: SimServer, x, y: int): tuple[x, y: int] =
           return (nx, ny)
   (x, y)
 
-proc teamHomeX(sim: SimServer, team: Team): int =
-  ## Returns the home-edge x anchor for one team's spawn strip.
-  sim.gameMap.teamHomeX(team)
-
 proc spawnPosition*(sim: SimServer, team: Team, order: int): tuple[x, y: int] =
-  ## Returns a deterministic spawn position just inside a team's home edge.
+  ## Returns a deterministic spawn position just inside a team's home edge:
+  ## players stagger along the edge, perpendicular to their home axis (down
+  ## the side for east/west teams, across for the plus layout's north/south
+  ## arms).
   let
-    baseX = sim.teamHomeX(team)
+    anchor = sim.gameMap.teamAnchor(team)
     strip = order div 2          ## stagger players down the edge.
-    cy = sim.gameMap.center.y
     spread = 36
-    targetY = cy + (strip - 1) * spread
-    targetX = baseX + (if order mod 2 == 0: -6 else: 6)
+    stepMajor = (strip - 1) * spread
+    stepMinor = (if order mod 2 == 0: -6 else: 6)
+    vertical = sim.gameMap.layout != layoutPlus or team in {Red, Blue}
+    targetX = if vertical: anchor.x + stepMinor else: anchor.x + stepMajor
+    targetY = if vertical: anchor.y + stepMajor else: anchor.y + stepMinor
   sim.nearestWalkable(targetX, targetY)
 
-proc captureZoneXRange(sim: SimServer, team: Team): tuple[lo, hi: int] =
-  ## Returns the inclusive x range of one team's home capture zone.
-  case team
-  of Red:
-    let hi = sim.teamHomeX(Red) + CaptureZoneWidth div 2
-    (0, hi)
-  of Blue:
-    let lo = sim.teamHomeX(Blue) - CaptureZoneWidth div 2
-    (lo, MapWidth - 1)
+proc captureZone(sim: SimServer, team: Team): CaptureZone =
+  ## Returns one team's home capture zone on the installed map.
+  sim.gameMap.captureZone(team)
 
 proc randomEndzonePosition*(sim: var SimServer, team: Team):
     tuple[x, y: int] =
   ## Returns a random walkable position inside a team's endzone (the home
-  ## capture column, full map height), drawn from the deterministic sim RNG.
+  ## capture zone), drawn from the deterministic sim RNG.
   let
-    zone = sim.captureZoneXRange(team)
+    zone = sim.captureZone(team)
     inset = ArenaBorder + PlayerHalf
-    xLo = max(zone.lo, inset)
-    xHi = min(zone.hi, MapWidth - 1 - inset)
-    yLo = inset
-    yHi = MapHeight - 1 - inset
-  sim.nearestWalkable(
-    xLo + sim.rng.rand(xHi - xLo),
-    yLo + sim.rng.rand(yHi - yLo))
+    xLo = max(zone.xLo, inset)
+    xHi = min(zone.xHi, MapWidth - 1 - inset)
+    yLo = max(zone.yLo, inset)
+    yHi = min(zone.yHi, MapHeight - 1 - inset)
+  var
+    x = xLo + sim.rng.rand(xHi - xLo)
+    y = yLo + sim.rng.rand(yHi - yLo)
+  if zone.diag:
+    ## A diagonal corner zone fills half its bounding box: redraw until the
+    ## point falls inside (deterministic — pure rng sequence), with the
+    ## anchor as a guaranteed landing spot if the draws run cold.
+    var attempts = 0
+    while not zone.inCaptureZone(x, y) and attempts < 16:
+      x = xLo + sim.rng.rand(xHi - xLo)
+      y = yLo + sim.rng.rand(yHi - yLo)
+      inc attempts
+    if not zone.inCaptureZone(x, y):
+      let anchor = sim.gameMap.teamAnchor(team)
+      x = anchor.x
+      y = anchor.y
+  sim.nearestWalkable(x, y)
 
 proc placePlayer(sim: var SimServer, playerIndex, x, y: int) =
   ## Moves one player to (x, y) with all motion state cleared.
@@ -4566,7 +5193,8 @@ proc eventActionId(
     slot = max(0, sim.eventSlot(playerIndex))
   var gameOrdinal = 0
   for account in sim.rewardAccounts:
-    gameOrdinal += account.gamesRed + account.gamesBlue
+    for team in Team:
+      gameOrdinal += account.games[team]
   (int64(gameOrdinal) shl 48) or
     (int64(eventTick) shl 16) or
     (int64(ord(kind) + 1) shl 8) or
@@ -4580,7 +5208,8 @@ proc eventActionIdForSlot(
 ): int64 {.inline.} =
   var gameOrdinal = 0
   for account in sim.rewardAccounts:
-    gameOrdinal += account.gamesRed + account.gamesBlue
+    for team in Team:
+      gameOrdinal += account.games[team]
   (int64(gameOrdinal) shl 48) or
     (int64(tick) shl 16) or
     (int64(ord(kind) + 1) shl 8) or
@@ -4683,12 +5312,19 @@ proc resetFlag*(sim: var SimServer, team: Team) =
   sim.flags[team] = FlagState(x: home.x, y: home.y, carrier: -1)
 
 proc resetFlags*(sim: var SimServer) =
-  ## Returns both flags to their home pedestals.
+  ## Returns every active team's flag to its home pedestal. Inactive slots
+  ## hold an explicit no-carrier state so nothing can misread the array's
+  ## zero value (carrier 0 would mean "player 0 carries it").
   for team in Team:
-    sim.resetFlag(team)
+    if team in sim.teams():
+      sim.resetFlag(team)
+    else:
+      sim.flags[team] = FlagState(x: 0, y: 0, carrier: -1)
 
 proc teamForSlot(sim: SimServer, order: int): Team =
-  ## Returns the configured or default team for one slot.
+  ## Returns the configured or default team for one slot: slots deal round
+  ## the active teams in enum order (the classic red/blue alternation on
+  ## 2-team maps).
   let slot =
     if order >= 0 and order < sim.config.slots.len:
       sim.config.slots[order]
@@ -4696,10 +5332,8 @@ proc teamForSlot(sim: SimServer, order: int): Team =
       PlayerSlotConfig()
   if slot.hasTeam:
     slot.team
-  elif order mod 2 == 0:
-    Red
   else:
-    Blue
+    Team(order mod sim.gameMap.teamCount())
 
 const IdentityNames* = [
   "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"]
@@ -4719,7 +5353,7 @@ proc slotIdentityIndex*(sim: SimServer, order: int): int =
 proc findSpawn*(sim: SimServer): tuple[x, y: int] =
   ## Returns the next lobby spawn position.
   let order = sim.players.len
-  sim.spawnPosition(sim.teamForSlot(order), order div 2)
+  sim.spawnPosition(sim.teamForSlot(order), order div sim.gameMap.teamCount())
 
 proc playerSlotLimit(config: GameConfig): int =
   ## Returns the number of slots players may occupy.
@@ -5066,7 +5700,7 @@ proc removePlayerAt*(sim: var SimServer, playerIndex: int) =
   ## Removes one live player and keeps index-keyed state aligned.
   if playerIndex < 0 or playerIndex >= sim.players.len:
     return
-  for team in Team:
+  for team in sim.teams():
     if sim.flags[team].carrier == playerIndex:
       sim.logGameEvent(teamText(team) & " heart returned home")
       sim.resetFlag(team)
@@ -5113,7 +5747,7 @@ proc addPlayer*(
       else:
         teamColor(team)
     accountIndex = sim.ensureRewardAccount(address)
-  let spawn = sim.spawnPosition(team, order div 2)
+  let spawn = sim.spawnPosition(team, order div sim.gameMap.teamCount())
   sim.bindRewardAccountSlot(accountIndex, order)
   sim.rewardAccounts[accountIndex].hasTeam = false
   sim.rewardAccounts[accountIndex].won = false
@@ -5123,8 +5757,8 @@ proc addPlayer*(
     y: spawn.y,
     homeX: spawn.x,
     homeY: spawn.y,
-    aimBrads: spawnAimBrads(team),
-    flipH: team == Blue,
+    aimBrads: sim.gameMap.spawnAimBrads(team),
+    flipH: sim.gameMap.spawnFlipH(team),
     windupBrads: -1,
     team: team,
     alive: true,
@@ -5179,10 +5813,7 @@ proc recordGameTeamAssigned*(
   sim.rewardAccounts[index].hasTeam = true
   sim.rewardAccounts[index].won = false
   sim.rewardAccounts[index].abandoned = false
-  if sim.players[playerIndex].team == Red:
-    inc sim.rewardAccounts[index].gamesRed
-  else:
-    inc sim.rewardAccounts[index].gamesBlue
+  inc sim.rewardAccounts[index].games[sim.players[playerIndex].team]
 
 proc recordGameAbandon*(sim: var SimServer, playerIndex: int) =
   ## Marks a player as abandoned for the current game.
@@ -5197,10 +5828,7 @@ proc recordGameWin*(sim: var SimServer, playerIndex: int) =
   if index < 0:
     return
   sim.rewardAccounts[index].won = true
-  if sim.players[playerIndex].team == Red:
-    inc sim.rewardAccounts[index].winsRed
-  else:
-    inc sim.rewardAccounts[index].winsBlue
+  inc sim.rewardAccounts[index].wins[sim.players[playerIndex].team]
 
 proc recordKill*(sim: var SimServer, playerIndex: int) =
   ## Increments the kill counter for one player.
@@ -5323,17 +5951,91 @@ proc playerResultsJson*(sim: SimServer): string =
   # only after the platform schema learns the fields.
   $results
 
-proc grenadeSpawnPoints*(): array[4, tuple[x, y: int]] =
-  ## The four corner grenade spawn points: two on each team's side.
+proc grenadeSpawnPoints*(gameMap: CtfMap): array[4, tuple[x, y: int]] =
+  ## The four grenade spawn points. Sides maps keep the classic corners;
+  ## corner maps move them to the edge midpoints (the corners are endzones
+  ## there); plus maps tuck them at the inner corners of the center
+  ## intersection, clear of the four endzone arm mouths.
   let inset = ArenaBorder + GrenadeSpawnInset
-  [(inset, inset),
-    (inset, MapHeight - inset),
-    (MapWidth - inset, inset),
-    (MapWidth - inset, MapHeight - inset)]
+  case gameMap.layout
+  of layoutSides:
+    [(inset, inset),
+      (inset, gameMap.height - inset),
+      (gameMap.width - inset, inset),
+      (gameMap.width - inset, gameMap.height - inset)]
+  of layoutCorners:
+    rot90Orbit((gameMap.width div 2, inset), gameMap.width)
+  of layoutPlus:
+    let arm = gameMap.plusArmHalf()
+    rot90Orbit(
+      (gameMap.center.x + arm - inset, gameMap.center.y + arm - inset),
+      gameMap.width
+    )
+
+proc shieldSpawnPoints*(gameMap: CtfMap): seq[tuple[x, y: int]] =
+  ## One shield point per team, deep in that team's endzone. Sides maps keep
+  ## the classic back-column pair (bottom half; the spray cans hold the
+  ## matching top-half spots); corner teams host theirs on their x edge at
+  ## anchor height, plus arms in the lower/outer half of the arm mouth.
+  let inset = ArenaBorder + GrenadeSpawnInset
+  case gameMap.layout
+  of layoutSides:
+    let endzoneY = 3 * gameMap.height div 4
+    result = @[(inset, endzoneY), (gameMap.width - inset, endzoneY)]
+  of layoutCorners:
+    for team in gameMap.teams():
+      let
+        anchor = gameMap.teamAnchor(team)
+        edgeX =
+          if anchor.x < gameMap.center.x: inset
+          else: gameMap.width - inset
+      result.add((edgeX, anchor.y))
+  of layoutPlus:
+    let arm = gameMap.plusArmHalf()
+    for team in gameMap.teams():
+      case team
+      of Red:
+        result.add((inset, gameMap.center.y + arm div 2))
+      of Blue:
+        result.add((gameMap.width - inset, gameMap.center.y - arm div 2))
+      of Green:
+        result.add((gameMap.center.x - arm div 2, inset))
+      of Yellow:
+        result.add((gameMap.center.x + arm div 2, gameMap.height - inset))
+
+proc plasmaArcSpawnPoints*(gameMap: CtfMap): seq[tuple[x, y: int]] =
+  ## One spray can point per team: the classic top-half back columns on
+  ## sides maps, the y edge beside each corner team's anchor, the opposite
+  ## half of the arm mouth on plus maps.
+  let inset = ArenaBorder + PlasmaArcSpawnInset
+  case gameMap.layout
+  of layoutSides:
+    result = @[(inset, gameMap.height div 4),
+      (gameMap.width - inset, gameMap.height div 4)]
+  of layoutCorners:
+    for team in gameMap.teams():
+      let
+        anchor = gameMap.teamAnchor(team)
+        edgeY =
+          if anchor.y < gameMap.center.y: inset
+          else: gameMap.height - inset
+      result.add((anchor.x, edgeY))
+  of layoutPlus:
+    let arm = gameMap.plusArmHalf()
+    for team in gameMap.teams():
+      case team
+      of Red:
+        result.add((inset, gameMap.center.y - arm div 2))
+      of Blue:
+        result.add((gameMap.width - inset, gameMap.center.y + arm div 2))
+      of Green:
+        result.add((gameMap.center.x + arm div 2, inset))
+      of Yellow:
+        result.add((gameMap.center.x - arm div 2, gameMap.height - inset))
 
 proc resetGrenades*(sim: var SimServer) =
   ## Refills every corner pickup and clears carried and airborne grenades.
-  let points = grenadeSpawnPoints()
+  let points = sim.gameMap.grenadeSpawnPoints()
   for i in 0 ..< sim.grenadeSpawns.len:
     sim.grenadeSpawns[i] = PickupSpawn(
       x: points[i].x, y: points[i].y, present: true, respawnAt: 0
@@ -5347,19 +6049,18 @@ proc resetMedKits*(sim: var SimServer) =
   ## Places both med kits on the map's active spawn points (generated maps
   ## draw the pair per map; hand-authored maps carry the classic center-line
   ## thirds), nudged to the nearest walkable floor, and refills them.
-  let targets =
-    if sim.gameMap.medKitSpawns.len >= 2:
-      [
-        (sim.gameMap.medKitSpawns[0].x, sim.gameMap.medKitSpawns[0].y),
-        (sim.gameMap.medKitSpawns[1].x, sim.gameMap.medKitSpawns[1].y),
-      ]
-    else:
-      [
-        (MapWidth div 2, MapHeight div 3),
-        (MapWidth div 2, 2 * MapHeight div 3),
-      ]
+  var targets: seq[tuple[x, y: int]]
+  if sim.gameMap.medKitSpawns.len >= 2:
+    for point in sim.gameMap.medKitSpawns:
+      targets.add((point.x, point.y))
+  else:
+    targets = @[
+      (MapWidth div 2, MapHeight div 3),
+      (MapWidth div 2, 2 * MapHeight div 3),
+    ]
+  sim.medKitSpawns.setLen(targets.len)
   for i in 0 ..< sim.medKitSpawns.len:
-    let spot = sim.nearestWalkable(targets[i][0], targets[i][1])
+    let spot = sim.nearestWalkable(targets[i].x, targets[i].y)
     sim.medKitSpawns[i] = PickupSpawn(
       x: spot.x, y: spot.y, present: true, respawnAt: 0
     )
@@ -5369,33 +6070,20 @@ proc resetShields*(sim: var SimServer) =
   ## as the corner grenade pickups but in the BOTTOM half (three quarters of
   ## the map height down) — the spray cans hold the matching top-half spots —
   ## nudged to the nearest walkable floor, and refills both.
-  let
-    inset = ArenaBorder + GrenadeSpawnInset
-    endzoneY = 3 * MapHeight div 4
-    targets = [
-      (inset, endzoneY),
-      (MapWidth - inset, endzoneY)
-    ]
+  let targets = sim.gameMap.shieldSpawnPoints()
+  sim.shieldSpawns.setLen(targets.len)
   for i in 0 ..< sim.shieldSpawns.len:
-    let spot = sim.nearestWalkable(targets[i][0], targets[i][1])
+    let spot = sim.nearestWalkable(targets[i].x, targets[i].y)
     sim.shieldSpawns[i] = PickupSpawn(
       x: spot.x, y: spot.y, present: true, respawnAt: 0
     )
   for i in 0 ..< sim.players.len:
     sim.players[i].hasShield = false
     sim.players[i].shieldHp = 0
-proc plasmaArcSpawnPoints*(): array[2, tuple[x, y: int]] =
-  ## The two spray can spawn points, nudged to walkable floor: the same side
-  ## back columns as the shields, but in the TOP half (a quarter of the map
-  ## height down) so the two pickups no longer sit on top of each other —
-  ## spray cans high, shields low.
-  let inset = ArenaBorder + PlasmaArcSpawnInset
-  [(inset, MapHeight div 4),
-    (MapWidth - inset, MapHeight div 4)]
-
 proc resetPlasmaArcs*(sim: var SimServer) =
-  ## Refills both side-center spray can pickups and clears carried cans.
-  let points = plasmaArcSpawnPoints()
+  ## Refills every team's spray can pickup and clears carried cans.
+  let points = sim.gameMap.plasmaArcSpawnPoints()
+  sim.plasmaArcSpawns.setLen(points.len)
   for i in 0 ..< sim.plasmaArcSpawns.len:
     let spot = sim.nearestWalkable(points[i].x, points[i].y)
     sim.plasmaArcSpawns[i] = PickupSpawn(
@@ -5425,8 +6113,8 @@ proc startGame*(sim: var SimServer) =
     sim.players[i].fireCooldown = 0
     sim.players[i].fireWindup = 0
     sim.players[i].windupBrads = -1
-    sim.players[i].aimBrads = spawnAimBrads(sim.players[i].team)
-    sim.players[i].flipH = sim.players[i].team == Blue
+    sim.players[i].aimBrads = sim.gameMap.spawnAimBrads(sim.players[i].team)
+    sim.players[i].flipH = sim.gameMap.spawnFlipH(sim.players[i].team)
     sim.players[i].carryingFlag = false
     sim.players[i].hasShield = false
     sim.players[i].shieldHp = 0
@@ -5734,7 +6422,7 @@ proc killPlayer*(
   sim.players[targetIndex].hasPlasmaArc = false
   sim.players[targetIndex].arcTicksLeft = 0
   sim.players[targetIndex].throwCharge = 0
-  for team in Team:
+  for team in sim.teams():
     if sim.flags[team].carrier == targetIndex:
       sim.players[targetIndex].carryingFlag = false
       sim.logGameEvent(teamText(team) & " heart returned home")
@@ -6687,36 +7375,41 @@ proc resolveSimultaneousFire*(sim: var SimServer, shooters: openArray[int]) =
     sim.applyFire(shot)
 
 proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
-  ## Lets a living player steal the ENEMY team's flag off its pedestal by
+  ## Lets a living player steal ANY enemy team's flag off its pedestal by
   ## touch. A player's own flag cannot be interacted with by their own team.
+  ## Ties (two pedestals in touch range at once — impossible on real maps)
+  ## resolve in enum order, deterministically.
   if not sim.players[playerIndex].alive or sim.players[playerIndex].carryingFlag:
-    return
-  let flagTeam = enemy(sim.players[playerIndex].team)
-  if sim.flags[flagTeam].carrier >= 0:
     return
   let
     px = sim.players[playerIndex].x + CollisionW div 2
     py = sim.players[playerIndex].y + CollisionH div 2
     rangeSq = FlagPickupRange * FlagPickupRange
-  if distSq(px, py, sim.flags[flagTeam].x, sim.flags[flagTeam].y) <= rangeSq:
-    sim.flags[flagTeam].carrier = playerIndex
-    sim.players[playerIndex].carryingFlag = true
-    # A steal is action: keep at least ActionClockFloorTicks on the clock.
-    sim.floorGameClock()
-    sim.emitEvent(
-      FlagSteal, source = playerIndex,
-      x = float(sim.flags[flagTeam].x), y = float(sim.flags[flagTeam].y)
-    )
-    sim.logGameEvent(
-      teamText(sim.players[playerIndex].team) & " stole the " &
-        teamText(flagTeam) & " heart"
-    )
+  for flagTeam in sim.teams():
+    if flagTeam == sim.players[playerIndex].team:
+      continue
+    if sim.flags[flagTeam].carrier >= 0:
+      continue
+    if distSq(px, py, sim.flags[flagTeam].x, sim.flags[flagTeam].y) <= rangeSq:
+      sim.flags[flagTeam].carrier = playerIndex
+      sim.players[playerIndex].carryingFlag = true
+      # A steal is action: keep at least ActionClockFloorTicks on the clock.
+      sim.floorGameClock()
+      sim.emitEvent(
+        FlagSteal, source = playerIndex,
+        x = float(sim.flags[flagTeam].x), y = float(sim.flags[flagTeam].y)
+      )
+      sim.logGameEvent(
+        teamText(sim.players[playerIndex].team) & " stole the " &
+          teamText(flagTeam) & " heart"
+      )
+      return
 
 proc updateFlags(sim: var SimServer) =
   ## Keeps each carried flag glued to its carrier; a carrier that stops
   ## carrying for any reason other than capture sends the flag straight back
   ## to its own pedestal.
-  for team in Team:
+  for team in sim.teams():
     let carrier = sim.flags[team].carrier
     if carrier < 0:
       continue
@@ -7088,6 +7781,10 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
           continue
         sim.rewardAccounts[i].reward += TimeoutReward
     return
+  # Zero-sum by construction: the winning team scores +1 per losing team,
+  # each losing team -1. Classic 2-team play stays +1/-1; a 4-team ffa win
+  # pays the winner +3 and each loser -1.
+  let loserTeams = sim.gameMap.teamCount() - 1
   var awardedAccounts = newSeq[bool](sim.rewardAccounts.len)
   for i in 0 ..< sim.players.len:
     let accountIndex = sim.rewardAccountForPlayer(i)
@@ -7096,7 +7793,7 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
     if accountIndex >= 0 and accountIndex < awardedAccounts.len:
       awardedAccounts[accountIndex] = true
     if sim.players[i].team == winner:
-      sim.addReward(i, WinReward)
+      sim.addReward(i, WinReward * loserTeams)
       sim.recordGameWin(i)
     else:
       sim.addReward(i, LossReward)
@@ -7106,12 +7803,9 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
     if not sim.rewardAccounts[i].hasTeam:
       continue
     if sim.rewardAccounts[i].team == winner:
-      sim.rewardAccounts[i].reward += WinReward
+      sim.rewardAccounts[i].reward += WinReward * loserTeams
       sim.rewardAccounts[i].won = true
-      if winner == Red:
-        inc sim.rewardAccounts[i].winsRed
-      else:
-        inc sim.rewardAccounts[i].winsBlue
+      inc sim.rewardAccounts[i].wins[sim.rewardAccounts[i].team]
     else:
       sim.rewardAccounts[i].reward += LossReward
 
@@ -7130,19 +7824,43 @@ proc teamLivesRemaining*(sim: SimServer, team: Team): int =
     if p.alive:
       inc result
 
-proc teamFlagProgress*(sim: SimServer, team: Team): int =
-  ## Returns how far the ENEMY flag has been advanced toward this team's
-  ## home while carried; 0 when it sits on its pedestal. (0.7.0 relabels the
-  ## flag a "heart" in art/copy, but the carry-to-home mechanic is unchanged.)
-  let flag = sim.flags[enemy(team)]
+proc flagCarryProgress*(sim: SimServer, flagTeam: Team): int =
+  ## Returns how far one team's STOLEN flag has been advanced from its
+  ## pedestal toward its carrier's home; 0 while it sits home. (0.7.0
+  ## relabels the flag a "heart" in art/copy, but the carry-to-home
+  ## mechanic is unchanged.) Sides maps keep the classic x-displacement
+  ## measure; corner and plus layouts use straight-line displacement.
+  let flag = sim.flags[flagTeam]
   if flag.carrier < 0:
     return 0
-  let home = sim.gameMap.flagHome(enemy(team))
-  case team
-  of Red:
-    max(0, home.x - flag.x)
-  of Blue:
-    max(0, flag.x - home.x)
+  let
+    carrierTeam = sim.players[flag.carrier].team
+    home = sim.gameMap.flagHome(flagTeam)
+  let progress =
+    case sim.gameMap.layout
+    of layoutSides:
+      if carrierTeam == Red:
+        home.x - flag.x
+      else:
+        flag.x - home.x
+    of layoutCorners, layoutPlus:
+      let
+        anchor = sim.gameMap.teamAnchor(carrierTeam)
+        d0 = sqrt(float(distSq(home.x, home.y, anchor.x, anchor.y)))
+        d = sqrt(float(distSq(flag.x, flag.y, anchor.x, anchor.y)))
+      int(d0 - d)
+  max(0, progress)
+
+proc teamFlagProgress*(sim: SimServer, team: Team): int =
+  ## Returns how far this team has advanced a stolen enemy flag toward its
+  ## own home; 0 when no enemy flag is on one of its players' backs.
+  for flagTeam in sim.teams():
+    if flagTeam == team:
+      continue
+    let flag = sim.flags[flagTeam]
+    if flag.carrier < 0 or sim.players[flag.carrier].team != team:
+      continue
+    result = max(result, sim.flagCarryProgress(flagTeam))
 
 proc teamHasLivePlayers(sim: SimServer, team: Team): bool =
   ## Returns true when a team still has a player who can act this round.
@@ -7163,37 +7881,43 @@ proc checkWinCondition*(sim: var SimServer) {.measure.} =
   ## Resolves capture and wipe win conditions.
   if sim.phase != Playing or sim.players.len == 0:
     return
-  # Capture: a living carrier bringing the enemy flag into their own home
+  # Capture: a living carrier bringing an enemy flag into their own home
   # capture zone (deliberately no own-flag-must-be-home precondition).
-  for flagTeam in Team:
+  for flagTeam in sim.teams():
     let carrierIndex = sim.flags[flagTeam].carrier
     if carrierIndex < 0 or carrierIndex >= sim.players.len or
         not sim.players[carrierIndex].alive:
       continue
     let
       carrier = sim.players[carrierIndex]
-      zone = sim.captureZoneXRange(carrier.team)
+      zone = sim.captureZone(carrier.team)
       cx = carrier.x + CollisionW div 2
-    if cx >= zone.lo and cx <= zone.hi:
+      cy = carrier.y + CollisionH div 2
+    if zone.inCaptureZone(cx, cy):
       sim.recordCapture(carrierIndex)
       sim.emitEvent(
         Capture, source = carrierIndex,
-        x = float(cx), y = float(carrier.y + CollisionH div 2)
+        x = float(cx), y = float(cy)
       )
       sim.logGameEvent(
         teamText(carrier.team) & " captured the " & teamText(flagTeam) & " heart"
       )
       sim.finishGame(carrier.team)
       return
-  # Wipe: a team with no live players left loses.
-  let
-    redAlive = sim.teamHasLivePlayers(Red)
-    blueAlive = sim.teamHasLivePlayers(Blue)
-  if not redAlive and blueAlive:
-    sim.finishGame(Blue)
-  elif not blueAlive and redAlive:
-    sim.finishGame(Red)
-  elif not redAlive and not blueAlive:
+  # Wipe: the game ends when at most one team still has live players — the
+  # survivor wins, and a mutual wipe is a draw. A 4-team game continues
+  # while two or more teams stand; a wiped team just stays out. Classic
+  # 2-team behavior is the two-team case of the same rule.
+  var
+    aliveCount = 0
+    lastAlive = Red
+  for team in sim.teams():
+    if sim.teamHasLivePlayers(team):
+      inc aliveCount
+      lastAlive = team
+  if aliveCount == 1:
+    sim.finishGame(lastAlive)
+  elif aliveCount == 0:
     sim.finishGame(Red, isDraw = true)
 
 proc checkMaxTicks(sim: var SimServer) =
@@ -7387,8 +8111,8 @@ proc respawnPlayers(sim: var SimServer) =
         sim.placePlayer(i, spawn.x, spawn.y)
         sim.players[i].alive = true
         sim.players[i].hp = sim.config.hitPoints
-        sim.players[i].aimBrads = spawnAimBrads(sim.players[i].team)
-        sim.players[i].flipH = sim.players[i].team == Blue
+        sim.players[i].aimBrads = sim.gameMap.spawnAimBrads(sim.players[i].team)
+        sim.players[i].flipH = sim.gameMap.spawnFlipH(sim.players[i].team)
         sim.emitEvent(
           Respawn, source = i,
           x = float(sim.players[i].x + CollisionW div 2),

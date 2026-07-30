@@ -51,3 +51,4 @@ players/modulabot/test/parity
 # the tracked coworld_manifest.json; dist/ is a local convenience artifact.
 /dist/
 trench-demo.bitreplay
+pool-preview/

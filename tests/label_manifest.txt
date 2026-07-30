@@ -10,7 +10,9 @@
 <color> shout <player>
 Room Blue Base
 Room Center
+Room Green Base
 Room Red Base
+Room Yellow Base
 blast stage <n>
 cog arm <color>
 cog gun <color>
@@ -59,7 +61,9 @@ spray can
 spray can carried
 spray paint puff
 team score BLUE <n>/1
+team score GREEN <n>/0
 team score RED <n>/0
+team score YELLOW <n>/0
 throw target
 walkability map
 weapon gun

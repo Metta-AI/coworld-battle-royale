@@ -402,7 +402,7 @@ proc buildReplayKeyframes*(
   # team's lives change to keep it compact.
   replay.livesSeries = @[]
   proc teamLives(sim: SimServer): seq[int] =
-    for team in Team:
+    for team in sim.teams():
       result.add(sim.teamLivesRemaining(team))
   proc seriesPoint(tick: int, lives: seq[int]): seq[int] =
     result = @[tick]

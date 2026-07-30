@@ -41,5 +41,6 @@ import
   test_weapon_observability,
   test_fast_mode,
   test_artlog,
-  test_clock_floor
+  test_clock_floor,
+  test_four_team
 {.warning[UnusedImport]: on.}

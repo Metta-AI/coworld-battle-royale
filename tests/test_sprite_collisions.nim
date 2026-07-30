@@ -172,6 +172,31 @@ suite "sprite id collisions":
     check game.buildPlayerMessages(1, pstate).conflicts() == newSeq[string]()
     check game.buildGlobalMessages(gstate).conflicts() == newSeq[string]()
 
+  test "a 4-team frame defines no colliding sprite ids":
+    # The widened pools (soldier/corpse/selected strides, rig blocks, flag
+    # 700..703, carry hearts 600..663, endzone fades 4100..4131) all get
+    # exercised by a full 4-team frame with green/yellow seated.
+    var config = defaultGameConfig()
+    config.teams = 4
+    config.mapPath = "gen"
+    config.mapGen.layout = "corners"
+    config.mapSeed = 42
+    var game = initCtfForTest(config)
+    for i in 0 ..< 8:
+      discard game.addPlayer("p" & $i)
+    game.startGame()
+    let green = game.gameMap.flagHome(Green)
+    game.players[0].x = green.x - CollisionW div 2
+    game.players[0].y = green.y - CollisionH div 2
+    game.tryPickupFlags(0)
+    check game.flags[Green].carrier == 0
+    var pstate: PlayerViewerState
+    var gstate = initGlobalViewerState()
+    gstate.selectedJoinOrder = game.players[3].joinOrder
+    check game.buildPlayerMessages(0, pstate).conflicts() == newSeq[string]()
+    check game.buildPlayerMessages(3, pstate).conflicts() == newSeq[string]()
+    check game.buildGlobalMessages(gstate).conflicts() == newSeq[string]()
+
   test "bot-critical labels survive a full-feature frame":
     # Every label the baseline bot exact-match scans for. A missing entry
     # means either a silent rename or a sprite-id clobber — both blind every

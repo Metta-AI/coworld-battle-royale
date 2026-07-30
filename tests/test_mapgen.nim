@@ -47,8 +47,30 @@ suite "procedural terrain":
             case gameMap.symmetry
             of symMirror: (w - 1 - x, y)
             of symRot180: (w - 1 - x, h - 1 - y)
+            of symRot90: (w - 1 - y, x)
           check obstacleAt(obstacles, x, y) ==
             obstacleAt(obstacles, sx, sy)
+          y += 13
+        x += 11
+
+  test "4-team maps are exactly rot90-fair and deterministic":
+    for layout in ["corners", "plus"]:
+      let
+        overrides = MapGenOverrides(windows: -1, layout: layout)
+        gameMap = generateCtfMap(11, overrides, teams = 4)
+        again = generateCtfMap(11, overrides, teams = 4)
+        obstacles = buildArenaObstacles(gameMap)
+        w = gameMap.width
+      check gameMap == again
+      check gameMap.symmetry == symRot90
+      check w == gameMap.height
+      # A quarter turn maps wall to wall everywhere: (x, y) -> (w-1-y, x).
+      var x = ArenaBorder
+      while x < w - ArenaBorder:
+        var y = ArenaBorder
+        while y < w - ArenaBorder:
+          check obstacleAt(obstacles, x, y) ==
+            obstacleAt(obstacles, w - 1 - y, x)
           y += 13
         x += 11
 
