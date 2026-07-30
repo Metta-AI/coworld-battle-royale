@@ -34,7 +34,10 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   viewer and every replay sees the same stone. The blocked lane through the
   center therefore **opens and closes on a clock**: a vertex that covered you a
   second ago may have swung away. A player the sweep engulfs is pushed to the
-  nearest free floor rather than trapped inside stone.
+  nearest free floor rather than trapped inside stone, and never onto another
+  body. This is a feature of the two hand-authored arenas: on procedurally
+  generated terrain (`mapPath: "pool"` / `"gen"`, including every 4-team map)
+  the center diamonds stay **baked static stone**, as they were before GV28.
 - In the outermost stub column of each half, the glass alternates in from
   both ends: the **second stub from the top, the middle stub, and the second
   from the bottom (GameVersion 27) are glass windows**: they block movement,

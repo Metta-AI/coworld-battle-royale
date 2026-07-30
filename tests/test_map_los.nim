@@ -32,12 +32,21 @@ proc isWalkable(sim: SimServer, x, y: int): bool =
 suite "map long sightlines":
   let sim = initCtfForTest()
 
-  test "no full horizontal crossing on any walkable row":
-    var y = 10
-    while y < MapHeight - 10:
-      if sim.isWalkable(215, y) or sim.isWalkable(1020, y):
-        check sim.segmentBlocked(215, y, 1020, y)
-      y += 4
+  test "no full horizontal crossing on any walkable row, at any spin frame":
+    ## Since GV28 the center diamonds are live geometry, so which rows they
+    ## block is a function of the tick: a crossing that is walled at rest can
+    ## open a third of a turn later. The invariant has to hold all turn, so
+    ## the scan runs at every frame — and every row, not every fourth, since
+    ## the rows that change are exactly the narrow ones near a vertex.
+    var spun = sim
+    for frame in 0 ..< DiamondSpinFrames:
+      spun.applyDiamondGeometry(frame * DiamondSpinTicksPerFrame)
+      var open = 0
+      for y in 10 ..< MapHeight - 10:
+        if (spun.isWalkable(215, y) or spun.isWalkable(1020, y)) and
+            not spun.segmentBlocked(215, y, 1020, y):
+          inc open
+      check open == 0
 
   test "at least 95% of long diagonals are wall-blocked":
     var rng = initRand(0xC7F5EED)

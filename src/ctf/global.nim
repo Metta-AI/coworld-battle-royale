@@ -2201,9 +2201,11 @@ proc buildPaintStainSprite(
         let
           mapX = stain.x - StainSize div 2 + x div k
           mapY = stain.y - StainSize div 2 + y div k
-        # isArtWall, not isWall: the collision mask counts the rotating
-        # diamonds as wall while the art bakes them as floor, so masking
-        # against collision painted the floor under every diamond.
+        # isArtWall, not isWall: since GV28 the collision mask carries the
+        # diamonds' LIVE rotated footprint, so masking a terrain stain against
+        # it would make the stain flicker with the spin. Terrain stains belong
+        # to the static art; paint that lands on a diamond is stored on the
+        # diamond instead (addPaintStain) so it turns with the stone.
         if sim.isArtWall(mapX, mapY) != stain.onWall:
           continue
       result.putRawRgbaPixel(y * outSize + x, paintR, paintG, paintB, alpha)
