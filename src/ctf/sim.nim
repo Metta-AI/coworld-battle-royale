@@ -1200,12 +1200,15 @@ const
 var
   rigLoaded: array[Team, bool]
   rigSegImg: array[Team, array[RigSeg, Image]]
+  rigHeadImg: array[Skin, array[Team, Image]]
   rigScale: array[Team, float]   ## master-frame px -> map px (body fills body px).
-  # Bake cache keyed by (baseStep, artStep, shortenStep, scale). baseStep is the
-  # aim step (head/arms) or heading step (legs/wheels); artStep is the leg swing or
-  # wheel caster; shortenStep is the leg-length index (0 for non-legs).
-  rigSegCache: array[Team, array[RigSeg, seq[tuple[
-    baseStep, artStep, shortenStep, scale: int, pixels: seq[uint8]]]]]
+  # The head asset is skin-specific; all other rig segments are shared.
+  # Bake cache keyed by skin and (baseStep, artStep, shortenStep, scale).
+  # baseStep is the aim step (head/arms) or heading step (legs/wheels); artStep
+  # is the leg swing or wheel caster; shortenStep is the leg-length index
+  # (0 for non-legs).
+  rigSegCache: array[Skin, array[Team, array[RigSeg, seq[tuple[
+    baseStep, artStep, shortenStep, scale: int, pixels: seq[uint8]]]]]]
 
 proc rigSegPath(seg: RigSeg): string =
   case seg
@@ -1231,6 +1234,8 @@ proc ensureRigLoaded(team: Team) =
   let dir = gameDir() / "data/rig_real" / (if team == Red: "red" else: "blue")
   for seg in RigSeg:
     rigSegImg[team][seg] = readImage(dir / rigSegPath(seg) & ".png")
+  rigHeadImg[DefaultSkin][team] = rigSegImg[team][rsHead]
+  rigHeadImg[CrownSkin][team] = readImage(dir / "head_crown.png")
   # Scale the rig so its body matches the unified soldier footprint. The solid
   # body spans ~99px in the 192px frame (y56..154); map that to SoldierBodyPx.
   ensureSoldierLoaded(DefaultSkin, team)
@@ -1248,7 +1253,7 @@ proc soldierCanvasToPixels(canvas: Image): seq[uint8] =
     result[i * 4 + 3] = c.a
 
 proc rigSegPixels*(team: Team, seg: RigSeg, baseStep, artStep: int,
-    shortenStep = 0, renderScale = 1): seq[uint8] =
+    shortenStep = 0, renderScale = 1, skin = DefaultSkin): seq[uint8] =
   ## One rig segment baked into a RigCanvas sprite, HUB-centered.
   ##  - baseStep: the segment's base rotation step (RigSteps) — the AIM step for
   ##    the head/arms, the movement-HEADING step for legs/wheels. This IS the
@@ -1264,14 +1269,19 @@ proc rigSegPixels*(team: Team, seg: RigSeg, baseStep, artStep: int,
     b = ((baseStep mod RigSteps) + RigSteps) mod RigSteps
     art = artStep
     sh = clamp(shortenStep, 0, RigShortenSteps)
-  for cached in rigSegCache[team][seg]:
+    effectiveSkin = if seg == rsHead: skin else: DefaultSkin
+  for cached in rigSegCache[effectiveSkin][team][seg]:
     if cached.baseStep == b and cached.artStep == art and
         cached.shortenStep == sh and cached.scale == renderScale:
       return cached.pixels
   ensureRigLoaded(team)
   let
     outCanvas = RigCanvas * renderScale
-    img = rigSegImg[team][seg]
+    img =
+      if seg == rsHead:
+        rigHeadImg[effectiveSkin][team]
+      else:
+        rigSegImg[team][seg]
     s = rigScale[team] * float(renderScale)
     center = float32(outCanvas) / 2
     anchor = RigAnchor[seg]
@@ -1325,7 +1335,7 @@ proc rigSegPixels*(team: Team, seg: RigSeg, baseStep, artStep: int,
   # and can be gated off if a cog is ever disarmed. The head is a clean turret.
   canvas.draw(img, mat)
   let pixels = soldierCanvasToPixels(canvas)
-  rigSegCache[team][seg].add(
+  rigSegCache[effectiveSkin][team][seg].add(
     (baseStep: b, artStep: art, shortenStep: sh, scale: renderScale,
      pixels: pixels))
   pixels
