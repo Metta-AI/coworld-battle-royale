@@ -1,6 +1,8 @@
 # baseline — Coworld CTF bot (8v8, fog-of-war)
 
 A capture-the-flag reference bot that speaks the Bitworld Sprite v1 protocol.
+Its WebSocket disables Nagle buffering so separate input and chat messages
+arrive within the simulation tick that produced them.
 It keeps a persistent world model on top of the fog-of-war full-map view and
 plays a coordinated 8v8 team game on the dense-cover arena: cover-aware
 pathfinding, a six-strong attack wave (mid quad plus wide flankers), an
@@ -18,7 +20,7 @@ The observation is the **full 1235×659 map in map coordinates**: the map
 object sits at `(0, 0)`, so object positions ARE map positions (no camera
 math). Entities are **fogged**: an enemy — including an enemy carrying our
 flag — is only streamed while inside OUR vision, which is a **forward cone**
-(half-angle `visionConeDeg` ≈ 45° around our AIM ANGLE, **unlimited range**,
+(half-angle `visionConeDeg` ≈ 60° around our AIM ANGLE, **unlimited range**,
 walls block it) plus an **omnidirectional bubble** (`visionBubble` ≈ 90px).
 **Aim carries vision**: the cone points where the turret points, never where
 we walk, so sweeping it is an explicit rotate-button act. Always visible
@@ -36,10 +38,10 @@ leaves after a ~5-tick windup. Labels we read:
 - `"player <color> right|left"` — another player; the suffix is the
   horizontal sprite flip. Teammates are always streamed; enemies only while
   inside our vision cone/bubble with line of sight.
-- `"aim dot <color>"` — the aim-indicator dots every visible player wears
-  along its aim line. OUR OWN farthest dot is an absolute readback of our
-  actual aim angle (see the turret controller); a visible enemy's dots are
-  readable intel about where it is looking.
+- No label carries anyone's **aim angle**. The old `"aim dot <color>"` line was
+  retired engine-side (see RULES.md label changes), so our own aim is pure dead
+  reckoning and a mate's or enemy's facing is only the coarse left/right sprite
+  flip above.
 - `"<team> flag"` (`"red flag"` / `"blue flag"`) — a flag, on its pedestal or
   riding its carrier's exact position. Pedestal flags are never fogged; a
   carried flag is exactly as visible as its carrier. Consequences: the ENEMY
@@ -165,8 +167,8 @@ the run home and charges stretches with no cover cell nearby — under map-wide
 guns an open lane is a shooting gallery even when it looks empty) and paths
 deep into the capture zone; the exposure cost keeps the run hugging cover
 past remembered enemies. The **enemy spawn pocket is a standing virtual
-threat** (fed into `enemyPosts`): every kill respawns an armed,
-spawn-protected enemy at the pedestal whose spawn aim points along the
+threat** (fed into `enemyPosts`): every kill respawns an armed
+enemy at the pedestal whose spawn aim points along the
 east-west axis, so a fresh carrier first **bugs out of the pocket
 vertically** (pure-vertical movement exits that cone fastest) and runs home
 along a border lane. Carriers never peek, duck, or jink and only engage
@@ -192,12 +194,11 @@ the capture race stays on.
   pixel raycast against the walkability mask (exactly the sim's LOS rule).
   Shoot first — first shot wins. Tracks form anywhere the vision cone
   reaches, so a lane watcher genuinely engages down its open lane.
-- **Turret controller**: the bot tracks its own aim two ways — dead reckoning
+- **Turret controller**: the bot tracks its own aim by **dead reckoning only**
   (spawn aim is toward the enemy side; every elapsed sim tick advances it by
-  the rotation of the last sent mask) plus an **absolute readback** from its
-  own rendered aim dots each frame (`observedAim`, resync when they disagree
-  by > `AimResyncBrads`). Each tick it outputs the rotate button (B = CCW,
-  Select = CW) that closes the shortest arc to the desired aim and stops
+  the rotation of the last sent mask) — no observation label reads the aim
+  angle back, so drift is uncorrected. Each tick it outputs the rotate button
+  (B = CCW, Select = CW) that closes the shortest arc to the desired aim and stops
   inside `CombatDeadband` (±2 brads; `AimRate` = 5 cannot settle tighter).
 - **Fire gate**: fire only when the corridor covers the target at its range —
   the perpendicular miss of the current aim error, `range × sin(err)`, must
@@ -236,13 +237,28 @@ the capture race stays on.
 
 ## Tuning
 
-The knobs are the constants at the top of `baseline.nim` (ranges, memory
-TTLs, aim rate/deadbands/fire slack, scan arc, cover/exposure costs, lane
-y-coordinates, spacing, corridor width). `AimRate` must match the server's
-`aimTurnRate` config (default 5). Role assignment is `roleForSeat`; lane via-points,
-`chokeSpot`, and `homeDeepX` encode the map geometry (1235×659, center
-617,329, mirror line x=617, capture zones x≤~206 / x≥~1029, spawn-pocket
-pedestals at 186,329 / 1049,329).
+Strategic levers can be overridden at compile time with `-d:NAME=VALUE`;
+defaults preserve the current baseline behavior. `AimRate` must match the server's
+`aimTurnRate` config (default 5). Role assignment is `roleForSeat`; lane
+via-points, `chokeSpot`, and `homeDeepX` encode the map geometry.
+
+| Name | Type | Default | What it does | Sane experimental range |
+| --- | --- | ---: | --- | --- |
+| `tuneRushEngageRange` | int | 230 | Rusher engagement distance | 150–350 |
+| `tunePocketRushRange` | int | 210 | Distance from enemy pedestal to prioritize pickup | 150–300 |
+| `tuneWeaveBand` | int | 280 | Midline x-band where rushers weave | 150–450 |
+| `tuneWeaveGain` | int percent | 60 | Side-steer strength during weaving | 20–100 |
+| `tuneCarrierFireRange` | int | 110 | Carrier engagement distance | 50–180 |
+| `tuneEscortEngageRange` | int | 320 | Engagement distance while escorting | 200–500 |
+| `tuneThiefFixTtl` | int ticks | 40 | Lifetime of a thief position fix | 20–80 |
+| `tuneThiefLeadTicks` | int ticks | 18 | Prediction lead for thief interception | 0–36 |
+| `tuneThiefFocusBonus` | int px | 400 | Target-priority bonus for the enemy flag thief | 0–800 |
+| `tuneFlankDepth` | int px | 260 | How far flankers cross past mid | 150–400 |
+| `tuneLatePushTick` | int ticks | 3400 | Tick after which defensive roles all-in for capture | 2500–4500 |
+| `tuneCarrierLaneBiasDiv` | int px | 500 | Divisor for nearest-lane stickiness | 250–1000 |
+| `tuneCarrierLaneThreatY` | int px | 120 | Enemy lane-threat y-window | 60–220 |
+| `tuneExtraDefenders` | int seats | 0 | Promote seats 6, then 0, then 1 to HomeDefender | 0–3 |
+| `stolenOverwatchGuards` | bool define | off | Make Overwatch guard stale own-flag steals | on/off |
 
 ## Build & run
 
@@ -254,3 +270,47 @@ COWORLD_PLAYER_WS_URL="ws://localhost:8080/player?slot=0&token=0xBADA55_0" \
 ```
 
 Container build uses `players/baseline/Dockerfile` (produces `/bin/baseline`).
+
+## Artifact telemetry (always on)
+
+`baseline/artlog.nim` records structured decision telemetry every episode
+and uploads it as the platform's per-seat **player artifact** (one zip per
+slot per episode, PUT to the presigned `COWORLD_PLAYER_ARTIFACT_UPLOAD_URL`
+the runner injects; `file://` URLs on local runs; silently skipped when the
+variable is absent; a failed upload never fails the episode). It exists so
+post-hoc analysis over large episode sets — "what was seat 3 doing between
+the steal and the death" — reads a few JSON files instead of re-simulating
+replays.
+
+Zip contents:
+
+- `meta.json` — slot, team, role, active compile defines, sample cadence.
+- `events.jsonl` — tick-stamped edges: `steal`/`carry_end`,
+  `mate_carry`/`mate_carry_end`, `death`/`respawn`,
+  `own_flag_stolen`/`own_flag_returned`, `thief_fix`,
+  `pickup_shield`/`shield_lost`, `pickup_plasma`/`plasma_spent`,
+  `pickup_nade`/`nade_thrown`, `damage`/`heal`, `shot` (with aim + engage
+  range), `objective` (movement-branch switches), `push_out`, `stuck_jink`,
+  `nade_flee`, `shout_tx`, `game_start`/`game_end`.
+- `ticks.jsonl` — a state row every 12 ticks (~0.5 s): position, hp, aim,
+  objective + action branch, movement target, visible enemies, engage
+  distance, input mask, and status flags (carry/shield/plasma/nade/pushOut).
+- `summary.json` — event counters plus per-objective and per-action tick
+  histograms; the first internal telemetry error, if any, is recorded here
+  (telemetry disables itself rather than ever touching gameplay).
+
+The `objective` tag names the movement-target branch in `decide` (`carry`,
+`thief_hunt`, `thief_guard`, `escort`, `defend`, `overwatch`, `attack`,
+`pocket_rush`, `shield_trip`, `plasma_grab`, `heal_detour`, `nade_grab`);
+the `action` tag names the turret/act branch (`nade`, `plasma`, `fire`,
+`duck`, `peek`, `evade`, `scan`, `navigate`, `nade_flee`).
+
+Fetching after a league/xreq episode:
+
+```bash
+uv run coworld episode-logs <ereq_id> --agent <slot> --artifact --download-dir logs/
+```
+
+Local runs: set `CTF_ARTLOG_PATH=/tmp/artifact.zip` to write the bundle to
+disk without a runner. Test builds can drop the libcurl dependency with
+`-d:artlogNoCurl` (file delivery keeps working).

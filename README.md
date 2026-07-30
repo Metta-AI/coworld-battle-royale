@@ -30,24 +30,35 @@ logs or replay links, and the smallest repro.
   to rotate clockwise (~7°/tick). Spawns aim toward the enemy side. A short aim
   indicator line shows every visible player's aim.
 - **Vision is fog-of-war:** the map itself is always visible, but enemies (and an
-  enemy carrying a flag) only appear inside your **forward vision cone** (±45°
-  around your **aim**, unlimited range, walls block it) or your **~90px
-  omnidirectional bubble**. Your aim carries your vision — you see where you
+  enemy carrying a flag) only appear inside your **forward vision cone** (±60°
+  around your **aim**, unlimited range, stone walls block it) or your **~90px
+  omnidirectional bubble**. Four wall stubs are **glass windows** (the second
+  from the top and bottom of each half's outer stub column): they block
+  movement and bullets like any wall but are **transparent to vision**. Your aim carries your vision — you see where you
   point, not where you walk. Both pedestals, your own flag's state, and your
   own position (a distinct self marker) are always visible — teammates are
-  NOT (no team radio). Shots you can't see leave a brief sound ring
-  randomly offset from the muzzle: heard, not pinpointed.
+  NOT (no team radio). Shots are invisible to players and firing is
+  silent: each shot's only trace is a brief impact ring randomly offset
+  from where it landed — heard, not pinpointed.
 - **Shoot** with **A**: an instant, line-of-sight, effectively map-wide hitscan
   along your aim angle (locked at the trigger pull, released after a short
   windup). Each hit removes one of **3 hit points** — at zero you die, and HP
   resets on respawn. **Friendly fire is on.**
+- **Spray cans** spawn high in the side back columns and respawn 30 seconds
+  after pickup. Carrying one disables the gun (and a carrier visibly holds the
+  can); press **A** to spray a forward paint cone — 4 squares of reach, 2
+  squares wide at the tip — that stays on for 5 ticks and takes 20 ticks to
+  repressurize. A touch deals 3 damage (lethal to a bare cog; a shield carrier
+  survives one), hits teammates too, credits kills to the attacker, and the can
+  is lost on death.
 - **Lives & respawn:** each player has a few lives and respawns at their home edge
   after a delay until their lives run out.
 - **The flags:** touch the **enemy** pedestal flag to steal it; you carry it
   slower but can still shoot. If the carrier dies, the flag returns instantly to
   its own pedestal.
 - **Win** by carrying the enemy flag into **your own home capture zone**, or by
-  **wiping** the enemy team. Scoring is **win-only** (+100 to the winning team).
+  **wiping** the enemy team. Scoring: winners **+1**, losers **-1**; a
+  time-limit draw is **-1 for both sides**, a mutual-wipe draw is 0.
 
 See [`docs/RULES.md`](docs/RULES.md) for exact mechanics and tuning defaults.
 
@@ -152,6 +163,14 @@ changes, movement, shots, kills, flag pickups/returns/captures, and score change
 
 ```sh
 nim r tools/expand_replay.nim tests/replays/<replay>.bitreplay
+```
+
+Use `tools/extract_events.nim` for the analysis JSONL stream. It includes
+correlated gun trigger/fire/impact stages, grenade throws and impacts, spray
+uses, pickups, shouts, and the existing damage/kill/objective events:
+
+```sh
+nim r tools/extract_events.nim tests/replays/<replay>.bitreplay
 ```
 
 Start with replays where your bot scored poorly, died early, stood still, missed

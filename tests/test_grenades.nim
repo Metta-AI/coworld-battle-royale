@@ -22,8 +22,6 @@ proc twoTeamGame(): SimServer =
   result.startGame()
   result.players[0].team = Red
   result.players[1].team = Blue
-  for i in 0 ..< result.players.len:
-    result.players[i].spawnProtect = 0
 
 proc stepWith(sim: var SimServer, inputs, prev: seq[InputState]) =
   sim.step(inputs, prev)
@@ -42,7 +40,7 @@ proc chargeAndThrow(sim: var SimServer, playerIndex, holdTicks: int) =
   sim.stepWith(sim.none(), prev)
 
 suite "grenades":
-  test "corner pickups exist on both sides and refill after 30 seconds":
+  test "corner pickups exist on both sides and refill after 5 seconds":
     var game = twoTeamGame()
     check game.grenadeSpawns.len == 4
     for spawn in game.grenadeSpawns:
@@ -54,7 +52,7 @@ suite "grenades":
       if spawn.x < MapWidth div 2:
         inc left
     check left == 2
-    # Pick one up and watch the corner refill exactly 30s later.
+    # Pick one up and watch the corner refill exactly 5s later.
     game.players[0].x = game.grenadeSpawns[0].x
     game.players[0].y = game.grenadeSpawns[0].y
     let prev = game.none()
@@ -131,6 +129,18 @@ suite "grenades":
     check not game.players[1].alive
     check game.players[0].kills == 1
 
+  test "the burst is a fixed two shot windups after release, near or far":
+    for charge in [1, GrenadeChargeTicks div 2, GrenadeChargeTicks]:
+      var game = twoTeamGame()
+      game.players[0].x = 300
+      game.players[0].y = 300
+      game.players[0].aimBrads = 0
+      game.players[0].hasGrenade = true
+      game.chargeAndThrow(0, charge)
+      check game.airborneGrenades.len == 1
+      check game.airborneGrenades[0].flightTicks ==
+        GrenadeFlightMultiple * game.config.fireWindupTicks
+
   test "the blast hurts everyone in the radius, thrower and teammates too":
     var game = initCtfForTest(defaultGameConfig())
     discard game.addPlayer("red0")
@@ -141,7 +151,6 @@ suite "grenades":
     game.players[1].team = Red
     game.players[2].team = Blue
     for i in 0 ..< 3:
-      game.players[i].spawnProtect = 0
       game.players[i].x = 300
       game.players[i].y = 300 + i * 4    # all inside the blast radius
       game.players[i].hp = GrenadeDamage + 1

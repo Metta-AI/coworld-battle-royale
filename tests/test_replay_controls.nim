@@ -57,7 +57,7 @@ suite "replay controls":
     )
     state = next
 
-    state.clickReplayLayer(ReplayBottomLeftLayerId, 67, 12)
+    state.clickReplayLayer(ReplayBottomLeftLayerId, 11, 2)
     discard game.buildSpriteProtocolUpdates(
       state,
       next,
@@ -75,7 +75,7 @@ suite "replay controls":
     state = next
     state.replayCommands.setLen(0)
     state.replaySeekTick = -1
-    state.clickReplayLayer(ReplayCenterBottomLayerId, 193, 29)
+    state.clickReplayLayer(ReplayCenterBottomLayerId, 64, 10)
     discard game.buildSpriteProtocolUpdates(
       state,
       next,
@@ -88,7 +88,7 @@ suite "replay controls":
       replayEnabled = true
     )
     check next.replayCommands.len == 0
-    check next.replaySeekTick == 505
+    check next.replaySeekTick == 506
 
     state = next
     state.replayCommands.setLen(0)
@@ -98,7 +98,7 @@ suite "replay controls":
       state,
       next,
       @[],
-      replayTick = 505,
+      replayTick = 506,
       replayPlaying = false,
       replaySpeed = 1,
       replayMaxTick = 1000,
@@ -129,7 +129,7 @@ suite "replay controls":
     check not packet.packetHasObject(ReplayScrubberObjectId)
 
     state = next
-    state.clickReplayLayer(ReplayBottomLeftLayerId, 67, 12)
+    state.clickReplayLayer(ReplayBottomLeftLayerId, 11, 2)
     discard game.buildSpriteProtocolUpdates(
       state,
       next,

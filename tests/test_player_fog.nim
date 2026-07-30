@@ -1,7 +1,7 @@
 import
-  std/[os, strutils, unittest],
+  std/[os, sequtils, strutils, unittest],
   bitworld/spriteprotocol,
-  ctf/[global, hd, sim]
+  ctf/[global, sim]
 
 const GameDir = currentSourcePath.parentDir.parentDir
 
@@ -64,26 +64,14 @@ suite "player fog-of-war protocol":
     for label in labels:
       check not label.contains("arrow")
       check label != "shadow"
-    # The fog overlay and the distinct self marker are present.
+    # The fog overlay and the distinct self marker are present. The viewer reads
+    # as a white-outlined rotating soldier (aim shown by the held gun's sweep),
+    # not the retired floating aim dots — but the marker keeps the DOCUMENTED
+    # `self <color> <side>` label (RULES.md) so exact-match label readers work.
+    # Aim 64 (east-ish) faces right.
     check "fog" in labels
-    check ("self red right" in labels) or ("self red left" in labels)
-    # The viewer wears its own aim-indicator dots (bots read their actual
-    # aim angle back from these).
-    check "aim dot red" in labels
-    # The viewer aims north (64 brads): its dots sit above its center.
-    # Object coordinates arrive in render-scale pixels.
-    var aimDotNorth = false
-    for message in messages:
-      if message.kind == spkObject and message.objectDef.id >= 18000 and
-          message.objectDef.id < 18064:
-        aimDotNorth = message.objectDef.y <
-          game.players[viewer].y * RenderScale
-    check aimDotNorth
-    # The fogged enemy contributes no aim dots (index 1 pool slots).
-    for message in messages:
-      if message.kind == spkObject:
-        check not (message.objectDef.id >= 18000 + 4 * foe and
-          message.objectDef.id < 18000 + 4 * foe + 4)
+    check "self red right" in labels
+    check labels.anyIt(it.startsWith("self red ") or it.startsWith("self blue "))
     # The map object sits at the origin: object coords are map coords.
     var mapAtOrigin = false
     for message in messages:
@@ -139,7 +127,7 @@ suite "player fog-of-war protocol":
     check turned.hasObject(1000 + game.players[mate].joinOrder)
     check turned.hasObject(5010)
 
-  test "an unseen shot leaves a jittered sound ring; a seen shot does not":
+  test "only a shot's landing rings for players; tracers are spectator-only":
     var game = initCtfForTest(defaultGameConfig())
     let viewer = game.addPlayer("red0")
     discard game.addPlayer("blue0")
@@ -151,19 +139,58 @@ suite "player fog-of-war protocol":
       cy = game.gameMap.center.y
     game.players[viewer].x = cx
     game.players[viewer].y = cy
-    game.players[viewer].aimBrads = 64   # looking north.
-    # A shot fired well behind the viewer, outside cone and bubble.
+    game.players[viewer].aimBrads = 64   # looking up the open corridor.
+    # A shot fired dead ahead, fully inside the viewer's vision cone (the
+    # same corridor the fov tests above rely on being open and visible).
     game.recentShots.add ShotFx(
-      x0: cx, y0: 550, x1: cx + 200, y1: 550,
-      firedTick: game.tickCount, color: game.players[1].color
+      x0: cx, y0: cy - 40, x1: cx, y1: cy - 140,
+      firedTick: game.tickCount, color: game.players[1].color, hit: true
     )
+    game.hitFlashes.add HitFlashFx(playerIndex: 1, tick: game.tickCount)
 
     var state: PlayerViewerState
     let messages = game.buildPlayerMessages(viewer, state)
-    check messages.hasObject(19100)      # the sound ring (SoundRingObjectBase).
+    let labels = messages.spriteLabels()
+    # Even a fully seen shot yields ONLY the jittered landing ring: the
+    # muzzle emits no signal...
+    check messages.hasObject(19120)      # impact ring (ShotImpactObjectBase).
+    check "shot impact" in labels
+    check not messages.hasObject(19100)  # retired muzzle sound-ring pool.
+    check "shot sound" notin labels
+    # ...and never any tracer pixels or struck-target flashes: those are
+    # spectator render only.
+    for label in labels:
+      check not label.startsWith("shot trail")
+      check not label.startsWith("shot head")
+      check not label.startsWith("muzzle bloom")
+      check not label.startsWith("hit flash")
 
-    # Turn around: the shot itself is visible, so the ring disappears.
-    game.players[viewer].aimBrads = 192
+    # A shot fired and landing well behind the viewer still rings at the
+    # landing: sound ignores fov.
+    game.recentShots.add ShotFx(
+      x0: cx, y0: 550, x1: cx + 200, y1: 550,
+      firedTick: game.tickCount, color: game.players[1].color, hit: false
+    )
     var state2: PlayerViewerState
-    let turned = game.buildPlayerMessages(viewer, state2)
-    check not turned.hasObject(19100)
+    let unseen = game.buildPlayerMessages(viewer, state2)
+    check unseen.hasObject(19121)        # second shot's impact ring.
+    check not unseen.hasObject(19101)    # and still no muzzle ring.
+
+    # The broadcast/global view still draws the full tracer comet. Both shots
+    # are brand new (age stage 0), but only the HIT draws full-bright: the
+    # miss pre-ages by MissStagePenalty (2) fade stages across its whole
+    # comet, so hits pop and misses read as faded ghosts.
+    var
+      globalState = initGlobalViewerState()
+      globalNext: GlobalViewerState
+    let globalLabels = game.buildSpriteProtocolUpdates(globalState, globalNext)
+      .parseSpritePacket().spriteLabels()
+    check globalLabels.anyIt(it.startsWith("shot trail"))
+    check globalLabels.anyIt(it.startsWith("shot head") and
+      it.endsWith("stage 0"))          # the hit: full-bright.
+    check globalLabels.anyIt(it.startsWith("shot head") and
+      it.endsWith("stage 2"))          # the miss: pre-faded.
+    check "muzzle bloom stage 0" in globalLabels
+    check "muzzle bloom stage 2" in globalLabels
+    # ...and rings the struck target with the fresh hit flash.
+    check "hit flash stage 0" in globalLabels

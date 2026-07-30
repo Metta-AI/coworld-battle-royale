@@ -74,7 +74,6 @@ suite "ctf game":
     sim.players[0].fireCooldown = 0
     sim.players[1].x = cx + 6
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
     sim.players[1].hp = 1
     let livesBefore = sim.players[1].lives
 
@@ -94,7 +93,6 @@ suite "ctf game":
     sim.players[0].aimBrads = 0
     sim.players[1].x = cx + 60
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
     check sim.players[1].hp == sim.config.hitPoints
 
     for hit in 1 .. sim.config.hitPoints:
@@ -117,6 +115,40 @@ suite "ctf game":
     check sim.players[1].alive
     check sim.players[1].hp == sim.config.hitPoints
 
+  test "respawns land at random spots inside the team endzone":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+      zoneLo = sim.gameMap.teamHomeX(Blue) - CaptureZoneWidth div 2
+      noInput = newSeq[InputState](sim.players.len)
+    var spots: seq[tuple[x, y: int]] = @[]
+    for round in 1 .. 4:
+      sim.players[0].x = cx
+      sim.players[0].y = cy
+      sim.players[0].aimBrads = 0
+      sim.players[0].fireCooldown = 0
+      sim.players[0].fireWindup = 0
+      sim.players[1].x = cx + 6
+      sim.players[1].y = cy
+      sim.players[1].hp = 1
+      sim.players[1].lives = 2
+      sim.tryFire(0)
+      check not sim.players[1].alive
+      for _ in 1 .. sim.config.respawnTicks + 1:
+        sim.step(noInput, noInput)
+      check sim.players[1].alive
+      # Inside Blue's endzone column (small slack for the walkability nudge).
+      check sim.players[1].x >= zoneLo - PlayerHalf
+      check sim.players[1].x < MapWidth - ArenaBorder
+      spots.add((sim.players[1].x, sim.players[1].y))
+    # The respawn point moves around instead of being campable.
+    var distinctSpots: seq[tuple[x, y: int]] = @[]
+    for spot in spots:
+      if spot notin distinctSpots:
+        distinctSpots.add(spot)
+    check distinctSpots.len >= 2
+
   test "a bullet stops at the first target in its path":
     var sim = twoTeamGame()
     discard sim.addPlayer("blue1")
@@ -131,10 +163,8 @@ suite "ctf game":
     # Two enemies dead ahead on the same ray: near and far.
     sim.players[1].x = cx + 40
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
     sim.players[2].x = cx + 100
     sim.players[2].y = cy
-    sim.players[2].spawnProtect = 0
     sim.players[1].hp = 1
 
     sim.tryFire(0)
@@ -157,7 +187,6 @@ suite "ctf game":
     # the bullet corridor.
     sim.players[1].x = cx + 200
     sim.players[1].y = cy + 60
-    sim.players[1].spawnProtect = 0
 
     sim.tryFire(0)
 
@@ -174,7 +203,6 @@ suite "ctf game":
     sim.players[0].fireCooldown = 0
     sim.players[1].x = cx + 60
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
     sim.players[1].hp = 1
 
     sim.startFireWindup(0)
@@ -199,7 +227,6 @@ suite "ctf game":
     sim.players[0].fireCooldown = 0
     sim.players[1].x = cx + 60
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
 
     sim.startFireWindup(0)
     # The peeker steps back out of the bullet corridor before the release.
@@ -222,7 +249,6 @@ suite "ctf game":
     sim.players[0].fireCooldown = 0
     sim.players[1].x = cx + 60
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
     sim.players[1].hp = 1
 
     sim.startFireWindup(0)
@@ -277,7 +303,6 @@ suite "ctf game":
     # The target sits on the exact diagonal, inside the open flag ring.
     sim.players[1].x = cx + 40
     sim.players[1].y = cy - 40
-    sim.players[1].spawnProtect = 0
     sim.players[1].hp = 1
 
     sim.tryFire(0)
@@ -295,7 +320,6 @@ suite "ctf game":
     sim.players[0].fireCooldown = 0
     sim.players[1].x = cx + 6
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
 
     sim.tryFire(0)
 
@@ -366,7 +390,6 @@ suite "ctf game":
     sim.players[0].fireCooldown = 0
     sim.players[1].x = cx + 6
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
     sim.players[1].hp = 1
 
     sim.tryFire(0)
@@ -405,22 +428,6 @@ suite "ctf game":
     check sim.players[1].alive
     check sim.players[0].kills == 0
 
-  test "spawn-protected target cannot be shot":
-    var sim = twoTeamGame()
-    let cx = sim.gameMap.center.x
-    let cy = sim.gameMap.center.y
-    sim.players[0].x = cx
-    sim.players[0].y = cy
-    sim.players[0].aimBrads = 0
-    sim.players[0].fireCooldown = 0
-    sim.players[1].x = cx + 6
-    sim.players[1].y = cy
-    sim.players[1].spawnProtect = 10
-
-    sim.tryFire(0)
-
-    check sim.players[1].alive
-
   test "a same-tick mutual duel kills both shooters (no order advantage)":
     var sim = twoTeamGame()
     let cx = sim.gameMap.center.x
@@ -430,12 +437,10 @@ suite "ctf game":
     sim.players[0].y = cy
     sim.players[0].aimBrads = 0
     sim.players[0].fireCooldown = 0
-    sim.players[0].spawnProtect = 0
     sim.players[1].x = cx + 20
     sim.players[1].y = cy
     sim.players[1].aimBrads = 128
     sim.players[1].fireCooldown = 0
-    sim.players[1].spawnProtect = 0
 
     sim.players[0].hp = 1
     sim.players[1].hp = 1
@@ -461,7 +466,6 @@ suite "ctf game":
     sim.players[0].fireCooldown = 0
     sim.players[1].x = cx + 40
     sim.players[1].y = cy
-    sim.players[1].spawnProtect = 0
     # Blue player 1 is running the RED flag home.
     sim.flags[Red].carrier = 1
     sim.players[1].carryingFlag = true
@@ -562,7 +566,44 @@ suite "ctf game":
     check sim.players[0].reward == 1
     check sim.players[1].reward == -1
 
-  test "a time-limit game is a scoreless draw for both sides":
+  test "a disconnected loser is not marked a winner":
+    var sim = twoTeamGame()
+    # Blue abandons (crashes) before the finish: its reward account remains.
+    sim.recordGameAbandon(1)
+    sim.removePlayerAt(1)
+    sim.finishGame(Red)
+    var red, blue = -1
+    for i in 0 ..< sim.rewardAccounts.len:
+      if sim.rewardAccounts[i].address == "red0": red = i
+      elif sim.rewardAccounts[i].address == "blue0": blue = i
+    check sim.rewardAccounts[red].won
+    check sim.rewardAccounts[red].reward == 1
+    check not sim.rewardAccounts[blue].won
+    check sim.rewardAccounts[blue].reward == -1
+    check sim.rewardAccounts[blue].winsRed == 0
+    check sim.rewardAccounts[blue].winsBlue == 0
+
+  test "an emptied finite match finishes as a scoreless draw inside step":
+    var sim = twoTeamGame()
+    sim.config.maxGames = 1
+    sim.removePlayerAt(1)
+    sim.removePlayerAt(0)
+    let none = newSeq[InputState](0)
+    sim.step(none, none)
+    check sim.phase == GameOver
+    check sim.isDraw
+    check sim.timeLimitReached
+
+  test "an emptied endless match recycles to the lobby inside step":
+    var sim = twoTeamGame()
+    sim.config.maxGames = 0
+    sim.removePlayerAt(1)
+    sim.removePlayerAt(0)
+    let none = newSeq[InputState](0)
+    sim.step(none, none)
+    check sim.phase == Lobby
+
+  test "a time-limit game is a lose-lose draw for both sides":
     var sim = twoTeamGame()
     sim.config.maxTicks = 5
     let none = newSeq[InputState](sim.players.len)
@@ -570,5 +611,19 @@ suite "ctf game":
       sim.step(none, none)
     check sim.isDraw
     check sim.timeLimitReached
+    # GameVersion 21: running out the clock penalizes everyone, so stalling
+    # is never better than losing — no side can prefer the draw.
+    check sim.players[0].reward == TimeoutReward
+    check sim.players[1].reward == TimeoutReward
+    for account in sim.rewardAccounts:
+      check account.reward == TimeoutReward
+      check not account.won
+
+  test "a mutual-wipe draw stays scoreless":
+    var sim = twoTeamGame()
+    let none = newSeq[InputState](sim.players.len)
+    sim.finishGame(Red, isDraw = true)
+    check sim.isDraw
+    check not sim.timeLimitReached
     check sim.players[0].reward == 0
     check sim.players[1].reward == 0

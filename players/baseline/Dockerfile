@@ -30,9 +30,13 @@ COPY nimby.lock .
 RUN nimby --global sync nimby.lock
 
 COPY . .
+ARG NIM_DEFINES=""
+# buildDefines feeds artlog meta.json: the full define set this build was
+# TOLD to compile with (records intent, not that guarded code exists).
 RUN nim c \
-  -d:release \
+  -d:release $NIM_DEFINES \
   -d:useMalloc \
+  -d:buildDefines="-d:release $NIM_DEFINES -d:useMalloc" \
   --opt:speed \
   --stackTrace:on \
   --nimcache:/tmp/ctf-nimcache \

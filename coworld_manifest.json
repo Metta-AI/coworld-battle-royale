@@ -1,9 +1,16 @@
 {
   "$schema": "https://raw.githubusercontent.com/Metta-AI/metta/main/packages/coworld/src/coworld/coworld_manifest_schema.json",
+  "tags": [
+    "shooter",
+    "team",
+    "ctf"
+  ],
   "game": {
     "name": "ctf",
-    "version": "0.1.0",
-    "description": "A two-team capture-the-heart shooter with fog-of-war vision. Red and Blue spawn on opposite edges, each guarding a heart on its home pedestal. Steal the enemy heart and carry it home - or wipe the enemy team. Grenade pickups wait in the corners: charged throws sail over walls and burst on landing, heard but not seen through the fog. Aim is decoupled from movement and carries your vision cone; guns are map-wide 3-hit-point hitscan with a trigger windup, teammates are fogged like enemies, and unseen gunfire is heard as a jittered sound ring - never pinpointed. Rendered in painted high-resolution art: observation coordinates arrive at 3x map scale since 0.6.0 (see docs/RULES.md, Observation render scale).",
+    "replay_viewer": {
+      "bundle": "static-replay-viewer"
+    },
+    "description": "A two-team capture-the-heart shooter with fog-of-war vision. Red and Blue spawn on opposite edges, each guarding a heart on its home pedestal. Steal the enemy heart and carry it home - or wipe the enemy team. Two med kits on the center line heal the hurt back to full and respawn after 30 seconds. Grenade pickups wait in the corners: charged throws sail over walls and burst on landing, heard but not seen through the fog. Two plasma arcs spawn high in the side back columns: a carried arc disables your gun and turns the trigger into a forward plasma cone - 4 squares of reach, 2 squares wide at the tip - that stays lit for 5 ticks, takes 20 ticks to reset, and deals 3 damage per touch (lethal to a bare cog; a shield carrier survives one). One shield sits low in each endzone's back column, vertically opposite the plasma arcs: carrying it grants 6 hit points but makes your fire rate 3x slower. Both are lost on death and respawn 30 seconds after being taken (see docs/RULES.md, Plasma arc and Shields). Aim is decoupled from movement and carries your vision cone; guns are map-wide 3-hit-point hitscan with a trigger windup, teammates are fogged like enemies, and unseen gunfire is heard as a jittered sound ring - never pinpointed. Players can shout: 10-character messages heard within a fifth of the field, tagged by player and team at jittered coordinates and drawn as speech bubbles in replays. Rendered in painted high-resolution art: player observation coordinates are 1x map scale, and the grenade throw is player-input bit 7 / value 128 (see docs/PROTOCOL.md).",
     "owner": "treeform@softmax.com",
     "runnable": {
       "type": "game",
@@ -52,7 +59,7 @@
           }
         },
         "slots": {
-          "description": "Optional fixed player slot team, color, and token settings.",
+          "description": "Optional fixed player slot team, color, skin, and token settings.",
           "type": "array",
           "maxItems": 16,
           "default": [],
@@ -68,6 +75,14 @@
                 "enum": [
                   "red",
                   "blue"
+                ]
+              },
+              "skin": {
+                "description": "Cosmetic body-art skin for this slot's player. Rendering only: no gameplay effect and no observation-label change.",
+                "type": "string",
+                "enum": [
+                  "default",
+                  "crown"
                 ]
               },
               "color": {
@@ -100,7 +115,7 @@
           "default": false
         },
         "seed": {
-          "description": "Random seed.",
+          "description": "Random seed. Omitted (or left at the legacy default 679961): the server draws a fresh crypto-random seed at startup so respawn locations cannot be pre-computed. Pin any other value for reproducible runs.",
           "type": "integer",
           "default": 679961
         },
@@ -128,12 +143,6 @@
           "type": "integer",
           "minimum": 0,
           "default": 72
-        },
-        "spawnProtectTicks": {
-          "description": "Ticks of spawn invulnerability after respawning (~1s).",
-          "type": "integer",
-          "minimum": 0,
-          "default": 24
         },
         "gunRange": {
           "description": "Maximum hitscan gun range in pixels.",
@@ -199,6 +208,11 @@
         },
         "showPlayerLabels": {
           "description": "Show player labels.",
+          "type": "boolean",
+          "default": true
+        },
+        "fastMode": {
+          "description": "Advance frames early when all players report ready.",
           "type": "boolean",
           "default": true
         },
@@ -301,11 +315,11 @@
     "protocols": {
       "player": {
         "type": "uri",
-        "value": "https://github.com/Metta-AI/bitworld/blob/master/docs/sprite_v1.md"
+        "value": "https://github.com/Metta-AI/coworld-ctf/blob/main/docs/PROTOCOL.md"
       },
       "global": {
         "type": "uri",
-        "value": "https://github.com/Metta-AI/bitworld/blob/master/docs/sprite_v1.md"
+        "value": "https://github.com/Metta-AI/coworld-ctf/blob/main/docs/PROTOCOL.md"
       }
     },
     "docs": {
@@ -335,7 +349,16 @@
       "run": [
         "/bin/baseline"
       ],
-      "source_url": "https://github.com/Metta-AI/coworld-ctf/tree/main/players/baseline"
+      "source_url": "https://github.com/Metta-AI/coworld-ctf/tree/main/players/baseline",
+      "resources": {
+        "requests": {
+          "cpu": "500m",
+          "memory": "384Mi"
+        },
+        "limits": {
+          "cpu": "2"
+        }
+      }
     }
   ],
   "commissioner": [
@@ -454,13 +477,11 @@
             "team": "blue"
           }
         ],
-        "seed": 679961,
         "num_agents": 16,
         "minPlayers": 16,
         "lives": 3,
         "hitPoints": 3,
         "respawnTicks": 72,
-        "spawnProtectTicks": 24,
         "gunRange": 1300,
         "fireCooldownTicks": 12,
         "carrierSpeedPct": 70,
@@ -469,7 +490,7 @@
         "visionBubble": 90,
         "startWaitTicks": 120,
         "gameOverTicks": 360,
-        "maxTicks": 10000,
+        "maxTicks": 5000,
         "maxGames": 1,
         "mapPath": "arena",
         "showPlayerLabels": true
@@ -628,7 +649,6 @@
           "team": "blue"
         }
       ],
-      "seed": 679961,
       "num_agents": 16,
       "minPlayers": 16,
       "lives": 1,

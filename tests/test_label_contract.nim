@@ -1,0 +1,434 @@
+import
+  std/[algorithm, os, sequtils, sets, strutils, tables, unittest],
+  bitworld/spriteprotocol,
+  ctf/[global, labels, sim]
+
+# Sprite-label VOCABULARY contract.
+#
+# Labels are the only observation schema a policy has: it finds objects by
+# label string and steers off their positions. Nothing type-checks a label,
+# nothing serializes one (so replays cannot catch a change), and
+# `spriteObjectsWithLabel` answers a vanished name with an empty seq. So a
+# rename is invisible in every direction — the engine keeps rendering, the bot
+# keeps running, and the bot just stops seeing a category of object. Field
+# symptoms look like a policy regression, not an engine change; the 2026-07-22
+# sprite-id clobber (see test_sprite_collisions.nim) cost a whole league round
+# exactly this way.
+#
+# Two guards over a full-feature frame:
+#   1. the emitted vocabulary, normalized, must equal tests/label_manifest.txt
+#      — so ANY label change (contract or chrome) shows up in review as a
+#      paired REMOVED/ADDED diff instead of slipping through;
+#   2. every label the reference policy exact-match scans (labels.nim's
+#      PolicyScannedLabels) must actually be emitted somewhere in that frame.
+#
+# CRITICAL, if you extend this: sweep BOTH streams. The board/spectator stream
+# and the per-player stream emit DIFFERENT vocabularies — the cog rig segments
+# and the flag banners are board-only, while `weapon <token>`, `lives ...`, and
+# `throw target` only ever appear in a player view. A one-stream sweep silently
+# misses half the vocabulary and would happily bless a rename in the other half.
+
+const GameDir = currentSourcePath.parentDir.parentDir
+const ManifestPath = currentSourcePath.parentDir / "label_manifest.txt"
+
+proc initCtfForTest(config: GameConfig): SimServer =
+  ## Initializes the sim from the game directory so data/ art resolves.
+  let previousDir = getCurrentDir()
+  setCurrentDir(GameDir)
+  try:
+    result = initSimServer(config)
+  finally:
+    setCurrentDir(previousDir)
+
+proc buildPlayerMessages(
+  sim: var SimServer,
+  playerIndex: int,
+  state: var PlayerViewerState
+): seq[SpritePacketMessage] =
+  var nextState: PlayerViewerState
+  let previousDir = getCurrentDir()
+  setCurrentDir(GameDir)
+  try:
+    result = sim.buildSpriteProtocolPlayerUpdates(
+      playerIndex, state, nextState).parseSpritePacket()
+  finally:
+    setCurrentDir(previousDir)
+  state = nextState
+
+proc buildGlobalMessages(
+  sim: var SimServer,
+  state: var GlobalViewerState
+): seq[SpritePacketMessage] =
+  var nextState: GlobalViewerState
+  let previousDir = getCurrentDir()
+  setCurrentDir(GameDir)
+  try:
+    result = sim.buildSpriteProtocolUpdates(state, nextState).parseSpritePacket()
+  finally:
+    setCurrentDir(previousDir)
+  state = nextState
+
+proc fullFeatureGame(): SimServer =
+  ## A game posed so that every label FAMILY is live in one frame — including
+  ## the rare ones a quiet frame never reaches. The vocabulary guard is only as
+  ## good as the corners this fixture lights up: a family that never renders
+  ## here is a family a rename can break unnoticed.
+  var config = defaultGameConfig()
+  config.slots.setLen(6)
+  result = initCtfForTest(config)
+  for i in 0 ..< 6:
+    discard result.addPlayer("p" & $i)
+  result.startGame()
+  for i in 0 ..< result.players.len:
+    result.players[i].team = (if i mod 2 == 0: Red else: Blue)
+  let
+    cx = result.gameMap.center.x
+    cy = result.gameMap.center.y
+  # Viewer (0, Red) mid-map aiming east at a visible enemy (1, Blue).
+  result.players[0].x = cx - 60
+  result.players[0].y = cy
+  result.players[0].aimBrads = 0
+  # The enemy carries a shield, so the carry marker renders.
+  result.players[1].x = cx + 60
+  result.players[1].y = cy
+  result.players[1].hasShield = true
+  # Teammates in the viewer's bubble carrying the grenade and the spray can,
+  # so both carry markers and both `cog <weapon>` rig sprites render.
+  result.players[2].x = cx - 90
+  result.players[2].y = cy - 20
+  result.players[2].hasGrenade = true
+  result.players[4].x = cx - 90
+  result.players[4].y = cy + 20
+  result.players[4].hasPlasmaArc = true
+  # A CHARGING thrower right next to the viewer: `throw target` is drawn only
+  # in a player view, only while throwCharge > 0, and only for a player the
+  # viewer can see — three gates that a normal frame passes through untouched.
+  result.players[2].throwCharge = 4
+  # An AIRBORNE grenade over the viewer's own position, so `grenade air` is
+  # inside the fog bubble. Injected directly: the throw path needs a two-tick
+  # button release, and the orb would then be mid-flight somewhere unhelpful.
+  result.airborneGrenades.add AirborneGrenade(
+    sx: result.players[0].x,
+    sy: result.players[0].y,
+    tx: result.players[0].x + 8,
+    ty: result.players[0].y + 8,
+    launchTick: result.tickCount,
+    flightTicks: 60,
+    thrower: 2
+  )
+  # A live shout from each side: the bot attributes shouts by `<color> shout `
+  # prefix, so both team spellings must be in the sweep.
+  result.applyShout(0, "push mid")
+  result.applyShout(1, "fall back")
+  # A CORPSE in the viewer's line of sight. A dead player renders as a body
+  # only for a GHOST viewer, so the corpse family is swept from a dead seat
+  # further down rather than from seat 0.
+  result.players[3].alive = false
+  result.players[3].hp = 0
+  result.players[3].x = cx - 30
+  result.players[3].y = cy - 30
+  # A carried objective: seat 0 runs the Blue heart, which lights the carried
+  # banner, the carrier glow, the carry heart, and the carrier nameplate.
+  result.flags[Blue].carrier = 0
+  result.flags[Blue].x = result.players[0].x
+  result.flags[Blue].y = result.players[0].y
+  # The two AUDIO families. Both are player-observation only and both need an
+  # event to have just happened, which no posed frame produces on its own — so
+  # they were missing from the vocabulary until this was added, and a rename of
+  # either would have slipped through the guard.
+  #   `shot impact` — every recent shot leaves every living viewer a landing
+  #   ring, in or out of sight. Injected as FX rather than fired for real: a real
+  #   shot needs a windup and would also mint tracers/hit flashes that move with
+  #   whoever it struck.
+  result.recentShots.add ShotFx(
+    x0: cx - 40, y0: cy, x1: cx + 40, y1: cy,
+    firedTick: result.tickCount, color: teamColor(Red), hit: false
+  )
+  #   `grenade sound` — the jittered ring a viewer gets for a blast they could
+  #   NOT see. Placed far away, out of seat 0's cone and bubble, because a blast
+  #   in view renders `blast stage <n>` instead and never the sound ring.
+  result.recentBlasts.add BlastFx(
+    x: 40, y: MapHeight - 40, tick: result.tickCount, color: teamColor(Blue)
+  )
+  # The DEATH FX families. All four are emitted to living player views
+  # (fog-gated: addSplatters / addDamagePops in global.nim) and are the only
+  # on-map record of a kill a policy can read — but no posed frame produces
+  # them, so until this kill was added none of them ever entered the manifest
+  # and a rename of any of them would have slipped through the guard.
+  #   A REAL kill, so the death path itself feeds the sweep: seat 5 (Blue,
+  #   otherwise unposed) dies next to the viewer, leaving the long-dwelling
+  #   death `splatter` and the floating `damage pop <color> KO` kill marker.
+  #   Both outlive the sweep's few ticks by seconds of game time. keepPlaying()
+  #   revives the seat; the FX persist independently of the victim.
+  result.players[5].x = cx - 40
+  result.players[5].y = cy + 30
+  result.killPlayer(5, 0)
+  #   The NON-fatal halves of the same two pools: the short-lived `hit splat`
+  #   paint spark and the floating `-N` damage number. Injected directly like
+  #   the shot/blast FX above — a real graze needs a windup and a live
+  #   trajectory, and the fatal path just above covers the real mechanism.
+  result.splatters.add SplatterFx(
+    x: cx - 40, y: cy - 30, tick: result.tickCount,
+    color: teamColor(Blue), hit: true
+  )
+  result.damagePops.add DamageFx(
+    x: cx - 30, y: cy - 20, tick: result.tickCount,
+    amount: 1, color: teamColor(Blue), kill: false
+  )
+
+proc normalizeLabel(label: string): string =
+  ## Collapses one emitted label to its stable PATTERN, so the manifest is a
+  ## vocabulary and not a snapshot of one tick's numbers and player names.
+  ##   digits         -> <n>       (stages, counts, ticks, hp segments)
+  ##   team/player color token -> <color>
+  ##   Greek slot name         -> <name>
+  ##   " right" / " left"      -> " <side>"
+  ##   shout tail after ": "   -> dropped (arbitrary player text)
+  ## Everything else is preserved verbatim — a real rename must survive.
+  var text = label
+  # Shouts: keep the addressing prefix, drop the payload. `<player>` is the
+  # connection address, which is fixture-specific.
+  let shoutCut = text.find(" shout ")
+  if shoutCut >= 0:
+    text = text[0 ..< shoutCut] & " shout <player>"
+  # Numbers before words, so a color like "light blue" is not chopped up by a
+  # stray digit substitution.
+  #
+  # ONE exception, and it is the point of the hp check below: a "/<total>" tail
+  # keeps its literal number. The varying part of "hp 2/3" is the numerator (how
+  # much health is lit); the denominator is a FIXED contract value that two
+  # independent constants have to agree on (the engine's LabelHpBarSegments and
+  # the bot's own MaxHp). Normalizing it to <n> would erase exactly the drift
+  # this test exists to catch — "hp <n>/<n>" matches whether the total is 3 or
+  # 300, so the vocabulary diff would wave a retune straight through.
+  var digitless = ""
+  var i = 0
+  while i < text.len:
+    if text[i].isDigit:
+      let afterSlash = i > 0 and text[i - 1] == '/'
+      if afterSlash:
+        while i < text.len and text[i].isDigit:
+          digitless.add(text[i])
+          inc i
+      else:
+        digitless.add("<n>")
+        while i < text.len and text[i].isDigit:
+          inc i
+    else:
+      digitless.add(text[i])
+      inc i
+  text = digitless
+  # Facing side, before the color pass: "red right" must not become
+  # "<color> right" and then have "right" survive as a bare word.
+  text = text.replace(" " & LabelSideRight, " <side>")
+    .replace(" " & LabelSideLeft, " <side>")
+  # Color tokens: longest first, so "light blue" wins over "blue".
+  var colorNames = PlayerColorNames.toSeq()
+  colorNames.sort(proc (a, b: string): int = cmp(b.len, a.len))
+  for name in colorNames:
+    text = text.replace(name, "<color>")
+  for name in IdentityNames:
+    text = text.replace(name, "<name>")
+  text
+
+proc collectLabels(sim: var SimServer): HashSet[string] =
+  ## Every label emitted across BOTH streams over a short run, normalized.
+  ##
+  ## Sprite definitions are deduped per connection and many are lazy (a floor
+  ## pickup defines its sprite the first time it is in somebody's vision), so
+  ## the sweep walks the viewer past each pickup family and accumulates. It
+  ## also runs the player stream from a LIVING seat (own HUD, own fog) and from
+  ## a DEAD one (ghost view: corpses, the whole map unfogged).
+  ##
+  ## THE SWEEP MUST NOT LET THE GAME END. Teleporting the viewer around the map
+  ## walks it through the enemy flag and the capture zone, which scores a capture
+  ## and flips the phase to GameOver — and most of the own-HUD families (the
+  ## weapon readout, the fire icon, the lives counter) are gated on
+  ## `player.alive` inside a `Playing`-phase branch, so every frame after that
+  ## silently stops carrying them. That is how a "full feature" sweep ends up
+  ## missing `weapon spray` while looking like it ran fine. Re-pinning the phase
+  ## after each step keeps the posed frame the thing under test.
+  var
+    gstate = initGlobalViewerState()
+    livingState: PlayerViewerState
+    ghostState: PlayerViewerState
+  let none = newSeq[InputState](sim.players.len)
+
+  proc keepPlaying(sim: var SimServer) =
+    ## Undo any round-ending side effect the teleporting sweep caused. Seat 3 is
+    ## left DEAD on purpose — it is the ghost viewer, and corpse labels only
+    ## render for a dead seat.
+    sim.phase = Playing
+    sim.isDraw = false
+    sim.gameOverTimer = 0
+    for team in Team:
+      sim.flags[team].carrier = -1
+    for i in 0 ..< sim.players.len:
+      sim.players[i].carryingFlag = false
+      if i != 3:
+        sim.players[i].alive = true
+
+  proc absorb(into: var HashSet[string], messages: seq[SpritePacketMessage]) =
+    for message in messages:
+      if message.kind == spkSprite:
+        into.incl(message.sprite.label.normalizeLabel())
+
+  # Board/spectator stream: the cog rig, the flag banners, the roster, and
+  # every skin master live only here.
+  result.absorb(sim.buildGlobalMessages(gstate))
+
+  let stops = [
+    (sim.players[0].x, sim.players[0].y),
+    (sim.grenadeSpawns[0].x, sim.grenadeSpawns[0].y),
+    (sim.shieldSpawns[0].x, sim.shieldSpawns[0].y),
+    (sim.plasmaArcSpawns[0].x, sim.plasmaArcSpawns[0].y),
+    (sim.medKitSpawns[0].x, sim.medKitSpawns[0].y),
+  ]
+  for stop in stops:
+    # Hover NEXT TO each spawn, never on it, so nothing is picked up (a pickup
+    # would remove the floor sprite this sweep is here to see).
+    sim.players[0].x = stop[0] + 40
+    sim.players[0].y = stop[1]
+    sim.players[0].aimBrads = 128            # aim west: the spawn is in the cone
+    sim.players[0].throwCharge = 0           # only seat 2 charges (see fixture)
+    sim.keepPlaying()
+    result.absorb(sim.buildPlayerMessages(0, livingState))
+    result.absorb(sim.buildGlobalMessages(gstate))
+    sim.step(none, none)
+    sim.keepPlaying()
+    result.absorb(sim.buildPlayerMessages(0, livingState))
+
+  # Ghost view from the dead seat: corpses render for ghost viewers only.
+  result.absorb(sim.buildPlayerMessages(3, ghostState))
+  result.absorb(sim.buildGlobalMessages(gstate))
+
+  # Spray FX + the shooter's own weapon HUD: give seat 0 the can and fire it.
+  # `weapon spray` is gated on the seat being alive in a Playing-phase frame, so
+  # the phase pin has to hold right here or this family goes missing.
+  sim.keepPlaying()
+  sim.players[0].hasPlasmaArc = true
+  sim.players[0].fireCooldown = 0
+  sim.tryFireArc(0)
+  result.absorb(sim.buildPlayerMessages(0, livingState))
+  result.absorb(sim.buildGlobalMessages(gstate))
+  sim.players[0].hasPlasmaArc = false
+  result.absorb(sim.buildPlayerMessages(0, livingState))
+
+suite "sprite label contract":
+  test "the emitted label vocabulary matches tests/label_manifest.txt":
+    var game = fullFeatureGame()
+    # ONE sweep, reused. collectLabels CONSUMES the fixture's transient state —
+    # it steps the sim, which spends the charging throw (`throw target`), lands
+    # the carried objective (`<color> flag carried`), and expires the carrier
+    # nameplate. Sweeping the same sim twice therefore yields a SMALLER second
+    # vocabulary, and comparing the two would report a phantom rename. Every
+    # check below either shares this set or builds its own fresh fixture.
+    let emitted = game.collectLabels()
+    # Regenerating: `nim r -d:writeLabelManifest tests/test_label_contract.nim`
+    # rewrites the golden from what the engine emits NOW, and the resulting git
+    # diff is the artifact to review. Deliberately opt-in — if the test could
+    # heal itself on a normal run it would rubber-stamp every accidental rename,
+    # which is the failure it exists to catch.
+    when defined(writeLabelManifest):
+      var text = """# The sprite-label vocabulary the engine emits, normalized to patterns
+# (<n> a number, <color> a team/player color, <name> a slot letter, <side> a
+# facing). GENERATED — regenerate with:
+#   nim r -d:writeLabelManifest tests/test_label_contract.nim
+# A diff here is a change to the observation contract every policy reads.
+"""
+      for label in emitted.toSeq().sorted():
+        text.add(label & "\n")
+      ManifestPath.writeFile(text)
+      echo "rewrote ", ManifestPath
+    let
+      golden = ManifestPath.readFile().splitLines()
+        .filterIt(it.strip().len > 0 and not it.startsWith("#"))
+        .toHashSet()
+      removed = (golden - emitted).toSeq().sorted()
+      added = (emitted - golden).toSeq().sorted()
+    if removed.len > 0 or added.len > 0:
+      var report = "\nSPRITE LABEL VOCABULARY CHANGED.\n"
+      if removed.len > 0 and added.len > 0:
+        report.add("\nThis reads as a RENAME. Pair each REMOVED line with the " &
+          "ADDED line that replaced it:\n")
+      if removed.len > 0:
+        report.add("\n  REMOVED — the engine no longer emits these labels:\n")
+        for label in removed:
+          report.add("    - " & label & "\n")
+        report.add("""
+    Any policy that scans for a REMOVED label is now SILENTLY BLIND to that
+    category of object. `spriteObjectsWithLabel` returns an empty seq for a
+    name nothing emits: no exception, no warning, no failing assertion — the
+    bot simply never sees kits, or shields, or enemies, forever. That is the
+    whole reason this test exists.
+""")
+      if added.len > 0:
+        report.add("\n  ADDED — newly emitted labels:\n")
+        for label in added:
+          report.add("    + " & label & "\n")
+      report.add("""
+If the change is intended, update ALL FOUR surfaces in the SAME commit:
+  1. src/ctf/labels.nim        — the shared vocabulary (consts + label procs)
+  2. tests/label_manifest.txt  — this golden list
+  3. docs/RULES.md             — the published observation spec policy authors read
+  4. players/baseline/         — the reference consumer's scans
+Skipping (3) or (4) leaves the docs lying and the reference bot blind, and
+neither failure surfaces until a league round comes back wrong.
+""")
+      checkpoint(report)
+      fail()
+
+  test "every policy-scanned label is actually emitted":
+    # PolicyScannedLabels is the set the reference policy matches EXACTLY. An
+    # exact match against a label the engine stopped emitting is the quietest
+    # bug in the codebase, so assert the producer still emits each one.
+    var game = fullFeatureGame()
+    let emitted = game.collectLabels()
+    for wanted in PolicyScannedLabels:
+      let pattern = wanted.normalizeLabel()
+      if pattern notin emitted:
+        checkpoint("\nPOLICY-SCANNED LABEL IS NOT EMITTED: \"" & wanted &
+          "\" (pattern \"" & pattern & "\")\n" & """
+    The reference policy calls spriteObjectsWithLabel with this exact string.
+    Nothing in the engine emits it, so that call returns an EMPTY SEQ on every
+    tick of every game, forever — and nothing else fails: no exception, no
+    warning, no other test. The policy is simply blind to whatever this label
+    named.
+    Either restore the emission in src/ctf/global.nim, or — if the label is
+    genuinely retired — drop it from PolicyScannedLabels in src/ctf/labels.nim
+    AND from the scans in players/baseline/ in the same commit.
+""")
+        fail()
+
+  test "the hp bar denominator has not drifted from the policy's MaxHp":
+    # `hp <lit>/<total>` is exact-match scanned, and its denominator lived in
+    # TWO independent constants: the engine's HpBarSegments (global.nim) and the
+    # reference policy's own MaxHp (baseline.nim). Nothing compared them; they
+    # matched only because both happened to be 3. Retune either and every bot's
+    # hp scan goes blind with no error anywhere.
+    #
+    # labels.nim now owns the number (LabelHpBarSegments) so the two CANNOT
+    # disagree once both sides call labelHp. Until the bot does, this is the
+    # check that keeps them honest:
+    #   - the engine side is verified structurally, by asserting the label the
+    #     engine actually emits equals the one labelHp builds;
+    #   - the policy side is a literal 3 in baseline.nim, restated here. It is a
+    #     test assertion rather than a static assert on purpose: baseline.nim is
+    #     a separate compilation unit that does not export MaxHp, so there is no
+    #     symbol to compile-time compare against. Changing LabelHpBarSegments
+    #     fails this line, which names the file to fix.
+    const PolicyMaxHp = 3   ## players/baseline/baseline.nim's MaxHp.
+    check LabelHpBarSegments == PolicyMaxHp
+    var game = fullFeatureGame()
+    let emitted = game.collectLabels()
+    # The emitted hp label must be the one labelHp builds, DENOMINATOR AND ALL.
+    # normalizeLabel keeps the "/<total>" digits (see the exception there), so
+    # this compares "hp <n>/3" against "hp <n>/3" — retune LabelHpBarSegments
+    # alone and the engine starts emitting "hp <n>/4" while this expects /3.
+    let wantHp = labelHp(1).normalizeLabel()
+    check wantHp in emitted
+    # ...and NO other denominator may appear: a second spelling of the hp label
+    # means one of the two producers was retuned without the other.
+    for label in emitted:
+      if label.startsWith(LabelPrefixHp):
+        check label == wantHp
