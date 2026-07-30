@@ -5698,16 +5698,18 @@ proc selectFireTarget(sim: SimServer, shooterIndex: int): int =
         result = i
       break
 
-proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
-  ## Applies one selected shot: cooldown, tracer, and the kill. The target
-  ## may already have died to another shot this tick; the shot still lands
-  ## (tracer and all) but only an alive target yields a kill.
+type PendingGunShot = object
+  shooterIndex: int
+  targetIndex: int
+  headingBrads: int
+  actionId: int64
+
+proc selectGunShot(sim: SimServer, shooterIndex: int): PendingGunShot =
+  ## Selects a target and snapshots the trigger metadata before any
+  ## simultaneous shot can kill and reset another shooter.
   let
     shooter = sim.players[shooterIndex]
-    (ux, uy) = sim.fireDirection(shooterIndex)
-    sx = shooter.x + CollisionW div 2
-    sy = shooter.y + CollisionH div 2
-    shotHeading =
+    headingBrads =
       if shooter.windupBrads >= 0: shooter.windupBrads
       else: shooter.aimBrads
     triggerTick =
@@ -5715,7 +5717,24 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
         sim.tickCount - sim.config.fireWindupTicks
       else:
         sim.tickCount
-    actionId = sim.eventActionId(shooterIndex, GunAction, triggerTick)
+  PendingGunShot(
+    shooterIndex: shooterIndex,
+    targetIndex: sim.selectFireTarget(shooterIndex),
+    headingBrads: headingBrads,
+    actionId: sim.eventActionId(shooterIndex, GunAction, triggerTick)
+  )
+
+proc applyFire(sim: var SimServer, shot: PendingGunShot) =
+  ## Applies one selected shot: cooldown, tracer, and the kill. The target
+  ## may already have died to another shot this tick; the shot still lands
+  ## (tracer and all) but only an alive target yields a kill.
+  let
+    shooterIndex = shot.shooterIndex
+    targetIndex = shot.targetIndex
+    shooter = sim.players[shooterIndex]
+    (ux, uy) = aimVector(shot.headingBrads)
+    sx = shooter.x + CollisionW div 2
+    sy = shooter.y + CollisionH div 2
   sim.players[shooterIndex].fireCooldown =
     if shooter.hasShield or shooter.carryingFlag:
       # GV26: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
@@ -5735,8 +5754,8 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
     weapon = "gun",
     x = float(sx),
     y = float(sy),
-    actionId = actionId,
-    headingBrads = shotHeading
+    actionId = shot.actionId,
+    headingBrads = shot.headingBrads
   )
   # Record a cosmetic tracer for the shot (never enters gameHash). It ends at
   # the victim, so a bullet visibly never travels past its first hit.
@@ -5805,8 +5824,8 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
         weapon = "gun",
         x = float(ex),
         y = float(ey),
-        actionId = actionId,
-        headingBrads = shotHeading,
+        actionId = shot.actionId,
+        headingBrads = shot.headingBrads,
         distance = hypot(float(ex - sx), float(ey - sy)),
         damages = @[
           sim.eventDamage(
@@ -5875,8 +5894,8 @@ proc applyFire(sim: var SimServer, shooterIndex, targetIndex: int) =
       weapon = "gun",
       x = float(ex),
       y = float(ey),
-      actionId = actionId,
-      headingBrads = shotHeading,
+      actionId = shot.actionId,
+      headingBrads = shot.headingBrads,
       distance = hypot(float(ex - sx), float(ey - sy))
     )
 
@@ -5884,7 +5903,7 @@ proc tryFire*(sim: var SimServer, shooterIndex: int) =
   ## Fires one shot immediately (the single-shooter path).
   if not sim.canFire(shooterIndex):
     return
-  sim.applyFire(shooterIndex, sim.selectFireTarget(shooterIndex))
+  sim.applyFire(sim.selectGunShot(shooterIndex))
 
 proc startFireWindup*(sim: var SimServer, shooterIndex: int) =
   ## Starts a shot: locks the current aim angle and arms the windup.
@@ -6309,12 +6328,12 @@ proc resolveSimultaneousFire*(sim: var SimServer, shooters: openArray[int]) =
   ## against the same snapshot before any kill is applied, so a mutual duel
   ## kills both shooters and neither team gains an input-processing-order
   ## advantage.
-  var shots: seq[tuple[shooter, target: int]] = @[]
+  var shots: seq[PendingGunShot] = @[]
   for shooterIndex in shooters:
     if sim.canFire(shooterIndex):
-      shots.add((shooterIndex, sim.selectFireTarget(shooterIndex)))
+      shots.add(sim.selectGunShot(shooterIndex))
   for shot in shots:
-    sim.applyFire(shot.shooter, shot.target)
+    sim.applyFire(shot)
 
 proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
   ## Lets a living player steal the ENEMY team's flag off its pedestal by
