@@ -297,10 +297,10 @@ const
   ## every family above (highest was kill pops ~31191). Bake dims: head = team×16
   ## aim; arms = team×16 aim; legs = team×16 heading×(2·swing+1)×(shorten+1);
   ## wheels = team×16 heading×(2·caster+1).
-  RigHeadSpriteBase* = 40000   ## 40000..40031 (team×16 aim). Exported so the
+  RigHeadSpriteBase* = 40000   ## 40000..40063 (skin×team×16 aim). Exported so the
                                ## sprite-collision audit can scope skin-pool checks
-                               ## below the (skin-independent) rig pool.
-  RigArmSpriteBase = 40040     ## 40040 + team×2arms×16 aim → 40040..40103.
+                               ## below the rig pool.
+  RigArmSpriteBase = 40080     ## 40080 + team×2arms×16 aim → 40080..40143.
   RigLegSpriteBase = 40200     ## team×3legs×16head×33swing×5shorten ≈ 15840 ids
                                ## → 40200..56039.
   RigWheelSpriteBase = 56100   ## team×3wheels×16head×17caster ≈ 1632 ids
@@ -804,8 +804,11 @@ proc selectedSoldierPlayerSpriteId(team: Team, skin: Skin, rot: int): int =
 # Each family packs its dimensions into a dense range. Signed articulation steps
 # (leg swing, wheel caster) are offset to a non-negative index. ord(seg) within a
 # family: arms armL/armR = 0/1; legs FL/FR/Rear = 0/1/2; wheels L/R/Rear = 0/1/2.
-proc rigHeadSpriteId(team: Team, aimStep: int): int =
-  RigHeadSpriteBase + ord(team) * RigSteps + aimStep
+proc rigHeadSpriteId(team: Team, skin: Skin, aimStep: int): int =
+  RigHeadSpriteBase +
+    ord(skin) * 2 * RigSteps +
+    ord(team) * RigSteps +
+    aimStep
 
 proc rigGunSpriteId(team: Team, aimStep: int): int =
   RigGunSpriteBase + ord(team) * RigSteps + aimStep
@@ -5091,7 +5094,16 @@ proc addCogRigObjects(
   # Baked-art selector for each segment (so define-on-demand rebakes the exact pose).
   proc bakePixels(seg: RigSeg): seq[uint8] =
     case seg
-    of rsHead: rigSegPixels(player.team, rsHead, aimStep, 0, 0, boardScale)
+    of rsHead:
+      rigSegPixels(
+        player.team,
+        rsHead,
+        aimStep,
+        0,
+        0,
+        renderScale = boardScale,
+        skin = player.skin
+      )
     of rsArmL, rsArmR: rigSegPixels(player.team, seg, aimStep, 0, 0, boardScale)
     of rsLegFL, rsLegFR, rsLegRear:
       rigSegPixels(player.team, seg, headStep,
@@ -5117,7 +5129,8 @@ proc addCogRigObjects(
       wheelSprite(rsWheelR, drive.casterFR), player.y - 2),
     (rsLegFL, RigLegObjectBase + base*3 + 0, legSprite(rsLegFL), player.y - 1),
     (rsLegFR, RigLegObjectBase + base*3 + 1, legSprite(rsLegFR), player.y - 1),
-    (rsHead, RigHeadObjectBase + base, rigHeadSpriteId(player.team, aimStep),
+    (rsHead, RigHeadObjectBase + base,
+      rigHeadSpriteId(player.team, player.skin, aimStep),
       player.y)]
   # Arms = the cog's SHOULDER pads. They're part of the cog's fixed silhouette:
   # always drawn, always in their natural tucked pose, rotating with the HEAD/aim
@@ -5614,14 +5627,21 @@ proc warmBoardRenderCaches*(sim: SimServer) =
     for team in Team:
       for rot in 0 ..< SoldierRotations:
         discard soldierRotPixels(team, skin, rot, RenderScale)
-  # The board turret-rig segments (skin-independent: they slice the DefaultSkin
-  # master). Prebake the REST pose (swing/caster/shorten 0) at every aim/heading
-  # step so a standing/straight-driving cog is hot on the first frame; maneuvering
-  # poses bake lazily.
+  # The board turret-rig head follows the configured skin; the remaining segments
+  # are shared. Prebake the REST pose at every aim/heading step so a
+  # standing/straight-driving cog is hot on the first frame; maneuvering poses
+  # bake lazily.
+  for skin in usedSkins:
+    for team in Team:
+      for rot in 0 ..< SoldierRotations:
+        discard rigSegPixels(
+          team, rsHead, rot, 0, 0,
+          renderScale = RenderScale, skin = skin)
   for team in Team:
     for rot in 0 ..< SoldierRotations:
       for seg in RigSeg:
-        discard rigSegPixels(team, seg, rot, 0, 0, RenderScale)
+        if seg != rsHead:
+          discard rigSegPixels(team, seg, rot, 0, 0, RenderScale)
       discard rigGunPixels(team, rot, RenderScale)
       discard rigSprayCanPixels(team, rot, RenderScale)
   discard boardTypeface()
