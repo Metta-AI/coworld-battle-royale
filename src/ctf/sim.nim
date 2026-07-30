@@ -2737,6 +2737,17 @@ proc generateMapAttempt*(
     oddCenterPit = overrides.pits >= 0 and overrides.pits mod 2 == 1
     pitPairsWanted = if overrides.pits >= 0: overrides.pits div 2 else: -1
   var obstacleRemoved = newSeq[bool](result.leftObstacles.len)
+  if result.symmetry == symRot90:
+    ## Trenches are a 2-team-map feature for now: the dig/image pair
+    ## accounting assumes one symmetry image per dig, and rot90 maps have
+    ## three. An explicit pit request errors; the density path digs nothing
+    ## (clearing the candidates keeps the loop from writing UNPAIRED digs
+    ## into result.trenches — finalize is what pairs them, and it is
+    ## skipped on rot90).
+    if overrides.pits > 0:
+      raise newException(
+        CtfError, "Trenches are not supported on 4-team maps yet.")
+    pitCandidates.setLen(0)
   if pitPairsWanted >= 0:
     rng.shuffle(pitCandidates)
   for cand in pitCandidates:
@@ -2927,16 +2938,9 @@ proc generateMapAttempt*(
   ## the map's symmetry so neither team has a private pit; a dig that ended
   ## up under a wall (a sightline-repair plug can land on its slot) or on
   ## top of an already-accepted dig is dropped — and a dig whose image is
-  ## blocked drops WITH it, fairness before density. Trenches are a
-  ## 2-team-map feature for now: the pair accounting below assumes one
-  ## symmetry image per dig, and rot90 maps have three. A 4-team config
-  ## that explicitly asks for pits gets an error, not a silent no-op.
-  if result.symmetry == symRot90:
-    if overrides.pits > 0:
-      raise newException(
-        CtfError, "Trenches are not supported on 4-team maps yet.")
-  else:
-   block finalizeTrenches:
+  ## blocked drops WITH it, fairness before density. (rot90 maps reach
+  ## here with zero candidates and place nothing — see the guard above.)
+  block finalizeTrenches:
     let obstacles = buildArenaObstacles(result)
     var digs: seq[MapRect]
     if oddCenterPit:
