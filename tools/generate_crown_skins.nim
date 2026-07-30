@@ -26,6 +26,16 @@ const SoldierSkins = [
     sourcePath: "data/soldier_blue.png",
     outputPath: "data/soldier_blue_crown.png",
     jewel: color(0.30, 0.55, 0.91, 1)
+  ),
+  TeamArt(
+    sourcePath: "data/soldier_green.png",
+    outputPath: "data/soldier_green_crown.png",
+    jewel: color(0.29, 0.75, 0.42, 1)
+  ),
+  TeamArt(
+    sourcePath: "data/soldier_yellow.png",
+    outputPath: "data/soldier_yellow_crown.png",
+    jewel: color(0.93, 0.81, 0.24, 1)
   )
 ]
 

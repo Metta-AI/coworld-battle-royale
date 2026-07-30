@@ -87,25 +87,37 @@ const
   # PiP's fallback, but an overhead projection in an eye-level view reads as a
   # flat plate with the face squashed onto its lower lip, so the front masters
   # are what the billboard actually wants.
-  SoldierArtRed = staticRead("../../data/soldier_red.png")
-  SoldierArtBlue = staticRead("../../data/soldier_blue.png")
-  SoldierArtRedFront = staticRead("../../data/soldier_red_front.png")
-  SoldierArtBlueFront = staticRead("../../data/soldier_blue_front.png")
   # ...and the same cogs holding their paintball marker forward at the camera.
   # A live cog always carries its gun, so this is the pose the PiP shows for any
-  # armed cog; the empty-handed masters above cover the unarmed read.
-  SoldierArtRedFrontGun = staticRead("../../data/soldier_red_front_gun.png")
-  SoldierArtBlueFrontGun = staticRead("../../data/soldier_blue_front_gun.png")
+  # armed cog; the empty-handed masters cover the unarmed read. One entry per
+  # team x {top-down, front, front_gun}, served by path lookup.
+  SoldierArtAssets = [
+    ("/client/soldier_red.png", staticRead("../../data/soldier_red.png")),
+    ("/client/soldier_blue.png", staticRead("../../data/soldier_blue.png")),
+    ("/client/soldier_green.png", staticRead("../../data/soldier_green.png")),
+    ("/client/soldier_yellow.png",
+      staticRead("../../data/soldier_yellow.png")),
+    ("/client/soldier_red_front.png",
+      staticRead("../../data/soldier_red_front.png")),
+    ("/client/soldier_blue_front.png",
+      staticRead("../../data/soldier_blue_front.png")),
+    ("/client/soldier_green_front.png",
+      staticRead("../../data/soldier_green_front.png")),
+    ("/client/soldier_yellow_front.png",
+      staticRead("../../data/soldier_yellow_front.png")),
+    ("/client/soldier_red_front_gun.png",
+      staticRead("../../data/soldier_red_front_gun.png")),
+    ("/client/soldier_blue_front_gun.png",
+      staticRead("../../data/soldier_blue_front_gun.png")),
+    ("/client/soldier_green_front_gun.png",
+      staticRead("../../data/soldier_green_front_gun.png")),
+    ("/client/soldier_yellow_front_gun.png",
+      staticRead("../../data/soldier_yellow_front_gun.png")),
+  ]
   LeagueReplayerPath = "/client/league"
   WallTextureHorizontalPath = "/client/art/walls/wall_h.jpg"
   WallTextureVerticalPath = "/client/art/walls/wall_v.jpg"
   BroadcastFontPath = "/client/font.ttf"
-  SoldierArtRedPath = "/client/soldier_red.png"
-  SoldierArtBluePath = "/client/soldier_blue.png"
-  SoldierArtRedFrontPath = "/client/soldier_red_front.png"
-  SoldierArtBlueFrontPath = "/client/soldier_blue_front.png"
-  SoldierArtRedFrontGunPath = "/client/soldier_red_front_gun.png"
-  SoldierArtBlueFrontGunPath = "/client/soldier_blue_front_gun.png"
   # Hosted replay closes any WS frame larger than 1 MiB (sends 1009). We chunk
   # outbound sprite packets under a margin below that so no single frame trips it.
   MaxWsFrameBytes = 900_000
@@ -651,28 +663,23 @@ proc httpHandler(request: Request) =
       request.respond(200, texHeaders, WallTextureHorizontal)
     else:
       request.respond(200, texHeaders, WallTextureVertical)
-  elif request.path in [SoldierArtRedPath, SoldierArtBluePath,
-      SoldierArtRedFrontPath, SoldierArtBlueFrontPath,
-      SoldierArtRedFrontGunPath, SoldierArtBlueFrontGunPath] and
-      request.httpMethod == "GET":
+  elif request.httpMethod == "GET" and (block:
+      var hit = false
+      for (path, art) in SoldierArtAssets:
+        if request.path == path:
+          hit = true
+          break
+      hit):
     # Cog art for the EYES PiP billboards (static PNG assets): the _front
     # eye-level masters the billboard blits, plus the top-down board masters
     # kept as its fallback.
     var artHeaders: HttpHeaders
     artHeaders["Content-Type"] = "image/png"
     artHeaders["Cache-Control"] = "public, max-age=3600"
-    if request.path == SoldierArtRedPath:
-      request.respond(200, artHeaders, SoldierArtRed)
-    elif request.path == SoldierArtBluePath:
-      request.respond(200, artHeaders, SoldierArtBlue)
-    elif request.path == SoldierArtRedFrontPath:
-      request.respond(200, artHeaders, SoldierArtRedFront)
-    elif request.path == SoldierArtBlueFrontPath:
-      request.respond(200, artHeaders, SoldierArtBlueFront)
-    elif request.path == SoldierArtRedFrontGunPath:
-      request.respond(200, artHeaders, SoldierArtRedFrontGun)
-    else:
-      request.respond(200, artHeaders, SoldierArtBlueFrontGun)
+    for (path, art) in SoldierArtAssets:
+      if request.path == path:
+        request.respond(200, artHeaders, art)
+        break
   elif request.path == BroadcastFontPath and request.httpMethod == "GET":
     var fontHeaders: HttpHeaders
     fontHeaders["Content-Type"] = "font/ttf"
@@ -942,10 +949,14 @@ proc buildRewardPacket(sim: SimServer): string {.measure.} =
     result.addStatLine("reward", identity, player.reward)
     if accountIndex >= 0:
       let account = sim.rewardAccounts[accountIndex]
-      result.addStatLine("wins_red", identity, account.winsRed)
-      result.addStatLine("wins_blue", identity, account.winsBlue)
-      result.addStatLine("games_red", identity, account.gamesRed)
-      result.addStatLine("games_blue", identity, account.gamesBlue)
+      # One wins/games line per ACTIVE team: 2-team games emit exactly the
+      # classic wins_red..games_blue quartet, 4-team games add green/yellow.
+      for team in sim.teams():
+        result.addStatLine("wins_" & teamText(team), identity,
+          account.wins[team])
+      for team in sim.teams():
+        result.addStatLine("games_" & teamText(team), identity,
+          account.games[team])
       result.addStatLine("kills", identity, account.kills)
       result.addStatLine("deaths", identity, account.deaths)
       result.addStatLine("captures", identity, account.captures)

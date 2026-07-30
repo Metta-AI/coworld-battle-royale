@@ -1247,12 +1247,13 @@ body[data-embed] #board { top: 0; height: 100%; }
   var COG_BASE = window.CtfStaticReplay
     ? '.'
     : location.pathname.replace(/\/clients?\/[^/]*$/, '') + '/client';
-  var COG_ART = { red: new Image(), blue: new Image() };
-  COG_ART.red.src = COG_BASE + '/soldier_red_front.png';
-  COG_ART.blue.src = COG_BASE + '/soldier_blue_front.png';
-  var COG_ART_GUN = { red: new Image(), blue: new Image() };
-  COG_ART_GUN.red.src = COG_BASE + '/soldier_red_front_gun.png';
-  COG_ART_GUN.blue.src = COG_BASE + '/soldier_blue_front_gun.png';
+  var COG_ART = {}, COG_ART_GUN = {};
+  ['red', 'blue', 'green', 'yellow'].forEach(function (team) {
+    COG_ART[team] = new Image();
+    COG_ART[team].src = COG_BASE + '/soldier_' + team + '_front.png';
+    COG_ART_GUN[team] = new Image();
+    COG_ART_GUN[team].src = COG_BASE + '/soldier_' + team + '_front_gun.png';
+  });
   function cogArtReady(img) { return img && img.complete && img.naturalWidth > 0; }
   // Pick the armed pose when it's ready, else the plain one, else null (the
   // caller falls back to the procedural chassis).

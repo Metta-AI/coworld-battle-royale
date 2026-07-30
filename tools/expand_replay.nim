@@ -193,13 +193,20 @@ proc printCaptures(
   ## always captures the enemy team's flag.
   for i, p in sim.players:
     if p.captures > track.captures[i]:
+      # The captured flag is whichever one this player still carries — a
+      # capture ends the game without resetting the flag, and with 4 teams
+      # "the enemy flag" is not unique.
+      var capturedTeam = p.team
+      for team in sim.teams():
+        if sim.flags[team].carrier == i:
+          capturedTeam = team
       events.add ReplayEvent(
         tick: tick,
         kind: Capture,
         actorSlot: sim.playerSlot(i),
         actorLabel: sim.player(i),
         secondarySlot: -1,
-        flagTeam: enemy(p.team),
+        flagTeam: capturedTeam,
         phase: sim.phase
       )
     track.captures[i] = p.captures
@@ -234,7 +241,7 @@ proc printFlagChanges(
   ## carrier. A carrier losing a flag for any reason other than capture sends
   ## it straight back to its pedestal; captures keep the carrier and are
   ## reported separately.
-  for team in Team:
+  for team in sim.teams():
     let carrier = sim.flags[team].carrier
     if carrier == prevCarriers[team]:
       continue

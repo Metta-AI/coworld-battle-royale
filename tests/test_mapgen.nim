@@ -47,6 +47,7 @@ suite "procedural terrain":
             case gameMap.symmetry
             of symMirror: (w - 1 - x, y)
             of symRot180: (w - 1 - x, h - 1 - y)
+            of symRot90: (w - 1 - y, x)
           check obstacleAt(obstacles, x, y) ==
             obstacleAt(obstacles, sx, sy)
           y += 13

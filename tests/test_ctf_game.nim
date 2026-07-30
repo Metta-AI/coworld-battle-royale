@@ -27,11 +27,15 @@ suite "ctf game":
   test "starts in playing with both flags home on their pedestals":
     let sim = twoTeamGame()
     check sim.phase == Playing
-    for team in Team:
+    for team in sim.teams():
       let home = sim.gameMap.flagHome(team)
       check sim.flags[team].carrier == -1
       check sim.flags[team].x == home.x
       check sim.flags[team].y == home.y
+    # Inactive team slots hold an explicit no-carrier state.
+    for team in Team:
+      if team notin sim.teams():
+        check sim.flags[team].carrier == -1
 
   test "only the enemy flag can be picked up":
     var sim = twoTeamGame()
@@ -580,8 +584,8 @@ suite "ctf game":
     check sim.rewardAccounts[red].reward == 1
     check not sim.rewardAccounts[blue].won
     check sim.rewardAccounts[blue].reward == -1
-    check sim.rewardAccounts[blue].winsRed == 0
-    check sim.rewardAccounts[blue].winsBlue == 0
+    check sim.rewardAccounts[blue].wins[Red] == 0
+    check sim.rewardAccounts[blue].wins[Blue] == 0
 
   test "an emptied finite match finishes as a scoreless draw inside step":
     var sim = twoTeamGame()
