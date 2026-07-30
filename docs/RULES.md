@@ -39,6 +39,18 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   through the glass.
 - A **trench** — a walkable dug-pit square — sits at the exact center of
   the field (GameVersion 27). See the Trenches section for its rules.
+  Generated maps (below) place additional trenches procedurally.
+- **Procedurally generated terrain is available as a config option**
+  (`mapPath: "pool"` draws from a curated 20-map pool, `"gen"` + `mapSeed`
+  generates directly; `mapSize` / `mapSymmetry` / `mapColumns` /
+  `mapWindows` / `mapCenterFeature` lock individual draws). Generated
+  layouts keep every arena invariant — exact team symmetry (vertical mirror
+  or 180° rotation), no straight cross-field shot, corridors at least twice
+  the player footprint, a bounded cover budget — and draw their size class,
+  obstacle columns, glass placements, center feature, and med-kit pair per
+  map. The exact geometry is pinned into the match config/replay as
+  `mapSpec`. The default league map remains the hand-tuned arena described
+  above; leagues opt in through their own config.
 - A round ends when a team **captures the enemy heart** or is **wiped out**.
 
 ## Teams & spawns
@@ -519,6 +531,18 @@ instead of `"plasma"`, and the broadcast item token is `spray`. The internal
 `PlasmaArc*` identifiers and `hasPlasmaArc` field keep their names (as the
 `flag`→`heart` rename kept `sim.flags`), so `gameHash` and replays are
 unaffected — no GameVersion bump.
+
+The analysis stream reports `gun_trigger` when A locks the aim and `shot` when
+the paintball actually leaves after the windup. A correlated `shot_impact`
+records where that paintball stopped, including misses. `grenade_throw` and
+`grenade_impact` share the same correlation contract; active cone ticks emit
+`spray_use`. These weapon events carry a deterministic `action_id`, native
+`heading_brads` (0 east, 64 north), map-space `x`/`y`, and distance where
+applicable. Damage-capable `shot_impact`, `grenade_impact`, and `spray_use`
+events always carry `damages`, an array of `{slot, amount, hp, blocked}` rows;
+a miss has an empty array. The stream also emits `item_pickup` with the item
+name and player, and `shout` with the sanitized content and player. The older
+flat `hit` and `damage` rows remain for compatibility.
 
 **Since 0.7.5:** shouts (see the Shouts section) add the label
 `<team> shout <player>: <text>`; chat packets, previously ignored, are now
