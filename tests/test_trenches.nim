@@ -1,7 +1,7 @@
 import
   std/[os, unittest],
   bitworld/spriteprotocol,
-  ctf/sim
+  ctf/sim, ctf/map_pool
 
 const GameDir = currentSourcePath.parentDir.parentDir
 
@@ -240,3 +240,51 @@ suite "trenches":
       sim.tryFire(0)
       check sim.players[1].hp == sim.config.hitPoints - 1
     check sim.players[0].shotsHit == 20
+
+  test "generated maps dig walkable, team-symmetric trenches":
+    ## Every pool map's trenches sit on open floor (never under a wall or
+    ## outside the borders), and every dig has its exact image under the
+    ## map's symmetry — neither team gets a private pit.
+    var mapsWithTrenches = 0
+    var sawEndzone, sawField = false
+    for index in 0 ..< MapPoolSeeds.len:
+      let
+        gameMap = poolCtfMap(index)
+        obstacles = buildArenaObstacles(gameMap)
+      if gameMap.trenches.len > 0:
+        inc mapsWithTrenches
+      for trench in gameMap.trenches:
+        check trench.w == TrenchSize
+        check trench.h == TrenchSize
+        var open = true
+        for y in trench.y ..< trench.y + trench.h:
+          for x in trench.x ..< trench.x + trench.w:
+            if mapWallAt(gameMap, obstacles, x, y):
+              open = false
+        check open
+        let cx = trench.x + trench.w div 2
+        if cx < gameMap.captureClear or
+            cx >= gameMap.width - gameMap.captureClear:
+          sawEndzone = true
+        else:
+          sawField = true
+        let image =
+          case gameMap.symmetry
+          of symMirror: MapRect(
+            x: gameMap.width - trench.x - trench.w,
+            y: trench.y, w: trench.w, h: trench.h)
+          of symRot180: MapRect(
+            x: gameMap.width - trench.x - trench.w,
+            y: gameMap.height - trench.y - trench.h,
+            w: trench.w, h: trench.h)
+        check image in gameMap.trenches
+    ## The drawn pool exercises the endzone and field placement classes.
+    check mapsWithTrenches > 0
+    check sawEndzone
+    check sawField
+
+  test "generated trenches are deterministic and survive the spec round-trip":
+    let generated = generateCtfMap(4242)
+    check generated.trenches == generateCtfMap(4242).trenches
+    let rebuilt = mapFromSpecJson(mapSpecJson(generated))
+    check rebuilt.trenches == generated.trenches

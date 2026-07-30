@@ -320,6 +320,15 @@ What that means in practice:
   center of the field** (GameVersion 27), inside the open flag ring. It
   draws as a recessed dark pit in the floor. It is **not a wall**: it never
   blocks movement, bullets, or vision.
+- **Generated maps dig additional trenches procedurally**, drawn per seed
+  in three placement classes: **instead of an obstacle** (a slot that would
+  raise cover digs a pit — cover you stand in rather than behind), **in the
+  gaps between a column's obstacles** (the corridor stays open; crossing it
+  the slow way is a choice), and **in each endzone around the flag** —
+  behind the pedestal toward the home edge, and above and/or below it.
+  Every dig is mirrored under the map's team symmetry, so neither team gets
+  a private pit, and the exact trench set is pinned in the replay's
+  `mapSpec` like the rest of the geometry.
 - You are "in" the trench exactly while your body center is inside the
   square; every effect below applies instantly on entry and ends instantly
   on exit.

@@ -1780,6 +1780,21 @@ proc centerTrench(width, height: int): MapRect =
     h: TrenchSize
   )
 
+proc trenchSquareAt(cx, cy: int): MapRect =
+  ## A TrenchSize×TrenchSize dug pit centered on (cx, cy). Like obstacle
+  ## sizes, the pit never scales with the map's size class.
+  MapRect(
+    x: cx - TrenchSize div 2,
+    y: cy - TrenchSize div 2,
+    w: TrenchSize,
+    h: TrenchSize
+  )
+
+proc rectsIntersect(a, b: MapRect): bool =
+  ## Returns true when the two rectangles overlap by at least one pixel.
+  a.x < b.x + b.w and b.x < a.x + a.w and
+    a.y < b.y + b.h and b.y < a.y + a.h
+
 proc defaultCtfRooms(gameMap: CtfMap): seq[Room] =
   ## The three-room annotation set every map shares: an informal center zone
   ## plus the two base strips spanning the spawn pockets. Derives entirely
@@ -2128,6 +2143,22 @@ proc mapWallAt*(gameMap: CtfMap, obstacles: seq[ArenaShape], x, y: int): bool =
       return true
   false
 
+proc rectOnOpenFloor(
+  gameMap: CtfMap, obstacles: seq[ArenaShape], rect: MapRect
+): bool =
+  ## Returns true when every pixel of the rectangle is walkable floor on an
+  ## uninstalled candidate map. Sampled on a 3px grid — finer than the
+  ## thinnest wall feature (12px), so no wall can slip between samples.
+  var y = rect.y
+  while y < rect.y + rect.h:
+    var x = rect.x
+    while x < rect.x + rect.w:
+      if mapWallAt(gameMap, obstacles, x, y):
+        return false
+      x += 3
+    y += 3
+  not mapWallAt(gameMap, obstacles, rect.x + rect.w - 1, rect.y + rect.h - 1)
+
 proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
   ## One UNVALIDATED draw. Every top-level parameter is drawn unconditionally
   ## and THEN overridden if locked, so locking one knob never shifts the
@@ -2215,6 +2246,18 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
     var zig = rng.coin()
     for i, sy in slotYs:
       if cleared[i]:
+        ## GV27: a cleared gap sometimes holds a dug pit BETWEEN the
+        ## column's obstacles — the corridor stays open to movement and
+        ## fire, but crossing it the slow way is a choice.
+        if rng.pick(4) == 0:
+          result.trenches.add trenchSquareAt(colX, sy)
+        continue
+      ## GV27: a kept slot occasionally digs a trench INSTEAD of raising
+      ## its obstacle — cover you stand in rather than behind. The
+      ## sightline repair and the validators judge the thinner wall set
+      ## exactly as usual.
+      if rng.pick(6) == 0:
+        result.trenches.add trenchSquareAt(colX, sy)
         continue
       case family
       of colStubs:
@@ -2244,6 +2287,21 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
         result.leftObstacles.add ArenaShape(kind: shapeDiagonal,
           x0: colX - 14, y0: ya, x1: colX + 14, y1: yb, thickness: 12)
         zig = not zig
+
+  ## GV27 endzone digs, authored on the RED side (the symmetry image gives
+  ## Blue the exact counterpart): maybe a pit BEHIND the pedestal, toward
+  ## the home edge, and maybe one ABOVE and/or BELOW it — each clear of the
+  ## pedestal art. Endzone floor is protected (never walled), so these digs
+  ## always survive the open-floor prune below.
+  let
+    redHomeX = result.teamHomeX(Red)
+    pedestalClear = PedestalCoverSize div 2 + TrenchSize div 2
+  if rng.coin():
+    result.trenches.add trenchSquareAt(redHomeX - pedestalClear - 12, cy)
+  if rng.coin():
+    result.trenches.add trenchSquareAt(redHomeX, cy - pedestalClear - 20)
+  if rng.coin():
+    result.trenches.add trenchSquareAt(redHomeX, cy + pedestalClear + 20)
 
   ## Center feature, straddling the horizontal midline just outside the
   ## flag ring ("[" here; its symmetry image closes the right side).
@@ -2348,6 +2406,33 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
       @[result.medKitCandidates[0], result.medKitCandidates[1]]
     else:
       @[result.medKitCandidates[2], result.medKitCandidates[3]]
+
+  ## GV27: finalize the trenches. Every left-half dig gets its image under
+  ## the map's symmetry so neither team has a private pit; a dig that ended
+  ## up under a wall (a sightline-repair plug can land on its slot) or on
+  ## top of an already-accepted dig is dropped — and a dig whose image is
+  ## blocked drops WITH it, fairness before density.
+  block finalizeTrenches:
+    let obstacles = buildArenaObstacles(result)
+    var digs: seq[MapRect]
+    for trench in result.trenches:
+      let image =
+        case result.symmetry
+        of symMirror: trench.mirrorX(result.width)
+        of symRot180: trench.rot180(result.width, result.height)
+      var blocked =
+        not rectOnOpenFloor(result, obstacles, trench) or
+        not rectOnOpenFloor(result, obstacles, image)
+      for accepted in digs:
+        if rectsIntersect(accepted, trench) or rectsIntersect(accepted, image):
+          blocked = true
+          break
+      if blocked:
+        continue
+      digs.add trench
+      if image != trench:
+        digs.add image
+    result.trenches = digs
   result.validateMap()
 
 proc validateGeneratedMap*(gameMap: CtfMap): string =
@@ -2537,6 +2622,20 @@ proc pointsFromNode(node: JsonNode): seq[MapPoint] =
   for item in node:
     result.add MapPoint(x: item[0].getInt(), y: item[1].getInt())
 
+proc rectsNode(rects: seq[MapRect]): JsonNode =
+  result = newJArray()
+  for r in rects:
+    result.add %*[r.x, r.y, r.w, r.h]
+
+proc rectsFromNode(node: JsonNode): seq[MapRect] =
+  if node.isNil:
+    return
+  for item in node:
+    result.add MapRect(
+      x: item[0].getInt(), y: item[1].getInt(),
+      w: item[2].getInt(), h: item[3].getInt()
+    )
+
 proc mapSpecJson*(gameMap: CtfMap): string =
   ## The FULL expanded geometry of one map as JSON. Replays pin this, so
   ## playback rebuilds the exact map even if the generator changes later.
@@ -2557,6 +2656,9 @@ proc mapSpecJson*(gameMap: CtfMap): string =
       if gameMap.symmetry == symMirror: "mirror" else: "rot180"),
     "medKitSpawns": pointsNode(gameMap.medKitSpawns),
     "medKitCandidates": pointsNode(gameMap.medKitCandidates),
+    # Trenches are FULL-map (both halves), already symmetrized — playback
+    # re-reads them verbatim, no re-mirroring.
+    "trenches": rectsNode(gameMap.trenches),
     "leftObstacles": shapes,
   })
 
@@ -2587,6 +2689,9 @@ proc mapFromSpecJson*(text: string): CtfMap =
     else: symMirror
   result.medKitSpawns = pointsFromNode(node["medKitSpawns"])
   result.medKitCandidates = pointsFromNode(node["medKitCandidates"])
+  ## Optional: specs pinned before GV27 carry no trenches and replay
+  ## without them, exactly as recorded.
+  result.trenches = rectsFromNode(node{"trenches"})
   for item in node["leftObstacles"]:
     result.leftObstacles.add item.shapeFromSpecNode()
   result.rooms = result.defaultCtfRooms()
