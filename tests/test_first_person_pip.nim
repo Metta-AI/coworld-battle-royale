@@ -71,12 +71,19 @@ suite "bundle asset paths":
 
   test "the cog art loads through COG_BASE, relative in the static bundle":
     let html = readFile(GameDir / "client/replay_broadcast.html")
-    # All four masters (both teams x plain/gun) must go through COG_BASE, and
-    # COG_BASE must collapse to "." when the WASM adapter marks a static bundle.
-    for sprite in ["soldier_red_front.png", "soldier_blue_front.png",
-                   "soldier_red_front_gun.png", "soldier_blue_front_gun.png"]:
-      checkpoint(sprite & " must load through COG_BASE")
-      check html.contains("COG_BASE + '/" & sprite & "'")
+    # The masters (every team x plain/gun) load through one templated loop —
+    # the guard checks the loop goes through COG_BASE (issue #131: a root
+    # path resolves to the API origin from the static bundle and 404s) and
+    # that every team name is in the roster it iterates.
+    checkpoint("the templated art loop must derive from COG_BASE")
+    check html.contains(
+      "COG_ART[team].src = COG_BASE + '/soldier_' + team + '_front.png'")
+    check html.contains(
+      "COG_ART_GUN[team].src = COG_BASE + '/soldier_' + team + " &
+      "'_front_gun.png'")
+    for team in ["'red'", "'blue'", "'green'", "'yellow'"]:
+      checkpoint(team & " must be in the art roster")
+      check html.contains(team)
     checkpoint("COG_BASE must still detect the static bundle")
     check html.contains("window.CtfStaticReplay")
 

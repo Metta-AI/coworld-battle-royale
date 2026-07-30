@@ -68,12 +68,19 @@ proc buildGlobalMessages(
     setCurrentDir(previousDir)
   state = nextState
 
-proc fullFeatureGame(): SimServer =
+proc fullFeatureGame(teams4 = false): SimServer =
   ## A game posed so that every label FAMILY is live in one frame — including
   ## the rare ones a quiet frame never reaches. The vocabulary guard is only as
   ## good as the corners this fixture lights up: a family that never renders
-  ## here is a family a rename can break unnoticed.
+  ## here is a family a rename can break unnoticed. With `teams4` the same
+  ## pose runs on a generated corner map, so the 4-team-only vocabulary
+  ## (green/yellow room markers etc.) is emitted too.
   var config = defaultGameConfig()
+  if teams4:
+    config.teams = 4
+    config.mapPath = "gen"
+    config.mapGen.layout = "corners"
+    config.mapSeed = 42
   config.slots.setLen(6)
   result = initCtfForTest(config)
   for i in 0 ..< 6:
@@ -323,7 +330,16 @@ suite "sprite label contract":
     # nameplate. Sweeping the same sim twice therefore yields a SMALLER second
     # vocabulary, and comparing the two would report a phantom rename. Every
     # check below either shares this set or builds its own fresh fixture.
-    let emitted = game.collectLabels()
+    # The golden is the UNION of the classic and 4-team vocabularies, so the
+    # 4-team-only labels (green/yellow room markers) are contract too. The
+    # 4-team sweep runs FIRST: fixtures install their map process-wide, and
+    # every later test in this binary poses on the classic arena.
+    var game4 = fullFeatureGame(teams4 = true)
+    var emitted4 = game4.collectLabels()
+    game = fullFeatureGame()
+    var emitted = game.collectLabels()
+    for label in emitted4:
+      emitted.incl(label)
     # Regenerating: `nim r -d:writeLabelManifest tests/test_label_contract.nim`
     # rewrites the golden from what the engine emits NOW, and the resulting git
     # diff is the artifact to review. Deliberately opt-in — if the test could

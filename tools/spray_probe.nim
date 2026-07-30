@@ -130,7 +130,7 @@ proc main() =
       # Subjects that don't animate, grabbed from the first frame.
       cropOf(board, sprayerX, sprayerY - 20, 130, 130)
         .resize(130 * 3, 130 * 3).writeFile(outDir / "spray-carried.png")
-      let spawn = arenaCtfMap().plasmaArcSpawnPoints()[0]
+      let spawn = loadCtfMapMetadata("arena").plasmaArcSpawnPoints()[0]
       cropOf(board, spawn.x, spawn.y, 120, 120)
         .resize(120 * 3, 120 * 3).writeFile(outDir / "spray-pickup.png")
     inc sim.tickCount            # age the flash by one tick

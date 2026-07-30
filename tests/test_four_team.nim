@@ -1,5 +1,6 @@
 import
   std/[os, unittest],
+  bitworld/spriteprotocol,
   ctf/sim
 
 const GameDir = currentSourcePath.parentDir.parentDir
@@ -143,6 +144,43 @@ suite "four team ctf":
     let anchor = sim.gameMap.teamAnchor(Red)
     check zone.inCaptureZone(anchor.x, anchor.y)
     check not zone.inCaptureZone(zone.diagLimit - 5, zone.diagLimit - 5)
+
+  test "a stepped 4-team episode is deterministic and respawns in-zone":
+    proc runGame(): SimServer =
+      result = initCtfForTest(fourTeamConfig("corners"))
+      for i in 0 ..< 8:
+        discard result.addPlayer("p" & $i)
+      result.startGame()
+      # Kill one player so the respawn path (diagonal-zone sampling) runs.
+      result.killPlayer(5, 0)
+      let none = newSeq[InputState](0)
+      for tick in 0 ..< 400:
+        result.step(none, none)
+    var a = runGame()
+    let b = runGame()
+    check a.gameHash() == b.gameHash()
+    check a.tickCount == b.tickCount
+    # The killed player respawned somewhere inside its OWN diagonal zone.
+    check a.players[5].alive
+    let
+      zone = a.gameMap.captureZone(a.players[5].team)
+      cx = a.players[5].x + CollisionW div 2
+      cy = a.players[5].y + CollisionH div 2
+    check zone.inCaptureZone(cx, cy)
+
+  test "bad 4-team configs fail loudly":
+    var config = defaultGameConfig()
+    expect CtfError:
+      config.update("""{"teams": 3}""")
+    expect CtfError:
+      config.update("""{"teams": 4, "mapPath": "arena"}""")
+    expect CtfError:
+      config.update("""{"teams": 4, "mapPath": "pool"}""")
+    expect CtfError:
+      config.update("""{"teams": 2, "mapPath": "gen", "mapLayout": "corners"}""")
+    expect CtfError:
+      config.update(
+        """{"teams": 4, "mapPath": "gen", "mapSymmetry": "mirror"}""")
 
   test "classic 2-team configs reject green and yellow slots":
     var config = defaultGameConfig()

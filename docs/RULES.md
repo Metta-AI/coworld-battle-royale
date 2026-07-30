@@ -427,7 +427,8 @@ heart run. The broadcast clock counts down against the extended limit.
 Scoring is **sparse and win-only**:
 
 - **Decisive round** (capture or wipe): every winner scores **+1**, every
-  loser scores **-1**.
+  loser scores **-1**. (Four-team free-for-all generalizes this zero-sum:
+  the winning team scores +1 per losing team — see "Four-team mode".)
 - **Time-limit draw: -1 for both sides** (GameVersion 21). Running out the
   clock is never better than losing, so stalling has no upside for anyone.
 - **Mutual-wipe draw** (both teams eliminated on the same tick): 0 for both

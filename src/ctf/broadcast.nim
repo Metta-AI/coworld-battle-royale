@@ -188,14 +188,17 @@ proc stepEvents*(
       })
 
   # Captures, diffed per player: the captured flag is whichever one the
-  # capturer was carrying on the previous frame (with 4 teams "the enemy
-  # flag" is no longer unique).
+  # capturer STILL carries — a capture ends the game without resetting the
+  # flag, and with 4 teams "the enemy flag" is no longer unique. A capture
+  # event with no carried flag would mean corrupted state; crash honestly
+  # rather than ship a nameless banner.
   for i, p in sim.players:
     if i < tracker.captures.len and p.captures > tracker.captures[i]:
       var captured = ""
       for team in sim.teams():
-        if tracker.carriers[team] == i:
+        if sim.flags[team].carrier == i:
           captured = teamText(team)
+      doAssert captured.len > 0, "capture event with no carried flag"
       events.add(%*{
         "t": tick,
         "k": "capture",

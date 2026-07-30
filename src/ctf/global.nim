@@ -84,8 +84,8 @@ const
     (HpBarSegments - 1) * HpBarSegGap  ## 14px total — sized to the crew sprite.
   IdentityBadgeSpriteBase = 4200 ## Greek identity badges keyed
                                  ## ord(team)*IdentityNames.len + identity:
-                                 ## 4200..4215 (clear of the endzone fade crops
-                                 ## at 4100..4115).
+                                 ## 4200..4231 (clear of the endzone fade crops
+                                 ## at 4100..4131).
   IdentityBadgeObjectBase = 19040  ## identity badge object pool: one per
                                    ## player, 19040..19055 (clear of the hp
                                    ## pips at 19000 and impact rings at 19120).
@@ -122,9 +122,9 @@ const
   ## where the two maps agree — crossfades from the baked-glow crop to a
   ## glow-free crop, drawn just above the map and below every actor. Purely
   ## cosmetic — outside gameHash and untouched in the player POV. Sprite ids
-  ## 4100..4115 and object ids 19520..19521 sit clear of every other pool.
+  ## 4100..4131 and object ids 19520..19523 sit clear of every other pool.
   EndzoneFadeSpriteBase = 4100 ## per-(team, stage) fade crops: 4100 +
-                               ## ord(team)*GlowFadeStages + stage → 4100..4115.
+                               ## ord(team)*GlowFadeStages + stage → 4100..4131.
                                ## Every stage owns an id so the crops can be
                                ## pre-shipped once per connection and the
                                ## event-time ramp is a pure object remap (bytes
@@ -133,8 +133,9 @@ const
                                ## viewers.
   EndzoneFadeObjectBase = 19520  ## one strip overlay per team.
   EndzonePrewarmEveryFrames = 4  ## drip one fade crop every N frames after
-                                 ## connect (~1.2 Mbps for ~2.4 s) instead of
-                                 ## dumping all 14 at once.
+                                 ## connect (~1.2 Mbps for ~2.4 s on classic
+                                 ## maps, twice that on 4-team maps) instead
+                                 ## of dumping every crop at once.
   GlowFadeStages* = 8          ## crossfade steps; 0 = full glow, 7 = fully cold.
   ## Grenades (0.7.0): a paint-bomb orb PNG shared by three placements plus a
   ## drawn charge ring and blast flash. Sprite ids 840..845 sit above the sound
@@ -169,8 +170,11 @@ const
   ShieldCarrySpriteId = 1421     ## the "shield carried" marker over a carrier.
   ShieldSize = 26                ## px footprint of an endzone shield pickup.
   ShieldCarrySize = 12           ## px footprint of the carried shield marker.
-  ShieldObjectBase = 19630       ## endzone shields: 19630..19633, one per
-                                 ## team (moved clear of the med kit pool).
+  ShieldObjectBase = 19560       ## endzone shields: 19560..19563, one per
+                                 ## team — clear of the endzone-fade strips
+                                 ## (19520..19523), the med kits (19600+),
+                                 ## and the PER-PLAYER carried-shield markers
+                                 ## at 19620..19635.
   ShieldCarryObjectBase = 19620  ## carried shield markers: one per player.
   ShieldBubbleSpriteId = 1422    ## the protective bubble drawn around a carrier.
   ShieldBubbleSize = 44          ## px bubble diameter (34px soldier body + margin).
@@ -303,16 +307,16 @@ const
   ## every family above (highest was kill pops ~31191). Bake dims: head = team×16
   ## aim; arms = team×16 aim; legs = team×16 heading×(2·swing+1)×(shorten+1);
   ## wheels = team×16 heading×(2·caster+1).
-  RigHeadSpriteBase* = 40000   ## 40000..40031 (team×16 aim). Exported so the
-                               ## sprite-collision audit can scope skin-pool checks
-                               ## below the (skin-independent) rig pool.
-  RigArmSpriteBase = 40040     ## 40040 + team×2arms×16 aim → 40040..40103.
-  RigLegSpriteBase = 40200     ## team×3legs×16head×33swing×5shorten ≈ 15840 ids
-                               ## → 40200..56039.
-  RigWheelSpriteBase = 56100   ## team×3wheels×16head×17caster ≈ 1632 ids
-                               ## → 56100..57731.
-  RigGunSpriteBase = 57800     ## team×16 aim → 57800..57831 (held marker + glow).
-  RigSpraySpriteBase = 57840   ## team×16 aim → 57840..57871 (held spray can +
+  RigHeadSpriteBase* = 40000   ## 40000..40063 (4 teams × 16 aim). Exported so
+                               ## the sprite-collision audit can scope skin-pool
+                               ## checks below the (skin-independent) rig pool.
+  RigArmSpriteBase = 40100     ## team×2arms×16aim×2reach → 40100..40355.
+  RigLegSpriteBase = 41000     ## team×3legs×16head×33swing×5shorten = 7920 ids
+                               ## per team → 41000..72679.
+  RigWheelSpriteBase = 73000   ## team×3wheels×16head×17caster = 816 ids per
+                               ## team → 73000..76263.
+  RigGunSpriteBase = 76500     ## team×16 aim → 76500..76563 (held marker + glow).
+  RigSpraySpriteBase = 76600   ## team×16 aim → 76600..76663 (held spray can +
                                ## glow): the swap-in art while a cog carries a
                                ## can, sharing the gun's object slot.
   ## Object pools sit clear of the tracer-dot pool (24000..30991) and the damage/
@@ -346,13 +350,13 @@ const
   TransportX = 2
   TransportY = 1
   ## Sprite/object id pools (sprites and objects are separate namespaces).
-  ## Sprites: team flags 700..701 (FlagSpriteBase), hp pips 820+, tracer
+  ## Sprites: team flags 700..703 (FlagSpriteBase), hp pips 820+, tracer
   ## dots 900..963 (color×fade-stage), muzzle blooms 964..967 (stage), tracer
   ## heads 968..1031 (color×stage), aim dots 780..795, identity badges
-  ## 4200..4215 (team×identity), self markers 5100..5131, team score text
-  ## 12100..12101, splatters 16000..16063, fog runs 21000..21155
-  ## (one per run width in cells), map markers 20000. Objects: flags 6500..6501
-  ## (map view) / 5009..5010 (player view), team score text 9600..9601,
+  ## 4200..4231 (team×identity), self markers 5100..5131, team score text
+  ## 12100..12103, splatters 16000..16063, fog runs 21000..21155
+  ## (one per run width in cells), map markers 20000. Objects: flags 6500..6503
+  ## (map view) / 5009..5012 (player view), team score text 9600..9603,
   ## muzzle blooms 16800..16815, tracer heads 16820..16835, splatters
   ## 17000..17031, aim dots 18000..18063, identity badges 19040..19055,
   ## map markers 20000, fog runs 21000..23047, tracer dots 24000..29263.
@@ -363,19 +367,19 @@ const
   SpritePlayerWalkabilitySpriteId = 5007
   SpritePlayerInterstitialObjectId = 5006
   SpritePlayerRemainingObjectId = 5008
-  SpritePlayerFlagObjectBase = 5009  ## 5009 red flag, 5010 blue flag.
+  SpritePlayerFlagObjectBase = 5009  ## 5009..5012 by team.
   SpritePlayerWeaponSpriteId = 5020  ## own-weapon HUD text ("weapon gun|arc").
   SpritePlayerWeaponObjectId = 5021
   SpritePlayerSelfSpriteBase = 5100  ## white-outlined self soldiers, keyed by
                                      ## skin×rotation: default 5100..5115,
                                      ## crown 5116..5131.
   CorpseSpriteBase = 1500      ## grey dead-soldier sprites, one per team×rot
-                               ## per skin: default 1500..1531, crown 1532..1563.
+                               ## per skin: default 1500..1563, crown 1564..1627.
                                ## A corpse must never read as a
                                ## live soldier for a label-scanning ghost
                                ## viewer. Moved off 850: that range overlapped
                                ## the blue paint-blast sprites (868..871).
-  FlagObjectBase = 6500        ## 6500 red flag, 6501 blue flag.
+  FlagObjectBase = 6500        ## 6500..6503 by team.
   ## Per-viewer fog of war: a second zoomable map-sized layer of translucent
   ## dark row-run sprites over the unseen 8px visibility cells. It draws over
   ## the map layer and alpha-blends, dimming everything outside the viewer's
@@ -404,8 +408,8 @@ const
   TeamScoreLayerType = 5       ## top-center anchor.
   TeamScoreWidth = 132
   TeamScoreGap = 8             ## px between the red and blue halves.
-  TeamScoreSpriteBase = 12100  ## 12100 red text, 12101 blue text.
-  TeamScoreObjectBase = 9600   ## 9600 red text, 9601 blue text.
+  TeamScoreSpriteBase = 12100  ## one score chip per team: 12100..12103.
+  TeamScoreObjectBase = 9600   ## one score chip per team: 9600..9603.
   MapMarkerSpriteBase = 20000
   MapMarkerObjectBase = 20000
   MapMarkerZ = -32767
@@ -574,27 +578,25 @@ proc boardScaledColdMapPixels(sim: SimServer): seq[uint8] =
   sim.ensureBoardMaps()
   boardColdMapCache
 
-proc endzoneStripRange(gameMap: CtfMap, team: Team): tuple[x0, x1: int] =
-  ## The inclusive x span of one team's endzone column, full map height. It
-  ## covers BOTH the crack-glow/capture-line column (captureZoneXRange) AND the
-  ## flag-home pedestal footprint, which pokes ~28px past the capture line on the
-  ## inner side — so the crossfade dims the pedestal disc too, with no lit sliver
-  ## left behind. Outside the glow band the hot and cold maps are identical, so
-  ## widening the strip is a visual no-op except over the pedestal.
+proc endzoneStripBox(gameMap: CtfMap, team: Team):
+    tuple[x0, y0, x1, y1: int] =
+  ## The inclusive scan box of ONE team's endzone: its capture-zone bounding
+  ## box expanded to cover the flag-home pedestal footprint (which pokes
+  ## ~28px past the capture line on the inner side — so the crossfade dims
+  ## the pedestal disc too, with no lit sliver left behind). Bounding BOTH
+  ## axes matters on 4-team maps: two corner zones share an x span, and an
+  ## unbounded-y scan would sweep the other team's glow into this team's
+  ## diff box, powering both down together. Sides maps reduce to the
+  ## classic full-height column. Outside the glow band the hot and cold
+  ## maps are identical, so a generous box is a visual no-op.
   let
     pedHalf = PedestalCoverSize div 2
     zone = gameMap.captureZone(team)
     anchor = gameMap.teamAnchor(team)
-  result =
-    if zone.xLo > 0:
-      (min(zone.xLo, anchor.x - pedHalf), MapWidth - 1)
-    elif zone.xHi < MapWidth - 1:
-      (0, max(zone.xHi, anchor.x + pedHalf))
-    else:
-      ## A plus-map north/south team: its zone bounds y, not x, but the
-      ## strip machinery scans x spans — cover the pedestal footprint and
-      ## let the diff box shrink to the actual glow pixels.
-      (0, MapWidth - 1)
+  result.x0 = max(0, min(zone.xLo, anchor.x - pedHalf))
+  result.x1 = min(MapWidth - 1, max(zone.xHi, anchor.x + pedHalf))
+  result.y0 = max(0, min(zone.yLo, anchor.y - pedHalf))
+  result.y1 = min(MapHeight - 1, max(zone.yHi, anchor.y + pedHalf))
 
 proc endzoneDiffBox(sim: SimServer, team: Team): tuple[x0, y0, x1, y1: int] =
   ## Returns the bounding box (map coords, inclusive) of the pixels inside one
@@ -610,10 +612,10 @@ proc endzoneDiffBox(sim: SimServer, team: Team): tuple[x0, y0, x1, y1: int] =
     EndzoneColdRgba = coldEndzoneMapRgba(sim.gameMap)
     EndzoneStripCache = default(typeof(EndzoneStripCache))
     EndzoneDiffBoxReady = default(typeof(EndzoneDiffBoxReady))
-  let (sx0, sx1) = sim.gameMap.endzoneStripRange(team)
-  result = (x0: sx1 + 1, y0: MapHeight, x1: sx0 - 1, y1: -1)
-  for y in 0 ..< MapHeight:
-    for x in sx0 .. sx1:
+  let scan = sim.gameMap.endzoneStripBox(team)
+  result = (x0: scan.x1 + 1, y0: scan.y1 + 1, x1: scan.x0 - 1, y1: -1)
+  for y in scan.y0 .. scan.y1:
+    for x in scan.x0 .. scan.x1:
       let src = mapIndex(x, y) * 4
       if sim.mapRgba[src] != EndzoneColdRgba[src] or
           sim.mapRgba[src + 1] != EndzoneColdRgba[src + 1] or
@@ -803,7 +805,7 @@ const SoldierSkinSpriteStride = 4 * SoldierRotations
   ## skin ids keep their historical values; the pool widened for green/yellow.
 
 proc soldierPlayerSpriteId(team: Team, skin: Skin, rot: int): int =
-  ## Sprite id for one living soldier at aim rotation `rot`. The two team
+  ## Sprite id for one living soldier at aim rotation `rot`. The four team
   ## masters need SoldierRotations ids per skin; they sit in the existing
   ## player sprite pool (PlayerSpriteBase..), which reserved 16 ids per color.
   PlayerSpriteBase + ord(skin) * SoldierSkinSpriteStride +
@@ -5000,12 +5002,12 @@ proc addEndzonePrewarm(
   ## a later steal/return ramp is a pure object remap instead of a ~200 KB
   ## sprite send per frame right at the dramatic moment. Crops the fade ramp
   ## already shipped on demand are skipped by the per-viewer sprite-def check.
-  let pairCount = 2 * (GlowFadeStages - 1)     # stages 1..7 per team; 0 never draws.
+  let pairCount = sim.gameMap.teamCount() * (GlowFadeStages - 1)     # stages 1..7 per team; 0 never draws.
   let pairIndex = state.endzonePrewarmFrames div EndzonePrewarmEveryFrames
   if state.endzonePrewarmFrames mod EndzonePrewarmEveryFrames == 0 and
       pairIndex < pairCount:
     let
-      team = if pairIndex < GlowFadeStages - 1: Red else: Blue
+      team = Team(pairIndex div (GlowFadeStages - 1))
       stage = 1 + pairIndex mod (GlowFadeStages - 1)
     discard sim.addEndzoneFadeSprite(state, packet, team, stage)
   inc state.endzonePrewarmFrames

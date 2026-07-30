@@ -1,12 +1,25 @@
 # Four-team CTF (red / blue / green / yellow)
 
 STATUS: implemented on this branch. Design points that moved during the
-build (with daveey, 2026-07-29): no alliance/2v2 game mode — 4-team play is
-pure FFA and "2v2" is two policies splitting one classic team's seats (the
-platform already seats that); scoring generalized to the zero-sum rule
-below (+1 per losing team to the winner, -1 per winning team to each
-loser), which reduces to the classic +1/-1 and pays +3/-1 in 4-team FFA;
-every team keeps its own heart in every mode.
+build (with daveey, 2026-07-29/30) — where this plan and the code disagree,
+the CODE is what shipped:
+
+- No alliance/2v2 game mode: 4-team play is pure FFA, and "2v2" is two
+  policies splitting one classic team's seats (doubles seating, which the
+  platform and viewer already support).
+- Scoring generalized to one zero-sum rule: winner +1 per losing team,
+  each loser -1 — classic stays +1/-1, 4-team FFA pays +3/-1.
+- Corner endzones are DIAGONAL (a 45-degree L1 threshold across the
+  corner), not the axis-aligned corner boxes planned below.
+- Plus maps have OPEN corners (no blocker rects); their endzones are
+  arm-mouth boxes.
+- `enemy()` was deleted outright, not kept for 2-team paths.
+- RewardAccount's per-team counters became `wins`/`games`:
+  `array[Team, int]`, not added scalars.
+- The 4-team scorebug is ONE row of four plates, not stacked pairs.
+- The label vocabulary needed no green/yellow additions beyond the room
+  markers — colors normalize to `<color>` in the manifest, which now also
+  unions a 4-team sweep.
 
 Goal: engine-side 4-team support behind a config gate, 4-team map generation
 (corner and plus symmetric layouts), demo replays verified in the already-landed
