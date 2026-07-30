@@ -11,7 +11,13 @@ import map_pool
 
 const
   GameName* = "ctf"
-  GameVersion* = "26"  ## TRENCHES are CONFIG-GATED and ship without a
+  GameVersion* = "27"  ## GV27 (operator rule): the default arena's
+                       ## column-1 glass windows alternate from both ends
+                       ## (stone, glass, stone, glass) — stubs 2, 4, and 6
+                       ## of 7 (y=108, 300, 491), a top/bottom-symmetric
+                       ## set replacing GV26's stubs 2, 5, 6; x-mirrored
+                       ## like every column-1 shape.
+                       ## TRENCHES are CONFIG-GATED and ship without a
                        ## version bump, exactly like procedural terrain:
                        ## the default arena has none, so its rules are
                        ## byte-identical, and a league opts in through its
@@ -1664,19 +1670,19 @@ const
   ## between the capture/spawn columns and the flag ring; isProtectedFloor
   ## carves them out of the ring, pockets, and capture columns.
   ArenaLeftObstacles = [
-    # Column 1 (x=268..286): rect stubs, phase 0, border-attached ends. The
-    # SECOND stub from the top and from the bottom are GLASS WINDOWS
-    # (GameVersion 15): solid to movement, bullets, and spray cones, transparent
-    # to fog-of-war.
+    # Column 1 (x=268..286): rect stubs, phase 0, border-attached ends.
+    # GV27 (operator rule): the GLASS WINDOWS alternate from both ends —
+    # stone, glass, stone, glass — landing on stubs 2, 4 (the middle), and
+    # 6 of 7, a top/bottom-symmetric set. Glass is solid to movement,
+    # bullets, and spray cones, transparent to fog-of-war; x-mirrored like
+    # every column-1 shape.
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 10, w: 18, h: 62)),
     ArenaShape(kind: shapeRect, window: true,
       rect: MapRect(x: 268, y: 108, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 204, w: 18, h: 60)),
-    ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 300, w: 18, h: 59)),
-    # GV26: the FIFTH stub from the top is a GLASS WINDOW too (operator rule)
-    # — windows at stubs 2, 5, and 6; x-mirrored like every column-1 shape.
     ArenaShape(kind: shapeRect, window: true,
-      rect: MapRect(x: 268, y: 395, w: 18, h: 60)),
+      rect: MapRect(x: 268, y: 300, w: 18, h: 59)),
+    ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 395, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, window: true,
       rect: MapRect(x: 268, y: 491, w: 18, h: 60)),
     ArenaShape(kind: shapeRect, rect: MapRect(x: 268, y: 587, w: 18, h: 62)),

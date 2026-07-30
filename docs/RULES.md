@@ -26,9 +26,10 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   field**, so every approach is a series of corners. GameVersion 16 thinned
   the disc column to every other disc, opening real gaps in the mid-field
   slalom.
-- In the outermost stub column of each half, the **second wall stub from the
-  top, the second from the bottom (GameVersion 15), and the fifth from the top
-  (GameVersion 26) are glass windows**: they block movement, bullets, and
+- In the outermost stub column of each half, the glass alternates in from
+  both ends: the **second stub from the top, the middle stub, and the second
+  from the bottom (GameVersion 27) are glass windows**: they block movement,
+  bullets, and
   spray cones exactly like stone, but **vision passes straight through them**.
   Glass draws as a pale pane with diagonal sheen — cover you can be seen
   behind is not cover.
@@ -116,8 +117,9 @@ always drawn — but moving entities are fogged:
   ±60°) around your **aim angle**, with **unlimited range**, plus a small
   **omnidirectional bubble** of `visionBubble` (default ~90px) around you.
 - **Stone walls block vision** — the same walls that block bullets — with one
-  exception: **glass windows** (the second stub from the top and bottom of
-  each half's outer stub column) block bullets but NOT vision. A long open
+  exception: **glass windows** (the second-from-top, middle, and
+  second-from-bottom stubs of each half's outer stub column) block bullets
+  but NOT vision. A long open
   lane is visible (and lethal) end to end; anything behind stone is not;
   anything behind glass is **seen but safe from direct fire**.
 - **Your aim carries your vision.** You look where you aim, not where you walk,
