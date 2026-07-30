@@ -345,7 +345,7 @@ const
   ## (one per run width in cells), map markers 20000. Objects: flags 6500..6501
   ## (map view) / 5009..5010 (player view), team score text 9600..9601,
   ## muzzle blooms 16800..16815, tracer heads 16820..16835, splatters
-  ## 17000..17031, aim dots 18000..18063, identity badges 19040..19055,
+  ## 17000..17031, identity badges 19040..19055,
   ## map markers 20000, fog runs 21000..23047, tracer dots 24000..29263.
   ## Player debug sprites and objects use per-player pools in 40000..56383.
   SpritePlayerFireSpriteId = 5000
