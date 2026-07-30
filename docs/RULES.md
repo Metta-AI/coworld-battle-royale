@@ -37,9 +37,10 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   bar — dead on the center row — is a **glass window**: the mid lane stays
   closed to movement and fire, but both teams can watch the center corridor
   through the glass.
-- A **trench** — a walkable dug-pit square — sits at the exact center of
-  the field (GameVersion 27). See the Trenches section for its rules.
-  Generated maps (below) place additional trenches procedurally.
+- **Trenches** — walkable dug-pit squares — are a **config-gated terrain
+  feature**: the default arena has none; generated maps (below) place them
+  procedurally, steered by `mapPits` / `mapPitDensity`. See the Trenches
+  section for their rules.
 - **Procedurally generated terrain is available as a config option**
   (`mapPath: "pool"` draws from a curated 20-map pool, `"gen"` + `mapSeed`
   generates directly; `mapSize` / `mapSymmetry` / `mapColumns` /
@@ -316,10 +317,13 @@ What that means in practice:
 
 ## Trenches
 
-- **One trench — a 56×56 px walkable dug-pit square — sits at the exact
-  center of the field** (GameVersion 27), inside the open flag ring. It
-  draws as a recessed dark pit in the floor. It is **not a wall**: it never
-  blocks movement, bullets, or vision.
+- A **trench is a 56×56 px walkable dug-pit square** that draws as a
+  recessed dark pit in the floor. It is **not a wall**: it never blocks
+  movement, bullets, or vision. Trenches are **config-gated** and ship
+  without a game-version bump, exactly like procedural terrain: **the
+  default arena has none**, and a league opts in through its own config
+  (generated maps dig them per seed; a `mapPits: 1` lock reproduces the
+  classic single center pit).
 - **Generated maps dig additional trenches procedurally**, drawn per seed
   in three placement classes: **instead of an obstacle** (a slot that would
   raise cover digs a pit — cover you stand in rather than behind), **in the
@@ -341,9 +345,12 @@ What that means in practice:
 - You are "in" the trench exactly while your body center is inside the
   square; every effect below applies instantly on entry and ends instantly
   on exit.
-- **Occupants move at 1/5 speed.** Both the speed cap and acceleration
-  divide by five, and momentum carried in is clamped immediately — you
-  cannot sprint through at full speed.
+- **Getting in is fast; climbing out is slow.** Dropping into a pit and
+  moving around inside it run at full speed — momentum carried in is kept.
+  But while your center is inside, any movement **away from the pit's
+  center** — climbing a wall to leave — has its speed cap and acceleration
+  divided by five, and outward momentum sheds to that cap. A pit is easy
+  to take and costly to abandon.
 - **Occupants fire their gun at 1/3 rate** (each shot's cooldown is three
   times the normal length). This composes with the shield/heart-carrier
   slowdown by taking the maximum, never the product.
@@ -491,7 +498,7 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Paint puff lifetime (`PlasmaArcFxTicks`) | 4 ticks | Cosmetic fade of each per-tick cone snapshot |
 | Heart auto-return | instant | A heart snaps back to its own pedestal the moment its carrier dies |
 | Trench size (`TrenchSize`) | 56px | Side of the walkable center trench pit |
-| Trench speed divisor (`TrenchSpeedDivisor`) | 5 | Occupants move at 1/5 speed (cap, accel, and an entry clamp) |
+| Trench speed divisor (`TrenchSpeedDivisor`) | 5 | Climbing out (motion away from the pit center while inside) is 1/5 speed; entering and crossing are full speed |
 | Trench fire slowdown (`TrenchFireSlowdown`) | 3 | Occupant gun cooldown multiplier; max-composed with shield/carrier |
 | Trench miss chance (`TrenchMissPct`) | 70% | Incoming gun shots that fly over an occupant and carry on (same-trench shots exempt) |
 | Pit count (`mapPits`) | -1 (unset) | Generated maps: exact total pits (0..64); odd counts anchor one at map center |

@@ -1,5 +1,5 @@
 import
-  std/[os, unittest],
+  std/[json, os, unittest],
   bitworld/spriteprotocol,
   ctf/sim, ctf/map_pool
 
@@ -16,8 +16,12 @@ proc initCtfForTest(config: GameConfig): SimServer =
 
 proc twoTeamGame(extraPlayers = 0): SimServer =
   ## A started game with one Red player (0), one Blue player (1), and
-  ## `extraPlayers` more Blue bodies (2..).
-  result = initCtfForTest(defaultGameConfig())
+  ## `extraPlayers` more Blue bodies (2..), on a generated map with exactly
+  ## ONE pit — anchored at the map center by the odd-count rule — since the
+  ## default arena ships trench-free.
+  var config = defaultGameConfig()
+  config.update("""{"mapPath": "gen", "mapSeed": 4242, "mapPits": 1}""")
+  result = initCtfForTest(config)
   discard result.addPlayer("red0")
   discard result.addPlayer("blue0")
   for i in 0 ..< extraPlayers:
@@ -40,7 +44,13 @@ proc placeAt(game: var SimServer, playerIndex, px, py: int) =
   game.players[playerIndex].velY = 0
 
 suite "trenches":
-  test "the arena has one walkable trench square at the field center":
+  test "the default arena digs no trenches":
+    let plain = initCtfForTest(defaultGameConfig())
+    check plain.gameMap.trenches.len == 0
+    check ArenaTrenches.len == 0
+    check trenchIndexAt(plain.gameMap.center.x, plain.gameMap.center.y) == -1
+
+  test "mapPits:1 anchors one walkable pit at the generated map's center":
     let sim = twoTeamGame()
     check ArenaTrenches.len == 1
     let
@@ -57,38 +67,46 @@ suite "trenches":
       for x in trench.x ..< trench.x + trench.w:
         check sim.canOccupy(x, y)
 
-  test "an occupant's speed cap is one fifth of the open-field cap":
+  test "climbing out of a trench is one fifth speed":
     var sim = twoTeamGame()
     let
       cx = sim.gameMap.center.x
       cy = sim.gameMap.center.y
       cap = sim.config.maxSpeed div TrenchSpeedDivisor
-    sim.placeAt(0, cx - 24, cy)
+    # Standing in the pit's right half and pushing further right is
+    # climbing the right wall: capped at 1/5 of the open-field max.
+    sim.placeAt(0, cx + 20, cy)
     check sim.playerTrench(0) == 0
-    # Hold right long enough to reach the cap; the capped speed never
-    # exceeds one fifth of the open-field max.
     for _ in 0 ..< 12:
       sim.applyInput(0, InputState(right: true))
       check sim.players[0].velX <= cap
     check sim.playerTrench(0) == 0
     check sim.players[0].velX == cap
+    # Outward momentum sheds to the climbing cap the same way.
+    sim.placeAt(0, cx + 20, cy)
+    sim.players[0].velX = sim.config.maxSpeed
+    sim.applyInput(0, InputState())
+    check sim.players[0].velX <= cap
 
-  test "momentum carried into a trench is clamped on entry":
+  test "dropping in and moving across the pit are full speed":
     var sim = twoTeamGame()
     let
       cx = sim.gameMap.center.x
       cy = sim.gameMap.center.y
       cap = sim.config.maxSpeed div TrenchSpeedDivisor
-    sim.placeAt(0, cx, cy)
-    sim.players[0].velX = sim.config.maxSpeed
+    # Full-speed momentum INTO the pit is kept — no entry clamp: only
+    # friction touches a glide toward the pit's center.
+    sim.placeAt(0, cx + 20, cy)
+    sim.players[0].velX = -sim.config.maxSpeed
     sim.applyInput(0, InputState())
-    check sim.players[0].velX <= cap
-    # The same full-speed glide OUTSIDE a trench keeps most of its speed
-    # (friction only) — the clamp is the trench's, not the field's.
-    sim.placeAt(1, cx - 200, cy)
-    sim.players[1].velX = sim.config.maxSpeed
-    sim.applyInput(1, InputState())
-    check sim.players[1].velX > cap
+    check sim.players[0].velX < -cap
+    # Holding toward the pit's middle accelerates to the FULL open-field
+    # cap while still inside.
+    sim.placeAt(0, cx + 24, cy)
+    for _ in 0 ..< 10:
+      sim.applyInput(0, InputState(left: true))
+    check sim.playerTrench(0) == 0
+    check sim.players[0].velX == -sim.config.maxSpeed
 
   test "firing from inside a trench takes three times the cooldown":
     var sim = twoTeamGame()
@@ -315,3 +333,94 @@ suite "trenches":
     config.update("""{"mapPath": "gen", "mapSeed": 4242, "mapPits": 5}""")
     check config.mapGen.pits == 5
     check resolveCtfMapMetadata(config).trenches.len == 5
+
+  test "the y axis mirrors the climb-out rule":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+      cap = sim.config.maxSpeed div TrenchSpeedDivisor
+    # Below the pit's center, pushing further down climbs the bottom wall.
+    sim.placeAt(0, cx, cy + 20)
+    check sim.playerTrench(0) == 0
+    for _ in 0 ..< 12:
+      sim.applyInput(0, InputState(down: true))
+      check sim.players[0].velY <= cap
+    check sim.players[0].velY == cap
+    # Pushing back up toward the middle runs at the full open-field cap.
+    sim.placeAt(0, cx, cy + 24)
+    for _ in 0 ..< 10:
+      sim.applyInput(0, InputState(up: true))
+    check sim.playerTrench(0) == 0
+    check sim.players[0].velY == -sim.config.maxSpeed
+
+  test "a heart carrier's climb-out cap composes with the carrier penalty":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+      carrierMax = sim.config.maxSpeed * sim.config.carrierSpeedPct div 100
+      cap = carrierMax div TrenchSpeedDivisor
+    sim.placeAt(0, cx + 20, cy)
+    sim.players[0].carryingFlag = true
+    for _ in 0 ..< 16:
+      sim.applyInput(0, InputState(right: true))
+      check sim.players[0].velX <= cap
+    check sim.players[0].velX == cap
+
+  test "a windup released inside a pit pays the trench cooldown":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+    # Trigger pulled OUTSIDE the pit; the shooter is inside at release —
+    # occupancy is read when the bullet leaves, not at the pull.
+    sim.placeAt(0, cx + 60, cy)
+    check sim.playerTrench(0) == -1
+    sim.players[0].aimBrads = 0
+    sim.players[0].fireCooldown = 0
+    sim.startFireWindup(0)
+    sim.placeAt(0, cx, cy)
+    let none = newSeq[InputState](sim.players.len)
+    for _ in 0 ..< sim.config.fireWindupTicks + 1:
+      sim.step(none, none)
+      if sim.players[0].fireCooldown > 0:
+        break
+    check sim.players[0].fireCooldown ==
+      sim.config.fireCooldownTicks * TrenchFireSlowdown
+
+  test "an over-request places as many pits as fit, still in fair pairs":
+    let gameMap = generateCtfMap(
+      4242, MapGenOverrides(windows: -1, pits: 64, pitDensity: -1))
+    check gameMap.trenches.len mod 2 == 0
+    check gameMap.trenches.len > 12
+    check gameMap.trenches.len < 64
+    for trench in gameMap.trenches:
+      let image =
+        case gameMap.symmetry
+        of symMirror: MapRect(
+          x: gameMap.width - trench.x - trench.w,
+          y: trench.y, w: trench.w, h: trench.h)
+        of symRot180: MapRect(
+          x: gameMap.width - trench.x - trench.w,
+          y: gameMap.height - trench.y - trench.h,
+          w: trench.w, h: trench.h)
+      check image in gameMap.trenches
+
+  test "out-of-range pit knobs raise config errors at config load":
+    # update() resolves the gen map to pin its mapSpec, so a bad knob is
+    # rejected the moment the config is loaded — before any game starts.
+    for bad in ["""{"mapPath": "gen", "mapSeed": 1, "mapPits": 65}""",
+                """{"mapPath": "gen", "mapSeed": 1, "mapPits": -2}""",
+                """{"mapPath": "gen", "mapSeed": 1, "mapPitDensity": 1001}"""]:
+      var config = defaultGameConfig()
+      expect CtfError:
+        config.update(bad)
+
+  test "specs recorded before trenches existed load with none":
+    let generated = generateCtfMap(4242)
+    var node = parseJson(mapSpecJson(generated))
+    node.delete("trenches")
+    let rebuilt = mapFromSpecJson($node)
+    check rebuilt.trenches.len == 0
+    check rebuilt.leftObstacles == generated.leftObstacles

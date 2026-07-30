@@ -11,18 +11,25 @@ import map_pool
 
 const
   GameName* = "ctf"
-  GameVersion* = "27"  ## GV27: TRENCHES — a walkable dug-pit square at the
-                       ## center of the field. It never blocks movement,
-                       ## bullets, or vision. Standing in it slows movement
-                       ## to 1/5 (TrenchSpeedDivisor) and gun fire to 1/3
-                       ## rate (TrenchFireSlowdown, max-composed with the
-                       ## shield/carrier multiplier), and TrenchMissPct
-                       ## percent of gun shots that would hit an occupant
-                       ## fly straight over instead — the bullet continues
-                       ## down the ray and can hit a body behind (shots
-                       ## fired from inside the same trench are exempt).
-                       ## Generated maps place trenches procedurally
-                       ## (obstacle-slot swaps, corridor gaps, endzone digs).
+  GameVersion* = "26"  ## TRENCHES are CONFIG-GATED and ship without a
+                       ## version bump, exactly like procedural terrain:
+                       ## the default arena has none, so its rules are
+                       ## byte-identical, and a league opts in through its
+                       ## own config (generated maps place pits per seed;
+                       ## mapPits/mapPitDensity steer them). A trench is a
+                       ## walkable dug-pit square — never a wall to
+                       ## movement, bullets, or vision. Dropping in and
+                       ## moving around inside are full speed; CLIMBING OUT
+                       ## (motion away from the pit's center while inside)
+                       ## is 1/5 speed (TrenchSpeedDivisor). Occupants fire
+                       ## at 1/3 rate (TrenchFireSlowdown,
+                       ## max-composed with the shield/carrier multiplier),
+                       ## and TrenchMissPct percent of gun shots that would
+                       ## hit an occupant fly straight over instead — the
+                       ## bullet continues down the ray and can hit a body
+                       ## behind (shots from inside the same trench are
+                       ## exempt). Replays pin the exact trench set via
+                       ## mapSpec, so playback is exact either way.
                        ## Procedural terrain itself (mapPath "gen"/"pool",
                        ## curated pool in map_pool.nim) is CONFIG-GATED and
                        ## shipped without a version bump: the default arena
@@ -220,13 +227,14 @@ const
                               ## product).
 
   TrenchSize* = 56            ## side length of the walkable trench square
-                              ## (GV27). The center trench sits inside the
                               ## open flag ring (corner reach ~40px < the
                               ## 70px ring), so it never touches a wall.
-  TrenchSpeedDivisor* = 5     ## an occupant moves at 1/5 speed: max speed
-                              ## and accel divide by this, and velocity is
-                              ## clamped every tick while inside, so running
-                              ## in slows you immediately.
+  TrenchSpeedDivisor* = 5     ## CLIMBING OUT is 1/5 speed: while the center
+                              ## is inside a pit, any axis motion pointing
+                              ## AWAY from the pit's center has its cap and
+                              ## accel divided by this, and outward momentum
+                              ## sheds to the cap. Dropping in, crossing,
+                              ## and moving around the pit are full speed.
   TrenchFireSlowdown* = 3     ## an occupant's gun fire cooldown multiplier
                               ## (1/3 fire rate). Max-composed with the
                               ## shield/carrier slowdown, never the product —
@@ -425,7 +433,7 @@ type
                                      ## generated maps; equals the active
                                      ## pair on hand-authored maps).
     leftObstacles*: seq[ArenaShape]
-    trenches*: seq[MapRect]    ## walkable dug-pit squares (GV27): standing
+    trenches*: seq[MapRect]    ## walkable dug-pit squares (config-gated trenches): standing
                                ## inside slows movement and fire, and most
                                ## incoming gun shots fly straight over.
 
@@ -1779,16 +1787,6 @@ const
     ArenaShape(kind: shapeRect, rect: MapRect(x: 726, y: 761, w: 18, h: 66)),
   ]
 
-proc centerTrench(width, height: int): MapRect =
-  ## The TrenchSize×TrenchSize trench square centered on the field (GV27).
-  ## It sits fully inside the open flag ring, so it is always walkable floor.
-  MapRect(
-    x: width div 2 - TrenchSize div 2,
-    y: height div 2 - TrenchSize div 2,
-    w: TrenchSize,
-    h: TrenchSize
-  )
-
 proc trenchSquareAt(cx, cy: int): MapRect =
   ## A TrenchSize×TrenchSize dug pit centered on (cx, cy). Like obstacle
   ## sizes, the pit never scales with the map's size class.
@@ -1835,7 +1833,6 @@ proc arenaCtfMap(): CtfMap =
   result.spawnClearH = 130
   result.gunRange = 1300
   result.leftObstacles = @ArenaLeftObstacles
-  result.trenches = @[centerTrench(result.width, result.height)]
   result.medKitSpawns = @[
     MapPoint(x: result.width div 2, y: result.height div 3),
     MapPoint(x: result.width div 2, y: 2 * result.height div 3),
@@ -1862,7 +1859,6 @@ proc arenaLargeCtfMap(): CtfMap =
   result.spawnClearH = 169
   result.gunRange = 1690
   result.leftObstacles = @ArenaLargeLeftObstacles
-  result.trenches = @[centerTrench(result.width, result.height)]
   result.medKitSpawns = @[
     MapPoint(x: result.width div 2, y: result.height div 3),
     MapPoint(x: result.width div 2, y: 2 * result.height div 3),
@@ -2212,7 +2208,7 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
     xMax = result.center.x - 52
   ## Window-eligible shapes: (obstacle index, column, slot y).
   var eligible: seq[tuple[idx, col, y: int]]
-  ## GV27 pit candidates, resolved into actual digs after the columns
+  ## Trench pit candidates, resolved into actual digs after the columns
   ## exist: `instead` swaps its obstacle for a pit, `gap` sits in a
   ## cleared slot's corridor, `endzone` hugs the pedestal.
   const
@@ -2301,7 +2297,7 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
           x0: colX - 14, y0: ya, x1: colX + 14, y1: yb, thickness: 12)
         zig = not zig
 
-  ## GV27 endzone pit candidates, authored on the RED side (the symmetry
+  ## Endzone trench pit candidates, authored on the RED side (the symmetry
   ## image gives Blue the exact counterpart): BEHIND the pedestal toward
   ## the home edge, and ABOVE and BELOW it — each clear of the pedestal
   ## art. Endzone floor is protected (never walled), so endzone digs
@@ -2478,7 +2474,7 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
     else:
       @[result.medKitCandidates[2], result.medKitCandidates[3]]
 
-  ## GV27: finalize the trenches. Every left-half dig gets its image under
+  ## Finalize the trenches. Every left-half dig gets its image under
   ## the map's symmetry so neither team has a private pit; a dig that ended
   ## up under a wall (a sightline-repair plug can land on its slot) or on
   ## top of an already-accepted dig is dropped — and a dig whose image is
@@ -2778,7 +2774,7 @@ proc mapFromSpecJson*(text: string): CtfMap =
     else: symMirror
   result.medKitSpawns = pointsFromNode(node["medKitSpawns"])
   result.medKitCandidates = pointsFromNode(node["medKitCandidates"])
-  ## Optional: specs pinned before GV27 carry no trenches and replay
+  ## Optional: specs pinned before trenches existed carry none and replay
   ## without them, exactly as recorded.
   result.trenches = rectsFromNode(node{"trenches"})
   for item in node["leftObstacles"]:
@@ -3499,7 +3495,7 @@ proc renderArenaRgbaPair*(
       else:
         coldColor = tileBlock[tileRow + x mod tileW]
         hotColor = endzoneColorAt(coldColor, lx, redHi, blueLo, playLo, playHi)
-        # The trench pit (GV27) paints over the finished floor on both
+        # The trench pit (config-gated trenches) paints over the finished floor on both
         # variants; it sits at the center, well clear of the endzone glow.
         coldColor = trenchArtColorAt(coldColor, lx, ly)
         hotColor = trenchArtColorAt(hotColor, lx, ly)
@@ -3617,7 +3613,7 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
           redHi, blueLo, playLo, playHi)
         else: tileSample(floorTex, x, y)
       if not wall:
-        # The trench pit (GV27) paints over the finished floor; it never
+        # The trench pit (config-gated trenches) paints over the finished floor; it never
         # overlaps a wall (it sits inside the open center ring).
         color = trenchArtColorAt(color, x, y)
       if onBorder:
@@ -5966,7 +5962,7 @@ proc selectFireTarget(sim: var SimServer, shooterIndex: int): int =
   ## locked aim direction toward the FIRST body it crosses (friendly fire
   ## on), stopping at walls — or -1 for a miss. A trench occupant crossed
   ## by the ray ducks under TrenchMissPct of the shots fired from outside
-  ## their trench (GV27): the bullet flies straight over them and carries
+  ## their trench (config-gated trenches): the bullet flies straight over them and carries
   ## on down the ray to the next exposed body, exactly as if the occupant
   ## were not there. The duck is rolled per occupant on the deterministic
   ## sim RNG at shot release.
@@ -6027,7 +6023,7 @@ type PendingGunShot = object
 proc selectGunShot(sim: var SimServer, shooterIndex: int): PendingGunShot =
   ## Selects a target and snapshots the trigger metadata before any
   ## simultaneous shot can kill and reset another shooter. (`var` because
-  ## target selection rolls the GV27 trench duck on the sim RNG.)
+  ## target selection rolls the trench duck on the sim RNG.)
   let
     shooter = sim.players[shooterIndex]
     headingBrads =
@@ -6057,7 +6053,7 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
   # GV26: heart carriers fire at CarrierFireSlowdown (same 3x as shields);
-  # GV27: trench occupants fire at TrenchFireSlowdown. Every slowdown
+  # Trench occupants fire at TrenchFireSlowdown (config-gated). Every slowdown
   # composes by MAX, never the product.
   var cooldownScale = 1
   if shooter.hasShield or shooter.carryingFlag:
@@ -6742,23 +6738,45 @@ proc applyInput*(
   let
     speedScale =
       if player.carryingFlag: sim.config.carrierSpeedPct else: 100
-    # A trench occupant moves at 1/5 speed (GV27): both the cap and the
-    # accel divide, and the cap is enforced on the velocity below even
-    # without input, so momentum from outside is shed on entry.
-    trenchDiv =
-      if sim.playerTrench(playerIndex) >= 0: TrenchSpeedDivisor else: 1
-    maxSpeed = sim.config.maxSpeed * speedScale div (100 * trenchDiv)
-    accel = max(1, sim.config.accel * speedScale div (100 * trenchDiv))
-
-  if trenchDiv > 1:
-    player.velX = clamp(player.velX, -maxSpeed, maxSpeed)
-    player.velY = clamp(player.velY, -maxSpeed, maxSpeed)
+    maxSpeed = sim.config.maxSpeed * speedScale div 100
+    accel = sim.config.accel * speedScale div 100
+    # CLIMBING OUT of a trench is slow; dropping in and moving around it
+    # are not. While the center is inside a pit, each axis whose motion
+    # points AWAY from the pit's center — up that wall — is capped at 1/5
+    # speed and accel, and outward momentum is shed to the cap. Motion
+    # into, across, and around the pit runs at full speed.
+    trench = sim.playerTrench(playerIndex)
+    slowSpeed = maxSpeed div TrenchSpeedDivisor
+    slowAccel = max(1, accel div TrenchSpeedDivisor)
+  var
+    posBoundX = maxSpeed
+    negBoundX = -maxSpeed
+    posBoundY = maxSpeed
+    negBoundY = -maxSpeed
+  if trench >= 0:
+    let
+      pit = ArenaTrenches[trench]
+      relX = (player.x + CollisionW div 2) - (pit.x + pit.w div 2)
+      relY = (player.y + CollisionH div 2) - (pit.y + pit.h div 2)
+    if relX > 0: posBoundX = slowSpeed
+    elif relX < 0: negBoundX = -slowSpeed
+    if relY > 0: posBoundY = slowSpeed
+    elif relY < 0: negBoundY = -slowSpeed
+    player.velX = clamp(player.velX, negBoundX, posBoundX)
+    player.velY = clamp(player.velY, negBoundY, posBoundY)
 
   if inputX != 0:
+    let accelX =
+      if trench >= 0 and
+          ((inputX > 0 and posBoundX == slowSpeed) or
+           (inputX < 0 and negBoundX == -slowSpeed)):
+        slowAccel
+      else:
+        accel
     player.velX = clamp(
-      player.velX + inputX * accel,
-      -maxSpeed,
-      maxSpeed
+      player.velX + inputX * accelX,
+      negBoundX,
+      posBoundX
     )
   else:
     player.velX =
@@ -6767,10 +6785,17 @@ proc applyInput*(
       player.velX = 0
 
   if inputY != 0:
+    let accelY =
+      if trench >= 0 and
+          ((inputY > 0 and posBoundY == slowSpeed) or
+           (inputY < 0 and negBoundY == -slowSpeed)):
+        slowAccel
+      else:
+        accel
     player.velY = clamp(
-      player.velY + inputY * accel,
-      -maxSpeed,
-      maxSpeed
+      player.velY + inputY * accelY,
+      negBoundY,
+      posBoundY
     )
   else:
     player.velY =
