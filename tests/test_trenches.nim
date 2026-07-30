@@ -288,3 +288,30 @@ suite "trenches":
     check generated.trenches == generateCtfMap(4242).trenches
     let rebuilt = mapFromSpecJson(mapSpecJson(generated))
     check rebuilt.trenches == generated.trenches
+
+  test "mapPits locks an exact total; odd counts anchor the map center":
+    for count in [0, 1, 4, 7, 12]:
+      let gameMap = generateCtfMap(
+        4242, MapGenOverrides(windows: -1, pits: count, pitDensity: -1))
+      check gameMap.trenches.len == count
+      let center = MapRect(
+        x: gameMap.center.x - TrenchSize div 2,
+        y: gameMap.center.y - TrenchSize div 2,
+        w: TrenchSize, h: TrenchSize)
+      check (center in gameMap.trenches) == (count mod 2 == 1)
+
+  test "mapPitDensity scales the density draw":
+    proc withDensity(density: int): CtfMap =
+      generateMapAttempt(
+        4242, MapGenOverrides(windows: -1, pits: -1, pitDensity: density))
+    check withDensity(0).trenches.len == 0
+    let defaultDigs = withDensity(-1).trenches.len
+    check defaultDigs > 0
+    check withDensity(100).trenches.len == defaultDigs
+    check withDensity(400).trenches.len >= defaultDigs
+
+  test "mapPits and mapPitDensity flow through the game config":
+    var config = defaultGameConfig()
+    config.update("""{"mapPath": "gen", "mapSeed": 4242, "mapPits": 5}""")
+    check config.mapGen.pits == 5
+    check resolveCtfMapMetadata(config).trenches.len == 5

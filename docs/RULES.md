@@ -329,6 +329,15 @@ What that means in practice:
   Every dig is mirrored under the map's team symmetry, so neither team gets
   a private pit, and the exact trench set is pinned in the replay's
   `mapSpec` like the rest of the geometry.
+- **Two runtime knobs steer the digging** (game config, generated maps
+  only): `mapPits` locks the exact TOTAL pit count (0..64) — even counts
+  place symmetric pairs; an **odd count anchors its extra pit at the exact
+  map center**, the one spot that is its own image under both mirror and
+  rot180 symmetry, so odd and even counts are equally team-fair. When the
+  candidate spots can't host the full request the map places as many as
+  fit. `mapPitDensity` (0..1000, default 100) scales the per-class draw
+  chances instead when no exact count is locked — 0 digs nothing, 200 digs
+  roughly twice as much. `mapPits` wins over `mapPitDensity`.
 - You are "in" the trench exactly while your body center is inside the
   square; every effect below applies instantly on entry and ends instantly
   on exit.
@@ -485,6 +494,8 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Trench speed divisor (`TrenchSpeedDivisor`) | 5 | Occupants move at 1/5 speed (cap, accel, and an entry clamp) |
 | Trench fire slowdown (`TrenchFireSlowdown`) | 3 | Occupant gun cooldown multiplier; max-composed with shield/carrier |
 | Trench miss chance (`TrenchMissPct`) | 70% | Incoming gun shots that fly over an occupant and carry on (same-trench shots exempt) |
+| Pit count (`mapPits`) | -1 (unset) | Generated maps: exact total pits (0..64); odd counts anchor one at map center |
+| Pit density (`mapPitDensity`) | 100 | Generated maps: percent multiplier on per-class dig chances; used when `mapPits` is unset |
 | Time limit (`MaxTicks`) | 5000 ticks (~3.5 min) | Round length cap before the lose-lose draw |
 | Map size | 1235×659 | Inherited from Crewrift; may change |
 

@@ -467,6 +467,15 @@ type
     columns*: int          ## obstacle column count per half, 3..8
     windows*: int          ## glass-window count per half, 0..6; -1 = draw
     centerFeature*: string ## "bracket" | "ring" | "walls"
+    pits*: int             ## exact TOTAL trench count, 0..64; -1 = density
+                           ## draw. Even counts place symmetric pairs; an
+                           ## odd count anchors its extra pit dead center
+                           ## (self-symmetric under mirror AND rot180), so
+                           ## both parities stay exactly team-fair.
+    pitDensity*: int       ## percent multiplier on the default per-class
+                           ## pit chances (100 = default feel, 0 = none,
+                           ## 200 = twice as digging-happy); -1 = default.
+                           ## Ignored when `pits` locks an exact count.
 
   GameConfig* = object
     motionScale*: int
@@ -2203,6 +2212,14 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
     xMax = result.center.x - 52
   ## Window-eligible shapes: (obstacle index, column, slot y).
   var eligible: seq[tuple[idx, col, y: int]]
+  ## GV27 pit candidates, resolved into actual digs after the columns
+  ## exist: `instead` swaps its obstacle for a pit, `gap` sits in a
+  ## cleared slot's corridor, `endzone` hugs the pedestal.
+  const
+    pitInstead = 0
+    pitGap = 1
+    pitEndzone = 2
+  var pitCandidates: seq[tuple[kind, obstacleIdx, x, y: int]]
 
   for col in 0 ..< columns:
     let
@@ -2246,19 +2263,15 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
     var zig = rng.coin()
     for i, sy in slotYs:
       if cleared[i]:
-        ## GV27: a cleared gap sometimes holds a dug pit BETWEEN the
-        ## column's obstacles — the corridor stays open to movement and
-        ## fire, but crossing it the slow way is a choice.
-        if rng.pick(4) == 0:
-          result.trenches.add trenchSquareAt(colX, sy)
+        ## A cleared gap can hold a dug pit BETWEEN the column's obstacles
+        ## — the corridor stays open to movement and fire.
+        pitCandidates.add (pitGap, -1, colX, sy)
         continue
-      ## GV27: a kept slot occasionally digs a trench INSTEAD of raising
-      ## its obstacle — cover you stand in rather than behind. The
-      ## sightline repair and the validators judge the thinner wall set
-      ## exactly as usual.
-      if rng.pick(6) == 0:
-        result.trenches.add trenchSquareAt(colX, sy)
-        continue
+      ## Every kept slot can dig a trench INSTEAD of raising its obstacle
+      ## — cover you stand in rather than behind. Selection below decides;
+      ## the sightline repair and the validators judge the thinner wall
+      ## set exactly as usual.
+      pitCandidates.add (pitInstead, result.leftObstacles.len, colX, sy)
       case family
       of colStubs:
         ## Stub ends whose border gap would drop under the corridor minimum
@@ -2288,20 +2301,78 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
           x0: colX - 14, y0: ya, x1: colX + 14, y1: yb, thickness: 12)
         zig = not zig
 
-  ## GV27 endzone digs, authored on the RED side (the symmetry image gives
-  ## Blue the exact counterpart): maybe a pit BEHIND the pedestal, toward
-  ## the home edge, and maybe one ABOVE and/or BELOW it — each clear of the
-  ## pedestal art. Endzone floor is protected (never walled), so these digs
+  ## GV27 endzone pit candidates, authored on the RED side (the symmetry
+  ## image gives Blue the exact counterpart): BEHIND the pedestal toward
+  ## the home edge, and ABOVE and BELOW it — each clear of the pedestal
+  ## art. Endzone floor is protected (never walled), so endzone digs
   ## always survive the open-floor prune below.
   let
     redHomeX = result.teamHomeX(Red)
     pedestalClear = PedestalCoverSize div 2 + TrenchSize div 2
-  if rng.coin():
-    result.trenches.add trenchSquareAt(redHomeX - pedestalClear - 12, cy)
-  if rng.coin():
-    result.trenches.add trenchSquareAt(redHomeX, cy - pedestalClear - 20)
-  if rng.coin():
-    result.trenches.add trenchSquareAt(redHomeX, cy + pedestalClear + 20)
+  pitCandidates.add (pitEndzone, -1, redHomeX - pedestalClear - 12, cy)
+  pitCandidates.add (pitEndzone, -1, redHomeX, cy - pedestalClear - 20)
+  pitCandidates.add (pitEndzone, -1, redHomeX, cy + pedestalClear + 20)
+
+  ## Pit selection. DENSITY mode (default) rolls every candidate at its
+  ## class chance scaled by pitDensity percent. COUNT mode (pits locked)
+  ## shuffles the candidates and takes symmetric pairs until the requested
+  ## total is met — an ODD total anchors its extra pit at the exact map
+  ## center, the one spot that is its own image under mirror AND rot180,
+  ## so both parities stay exactly team-fair.
+  if overrides.pits < -1 or overrides.pits > 64:
+    raise newException(CtfError, "Config field mapPits must be 0..64.")
+  if overrides.pitDensity < -1 or overrides.pitDensity > 1000:
+    raise newException(
+      CtfError, "Config field mapPitDensity must be 0..1000.")
+  let
+    pitDensity = if overrides.pitDensity >= 0: overrides.pitDensity else: 100
+    centerPit = trenchSquareAt(result.center.x, result.center.y)
+    oddCenterPit = overrides.pits >= 0 and overrides.pits mod 2 == 1
+    pitPairsWanted = if overrides.pits >= 0: overrides.pits div 2 else: -1
+  var obstacleRemoved = newSeq[bool](result.leftObstacles.len)
+  if pitPairsWanted >= 0:
+    rng.shuffle(pitCandidates)
+  for cand in pitCandidates:
+    if pitPairsWanted >= 0:
+      if result.trenches.len >= pitPairsWanted:
+        break
+    else:
+      let baseChance =
+        case cand.kind
+        of pitInstead: 17
+        of pitGap: 25
+        else: 50
+      if rng.pick(100) >= clamp(baseChance * pitDensity div 100, 0, 100):
+        continue
+    let pit = trenchSquareAt(cand.x, cand.y)
+    var blocked = oddCenterPit and rectsIntersect(pit, centerPit)
+    for accepted in result.trenches:
+      if rectsIntersect(accepted, pit):
+        blocked = true
+        break
+    if blocked:
+      continue
+    result.trenches.add pit
+    if cand.kind == pitInstead:
+      obstacleRemoved[cand.obstacleIdx] = true
+
+  ## Swap the chosen `instead` obstacles out of the wall set. Window
+  ## eligibility indexes leftObstacles, so compact both together.
+  block removeSwappedObstacles:
+    var remap = newSeq[int](result.leftObstacles.len)
+    var compacted: seq[ArenaShape]
+    for i, shape in result.leftObstacles:
+      if obstacleRemoved[i]:
+        remap[i] = -1
+      else:
+        remap[i] = compacted.len
+        compacted.add shape
+    result.leftObstacles = compacted
+    var remappedEligible: seq[tuple[idx, col, y: int]]
+    for entry in eligible:
+      if remap[entry.idx] >= 0:
+        remappedEligible.add (remap[entry.idx], entry.col, entry.y)
+    eligible = remappedEligible
 
   ## Center feature, straddling the horizontal midline just outside the
   ## flag ring ("[" here; its symmetry image closes the right side).
@@ -2415,23 +2486,41 @@ proc generateMapAttempt*(seed: int, overrides: MapGenOverrides): CtfMap =
   block finalizeTrenches:
     let obstacles = buildArenaObstacles(result)
     var digs: seq[MapRect]
-    for trench in result.trenches:
+    if oddCenterPit:
+      ## The odd pit sits dead center, inside the always-open flag ring.
+      digs.add centerPit
+    proc addPair(
+      gameMap: CtfMap, digs: var seq[MapRect], trench: MapRect
+    ): bool =
+      ## Accepts one left-half dig plus its symmetry image when both sit
+      ## on open floor clear of every accepted dig.
       let image =
-        case result.symmetry
-        of symMirror: trench.mirrorX(result.width)
-        of symRot180: trench.rot180(result.width, result.height)
-      var blocked =
-        not rectOnOpenFloor(result, obstacles, trench) or
-        not rectOnOpenFloor(result, obstacles, image)
+        case gameMap.symmetry
+        of symMirror: trench.mirrorX(gameMap.width)
+        of symRot180: trench.rot180(gameMap.width, gameMap.height)
+      if not rectOnOpenFloor(gameMap, obstacles, trench) or
+          not rectOnOpenFloor(gameMap, obstacles, image):
+        return false
       for accepted in digs:
-        if rectsIntersect(accepted, trench) or rectsIntersect(accepted, image):
-          blocked = true
-          break
-      if blocked:
-        continue
+        if rectsIntersect(accepted, trench) or
+            rectsIntersect(accepted, image):
+          return false
       digs.add trench
       if image != trench:
         digs.add image
+      true
+    for trench in result.trenches:
+      discard result.addPair(digs, trench)
+    ## COUNT mode: pairs lost to sightline-repair walls are topped back up
+    ## from the unused candidates that cannot change the wall set (gap and
+    ## endzone spots; a late `instead` swap would dodge the repair pass).
+    if pitPairsWanted >= 0:
+      for cand in pitCandidates:
+        if digs.len >= overrides.pits:
+          break
+        if cand.kind == pitInstead:
+          continue
+        discard result.addPair(digs, trenchSquareAt(cand.x, cand.y))
     result.trenches = digs
   result.validateMap()
 
@@ -2541,7 +2630,7 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
   ""
 
 proc generateCtfMap*(
-  seed: int, overrides = MapGenOverrides(windows: -1)
+  seed: int, overrides = MapGenOverrides(windows: -1, pits: -1, pitDensity: -1)
 ): CtfMap =
   ## Generates a VALIDATED map: attempts seeds seed, seed+1, ... until one
   ## passes every validator. A locked-parameter combination that can never
@@ -2557,7 +2646,7 @@ proc generateCtfMap*(
   )
 
 proc poolCtfMap*(
-  index: int, overrides = MapGenOverrides(windows: -1)
+  index: int, overrides = MapGenOverrides(windows: -1, pits: -1, pitDensity: -1)
 ): CtfMap =
   ## One curated-pool map; the index wraps around the pool.
   let n = MapPoolSeeds.len
@@ -3637,7 +3726,7 @@ proc defaultGameConfig*(): GameConfig =
     mapPath: DefaultMapPath,
     mapSeed: -1,
     mapPoolIndex: -1,
-    mapGen: MapGenOverrides(windows: -1),
+    mapGen: MapGenOverrides(windows: -1, pits: -1, pitDensity: -1),
     mapSpec: "",
     closedRoster: false,
     slots: @[]
@@ -4001,6 +4090,8 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigString("mapSymmetry", config.mapGen.symmetry)
   node.readConfigInt("mapColumns", config.mapGen.columns)
   node.readConfigInt("mapWindows", config.mapGen.windows)
+  node.readConfigInt("mapPits", config.mapGen.pits)
+  node.readConfigInt("mapPitDensity", config.mapGen.pitDensity)
   node.readConfigString("mapCenterFeature", config.mapGen.centerFeature)
   if node.hasKey("mapSpec"):
     if node["mapSpec"].kind != JObject:
@@ -4099,6 +4190,8 @@ proc configJson*(config: GameConfig): string =
     "mapSymmetry": config.mapGen.symmetry,
     "mapColumns": config.mapGen.columns,
     "mapWindows": config.mapGen.windows,
+    "mapPits": config.mapGen.pits,
+    "mapPitDensity": config.mapGen.pitDensity,
     "mapCenterFeature": config.mapGen.centerFeature,
     "closedRoster": config.closedRoster,
     "showPlayerLabels": config.showPlayerLabels,
