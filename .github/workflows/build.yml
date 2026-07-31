@@ -19,4 +19,30 @@ jobs:
       - uses: treeform/setup-nim-action@v6
       - run: nimby sync nimby.lock -g
       - run: nim check src/ctf.nim
-      - run: nim r tests/tests.nim
+      - name: Compile test shards (release)
+        run: |
+          for i in 1 2 3 4; do
+            nim c -d:release --hints:off -o:shard_$i tests/shard_$i.nim &
+            eval "pid_$i=\$!"
+          done
+          fail=0
+          for i in 1 2 3 4; do
+            eval "wait \$pid_$i" || fail=1
+          done
+          exit $fail
+      - name: Run test shards in parallel
+        run: |
+          for i in 1 2 3 4; do
+            ./shard_$i > shard_$i.log 2>&1 &
+            eval "pid_$i=\$!"
+          done
+          fail=0
+          for i in 1 2 3 4; do
+            eval "wait \$pid_$i" || fail=1
+          done
+          for i in 1 2 3 4; do
+            echo "::group::shard $i"
+            cat shard_$i.log
+            echo "::endgroup::"
+          done
+          exit $fail
