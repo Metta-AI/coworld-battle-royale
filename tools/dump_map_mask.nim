@@ -69,6 +69,14 @@ proc rawMask*(gameMap: CtfMap): string =
   ## so gen:<seed> / pool:<idx> export without becoming the process map.
   ## Glass is a strict SUBSET of stone (a window pixel is a wall pixel), so
   ## the three classes are disjoint and the ordering below is total.
+  ##
+  ## One thing this cannot express: since GV28 the arenas' eight center
+  ## diamonds are LIVE geometry that turns with the tick. What lands here is
+  ## their frame-0 footprint, which is exactly their resting shape — correct
+  ## for tick 0 and for every 16th frame, and the right static approximation
+  ## everywhere else, but a model that needs the mid-turn silhouette has to
+  ## reconstruct it from the tick (animatedDiamondCovers). Generated maps have
+  ## no live diamonds, so their masks are exact at every tick.
   let obstacles = buildArenaObstacles(gameMap)
   result = newString(gameMap.width * gameMap.height)
   for y in 0 ..< gameMap.height:

@@ -92,12 +92,13 @@ suite "med kits":
     sim.tryFire(0)
     check not sim.players[1].alive
 
-  test "spinning center diamonds keep their static collision":
+  test "spinning center diamonds are solid at their core":
     let sim = twoTeamGame()
     check AnimatedDiamonds.len == 8
     for spot in AnimatedDiamonds:
-      # Center of every animated diamond is still a wall for movement, LOS,
-      # and bullets; the spin is drawing only.
+      # The center pixel is inside the diamond at every spin angle, so it is
+      # wall for movement, LOS, and bullets no matter where the rotation is.
+      # (The EDGES move — see tests/test_spinning_diamonds.nim.)
       check sim.isWall(spot.cx, spot.cy)
       check isAnimatedDiamondPixel(spot.cx, spot.cy)
 

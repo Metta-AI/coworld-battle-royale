@@ -26,6 +26,18 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   field**, so every approach is a series of corners. GameVersion 16 thinned
   the disc column to every other disc, opening real gaps in the mid-field
   slalom.
+- The **eight diamonds flanking the center spin**, and since **GameVersion 28
+  the spin is real geometry**: the rotating silhouette you see is the exact
+  footprint that stops your feet, your bullets, and your line of sight. A
+  quarter turn takes ~2.7s (16 frames, one every 4 ticks), the two halves turn
+  in mirrored directions, and the angle derives only from the tick — so every
+  viewer and every replay sees the same stone. The blocked lane through the
+  center therefore **opens and closes on a clock**: a vertex that covered you a
+  second ago may have swung away. A player the sweep engulfs is pushed to the
+  nearest free floor rather than trapped inside stone, and never onto another
+  body. This is a feature of the two hand-authored arenas: on procedurally
+  generated terrain (`mapPath: "pool"` / `"gen"`, including every 4-team map)
+  the center diamonds stay **baked static stone**, as they were before GV28.
 - In the outermost stub column of each half, the glass alternates in from
   both ends: the **second stub from the top, the middle stub, and the second
   from the bottom (GameVersion 27) are glass windows**: they block movement,

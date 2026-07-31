@@ -2201,9 +2201,11 @@ proc buildPaintStainSprite(
         let
           mapX = stain.x - StainSize div 2 + x div k
           mapY = stain.y - StainSize div 2 + y div k
-        # isArtWall, not isWall: the collision mask counts the rotating
-        # diamonds as wall while the art bakes them as floor, so masking
-        # against collision painted the floor under every diamond.
+        # isArtWall, not isWall: since GV28 the collision mask carries the
+        # diamonds' LIVE rotated footprint, so masking a terrain stain against
+        # it would make the stain flicker with the spin. Terrain stains belong
+        # to the static art; paint that lands on a diamond is stored on the
+        # diamond instead (addPaintStain) so it turns with the stone.
         if sim.isArtWall(mapX, mapY) != stain.onWall:
           continue
       result.putRawRgbaPixel(y * outSize + x, paintR, paintG, paintB, alpha)
@@ -4059,15 +4061,15 @@ proc addRotatingDiamonds(
   ## Draws the center diamonds as slowly spinning carved-stone sprites over
   ## the floor the art bake left under them. Map geometry is always visible
   ## (never fog-gated), and the halves spin in mirrored directions. The spin
-  ## angle derives from tickCount, so replays and every viewer agree; the
-  ## collision masks still hold the static diamond — decoration only.
+  ## angle derives from tickCount, so replays and every viewer agree — and
+  ## since GV28 the sim stamps THIS frame's silhouette into the collision,
+  ## bullet, and vision masks (applyDiamondGeometry), so the shape drawn here
+  ## is the shape that blocks. Both sides call diamondSpinFrame; there is no
+  ## second copy of the angle math to drift.
   for i in 0 ..< AnimatedDiamonds.len:
     let
       spot = AnimatedDiamonds[i]
-      dir = if spot.cx < MapWidth div 2: 1 else: -1
-      step = sim.tickCount div DiamondSpinTicksPerFrame
-      frame = ((step * dir) mod DiamondSpinFrames + DiamondSpinFrames) mod
-        DiamondSpinFrames
+      frame = diamondSpinFrame(spot.cx, sim.tickCount)
       (size, pixels) = rotatingDiamondPixels(spot.radius, frame, boardScale)
     # A diamond that has been shot carries its paint baked into the stone, so
     # the marks turn with it and stay clipped to its silhouette. Only the frame
