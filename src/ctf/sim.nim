@@ -281,7 +281,13 @@ const
                               ## full-range lob hung airborne ~41 ticks.)
   GrenadeBlastRadius* = 52    ## everyone inside the blast takes damage
                               ## (GameVersion 17: 40 -> 52, +30%).
-  GrenadeDamage* = 2          ## hit points removed by one blast.
+  GrenadeDamage* = 2          ## hit points removed by one blast, for a
+                              ## victim standing outside any trench.
+  GrenadeTrenchDamage* = 6    ## a blast that lands in the SAME trench as its
+                              ## victim: the pit traps the blast, amplifying it.
+  GrenadeTrenchSplashDamage* = 1  ## a victim in a trench, hit by a blast that
+                              ## landed elsewhere (open field or another
+                              ## trench): the pit mostly shields them.
   BlastFxTicks* = 12          ## cosmetic blast flash duration in ticks.
 
   MedKitPickupRange* = 12     ## touch radius to pick a med kit up.
@@ -871,6 +877,9 @@ type
     tick*: int
     color*: uint8              ## the thrower's paint color, so the landing
                                ## splat reads as that team's paint-bomb.
+    trenchLanding*: bool       ## true when the blast landed inside a trench:
+                               ## the flash renders truncated to the pit's
+                               ## footprint instead of the open-field size.
 
   PlasmaArcFx* = object
     ## A cosmetic spray-cone paint flash; never enters gameHash (replay-safe).
@@ -885,7 +894,8 @@ type
     ## (replay-safe). Makes each of the 3 health bars visibly tick down.
     x*, y*: int                ## where the hit landed (player center at hit).
     tick*: int                 ## when the hit landed.
-    amount*: int               ## hit points lost (1 for a shot, GrenadeDamage).
+    amount*: int               ## hit points lost (1 for a shot; a grenade
+                               ## varies by trench, see explodeGrenade).
     color*: uint8              ## the victim's team color, so it reads as their loss.
     kill*: bool                ## a fatal hit: drawn as a "KO" kill marker that
                                ## lives KillFxTicks instead of the "-N" number.
@@ -8069,7 +8079,10 @@ proc applyGrenadeInput(
 proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
   ## Applies one landing: a cosmetic blast flash (which views also use for
   ## the audible landing's sound ring) plus blast damage to EVERYONE inside
-  ## the radius — teammates and the thrower included.
+  ## the radius — teammates and the thrower included. A trench changes the
+  ## damage, not the radius: GrenadeTrenchDamage for a victim sharing the
+  ## landing trench, GrenadeTrenchSplashDamage for a victim in any other
+  ## trench, GrenadeDamage for anyone in the open.
   # Color the splat by the thrower's TEAM (not their individual slot color), so
   # a landing reads as that team's paint-bomb — and the sprite id stays within
   # the two team-color slots, never colliding with the tracer pool.
@@ -8078,13 +8091,17 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
     throwerSlot = sim.grenadeThrowerSlot(grenade)
     throwerIndex = sim.playerIndexForSlot(throwerSlot)
     throwerColor = teamColor(sim.teamForSlot(throwerSlot))
+    landingTrench = trenchIndexAt(grenade.tx, grenade.ty)
   sim.recentBlasts.add BlastFx(
-    x: grenade.tx, y: grenade.ty, tick: sim.tickCount, color: throwerColor
+    x: grenade.tx, y: grenade.ty, tick: sim.tickCount, color: throwerColor,
+    trenchLanding: landingTrench >= 0
   )
   # A paint bomb repaints the ground it lands on permanently: a cluster of
   # dried stains across the blast footprint, so a contested chokepoint that
   # eats grenades ends the match visibly coated. Offsets are fixed (and each
   # stain re-hashes its own site) so a replay rebuilds the identical cluster.
+  # A trench-trapped blast keeps its stains inside the pit: offsets that
+  # would land outside the landing trench's own square are simply skipped.
   const stainRing = [(0, 0), (-26, -14), (24, -20), (30, 12),
                      (-18, 24), (6, 32), (-32, 4), (14, -32)]
   for (ox, oy) in stainRing:
@@ -8092,6 +8109,8 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       bx = grenade.tx + ox
       by = grenade.ty + oy
     if bx < 0 or by < 0 or bx >= MapWidth or by >= MapHeight:
+      continue
+    if landingTrench >= 0 and not inRect(bx, by, ArenaTrenches[landingTrench]):
       continue
     sim.addPaintStain(bx, by, throwerColor)
   sim.logGameEvent("grenade landed")
@@ -8107,27 +8126,37 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       py = sim.players[i].y + CollisionH div 2
     if distSq(px, py, grenade.tx, grenade.ty) > radiusSq:
       continue
-    let blocked = sim.absorbDamage(i, GrenadeDamage)
+    # A trench traps or shields a blast: a victim caught in the SAME trench
+    # the grenade landed in takes amplified damage (nowhere to duck), a
+    # victim in any OTHER trench takes reduced splash, and a victim outside
+    # every trench takes the ordinary open-field amount.
+    let
+      victimTrench = trenchIndexAt(px, py)
+      dmg =
+        if victimTrench < 0: GrenadeDamage
+        elif victimTrench == landingTrench: GrenadeTrenchDamage
+        else: GrenadeTrenchSplashDamage
+      blocked = sim.absorbDamage(i, dmg)
     # A paint-bomb blast marks everyone caught in it — stamp so the EYES-PiP
     # visor splat fires for this paint hit (gun/grenade; spray stamps its own).
     sim.players[i].paintHitTick = sim.tickCount
     sim.emitEvent(
       Damage, source = throwerIndex, target = i, weapon = "grenade",
-      amount = GrenadeDamage, hp = max(0, sim.players[i].hp),
+      amount = dmg, hp = max(0, sim.players[i].hp),
       blocked = blocked,
       x = float(px), y = float(py), sourceSlot = throwerSlot
     )
     if sim.collectEvents:
       damages.add sim.eventDamage(
         i,
-        GrenadeDamage,
+        dmg,
         max(0, sim.players[i].hp),
         blocked
       )
     # Floating damage number for the blast's HP loss (cosmetic, not in gameHash).
     sim.damagePops.add DamageFx(
       x: px, y: py, tick: sim.tickCount,
-      amount: GrenadeDamage, color: sim.players[i].color
+      amount: dmg, color: sim.players[i].color
     )
     if sim.players[i].hp <= 0:
       sim.killPlayer(i, throwerIndex, throwerSlot)
@@ -8144,7 +8173,7 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
           sim.recordTeamKill(throwerIndex, i)
         sim.emitEvent(
           Kill, source = throwerIndex, target = i, weapon = "grenade",
-          amount = GrenadeDamage, x = float(px), y = float(py),
+          amount = dmg, x = float(px), y = float(py),
           sourceSlot = throwerSlot
         )
         if throwerIndex >= 0 and throwerIndex != i:

@@ -335,10 +335,11 @@ What that means in practice:
   faster. A grenade is a snap weapon: the reaction window is the same as
   eating two aimed shots, not a mortar shell you can stroll away from.
 - **The blast hurts everyone inside its radius (~52 px): enemies, teammates,
-  and the thrower alike**, removing 2 hit points each. The landing splat and
-  the charge-time throw-target ring are drawn at the TRUE blast diameter —
-  what looks painted is exactly what got hit, and everything inside the ring
-  will be. Kills credit the thrower (except suicides).
+  and the thrower alike**, removing 2 hit points each — **unless a trench is
+  involved, which changes the amount**; see the Trenches section. The landing
+  splat and the charge-time throw-target ring are drawn at the TRUE blast
+  diameter — what looks painted is exactly what got hit, and everything
+  inside the ring will be. Kills credit the thrower (except suicides).
 - **Throwing is silent; landing is loud.** A landing you could not see
   leaves a large jittered sound ring (label `grenade sound`) — landing-only
   audio, exactly like gunshot impact rings. The throw itself leaves nothing.
@@ -481,8 +482,20 @@ What that means in practice:
 - **Shots fired from inside the same trench are never ducked** — the
   protection is against fire from outside; two players inside the same
   trench duel normally.
-- The fly-over protection applies to **gun shots only**. Grenade blasts,
-  spray cones, and every other damage source are unaffected by the trench.
+- The fly-over protection applies to **gun shots only**. Spray cones deal
+  their ordinary damage regardless of trenches on either side.
+- **A grenade blast's damage depends on the trench it lands in, not the
+  trench radius.** A blast that lands in the SAME trench as a victim traps
+  them below grade with nowhere to duck: **6 hit points**, GrenadeTrenchDamage
+  — three times the open-field amount, and lethal to a bare cog through a
+  6 hp shield in one blast. A victim standing in ANY OTHER trench — the
+  blast landed in the open or in a different pit — is mostly shielded by
+  their own pit's lip: **1 hit point**, GrenadeTrenchSplashDamage. Anyone
+  outside every trench takes the ordinary GrenadeDamage (2) exactly as
+  before. The landing splat and blast-flash animation are truncated to the
+  trench's own 56×56 footprint when the blast is trapped in one, instead of
+  spilling out to the full open-field blast size — what you see burning is
+  what's amplified.
 - Occupants are still subject to normal fog-of-war visibility — the trench
   itself grants no concealment.
 
