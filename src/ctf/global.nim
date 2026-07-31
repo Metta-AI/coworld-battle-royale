@@ -232,11 +232,12 @@ const
   PaintBombCarryObjectBase = 19360   ## carried markers: one per player.
   ThrowTargetObjectBase = 19400      ## charge rings: one per player.
   BlastObjectBase = 19440            ## blast flashes: one per recent blast.
-  ShoutSpriteBase = 22000      ## speech-bubble sprites: one per live shout
-                               ## (content-keyed, so unique per shout, clear
-                               ## of the fog runs at 21000 and map markers at
-                               ## 20000).
-  ShoutObjectBase = 19480      ## speech-bubble object pool: one per live shout.
+  ShoutSpriteBase = 22000      ## speech-bubble sprites: one per live shout,
+                               ## keyed by the viewer's shoutSlots table (see
+                               ## addShouts), clear of the fog runs at 21000
+                               ## and map markers at 20000.
+  ShoutObjectBase = 19480      ## speech-bubble object pool: one per live shout,
+                               ## same slot key as the sprite.
   ShoutMaxCount = 16           ## most bubbles drawn at once (one per player).
   ShoutBubbleZ = 30003         ## just above the name label (30002), so a shout
                                ## reads over the crowd but under the HUD text.
@@ -539,6 +540,10 @@ type
                                  ## emitted once each (addPaintStains), so this
                                  ## is the incremental cursor into
                                  ## sim.paintStains — never a re-send.
+    shoutSlots*: array[ShoutMaxCount, string]  ## slot → owning shouter address
+                                 ## ("" = free), so a bubble keeps one wire
+                                 ## sprite/object id for its whole life however
+                                 ## sim.recentShouts reshuffles; see addShouts.
     spriteDefs: seq[SpriteDefinition]
 
   PlayerViewerState* = ref object
@@ -546,6 +551,8 @@ type
     objectIds*: seq[int]
     pendingDebugSprites*: seq[seq[uint8]]
     debugSpriteLimitWarned*: bool
+    shoutSlots*: array[ShoutMaxCount, string]  ## slot → owning shouter address
+                                 ## ("" = free); see GlobalViewerState.shoutSlots.
     spriteDefs: seq[SpriteDefinition]
 
   ProtocolTextItem = ref object
@@ -4584,6 +4591,7 @@ proc addShouts(
   spriteDefs: var seq[SpriteDefinition],
   currentIds: var seq[int],
   packet: var seq[uint8],
+  shoutSlots: var array[ShoutMaxCount, string],
   viewerIndex = -1
 ) {.measure.} =
   ## Places live shout speech bubbles. The map/broadcast view passes no viewer
@@ -4597,8 +4605,30 @@ proc addShouts(
   ## policy's name. See `shoutIdentityName`. The broadcast view is anonymized
   ## too — a human watching still gets the address from the `name` label over
   ## the shouter's head, so nothing is lost by keeping one label shape.
-  for i in 0 ..< min(sim.recentShouts.len, ShoutMaxCount):
-    let shout = sim.recentShouts[i]
+  ##
+  ## Sprite and object ids come from `shoutSlots`, the viewer's persistent
+  ## address→slot table, NOT from the shout's position in `recentShouts`. That
+  ## array reshuffles almost every tick in a busy match — a re-shout removes
+  ## its old bubble mid-array and appends the new one, an expiry compacts the
+  ## front — and ids keyed on the array index handed every bubble behind the
+  ## churn point a different wire identity each frame, which the client
+  ## rendered as bubbles teleporting and flashing each other's text. A slot is
+  ## claimed when an address's bubble is first drawn and freed only when that
+  ## address no longer has a live shout ANYWHERE in the sim — not merely out
+  ## of this viewer's earshot — so a bubble heard again keeps its ids, and a
+  ## re-shout replaces its own bubble in place: same slot, new label.
+  for slot in 0 ..< ShoutMaxCount:
+    if shoutSlots[slot].len == 0:
+      continue
+    var live = false
+    for shout in sim.recentShouts:
+      if shout.address == shoutSlots[slot]:
+        live = true
+        break
+    if not live:
+      shoutSlots[slot] = ""
+
+  for shout in sim.recentShouts:
     var
       anchorX = shout.x        # tail-tip x (bubble is centered on it)
       tailTipY = shout.y - ShoutFloat
@@ -4618,10 +4648,26 @@ proc addShouts(
             tailTipY = player.overheadAnchorY() - OverheadYOffset -
               HpBarH - TextLineHeight - 2
           break
+    var slot = -1
+    for s in 0 ..< ShoutMaxCount:
+      if shoutSlots[s] == shout.address:
+        slot = s
+        break
+    if slot < 0:
+      for s in 0 ..< ShoutMaxCount:
+        if shoutSlots[s].len == 0:
+          shoutSlots[s] = shout.address
+          slot = s
+          break
+    if slot < 0:
+      # Every slot is owned by another live bubble — only possible when churn
+      # pushes distinct shouting addresses past ShoutMaxCount. Drop the
+      # overflow shout, like the old first-ShoutMaxCount cap did.
+      continue
     let
       bubble = sim.buildShoutBubble(shout.team, shout.text)
-      spriteId = ShoutSpriteBase + i
-      objectId = ShoutObjectBase + i
+      spriteId = ShoutSpriteBase + slot
+      objectId = ShoutObjectBase + slot
     packet.addBoardSpriteChanged(
       spriteDefs,
       spriteId,
@@ -5138,6 +5184,7 @@ proc buildSpriteProtocolPlayerUpdates*(
       nextState.spriteDefs,
       currentIds,
       result,
+      nextState.shoutSlots,
       viewerIndex = playerIndex
     )
     if not viewerIsGhost:
@@ -5872,7 +5919,7 @@ proc buildSpriteProtocolUpdates*(
   sim.addGrenades(nextState.spriteDefs, currentIds, result)
   sim.addPlasmaArcs(nextState.spriteDefs, currentIds, result)
   sim.addPlasmaArcFlashes(nextState.spriteDefs, currentIds, result)
-  sim.addShouts(nextState.spriteDefs, currentIds, result)
+  sim.addShouts(nextState.spriteDefs, currentIds, result, nextState.shoutSlots)
   sim.addAimIndicators(nextState.spriteDefs, currentIds, result)
   sim.addHpPips(nextState.spriteDefs, currentIds, result)
   sim.addIdentityBadges(nextState.spriteDefs, currentIds, result)

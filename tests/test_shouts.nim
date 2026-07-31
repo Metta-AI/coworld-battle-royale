@@ -1,5 +1,5 @@
 import
-  std/[algorithm, os, sequtils, strutils, unittest],
+  std/[algorithm, os, sequtils, strutils, tables, unittest],
   bitworld/spriteprotocol,
   ctf/[global, labels, sim]
 
@@ -258,3 +258,123 @@ suite "shout labels name a slot letter, never the shouter's address":
     let heard = sim.shoutLabels(viewerIndex = 0)
     check heard == @[labelShout("red", IdentityNameUnknown, "H2")]
     check not heard.anyIt("policy" in it)
+
+suite "shout bubbles keep their wire ids while other shouts churn":
+  # The replay client tracks board objects by id across frames, so a bubble
+  # whose object id changes mid-life reads as a teleport, and an id that jumps
+  # to a DIFFERENT shout reads as the text flashing. recentShouts reshuffles on
+  # every re-shout (remove mid-array + append) and every expiry (front
+  # compaction), so ids keyed on the array index — the old scheme — swapped
+  # almost every second of a talkative match. These tests pin the fix: a
+  # bubble's (object id, sprite id) pair is claimed when it first draws and
+  # holds until its shout dies, whatever the rest of the roster says.
+
+  proc namedGame(seats: int): SimServer =
+    result = initCtfForTest(defaultGameConfig())
+    for i in 0 ..< seats:
+      discard result.addPlayer("policy" & $i)
+    result.startGame()
+
+  proc boardShoutIds(
+    sim: var SimServer,
+    state: var GlobalViewerState,
+    spriteLabels: var Table[int, string]
+  ): Table[string, (int, int)] =
+    ## text → (objectId, spriteId) for every shout bubble the board stream
+    ## places this frame. Carries the viewer state between calls — slot
+    ## persistence across frames is the thing under test — and accumulates
+    ## sprite labels because an unchanged sprite def is not re-sent.
+    let previousDir = getCurrentDir()
+    setCurrentDir(GameDir)
+    var packet: seq[uint8]
+    try:
+      var nextState: GlobalViewerState
+      packet = sim.buildSpriteProtocolUpdates(state, nextState)
+      state = nextState
+    finally:
+      setCurrentDir(previousDir)
+    var objects: seq[SpritePacketObject]
+    for message in packet.parseSpritePacket():
+      case message.kind
+      of spkSprite:
+        spriteLabels[message.sprite.id] = message.sprite.label
+      of spkObject:
+        objects.add message.objectDef
+      else:
+        discard
+    for obj in objects:
+      let label = spriteLabels.getOrDefault(obj.spriteId, "")
+      if " shout " in label:
+        result[label.split(": ", 1)[1]] = (obj.id, obj.spriteId)
+
+  test "a re-shout and an expiry never move another player's bubble":
+    var
+      sim = namedGame(2)
+      state = initGlobalViewerState()
+      spriteLabels = initTable[int, string]()
+    let none = newSeq[InputState](sim.players.len)
+
+    # Frame 1: player 0's bubble claims its ids.
+    check sim.applyShout(0, "one")
+    let first = sim.boardShoutIds(state, spriteLabels)
+    check first.len == 1
+    let idsA = first["one"]
+
+    # Frame 2, one cooldown later: player 1 joins the conversation. The new
+    # bubble gets its own ids; player 0's do not move.
+    for _ in 0 ..< ShoutCooldownTicks:
+      sim.step(none, none)
+    check sim.applyShout(1, "two")
+    let second = sim.boardShoutIds(state, spriteLabels)
+    check second.len == 2
+    check second["one"] == idsA
+    let idsB = second["two"]
+    check idsB != idsA
+
+    # Frame 3: player 0 re-shouts, which REPLACES its recentShouts entry
+    # (remove mid-array + append at the end). Under index-keyed ids that
+    # reordering swapped both bubbles' identities; slot-keyed, each stays put.
+    for _ in 0 ..< ShoutCooldownTicks:
+      sim.step(none, none)
+    check sim.applyShout(0, "three")
+    let third = sim.boardShoutIds(state, spriteLabels)
+    check third.len == 2
+    check third["three"] == idsA
+    check third["two"] == idsB
+
+    # Frame 4: player 1 refreshes its bubble too, so its shout now outlives
+    # player 0's.
+    for _ in 0 ..< ShoutCooldownTicks:
+      sim.step(none, none)
+    check sim.applyShout(1, "four")
+    let fourth = sim.boardShoutIds(state, spriteLabels)
+    check fourth.len == 2
+    check fourth["three"] == idsA
+    check fourth["four"] == idsB
+
+    # Frame 5: player 0's shout expires, compacting recentShouts. ("three" was
+    # made one cooldown before "four", so this lands after "three" dies and
+    # before "four" does.) Under index-keyed ids the surviving bubble slid
+    # into the dead one's identity; slot-keyed, it keeps its own.
+    for _ in 0 ..< ShoutTicks - ShoutCooldownTicks:
+      sim.step(none, none)
+    check sim.recentShouts.len == 1
+    let fifth = sim.boardShoutIds(state, spriteLabels)
+    check fifth.len == 1
+    check fifth["four"] == idsB
+
+  test "a freed slot is reusable by the next new shout":
+    var
+      sim = namedGame(2)
+      state = initGlobalViewerState()
+      spriteLabels = initTable[int, string]()
+    let none = newSeq[InputState](sim.players.len)
+    check sim.applyShout(0, "one")
+    let first = sim.boardShoutIds(state, spriteLabels)
+    for _ in 0 ..< ShoutTicks:
+      sim.step(none, none)
+    check sim.recentShouts.len == 0
+    check sim.boardShoutIds(state, spriteLabels).len == 0
+    check sim.applyShout(1, "two")
+    let next = sim.boardShoutIds(state, spriteLabels)
+    check next["two"] == first["one"]
