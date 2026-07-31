@@ -159,11 +159,19 @@ const
   MedKitRespawn = 30 * 24     # a taken kit refills after 30s (sim constant)
   MedKitSeenClear = 55.0      # inside this range an empty spot is truly
                               # empty (bubble vision), not just fogged
-  PlasmaReach = 136.0         # spray cone reach: 4 squares (sim
-                              # PlasmaArcReach)
-  PlasmaHalfBrads = 10        # cone half-angle in brads: the cone is 2
+  PlasmaReach = 187.0         # spray cone reach: 5 squares of centerline plus
+                              # the sprayed cog's own radius, because the cone
+                              # hits BODIES (sim PlasmaArcReach +
+                              # PlasmaArcBodyRadius, GameVersion 30)
+  PlasmaSlope = 0.25          # centerline cone half-width per px forward: 2
                               # squares wide at max reach, atan(1/4) ~ 14
                               # degrees (sim PlasmaArcMaxWidth / Reach)
+  PlasmaBodyRadius = 17.0     # half a cog, added to the cone's half-width at
+                              # EVERY distance (sim PlasmaArcBodyRadius). It
+                              # dominates up close: at 40px out the centerline
+                              # cone forgives 10px of miss and the body another
+                              # 17, so a point-blank spray is far harder to
+                              # whiff than the 14-degree figure suggests.
   PlasmaDetour = 70.0         # attacker detour budget for a spray can pickup
   ShieldStealDetour = 480.0   # MidGuard's shield trip: the enemy endzone
                               # shield sits low in their back column
@@ -2500,14 +2508,21 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   elif hasPlasma and engage >= 0:
     actMode = "plasma"
     # Plasma cone: ignition is INSTANT (no windup, no aim lock), reaches 4
-    # squares in a ~14-degree half-angle cone, stays on 5 ticks, and deals
-    # 3 hp (lethal to bare cogs) — press A the moment the victim is inside
-    # reach and roughly in front.
+    # squares plus a body radius, stays on 5 ticks, and deals 3 hp (lethal to
+    # bare cogs) — press A the moment the victim is inside reach and roughly
+    # in front.
     desiredAim = bradsOf(aim - me)
     let err = abs(bradsErr(desiredAim, bot.estAim))
+    # How far off-axis the cone still catches this target, as an angle: the
+    # half-width is PlasmaSlope * range + a whole body radius, so the angle
+    # the cone forgives OPENS UP as the range closes. A fixed half-angle gate
+    # throws away most of a point-blank spray's reach.
+    let plasmaHalfBrads = int(round(
+      arctan((PlasmaSlope * engageD + PlasmaBodyRadius) / max(1.0, engageD)) *
+        float(AimBrads div 2) / PI))
     # Ignite a little early on the angle: the cone stays on 5 ticks and
     # tracks our aim, so the ongoing traverse sweeps it across the target.
-    if engageD <= PlasmaReach - 6.0 and err <= PlasmaHalfBrads + 3:
+    if engageD <= PlasmaReach - 6.0 and err <= plasmaHalfBrads + 3:
       wantFire = true
       holdStill = true
     else:

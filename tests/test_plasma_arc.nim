@@ -110,16 +110,18 @@ suite "spray cans":
     game.tryFireArc(0)
     check game.players[1].alive
     game.players[0].fireCooldown = 0
-    # Forward 90px: the cone's half-width there is only 22px.
-    game.players[1].placeAtCenter(ax + 90, ay + 40)
+    # Forward 90px the cone's half-width is 22px, so a body centered 50px
+    # off-axis is clear of it even counting the cog's own 17px radius.
+    game.players[1].placeAtCenter(ax + 90, ay + 50)
     game.tryFireArc(0)
     check game.players[1].alive
     game.players[0].fireCooldown = 0
-    game.players[1].placeAtCenter(ax + PlasmaArcReach + 10, ay)
+    game.players[1].placeAtCenter(
+      ax + PlasmaArcReach + PlasmaArcBodyRadius + 10, ay)
     game.tryFireArc(0)
     check game.players[1].alive
 
-  test "the cone spans 4 squares of reach and 2 squares of width at max":
+  test "a cog whose BODY overlaps the cone is sprayed, not just its center":
     var game = twoTeamGame()
     game.players[0].hasPlasmaArc = true
     game.players[0].aimBrads = 0
@@ -127,10 +129,52 @@ suite "spray cans":
     let
       ax = game.players[0].x + CollisionW div 2
       ay = game.players[0].y + CollisionH div 2
-    check PlasmaArcReach == 4 * PlasmaArcSquare
-    check PlasmaArcMaxWidth == 2 * PlasmaArcSquare
-    # Near max reach the half-width approaches PlasmaArcMaxWidth / 2
-    # (32.5px at forward 130 of the 136px reach).
+    # 40px forward the centerline cone is only 10px wide to each side, which is
+    # narrower than the 34px cog it is painting: a body 20px off-axis is visibly
+    # engulfed even though its center point is outside the centerline cone.
+    game.players[1].placeAtCenter(ax + 40, ay + 20)
+    game.tryFireArc(0)
+    check not game.players[1].alive
+
+  test "the cone reaches one body radius past its centerline reach":
+    var game = twoTeamGame()
+    game.players[0].hasPlasmaArc = true
+    game.players[0].aimBrads = 0
+    game.players[0].placeAtCenter(ClearX, ClearY)
+    let
+      ax = game.players[0].x + CollisionW div 2
+      ay = game.players[0].y + CollisionH div 2
+    check PlasmaArcBodyRadius == SoldierBodyPx div 2
+    game.players[1].placeAtCenter(
+      ax + PlasmaArcReach + PlasmaArcBodyRadius - 2, ay)
+    game.tryFireArc(0)
+    check not game.players[1].alive
+    # ...and stops one body radius out: a cog fully clear of the cone tip is
+    # still safe.
+    game.players[0].fireCooldown = 0
+    game.players[1].respawnTimer = 0
+    game.players[1].alive = true
+    game.players[1].hp = game.config.hitPoints
+    game.players[1].placeAtCenter(
+      ax + PlasmaArcReach + PlasmaArcBodyRadius + 4, ay)
+    game.tryFireArc(0)
+    check game.players[1].alive
+
+  test "the cone spans 5 squares of reach at an unchanged 14-degree half-angle":
+    var game = twoTeamGame()
+    game.players[0].hasPlasmaArc = true
+    game.players[0].aimBrads = 0
+    game.players[0].placeAtCenter(ClearX, ClearY)
+    let
+      ax = game.players[0].x + CollisionW div 2
+      ay = game.players[0].y + CollisionH div 2
+    check PlasmaArcReach == 5 * PlasmaArcSquare
+    # The reach grew to cover the drawn plume, and the width grew with it so
+    # the half-angle did NOT: 2.5 squares across 5 squares of reach is the
+    # same atan(1/4) the 2-across-4 cone had.
+    check PlasmaArcMaxWidth * 4 == PlasmaArcReach * 2
+    # The centerline half-width is a quarter of the range (32.5px at forward
+    # 130), and a sprayed body counts out to its own radius past that: 49.5px.
     game.players[1].placeAtCenter(ax + 130, ay + 30)
     game.tryFireArc(0)
     check not game.players[1].alive
@@ -138,16 +182,17 @@ suite "spray cans":
     game.players[1].respawnTimer = 0
     game.players[1].alive = true
     game.players[1].hp = game.config.hitPoints
-    game.players[1].placeAtCenter(ax + 130, ay + 36)
+    game.players[1].placeAtCenter(ax + 130, ay + 56)
     game.tryFireArc(0)
     check game.players[1].alive
-    # Near the muzzle the cone is proportionally narrow (7.5px at 30).
+    # Near the muzzle the cone is proportionally narrow (7.5px at 30), so the
+    # body radius is most of what a point-blank spray covers: 24.5px.
     game.players[0].fireCooldown = 0
-    game.players[1].placeAtCenter(ax + 30, ay + 12)
+    game.players[1].placeAtCenter(ax + 30, ay + 30)
     game.tryFireArc(0)
     check game.players[1].alive
     game.players[0].fireCooldown = 0
-    game.players[1].placeAtCenter(ax + 30, ay + 6)
+    game.players[1].placeAtCenter(ax + 30, ay + 20)
     game.tryFireArc(0)
     check not game.players[1].alive
 
@@ -280,6 +325,28 @@ proc hasFxObject(messages: openArray[SpritePacketMessage], objectId: int): bool 
   for message in messages:
     if message.kind == spkObject and message.objectDef.id == objectId:
       return true
+
+suite "the damage cone covers the plume the game draws":
+  ## The complaint this guards against: paint visibly engulfing a cog that
+  ## takes no damage. A cog is PAINTED when the plume touches its body and
+  ## DAMAGED when its center is inside the cone — both measured against the
+  ## same 17px body radius, so the radius cancels and the comparison is the
+  ## plume's outermost pixel against the bare cone.
+
+  test "no painted pixel lands past the damage reach":
+    var farthest = 0
+    for stage in 0 ..< PlasmaArcFxStages:
+      for pulse in 0 ..< PlasmaArcFxPulses:
+        farthest = max(farthest, plasmaPulseForward(pulse, stage) +
+          plasmaPulseDiameter(pulse, stage) div 2)
+    check farthest <= PlasmaArcReach
+
+  test "the plume is sized against the FX span, not the damage reach":
+    # Otherwise growing the cone to cover the plume grows the plume too, and
+    # the overhang can never be closed.
+    check PlasmaArcFxReach == 4 * PlasmaArcSquare
+    check PlasmaArcFxMaxWidth == 2 * PlasmaArcSquare
+    check PlasmaArcReach > PlasmaArcFxReach
 
 suite "spray cone fx wall clipping":
   test "cone pulse discs stop at the first wall along the aim ray":

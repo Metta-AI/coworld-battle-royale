@@ -9,7 +9,7 @@ const
   # Fixtures are recorded against the CURRENT gameplay rules and must be
   # re-recorded on every GameVersion bump (tools/record_fixture.sh):
   #   capture-seed1:  record_fixture.sh <out> 1
-  #   wipe-lives1:    record_fixture.sh <out> 7 10000 \
+  #   wipe-lives1:    record_fixture.sh <out> 3 10000 \
   #                     '{"lives":1,"hitPoints":1,"carrierSpeedPct":1}'
   #   draw-nokill:    record_fixture.sh <out> 7 1500 \
   #                     '{"hitPoints":1000,"carrierSpeedPct":1}'
@@ -143,7 +143,7 @@ suite "broadcast state channel":
       check state["ph"].getStr == "gameover"
       check state.hasKey("over")
       # A capture win is not a draw and not a time-limit tiebreak. The winner
-      # is pinned to the current recording of the fixture (GameVersion 30,
+      # is pinned to the current recording of the fixture (GameVersion 31,
       # seed 1: Blue captures).
       check state["over"]["draw"].getBool == false
       check state["over"]["timeLimit"].getBool == false

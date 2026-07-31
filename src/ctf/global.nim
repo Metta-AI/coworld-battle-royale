@@ -203,7 +203,7 @@ const
                                  ## (stages * pulses) + stage * pulses +
                                  ## pulse: 2002..2385, clear of the replay
                                  ## UI sprites at 4002.
-  PlasmaArcFxStages = 4          ## fade stages across PlasmaArcFxTicks.
+  PlasmaArcFxStages* = 4         ## fade stages across PlasmaArcFxTicks.
   PlasmaArcFxPulses* = 6         ## puffs placed along the cone axis, sized to
                                  ## the local cone width. 6 (was 4) so the
                                  ## overlapping puffs close into a continuous
@@ -1613,7 +1613,7 @@ proc plasmaPulseForward*(pulse, stage: int): int =
   ## The forward distance of one paint-mist puff's center, in map px, measured
   ## from the sprayer's body center: the puff's slot along the fan, where the fan
   ## spans the NOZZLE out to however far this stage has jetted.
-  let tip = float(PlasmaArcReach) * sprayJetGrowth(stage)
+  let tip = float(PlasmaArcFxReach) * sprayJetGrowth(stage)
   if tip <= float(SprayNozzleFwd):
     return SprayNozzleFwd
   SprayNozzleFwd + int(round((tip - float(SprayNozzleFwd)) *
@@ -1630,14 +1630,20 @@ proc plasmaPulseRight*(pulse, stage: int): int =
   let along = float(pulse) / float(PlasmaArcFxPulses - 1)   ## 0 near .. 1 far
   int(round(float(SprayNozzleRight) * (1.0 - SprayAxisConverge * along)))
 
-proc plasmaPulseDiameter(pulse, stage: int): int =
-  ## One puff sprite's diameter: the cone's width AT that puff's current distance
-  ## (so the mist widens with the cone as it travels — geometrically honest about
-  ## the hitbox), scaled by the overlap so the plume closes up. The floor keeps a
-  ## near-nozzle puff from collapsing to a speck.
+proc plasmaPulseDiameter*(pulse, stage: int): int =
+  ## One puff sprite's diameter: the plume's width AT that puff's current
+  ## distance (so the mist widens as it travels), scaled by the overlap so the
+  ## plume closes up. The floor keeps a near-nozzle puff from collapsing to a
+  ## speck.
+  ##
+  ## Sized against the FX span, NOT the damage reach: the overlap draws each
+  ## puff wider than its slot, so a plume sized directly off the cone would
+  ## always spill outside it, and growing the cone to catch the spill would
+  ## grow the plume with it. The damage cone is set to cover this shape
+  ## instead — test_plasma_arc asserts the containment.
   let
     forward = plasmaPulseForward(pulse, stage)
-    slot = PlasmaArcMaxWidth * forward div max(1, PlasmaArcReach)
+    slot = PlasmaArcFxMaxWidth * forward div max(1, PlasmaArcFxReach)
   max(10, int(round(float(slot) * SprayPuffOverlap)))
 
 ## --- Team-colored PAINT art: always tint from teamPaintRgba ---
