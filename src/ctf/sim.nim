@@ -11,7 +11,26 @@ import map_pool
 
 const
   GameName* = "ctf"
-  GameVersion* = "29"  ## GV29 (operator rule): live spinning-diamond geometry
+  GameVersion* = "30"  ## GV30 (operator rule): SPRAYED PAINT HURTS. Two
+                       ## changes, both closing the same gap — paint visibly
+                       ## covering a cog that walked away clean.
+                       ## 1. The cone hits BODIES, not center points: a victim
+                       ## is tested as a disc of PlasmaArcBodyRadius (half a
+                       ## cog), where it used to be the bare point its 1px
+                       ## collision box describes. Largest effect point-blank,
+                       ## where the cone was narrower than the cog it covered.
+                       ## 2. The reach grew 4 -> 5 squares, with the width
+                       ## grown to match so the 14-degree half-angle did NOT
+                       ## change. The 5th square is exactly what it takes to
+                       ## cover the tip of the plume the game draws: the mist
+                       ## is a chain of round puffs drawn oversize so they
+                       ## merge, so it always reached past the cone that sized
+                       ## it. test_plasma_arc pins the containment.
+                       ## A cog can still be grazed by the plume's edge
+                       ## without damage (the overlap makes the mist ~15px
+                       ## wider than the cone); closing that too would need a
+                       ## 31-degree cone, which is a different weapon.
+                       ## GV29 (operator rule): live spinning-diamond geometry
                        ## extends to GENERATED terrain, fairly. Selection is
                        ## closed under each map's symmetry group (a cross on
                        ## rot90 maps, where a vertical band is not invariant),
@@ -259,11 +278,42 @@ const
   PlasmaArcPickupRange* = 12  ## touch radius to pick a plasma arc up.
   PlasmaArcRespawnTicks* = 30 * ReplayFps
   PlasmaArcSquare* = SoldierBodyPx  ## one "square": a cog body length.
-  PlasmaArcReach* = 4 * PlasmaArcSquare  ## forward cone reach: 4 squares.
-  PlasmaArcMaxWidth* = 2 * PlasmaArcSquare  ## cone width AT max reach:
-                              ## 2 squares. The cone widens linearly from the
-                              ## muzzle, so the half-angle is atan(1/4) ~ 14.0
-                              ## degrees everywhere along the reach.
+  PlasmaArcFxReach* = 4 * PlasmaArcSquare
+                              ## how far the DRAWN plume spans, and the span
+                              ## its puffs are sized against. This is art
+                              ## geometry, not damage: the mist is a chain of
+                              ## round puffs drawn oversize so they merge
+                              ## (SprayPuffOverlap), so its outermost pixel
+                              ## lands well past this. The damage reach below
+                              ## is set to cover that overhang — see
+                              ## test_plasma_arc's containment check, which is
+                              ## what keeps the two in step if either moves.
+  PlasmaArcFxMaxWidth* = 2 * PlasmaArcSquare
+                              ## the drawn plume's width at PlasmaArcFxReach.
+  PlasmaArcReach* = 5 * PlasmaArcSquare  ## forward cone reach: 5 squares
+                              ## (GameVersion 30, was 4). The 5th square is
+                              ## not extra range for its own sake — it is
+                              ## exactly what it takes for the damage cone to
+                              ## cover the tip of the plume the game draws, so
+                              ## a cog the paint engulfs cannot walk away
+                              ## clean.
+  PlasmaArcMaxWidth* = 5 * PlasmaArcSquare div 2  ## cone width AT max reach:
+                              ## 2.5 squares, which holds the half-angle at
+                              ## atan(1/4) ~ 14.0 degrees everywhere along the
+                              ## reach as the reach grew. The cone widens
+                              ## linearly from the muzzle.
+  PlasmaArcBodyRadius* = SoldierBodyPx div 2
+                              ## the sprayed cog's own half-width, added to the
+                              ## cone on every side (GameVersion 30). Reach and
+                              ## width above describe the cone's CENTERLINE
+                              ## geometry, and a victim used to be tested as a
+                              ## bare point (CollisionW is 1px) — so paint could
+                              ## visibly engulf a 34px body that took no damage,
+                              ## worst of all point-blank, where the centerline
+                              ## cone is narrower than the cog it covers (10px
+                              ## to each side at 40px out). Spraying a body now
+                              ## hits it: the test is the cog's DISC against the
+                              ## cone, not its center point.
   PlasmaArcDamage* = 3        ## hit points removed by one cone touch:
                               ## instantly lethal to a bare cog (3 hp), but a
                               ## shield carrier (6 hp) survives the first one.
@@ -7285,9 +7335,14 @@ proc selectArcVictims(
   sim: SimServer,
   attackerIndex: int
 ): seq[int] =
-  ## Returns every living player inside the attacker's forward spray cone,
-  ## computed from the attacker's CURRENT position and aim: a live cone
-  ## tracks its owner across the active window.
+  ## Returns every living player whose BODY overlaps the attacker's forward
+  ## spray cone, computed from the attacker's CURRENT position and aim: a live
+  ## cone tracks its owner across the active window.
+  ##
+  ## The victim is a disc of PlasmaArcBodyRadius, not the bare point its
+  ## 1px collision box would suggest, so the cone covers what the paint
+  ## visibly covers. Spraying backwards still hits nobody: the can points
+  ## forward, so a cog behind the attacker is out regardless of its body.
   if attackerIndex < 0 or attackerIndex >= sim.players.len:
     return @[]
   let
@@ -7307,9 +7362,9 @@ proc selectArcVictims(
       vy = float(sim.players[i].y + CollisionH div 2 - ay)
       forward = vx * ux + vy * uy
       perpendicular = abs(vx * uy - vy * ux)
-    if forward <= 0 or forward > reach:
+    if forward <= 0 or forward > reach + float(PlasmaArcBodyRadius):
       continue
-    if perpendicular > forward * halfWidthSlope:
+    if perpendicular > forward * halfWidthSlope + float(PlasmaArcBodyRadius):
       continue
     if not sim.lineOfSightClear(
       ax,

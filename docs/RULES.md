@@ -49,6 +49,15 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   cover ceiling against its **widest** — so a map cannot pass validation on
   a firing lane that is only blocked at rest. Two seeds in the previous
   curated pool did exactly that, and the pool was re-drawn without them.
+- **GameVersion 30 makes sprayed paint hurt.** Two changes close the same
+  gap — paint visibly covering a cog that walked away clean. First, the cone
+  hits **bodies, not center points**: a sprayed cog is tested as a **17 px
+  disc** (half its 34 px body), where it used to be the bare point its 1 px
+  collision box describes — largest effect **point-blank**, where the cone
+  was narrower than the cog it covered. Second, the **reach grew 4 → 5
+  squares**, with the width grown to match so the **14° half-angle did not
+  change**; the 5th square is exactly what it takes to cover the tip of the
+  plume the game draws. See the Spray can section for the shape.
 - In the outermost stub column of each half, the glass alternates in from
   both ends: the **second stub from the top, the middle stub, and the second
   from the bottom (GameVersion 27) are glass windows**: they block movement,
@@ -336,11 +345,26 @@ What that means in practice:
 - **Each player carries at most one spray can**, independently of their
   grenade. Dying loses the carried can; nothing drops.
 - While carrying a spray can, **A sprays a forward paint cone instead of
-  firing the gun**. The cone reaches **4 squares** in front of the player
-  (136 px — one square is one 34 px cog body) and widens linearly to
-  **2 squares (68 px) at max reach**, a constant half-angle of
+  firing the gun**. The cone reaches **5 squares** in front of the player
+  (170 px — one square is one 34 px cog body) and widens linearly to
+  **2.5 squares (85 px) at max reach**, a constant half-angle of
   atan(1/4) ≈ 14°. The gun is disabled while the can is held; C still
   throws a carried grenade normally.
+- **The cone hits bodies, not center points** (GameVersion 30). Those reach
+  and width figures describe the cone's **centerline**; a cog is tested as a
+  **17 px disc** (half a 34 px body) against it, so paint that visibly
+  engulfs a cog takes its hit points. In effect the cone covers **187 px**
+  forward and **17 px extra to each side at every distance** — which matters
+  most **point-blank**, where the centerline cone is narrower than the cog it
+  covers (±10 px at 40 px out, against a ±17 px body). Spraying **backwards**
+  still hits nobody: the can points forward, so a cog behind the sprayer is
+  out regardless of its body.
+- **What the mist draws is not exactly what the cone covers.** The plume is a
+  chain of round puffs drawn oversize so they merge into one jet, so it spills
+  past the shape that sizes it. The reach is set to swallow that spill
+  lengthwise — nothing the paint **engulfs** survives — but the mist still
+  runs about **15 px wider** than the cone, so a cog can catch paint on its
+  **edge** without taking damage. Closing that too would need a 31° cone.
 - **The cone stays on for 5 ticks**, tracking the attacker's position and
   aim across the window, then the can takes **20 ticks to repressurize**
   (one burst every 25 ticks). The cone shuts off if its owner dies.
@@ -570,8 +594,10 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Aim turn rate (`aimTurnRate`) | 5 brads/tick | Rotation speed while B/Select is held (~7°/tick; full turn ~2.1s) |
 | Vision cone (`visionConeDeg`) | ±60° | Fog-of-war forward vision half-angle; unlimited range, walls block |
 | Vision bubble (`visionBubble`) | 90px | Omnidirectional close-range vision regardless of aim |
-| Spray cone reach (`PlasmaArcReach`) | 136px (4 squares) | Forward cone reach; one square = one 34px cog body |
-| Spray cone max width (`PlasmaArcMaxWidth`) | 68px (2 squares) | Cone width at max reach; widens linearly (half-angle atan(1/4) ≈ 14°) |
+| Spray cone reach (`PlasmaArcReach`) | 170px (5 squares) | Forward cone reach along the centerline; one square = one 34px cog body |
+| Spray cone max width (`PlasmaArcMaxWidth`) | 85px (2.5 squares) | Centerline cone width at max reach; widens linearly (half-angle atan(1/4) ≈ 14°) |
+| Drawn plume span (`PlasmaArcFxReach` / `PlasmaArcFxMaxWidth`) | 136px / 68px | Art geometry the mist puffs are placed and sized against — deliberately shorter than the cone, because the puffs are drawn oversize and spill past it |
+| Spray body radius (`PlasmaArcBodyRadius`) | 17px (half a cog) | The victim is a disc, not a point: added to the cone's reach and to its half-width at every distance |
 | Spray damage (`PlasmaArcDamage`) | 3 hp | One touch per victim per burst; lethal to a bare cog, survivable by a shield carrier |
 | Spray active window (`PlasmaArcActiveTicks`) | 5 ticks | The sprayed cone stays on, tracking its owner's position and aim |
 | Spray can reset (`PlasmaArcResetTicks`) | 20 ticks | Repressurize after the cone shuts off (one burst per 25 ticks) |

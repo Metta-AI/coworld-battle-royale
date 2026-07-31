@@ -6,10 +6,15 @@ import
 const
   GameDir = currentSourcePath.parentDir.parentDir
   # The event-substrate fixture: a full 16-bot match recorded against the
-  # CURRENT gameplay rules (GameVersion 29, seed 281, lives 9,
-  # tools/record_fixture.sh) whose kill mix exercises all three weapons
-  # (gun, grenade, spray) plus steals, returns and heals, and ends on a
-  # time-limit verdict rather than a capture.
+  # CURRENT gameplay rules (GameVersion 30, seed 205, lives 9:
+  #   record_fixture.sh tests/replays/ctf.bitreplay 205 10000 '{"lives":9}')
+  # whose kill mix exercises all three weapons (gun, grenade, spray) plus
+  # steals, returns and heals across a near-full 10000-tick match.
+  # Re-record on an IDLE machine and check the mix (tools/scan_event_seeds.sh
+  # scans seeds and reports it): a starved recording — or a seed whose match
+  # ends early — yields a short, gun-only stream that still passes every
+  # assertion here while testing much less. Grenade kills are the scarce one;
+  # expect to scan several seeds to find any.
   EventsFixture = GameDir / "tests" / "replays" / "ctf.bitreplay"
 
 suite "tier-2 event extraction (tools/extract_events)":
