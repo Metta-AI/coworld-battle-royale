@@ -4,7 +4,7 @@ import
   bitworld/client as bitworldClient, bitworld/profile, bitworld/spriteprotocol,
   bitworld/runtime,
   curly, mummy,
-  sim, global, replays, broadcast, replay_runtime
+  sim, global, replays, broadcast, replay_runtime, events
 
 when defined(posix):
   from std/posix import SHUT_RDWR, shutdown
@@ -1037,11 +1037,33 @@ proc runServerLoop*(
   appState.replayServerMode = replayLoaded
   appState.config = config
 
+  # Tier-2 event sink. Off unless the platform configured a destination, so a
+  # live server that nobody is analysing keeps paying nothing — which is the
+  # property `emitEvent`'s `collectEvents` guard exists to preserve.
+  #
+  # file:// ONLY, and it fails loudly otherwise rather than silently dropping
+  # the stream: the dispatcher writes this as a workdir path and the runner
+  # uploads the file afterwards, so an http target would mean the contract
+  # changed underneath us and the operator needs to know.
+  let eventsPath = block:
+    let uri = getEnv("COGAME_EVENTS_URI")
+    if uri.len == 0:
+      ""
+    elif uri.startsWith("file://"):
+      uri[7 .. ^1]
+    else:
+      raise newException(
+        ValueError,
+        "COGAME_EVENTS_URI must be a file:// path, got: " & uri
+      )
+
   var
     sim =
       if replayLoaded: move(initializedReplay.sim)
       else: initSimServer(config)
     lastTick = getMonoTime()
+    collectedEvents: seq[SimEvent] = @[]
+  sim.collectEvents = eventsPath.len > 0
   block:
     # Bake the supersampled spectator render caches (map, endzone fades,
     # soldier rotations) BEFORE the listener opens: a viewer's first-message
@@ -1334,6 +1356,10 @@ proc runServerLoop*(
       let rewardAccounts = sim.rewardAccounts
       inc config.seed
       sim = initSimServer(config)
+      sim.collectEvents = eventsPath.len > 0
+      # One file describes ONE match. A reset that kept the previous match's
+      # events would concatenate two games under a single episode id.
+      collectedEvents.setLen(0)
       liveOverlays = @[]
       sim.rewardAccounts = rewardAccounts
       prevInputs = @[]
@@ -1445,6 +1471,12 @@ proc runServerLoop*(
         let phaseBeforeStep = sim.phase
         stepPrevInputs.clearPressedInputMasks(stepPressedInputMasks)
         sim.step(stepInputs, stepPrevInputs)
+        if sim.collectEvents:
+          # Drained every tick, like the extractor's walk: the sink is a plain
+          # seq on the sim and would otherwise grow for the whole match.
+          for event in sim.events:
+            collectedEvents.add(event)
+          sim.events.setLen(0)
         lastStepInputs = stepInputs
         stepPrevInputs = stepInputs
         stepPressedInputMasks.resetInputMasks()
@@ -1573,6 +1605,13 @@ proc runServerLoop*(
         echo "Replay written: ", saveReplayPath,
           " (", getFileSize(saveReplayPath), " bytes)"
         runtimeConfig.writeReplay(readFile(saveReplayPath))
+      if eventsPath.len > 0:
+        # Always written when a sink is configured, even with zero events: the
+        # summary row is how a reader tells "this match had none" from "the
+        # upload never happened".
+        writeFile(eventsPath, collectedEvents.eventsJsonl(sim.tickCount))
+        echo "Events written: ", eventsPath,
+          " (", collectedEvents.len, " events, ", getFileSize(eventsPath), " bytes)"
       if runtimeConfig.resultsUri.len > 0:
         let scoresJson = sim.playerResultsJson() & "\n"
         runtimeConfig.writeResults(scoresJson)
