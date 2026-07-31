@@ -6,15 +6,22 @@ import
 const
   GameDir = currentSourcePath.parentDir.parentDir
   # The event-substrate fixture: a full 16-bot match recorded against the
-  # CURRENT gameplay rules (GameVersion 30, seed 205, lives 9:
-  #   record_fixture.sh tests/replays/ctf.bitreplay 205 10000 '{"lives":9}')
-  # whose kill mix exercises all three weapons (gun, grenade, spray) plus
-  # steals, returns and heals across a near-full 10000-tick match.
-  # Re-record on an IDLE machine and check the mix (tools/scan_event_seeds.sh
-  # scans seeds and reports it): a starved recording — or a seed whose match
-  # ends early — yields a short, gun-only stream that still passes every
-  # assertion here while testing much less. Grenade kills are the scarce one;
-  # expect to scan several seeds to find any.
+  # CURRENT gameplay rules (GameVersion 31, seed 61, lives 9:
+  #   record_fixture.sh tests/replays/ctf.bitreplay 61 10000 '{"lives":9}')
+  # — 108 kills across ALL THREE weapons (55 gun / 51 spray / 2 grenade), 11
+  # steals, 10 returns, 13 heals, ending on a capture.
+  #
+  # Two things make this fixture easy to weaken by accident, both learned the
+  # hard way:
+  # - GRENADE KILLS ARE SCARCE. A bot that finishes a target with a grenade is
+  #   rare, so most seeds carry none (GV30 scanned 281, 282, 283, 42, 99, 123,
+  #   7 without one, and shipped without the coverage). Keep a seed that has
+  #   them, and expect to scan for it — tools/scan_event_seeds.sh reports the
+  #   mix per seed.
+  # - RECORD ON AN IDLE MACHINE. A CPU-starved speed-16 server drops its bots:
+  #   the same seed gave 9771 ticks and 45/31/1 kills idle vs 4499 ticks and
+  #   25/1/0 under load. Both pass every assertion here; the starved one just
+  #   tests far less.
   EventsFixture = GameDir / "tests" / "replays" / "ctf.bitreplay"
 
 suite "tier-2 event extraction (tools/extract_events)":

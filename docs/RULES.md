@@ -36,6 +36,22 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   second ago may have swung away. A player the sweep engulfs is pushed to the
   nearest free floor rather than trapped inside stone, and never onto another
   body.
+- **GameVersion 31 makes sprayed paint hurt.** Two changes close the same
+  gap — paint visibly covering a cog that walked away clean. First, the cone
+  hits **bodies, not center points**: a sprayed cog is tested as a **17 px
+  disc** (half its 34 px body), where it used to be the bare point its 1 px
+  collision box describes — largest effect **point-blank**, where the cone
+  was narrower than the cog it covered. Second, the **reach grew 4 → 5
+  squares**, with the width grown to match so the **14° half-angle did not
+  change**; the 5th square is exactly what it takes to cover the tip of the
+  plume the game draws. See the Spray can section for the shape.
+- **GameVersion 30 puts every team's pickups on the map's own symmetry.** A
+  team's shield and spray can are Red's spots carried over by whichever
+  symmetry the terrain was built with — mirrored, rotated 180°, or turned a
+  quarter at a time on the 4-team boards. Only that image lands in equivalent
+  terrain: a mirrored copy on a rotational map sits in the rotation of Red's
+  *other* pickup, so one team's shield had cover and sightlines the other's
+  did not. See "Shields" and "Spray can".
 - **GameVersion 29 extends the live spin to generated terrain**, fairly. Which
   diamonds spin is decided by a band down the center column, and that choice
   is **closed under each map's own symmetry** — on the 90°-rotational 4-team
@@ -49,15 +65,6 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   cover ceiling against its **widest** — so a map cannot pass validation on
   a firing lane that is only blocked at rest. Two seeds in the previous
   curated pool did exactly that, and the pool was re-drawn without them.
-- **GameVersion 30 makes sprayed paint hurt.** Two changes close the same
-  gap — paint visibly covering a cog that walked away clean. First, the cone
-  hits **bodies, not center points**: a sprayed cog is tested as a **17 px
-  disc** (half its 34 px body), where it used to be the bare point its 1 px
-  collision box describes — largest effect **point-blank**, where the cone
-  was narrower than the cog it covered. Second, the **reach grew 4 → 5
-  squares**, with the width grown to match so the **14° half-angle did not
-  change**; the 5th square is exactly what it takes to cover the tip of the
-  plume the game draws. See the Spray can section for the shape.
 - In the outermost stub column of each half, the glass alternates in from
   both ends: the **second stub from the top, the middle stub, and the second
   from the bottom (GameVersion 27) are glass windows**: they block movement,
@@ -132,7 +139,12 @@ square map:
   west, Blue east, Green north, Yellow south) with an arm-mouth endzone —
   the corners are open battlefield. Both are fully open square boards whose
   terrain replicates a generated quadrant by 90-degree rotation, so all
-  four quarters are exactly fair.
+  four quarters are exactly fair: the WALL MASK a team plays against is
+  pixel-for-pixel the quarter turn of every other team's, homes included.
+  Each team's spawn pocket rotates with its home, so the north and south
+  pockets of a plus board lie on their sides relative to the east and west
+  ones — a pocket that stayed upright everywhere would be a different
+  shape than its own rotational twin.
 - **Every team has its own heart** on its own pedestal, and its own capture
   zone behind it. Steal ANY other team's heart and carry it into your own
   zone to win. Allies do not exist: 4-team play is pure free-for-all, and a
@@ -336,12 +348,17 @@ What that means in practice:
 
 ## Spray can
 
-- **Two spray can pickups spawn high in the side back columns** — one on
-  each side, in the TOP half (a quarter of the map height down, between the
-  top corner grenade and the side midpoint), nudged to the nearest walkable
-  floor. The shields hold the matching bottom-half spots. Both spray cans
-  are present when the game starts, and a taken one respawns after
-  **30 seconds**.
+- **Two spray can pickups spawn high in the side back columns** — Red's in
+  the TOP half (a quarter of the map height down, between the top corner
+  grenade and the side midpoint), nudged to the nearest walkable floor. The
+  shields hold the matching bottom-half spots. Both spray cans are present
+  when the game starts, and a taken one respawns after **30 seconds**.
+- **The other team's can is Red's spot carried over by the map's own
+  symmetry** (GameVersion 30), not simply mirrored across the midline. On a
+  180°-rotational map that puts Blue's can in the BOTTOM half, because that
+  is where the rotation sends Red's — mirror it instead and it lands in the
+  rotation of Red's *shield*, so the two teams fight for the same item in
+  differently-shaped terrain.
 - **Each player carries at most one spray can**, independently of their
   grenade. Dying loses the carried can; nothing drops.
 - While carrying a spray can, **A sprays a forward paint cone instead of
@@ -350,7 +367,7 @@ What that means in practice:
   **2.5 squares (85 px) at max reach**, a constant half-angle of
   atan(1/4) ≈ 14°. The gun is disabled while the can is held; C still
   throws a carried grenade normally.
-- **The cone hits bodies, not center points** (GameVersion 30). Those reach
+- **The cone hits bodies, not center points** (GameVersion 31). Those reach
   and width figures describe the cone's **centerline**; a cog is tested as a
   **17 px disc** (half a 34 px body) against it, so paint that visibly
   engulfs a cog takes its hit points. In effect the cone covers **187 px**
@@ -477,13 +494,19 @@ What that means in practice:
 
 ## Shields
 
-- **One shield sits deep in each team's endzone**, in the same back column
-  as the corner grenade pickups but in the BOTTOM half (three quarters of
-  the map height down, between the side midpoint and the bottom corner
-  grenade), nudged to the nearest walkable floor. The spray cans hold the
-  matching top-half spots. On a **compact endzone** (disc/square) there is
-  no back column: the shield sits inside the zone below the pedestal and
+- **One shield sits deep in each team's endzone.** Red's is in the same back
+  column as the corner grenade pickups but in the BOTTOM half (three
+  quarters of the map height down, between the side midpoint and the bottom
+  corner grenade), nudged to the nearest walkable floor. The spray cans hold
+  the matching top-half spots. On a **compact endzone** (disc/square) there
+  is no back column: the shield sits inside the zone below the pedestal and
   the spray can above it.
+- **Every other team's shield is Red's spot under the map's own symmetry**
+  (GameVersion 30) — mirrored on a mirror map, rotated on a rotational one,
+  and a quarter turn round on the 4-team boards. Only that image sits in
+  terrain equivalent to Red's; a mirrored copy on a rotational map lands in
+  the transpose (4-team) or in the spray can's terrain (2-team), which is a
+  fairness difference in cover and sightlines, not a cosmetic one.
 - **Touch a shield to pick it up** — either team may take either endzone's
   shield. A shield is a **3 hp armor layer on top of your base hit points**:
   damage depletes the shield layer first, and only then your base hp. A
@@ -757,8 +780,8 @@ This section is a build plan, not player-facing rules.
 - A **baseline bot** (Crewrift's `notsus` equivalent) speaking Sprite v1.
 - A **CTF grader** scoring episodes from wins.
 
-**Open follow-up:**
-
-- Crewrift reuses the **among_them social-deduction commissioner** for seating and
-  ranking. CTF is team-based, so it needs a **team commissioner** (fixed Red/Blue
-  seating, win/loss ranking) — to be written or adapted.
+**Resolved:** CTF needed team-based seating and win/loss ranking rather than
+Crewrift's social-deduction scheme. This is no longer a per-game concern — both
+the Ctf and Paintbot leagues run on the platform ladder service
+(`commissioner_key=platform`), which owns seating and ranking. This repo ships
+the game and baseline player only; it declares no commissioner runnable.
