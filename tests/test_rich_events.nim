@@ -1,7 +1,8 @@
 import
   std/[json, os, sequtils, unittest],
   bitworld/spriteprotocol,
-  ctf/sim,
+  # jsonRow lives in ctf/events, not in the tool that used to own it.
+  ctf/[events, sim],
   "../tools/extract_events"
 
 const GameDir = currentSourcePath.parentDir.parentDir
