@@ -29,6 +29,7 @@
 
 import
   std/[json, os, strutils],
+  ../src/ctf/events,
   ../src/ctf/replays,
   ../src/ctf/sim
 
@@ -86,55 +87,6 @@ proc replayConfig(data: ReplayData): GameConfig =
   ## Returns the game config embedded in a replay.
   result = defaultGameConfig()
   result.update(data.configJson)
-
-proc key*(kind: SimEventKind): string =
-  ## Returns the JSON event key for one tier-2 event kind.
-  case kind
-  of Shot: "shot"
-  of Hit: "hit"
-  of Damage: "damage"
-  of Kill: "kill"
-  of Death: "death"
-  of FlagSteal: "flag_steal"
-  of FlagReturn: "flag_return"
-  of Capture: "capture"
-  of Respawn: "respawn"
-  of Heal: "heal"
-  of PhaseChange: "phase"
-  of GunTrigger: "gun_trigger"
-  of ShotImpact: "shot_impact"
-  of GrenadeThrow: "grenade_throw"
-  of GrenadeImpact: "grenade_impact"
-  of SprayUse: "spray_use"
-  of Pickup: "item_pickup"
-  of ShoutEvent: "shout"
-
-proc jsonRow*(event: SimEvent): JsonNode =
-  ## Returns one JSON-lines row for a tier-2 sim event.
-  result = newJObject()
-  result["tick"] = %event.tick
-  result["kind"] = %event.kind.key()
-  result["source"] = %event.source
-  result["target"] = %event.target
-  result["weapon"] = %event.weapon
-  result["amount"] = %event.amount
-  result["hp"] = %event.hp
-  result["blocked"] = %event.blocked
-  result["x"] = %event.x
-  result["y"] = %event.y
-  result["action_id"] = %event.actionId
-  result["heading_brads"] = %event.headingBrads
-  result["distance"] = %event.distance
-  result["item"] = %event.item
-  result["content"] = %event.content
-  result["damages"] = newJArray()
-  for damage in event.damages:
-    result["damages"].add(%*{
-      "slot": damage.slot,
-      "amount": damage.amount,
-      "hp": damage.hp,
-      "blocked": damage.blocked
-    })
 
 type
   ExtractResult* = object
@@ -349,16 +301,7 @@ proc extractEventsJsonl*(
   ## summary object. Captured frames, if any, come back through `framesOut`.
   let extraction = extractEvents(data, captureFrames)
   framesOut = extraction.frames
-  var lines = newSeqOfCap[string](extraction.events.len + 1)
-  for event in extraction.events:
-    lines.add($event.jsonRow())
-  var summary = newJObject()
-  summary["type"] = %"summary"
-  summary["ticks"] = %extraction.ticks
-  summary["events"] = %extraction.events.len
-  summary["gameVersion"] = %GameVersion
-  lines.add($summary)
-  lines.join("\n") & "\n"
+  extraction.events.eventsJsonl(extraction.ticks)
 
 proc extractEventsJsonl*(data: ReplayData): string =
   ## Event-stream-only overload: the shape every existing caller uses.
