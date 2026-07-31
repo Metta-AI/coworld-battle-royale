@@ -1,7 +1,7 @@
 import
-  std/[json, os, unittest],
+  std/[json, os, strutils, unittest],
   bitworld/spriteprotocol,
-  ctf/sim, ctf/map_pool
+  ctf/[global, map_pool, sim]
 
 const GameDir = currentSourcePath.parentDir.parentDir
 
@@ -42,6 +42,50 @@ proc placeAt(game: var SimServer, playerIndex, px, py: int) =
   game.players[playerIndex].y = py - CollisionH div 2
   game.players[playerIndex].velX = 0
   game.players[playerIndex].velY = 0
+
+proc none(game: SimServer): seq[InputState] =
+  newSeq[InputState](game.players.len)
+
+proc chargeAndThrow(game: var SimServer, playerIndex, holdTicks: int) =
+  ## Holds C for holdTicks then releases, exactly like a real throw input.
+  var held = game.none()
+  held[playerIndex].c = true
+  var prev = game.none()
+  for _ in 0 ..< holdTicks:
+    game.step(held, prev)
+    prev = held
+  game.step(game.none(), prev)
+
+proc throwFullChargeEastAt(game: var SimServer, thrower, tx, ty: int) =
+  ## Places `thrower` GrenadeMaxRange west of (tx, ty) and throws a
+  ## full-charge shot due east, landing exactly on (tx, ty) — the same math
+  ## throwGrenade itself uses (see "charge picks the distance" in
+  ## test_grenades.nim), so the target is exact rather than approximate.
+  game.placeAt(thrower, tx - GrenadeMaxRange, ty)
+  game.players[thrower].aimBrads = 0
+  game.players[thrower].hasGrenade = true
+  game.chargeAndThrow(thrower, GrenadeChargeTicks)
+  check game.airborneGrenades.len == 1
+  check game.airborneGrenades[0].tx == tx
+  check game.airborneGrenades[0].ty == ty
+  let flight = game.airborneGrenades[0].flightTicks
+  let prev = game.none()
+  for _ in 0 .. flight:
+    game.step(game.none(), prev)
+  check game.airborneGrenades.len == 0
+
+proc buildGlobalMessages(
+  game: var SimServer,
+  state: var GlobalViewerState
+): seq[SpritePacketMessage] =
+  var nextState: GlobalViewerState
+  let previousDir = getCurrentDir()
+  setCurrentDir(GameDir)
+  try:
+    result = game.buildSpriteProtocolUpdates(state, nextState).parseSpritePacket()
+  finally:
+    setCurrentDir(previousDir)
+  state = nextState
 
 suite "trenches":
   test "the default arena digs no trenches":
@@ -426,3 +470,93 @@ suite "trenches":
     let rebuilt = mapFromSpecJson($node)
     check rebuilt.trenches.len == 0
     check rebuilt.leftObstacles == generated.leftObstacles
+
+  test "a blast trapped in its victim's own trench deals amplified damage":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+    sim.placeAt(1, cx, cy)
+    check sim.playerTrench(1) == 0
+    sim.players[1].hp = 20
+    sim.throwFullChargeEastAt(0, cx, cy)
+    check sim.players[1].hp == 20 - GrenadeTrenchDamage
+    check sim.recentBlasts.len == 1
+    check sim.recentBlasts[0].trenchLanding
+
+  test "a blast landing outside a trench only splashes its occupant":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+      landingX = cx - 40
+    # The landing spot itself must read as open field, and still be within
+    # blast range of the victim sitting on the trench.
+    check trenchIndexAt(landingX, cy) == -1
+    check (cx - landingX) * (cx - landingX) <= GrenadeBlastRadius * GrenadeBlastRadius
+    sim.placeAt(1, cx, cy)
+    check sim.playerTrench(1) == 0
+    sim.players[1].hp = 20
+    sim.throwFullChargeEastAt(0, landingX, cy)
+    check sim.players[1].hp == 20 - GrenadeTrenchSplashDamage
+    check sim.recentBlasts.len == 1
+    check not sim.recentBlasts[0].trenchLanding
+
+  test "a blast with no trench in play deals the ordinary open-field amount":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+      landingX = cx + 50
+    check trenchIndexAt(landingX, cy) == -1
+    sim.placeAt(1, landingX, cy)
+    check sim.playerTrench(1) == -1
+    sim.players[1].hp = 20
+    sim.throwFullChargeEastAt(0, landingX, cy)
+    check sim.players[1].hp == 20 - GrenadeDamage
+    check not sim.recentBlasts[0].trenchLanding
+
+  test "a blast's paint stains stay inside the trench that trapped it":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+      trench = ArenaTrenches[0]
+    sim.throwFullChargeEastAt(0, cx, cy)
+    check sim.paintStains.len > 0
+    for stain in sim.paintStains:
+      check stain.x >= trench.x and stain.x < trench.x + trench.w
+      check stain.y >= trench.y and stain.y < trench.y + trench.h
+
+  test "a trench-trapped blast renders a smaller flash than an open one":
+    var sim = twoTeamGame()
+    let
+      cx = sim.gameMap.center.x
+      cy = sim.gameMap.center.y
+    sim.throwFullChargeEastAt(0, cx, cy)
+    var state = initGlobalViewerState()
+    let messages = sim.buildGlobalMessages(state)
+    var sawTrenchSprite = false
+    for msg in messages:
+      if msg.kind == spkSprite and msg.sprite.label.startsWith("blast stage"):
+        # The board/spectator stream renders at RenderScale× the sim's own
+        # pixels (see RenderScale's doc comment in global.nim), so the wire
+        # sprite is TrenchSize scaled up, not TrenchSize itself.
+        check msg.sprite.width == TrenchSize * RenderScale
+        check msg.sprite.height == TrenchSize * RenderScale
+        sawTrenchSprite = true
+    check sawTrenchSprite
+
+    var sim2 = twoTeamGame()
+    let landingX = cx + 200
+    check trenchIndexAt(landingX, cy) == -1
+    sim2.throwFullChargeEastAt(0, landingX, cy)
+    var state2 = initGlobalViewerState()
+    let messages2 = sim2.buildGlobalMessages(state2)
+    var sawOpenSprite = false
+    for msg in messages2:
+      if msg.kind == spkSprite and msg.sprite.label.startsWith("blast stage"):
+        check msg.sprite.width == (GrenadeBlastRadius * 2 + 4) * RenderScale
+        check msg.sprite.height == (GrenadeBlastRadius * 2 + 4) * RenderScale
+        sawOpenSprite = true
+    check sawOpenSprite

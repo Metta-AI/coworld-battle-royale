@@ -149,6 +149,10 @@ const
                                  ## colorIndex*BlastStages+stage. Team colors
                                  ## (Red idx0, Blue idx6) → ids 844..847 and
                                  ## 868..871, clear of tracers at 900.
+  TrenchBlastSpriteBase = 848    ## the trench-truncated variant of the same
+                                 ## landing splat, same colorIndex*BlastStages+
+                                 ## stage keying → ids 848..851 and 872..875:
+                                 ## still clear of tracers at 900.
   PaintBombPickupSize = 22       ## px footprint of a corner pickup orb.
   PaintBombAirSize = 16          ## px footprint of the airborne orb.
   PaintBombCarrySize = 10        ## px footprint of the carried marker.
@@ -159,6 +163,11 @@ const
   BlastSize = GrenadeBlastRadius * 2 + 4
     ## px footprint of the landing splat: the blast diameter plus a 2px
     ## margin, so the painted burst covers the true damage circle.
+  TrenchBlastSize = TrenchSize
+    ## px footprint of a blast that landed inside a trench: capped to the
+    ## pit's own square (56px) instead of the open-field BlastSize (108px),
+    ## so the flash reads as trapped in the pit rather than spilling over
+    ## its rim.
   BlastStages = 4                ## landing-splat fade stages across BlastFxTicks.
   PaintBombPickupObjectBase = 19300  ## corner pickups: 19300..19303 (four corners).
   MedKitSpriteId = 1400          ## center med kit pickup (native size);
@@ -1704,7 +1713,7 @@ proc buildPlasmaPulseSprite(
         uint8(clamp(255.0 * fade * (0.45 + 0.55 * core), 0.0, 255.0))
       )
 
-proc buildBlastSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
+proc buildBlastSprite(colorIndex, stage, size: int): seq[uint8] {.measure.} =
   ## The grenade landing: a BIG paint splat in the THROWER's team color — a
   ## paint-bomb bursts, it doesn't flash white. Same wet-paintball language as
   ## the on-hit splat (buildHitSparkSprite) but blast-sized (~2x the blast
@@ -1712,7 +1721,10 @@ proc buildBlastSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
   ## bright wet-sheen core, and a deep same-hue contour so it pops off the dark
   ## floor. Alpha-only fade across the short blast life keeps the team color
   ## vivid (never muddies toward brown) so a landing is unmistakably one team's.
-  result = newRgbaPixels(BlastSize, BlastSize)
+  ## `size` is BlastSize for an open-field landing or TrenchBlastSize for one
+  ## trapped in a trench — every proportion below scales off it, so a trench
+  ## blast is the same shape shrunk to the pit's footprint, not a crop.
+  result = newRgbaPixels(size, size)
   let
     base = teamPaintRgba(PlayerColors[colorIndex and 0x0f])
     paintR = uint8((base.r.int * 3 + 255) div 4)
@@ -1724,8 +1736,8 @@ proc buildBlastSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
     edgeR = uint8(base.r.int * 2 div 5)
     edgeG = uint8(base.g.int * 2 div 5)
     edgeB = uint8(base.b.int * 2 div 5)
-    c = float(BlastSize - 1) / 2
-    coreR = float(BlastSize) * 0.30            # main wet blob radius
+    c = float(size - 1) / 2
+    coreR = float(size) * 0.30                 # main wet blob radius
     # Alpha-only fade: full at stage 0, thinning to a faint stain by the last.
     fade = 1.0 - 0.72 * (stage.float / float(max(1, BlastStages - 1)))
   # Ten flung droplets ring the core (fixed offsets → deterministic sprite).
@@ -1736,9 +1748,9 @@ proc buildBlastSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
                     (-22, 26, 6.5), (8, 33, 5.5), (-33, 6, 5.0),
                     (18, 30, 5.0), (-14, -30, 5.5), (31, -3, 5.0),
                     (-4, -34, 4.5)]
-  let ds = float(BlastSize) / 84.0
-  for y in 0 ..< BlastSize:
-    for x in 0 ..< BlastSize:
+  let ds = float(size) / 84.0
+  for y in 0 ..< size:
+    for x in 0 ..< size:
       let
         dx = float(x) - c
         dy = float(y) - c
@@ -1778,7 +1790,7 @@ proc buildBlastSprite(colorIndex, stage: int): seq[uint8] {.measure.} =
       else:
         (r, g, b) = (paintR, paintG, paintB)
       result.putRawRgbaPixel(
-        y * BlastSize + x, r, g, b,
+        y * size + x, r, g, b,
         uint8(clamp(255.0 * fade, 0.0, 255.0))
       )
 
@@ -4512,19 +4524,22 @@ proc addGrenades(
       let
         stage = clamp(age * BlastStages div BlastFxTicks, 0, BlastStages - 1)
         colorIndex = playerColorIndex(blast.color)
-        spriteId = BlastSpriteBase + colorIndex * BlastStages + stage
+        size = if blast.trenchLanding: TrenchBlastSize else: BlastSize
+        spriteBase =
+          if blast.trenchLanding: TrenchBlastSpriteBase else: BlastSpriteBase
+        spriteId = spriteBase + colorIndex * BlastStages + stage
       if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
         packet.addBoardSpriteChanged(
-          spriteDefs, spriteId, BlastSize, BlastSize,
-          buildBlastSprite(colorIndex, stage),
+          spriteDefs, spriteId, size, size,
+          buildBlastSprite(colorIndex, stage, size),
           "blast stage " & $stage
         )
       let objectId = BlastObjectBase + i
       currentIds.add(objectId)
       packet.addBoardObject(
         objectId,
-        blast.x - BlastSize div 2,
-        blast.y - BlastSize div 2,
+        blast.x - size div 2,
+        blast.y - size div 2,
         blast.y - 2, MapLayerId, spriteId
       )
     elif viewer >= 0:
