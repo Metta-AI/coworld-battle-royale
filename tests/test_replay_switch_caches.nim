@@ -1,18 +1,8 @@
 import
+  helpers,
   std/[os, strutils, unittest],
   bitworld/spriteprotocol,
   ctf/[global, sim]
-
-const GameDir = currentSourcePath.parentDir.parentDir
-
-proc initCtfForTest(config: GameConfig): SimServer =
-  ## Initializes the CTF sim from the game directory (so data/ resolves).
-  let previousDir = getCurrentDir()
-  setCurrentDir(GameDir)
-  try:
-    result = initSimServer(config)
-  finally:
-    setCurrentDir(previousDir)
 
 proc startedGame(configJson: string): SimServer =
   ## A started two-player game over the map the config JSON selects.
@@ -66,7 +56,10 @@ suite "replay switch render caches":
 # The suite above installs a pool map as THE process map (selectCtfMap runs
 # inside initSimServer) and leaves the render caches repopulated from it.
 # Both are process-wide, so any board-state module that runs after this one
-# in the same shard binary would see the pool map instead of the default
-# arena. Restore the default and drop the map-derived caches.
+# in the same binary would see the pool map instead of the default arena —
+# tests.nim runs ALL shards in one process (unlike CI's four), and
+# test_shouts/test_shield_bubble crashed with an IndexDefect exactly that
+# way when this module ran before them. Restore the default and drop the
+# map-derived caches.
 discard loadCtfMap()
 invalidateBoardMapCaches()
