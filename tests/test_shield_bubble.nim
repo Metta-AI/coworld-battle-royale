@@ -5,8 +5,8 @@ import
   ctf/[global, sim]
 
 const
-  ShieldBubbleObjectBase = 19680
-  ShieldCarryObjectBase = 19620
+  ShieldBubbleObjectBase = 19940  ## mirrors global.nim (private there).
+  ShieldCarryObjectBase = 19900   ## mirrors global.nim (private there).
 
 proc objectSpriteId(
   messages: openArray[SpritePacketMessage],
