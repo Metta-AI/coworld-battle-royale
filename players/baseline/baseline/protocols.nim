@@ -150,6 +150,13 @@ proc readyBlob*(): string =
   result = newString(1)
   result[0] = char(0x85)
 
+proc spritesOffBlob*(): string =
+  ## Builds one sprite sprites-off packet (0x87): this bot consumes state
+  ## and labels only, never pixels. Declared here like readyBlob so the
+  ## pinned bitworld needn't carry it.
+  result = newString(1)
+  result[0] = char(0x87)
+
 proc unpack4bpp*(
   packed: openArray[uint8],
   unpacked: var seq[uint8]
@@ -329,8 +336,13 @@ proc applySpritePacket(
       of spkSprite:
         let sprite = message.sprite
         let
-          shouldDecodeWalkability = sprite.label == "walkability map"
-          shouldDecodePixels = decodePixels
+          # A zero-length payload is a Sprites Off pixel-free definition:
+          # keep the metadata, skip pixel decoding, and keep waiting for a
+          # full payload if this sprite's pixels are ever actually needed.
+          pixelFree = sprite.compressedPixels.len == 0
+          shouldDecodeWalkability =
+            sprite.label == "walkability map" and not pixelFree
+          shouldDecodePixels = decodePixels and not pixelFree
         var
           compressed = ""
           pixels: seq[uint8]
