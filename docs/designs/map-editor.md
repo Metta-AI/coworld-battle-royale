@@ -202,12 +202,19 @@ The single hot path: one call per (debounced) edit.
     "coverPermilleMin": 40,        // the validator's bounds, so the client can
     "coverPermilleMax": 170,       // show "88 (valid 40-170)" without hardcoding
     "openSightlineRows": [412, 416, 420],
+    // the x band the scan covers; a wider rule would overclaim
+    "sightlineXRange": {"xLo": 215, "xHi": 1020},
     "unreachableTeams": ["blue"],
     "centerReachable": true,
-    "endzoneGates": [{"name": "behind", "state": "sealed"}]
+    // these three are otherwise recoverable only by parsing `reason` prose
+    "redHomeOnOpenFloor": true,
+    "endzoneFlankChecked": true,
+    "rearGateReachesCenterWithoutEndzone": true,
+    "endzoneGates": [{"name": "behind", "state": "sealed", "x": 41, "y": 329}]
   },
   "derived": {
     "teamCount": 2,
+    "center": {"x": 617, "y": 329},
     "seedRegion": {"x": 0, "y": 0, "w": 617, "h": 659},
     "anchors":   [{"team": "red", "x": 185, "y": 329}],
     // Full CaptureZone fields: a `diag` corner zone or a `disc` compact zone
@@ -469,10 +476,14 @@ selection, and have both the pool renderer and the editor call it.
   panel rather than a place on the board.
 
   - **Anchor each failure to the board.** `open horizontal sightline at y=412`
-    should be selectable and draw a rule at y=412; an unreachable team should
-    shade the region that cannot be reached. The diagnostics already carry every
-    open row and the reachability mask, and drawing a rule at a server-supplied
-    `y` is annotation, not geometry, so this stays inside the architecture rule.
+    should be selectable and draw a rule at y=412, bounded to
+    `validation.sightlineXRange` — a full-width rule would claim the validator
+    checked ground it never looked at. An unreachable team is located by its
+    `derived.anchors` entry; the browser must **not** shade the unreachable
+    region, because the reachability mask is deliberately retained server-side
+    and the composited `reachability` overlay stays the full picture. Drawing a
+    rule at a server-supplied `y` is annotation, not geometry, so this stays
+    inside the architecture rule; deriving *which* rows are open would not.
   - **Editing ergonomics.** Arrow-key nudge (1 px, 10 px with Shift) and optional
     grid snapping, for authoring at exact integer coordinates.
   - **A legend** for the diagnostic overlays, which currently rely on the reader

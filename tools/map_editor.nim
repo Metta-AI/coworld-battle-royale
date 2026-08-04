@@ -223,7 +223,11 @@ proc parseRenderOptions(node: JsonNode): MapRenderOptions =
     else:
       raiseRequestError("Unknown render overlay: " & item.getStr() & ".")
 
-proc diagnosticsNode(diagnostics: MapDiagnostics): JsonNode =
+proc diagnosticsNode(gameMap: CtfMap, diagnostics: MapDiagnostics): JsonNode =
+  ## Every positional detail the validator knows travels with the verdict, so a
+  ## client can point at a failure without deriving geometry or scraping the
+  ## reason prose. Gate points and the two flank booleans already exist in
+  ## MapDiagnostics; dropping them here only made the UI less truthful.
   var gates = newJArray()
   for gate in diagnostics.endzoneGates:
     gates.add %*{
@@ -234,6 +238,8 @@ proc diagnosticsNode(diagnostics: MapDiagnostics): JsonNode =
         of gateOffMap: "offMap"
         of gateSealed: "sealed"
       ),
+      "x": gate.point.x,
+      "y": gate.point.y,
     }
   let reason = mapValidationReason(diagnostics)
   %*{
@@ -244,8 +250,18 @@ proc diagnosticsNode(diagnostics: MapDiagnostics): JsonNode =
     "coverPermilleMin": CoverPermilleMin,
     "coverPermilleMax": CoverPermilleMax,
     "openSightlineRows": diagnostics.openSightlineRows,
+    # The x band the sightline scan actually covers. A rule drawn across the
+    # full width would claim the validator checked ground it never looked at.
+    "sightlineXRange": {
+      "xLo": gameMap.sightlineLoX(),
+      "xHi": gameMap.sightlineHiX(),
+    },
     "unreachableTeams": teamNamesNode(diagnostics.unreachableTeams),
     "centerReachable": diagnostics.centerReachable,
+    "redHomeOnOpenFloor": diagnostics.redHomeOnOpenFloor,
+    "endzoneFlankChecked": diagnostics.endzoneFlankChecked,
+    "rearGateReachesCenterWithoutEndzone":
+      diagnostics.rearGateReachesCenterWithoutEndzone,
     "endzoneGates": gates,
   }
 
@@ -299,6 +315,9 @@ proc derivedNode(gameMap: CtfMap): JsonNode =
     }
   %*{
     "teamCount": gameMap.teamCount(),
+    # Trivially derivable from the dimensions, but returning it keeps the
+    # client out of the business of knowing how a map's centre is defined.
+    "center": {"x": gameMap.center.x, "y": gameMap.center.y},
     "seedRegion": {
       "x": seedRegion.x,
       "y": seedRegion.y,
@@ -341,7 +360,7 @@ proc mapResponseNode(body: string): JsonNode =
     "ok": true,
     "png": encode(png),
     "renderScale": rendered.renderScale,
-    "validation": diagnosticsNode(diagnostics),
+    "validation": diagnosticsNode(gameMap, diagnostics),
     "derived": derivedNode(gameMap),
   }
 
