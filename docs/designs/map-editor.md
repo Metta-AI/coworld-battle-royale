@@ -4,9 +4,10 @@ A visual editor for CTF / Paintbot maps that reads and writes the existing
 `mapSpec` JSON format, with the Nim sim as the single source of truth for all
 geometry, derivation, and validation.
 
-Status: **Phase 1 (inspector) implemented**; Phase 2 (editing) and Phase 3
-(diagnostics polish) are still proposals. See Rollout at the end for what each
-phase covers and what Phase 2 is blocked on.
+Status: **Phase 1 (inspector) implemented.** Phase 2 (editing) is in progress —
+its Nim half (`symmetryImages` + `POST /api/symmetry`) has landed, unblocking
+trench and med-kit authoring; the editing UI is still being built. Phase 3
+(diagnostics polish) remains a proposal. See Rollout at the end.
 
 ## Problem
 

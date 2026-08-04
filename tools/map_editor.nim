@@ -88,6 +88,14 @@ proc mapPointsNode(points: openArray[MapPoint]): JsonNode =
   for point in points:
     result.add pointNode(point.x, point.y)
 
+proc rectNode(rect: MapRect): JsonNode =
+  %*[rect.x, rect.y, rect.w, rect.h]
+
+proc mapRectsNode(rects: openArray[MapRect]): JsonNode =
+  result = newJArray()
+  for rect in rects:
+    result.add rect.rectNode()
+
 proc teamNamesNode(teams: openArray[Team]): JsonNode =
   result = newJArray()
   for team in teams:
@@ -116,6 +124,46 @@ proc parseMapSpec(node: JsonNode): CtfMap =
     raise
   except CatchableError as e:
     raiseRequestError("Could not parse map spec JSON: " & e.msg)
+
+proc parseTrenches(node: JsonNode, gameMap: CtfMap): seq[MapRect] =
+  if node.kind != JArray:
+    raiseRequestError("Field trenches must be an array.")
+  for i in 0 ..< node.len:
+    let item = node[i]
+    if item.kind != JArray or item.len != 4:
+      raiseRequestError(
+        "Field trenches entries must be [x, y, w, h] arrays."
+      )
+    for value in item:
+      if value.kind != JInt:
+        raiseRequestError("Trench coordinates and sizes must be integers.")
+    let rect = MapRect(
+      x: item[0].getInt(), y: item[1].getInt(),
+      w: item[2].getInt(), h: item[3].getInt(),
+    )
+    if rect.w <= 0 or rect.h <= 0:
+      raiseRequestError("Map trench " & $i & " size must be positive.")
+    if rect.x < 0 or rect.y < 0 or
+        rect.w > gameMap.width or rect.x > gameMap.width - rect.w or
+        rect.h > gameMap.height or rect.y > gameMap.height - rect.h:
+      raiseRequestError("Map trench " & $i & " is outside the map.")
+    result.add rect
+
+proc parseMedKits(node: JsonNode, gameMap: CtfMap): seq[MapPoint] =
+  if node.kind != JArray:
+    raiseRequestError("Field medKits must be an array.")
+  for i in 0 ..< node.len:
+    let item = node[i]
+    if item.kind != JArray or item.len != 2:
+      raiseRequestError("Field medKits entries must be [x, y] arrays.")
+    for value in item:
+      if value.kind != JInt:
+        raiseRequestError("Med-kit coordinates must be integers.")
+    let point = MapPoint(x: item[0].getInt(), y: item[1].getInt())
+    if point.x < 0 or point.y < 0 or
+        point.x >= gameMap.width or point.y >= gameMap.height:
+      raiseRequestError("Map med kit " & $i & " is outside the map.")
+    result.add point
 
 proc parseMapGenOverrides(node: JsonNode): MapGenOverrides =
   if node.kind != JObject:
@@ -320,6 +368,30 @@ proc generateResponseNode(body: string): JsonNode =
     "spec": parseJson(mapSpecJson(gameMap)),
   }
 
+proc symmetryResponseNode(body: string): JsonNode =
+  let
+    request = parseObject(body, "symmetry request")
+    spec = request.requiredObject("spec")
+    gameMap = parseMapSpec(spec)
+  gameMap.validateMapResourceLimits()
+  let
+    trenches = parseTrenches(request.requiredField("trenches"), gameMap)
+    medKits = parseMedKits(request.requiredField("medKits"), gameMap)
+  if gameMap.symmetry == symRot90 and trenches.len > 0:
+    raiseRequestError("Trenches are not supported on 4-team maps yet.")
+  var
+    trenchOrbits = newJArray()
+    medKitOrbits = newJArray()
+  for trench in trenches:
+    trenchOrbits.add mapRectsNode(gameMap.symmetryImages(trench))
+  for medKit in medKits:
+    medKitOrbits.add mapPointsNode(gameMap.symmetryImages(medKit))
+  %*{
+    "ok": true,
+    "trenches": trenchOrbits,
+    "medKits": medKitOrbits,
+  }
+
 proc poolListResponseNode(): JsonNode =
   var seeds = newJArray()
   for seed in MapPoolSeeds:
@@ -354,6 +426,12 @@ proc handleMap*(body: string): EditorResponse =
 proc handleGenerate*(body: string): EditorResponse =
   try:
     jsonResponse(generateResponseNode(body))
+  except CtfError as e:
+    errorResponse(e.msg)
+
+proc handleSymmetry*(body: string): EditorResponse =
+  try:
+    jsonResponse(symmetryResponseNode(body))
   except CtfError as e:
     errorResponse(e.msg)
 
@@ -462,6 +540,10 @@ proc handleEditorRequest*(
     if httpMethod != "POST":
       return errorResponse("Method not allowed.", 405)
     handleGenerate(body)
+  of "/api/symmetry":
+    if httpMethod != "POST":
+      return errorResponse("Method not allowed.", 405)
+    handleSymmetry(body)
   of "/api/pool":
     if httpMethod != "GET":
       return errorResponse("Method not allowed.", 405)

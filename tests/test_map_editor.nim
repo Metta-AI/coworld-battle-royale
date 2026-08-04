@@ -35,6 +35,29 @@ proc mapRequest(spec: JsonNode, overlays: seq[string] = @[]): string =
     },
   })
 
+proc symmetrySpec(symmetry: string): JsonNode =
+  let
+    teams = if symmetry == "rot90": 4 else: 2
+    gameMap = generateMapAttempt(
+      1001,
+      MapGenOverrides(
+        size: "small",
+        symmetry: symmetry,
+        windows: -1,
+        pits: -1,
+        pitDensity: -1,
+      ),
+      teams,
+    )
+  parseJson(mapSpecJson(gameMap))
+
+proc symmetryRequest(spec, trenches, medKits: JsonNode): string =
+  $(%*{
+    "spec": spec,
+    "trenches": trenches,
+    "medKits": medKits,
+  })
+
 suite "map editor service":
   test "POST /api/map returns the complete map response":
     let
@@ -186,6 +209,92 @@ suite "map editor service":
       check not body["ok"].getBool()
       check body["error"].getStr().len > 0
 
+  test "POST /api/symmetry expands named placements in input order":
+    let
+      spec = symmetrySpec("rot180")
+      gameMap = mapFromSpecJson($spec)
+      response = handleEditorRequest(
+        "POST",
+        "/api/symmetry",
+        symmetryRequest(
+          spec,
+          %*[[20, 30, 7, 9], [100, 120, 11, 13]],
+          %*[[30, 40], [200, 220]],
+        ),
+      )
+      body = response.responseJson()
+    check response.status == 200
+    check body["ok"].getBool()
+    check body["trenches"].len == 2
+    check body["medKits"].len == 2
+    check body["trenches"][0][0] == %*[20, 30, 7, 9]
+    check body["trenches"][0][1] == %*[
+      gameMap.width - 27,
+      gameMap.height - 39,
+      7,
+      9,
+    ]
+    check body["trenches"][1][0] == %*[100, 120, 11, 13]
+    check body["medKits"][0][0] == %*[30, 40]
+    check body["medKits"][0][1] == %*[
+      gameMap.width - 1 - 30,
+      gameMap.height - 1 - 40,
+    ]
+    check body["medKits"][1][0] == %*[200, 220]
+
+  test "POST /api/symmetry allows med kits but refuses trenches on rot90":
+    let spec = symmetrySpec("rot90")
+    var response = handleEditorRequest(
+      "POST",
+      "/api/symmetry",
+      symmetryRequest(spec, %*[], %*[[30, 40]]),
+    )
+    var body = response.responseJson()
+    check response.status == 200
+    check body["ok"].getBool()
+    check body["trenches"].len == 0
+    check body["medKits"].len == 1
+    check body["medKits"][0].len == 4
+    check body["medKits"][0][0] == %*[30, 40]
+
+    response = handleEditorRequest(
+      "POST",
+      "/api/symmetry",
+      symmetryRequest(spec, %*[[20, 30, 7, 9]], %*[]),
+    )
+    body = response.responseJson()
+    check response.status == 200
+    check not body["ok"].getBool()
+    check body["error"].getStr() ==
+      "Trenches are not supported on 4-team maps yet."
+
+  test "POST /api/symmetry validates its editing boundary":
+    let spec = symmetrySpec("mirror")
+    for requestBody in [
+      "{}",
+      $(%*{"spec": spec, "medKits": []}),
+      $(%*{"spec": spec, "trenches": []}),
+      symmetryRequest(spec, %*{}, %*[]),
+      symmetryRequest(spec, %*[], %*{}),
+      symmetryRequest(spec, %*[[1, 2, 3]], %*[]),
+      symmetryRequest(spec, %*[[1, 2, "wide", 4]], %*[]),
+      symmetryRequest(spec, %*[[1, 2, 0, 4]], %*[]),
+      symmetryRequest(spec, %*[[-1, 2, 3, 4]], %*[]),
+      symmetryRequest(spec, %*[[1048, 2, 3, 4]], %*[]),
+      symmetryRequest(spec, %*[], %*[[1, 2, 3]]),
+      symmetryRequest(spec, %*[], %*[["left", 2]]),
+      symmetryRequest(spec, %*[], %*[[-1, 2]]),
+      symmetryRequest(spec, %*[], %*[[1050, 2]]),
+    ]:
+      let
+        response = handleEditorRequest(
+          "POST", "/api/symmetry", requestBody
+        )
+        body = response.responseJson()
+      check response.status == 200
+      check not body["ok"].getBool()
+      check body["error"].getStr().len > 0
+
   test "pool endpoints expose exact curated entries with strict bounds":
     var response = handleEditorRequest("GET", "/api/pool", "")
     var body = response.responseJson()
@@ -225,6 +334,9 @@ suite "map editor service":
     check not response.responseJson()["ok"].getBool()
 
     response = handleEditorRequest("GET", "/api/map", "")
+    check response.status == 405
+
+    response = handleEditorRequest("GET", "/api/symmetry", "")
     check response.status == 405
 
     response = handleEditorRequest("GET", "/does-not-exist", "")

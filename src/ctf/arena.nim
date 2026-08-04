@@ -740,6 +740,47 @@ proc rot90(shape: ArenaShape, side: int): ArenaShape =
       thickness: shape.thickness
     )
 
+proc symmetryImages*(gameMap: CtfMap, rect: MapRect): seq[MapRect] =
+  ## Returns one rectangle's full orbit under the map's own symmetry,
+  ## original first. Images are deduplicated after applying the canonical
+  ## integer transforms: that handles center-straddling rectangles on even
+  ## boards, as well as the one- and two-member rot90 orbits, without
+  ## re-deriving the half-pixel rotation axis.
+  result.add rect
+  case gameMap.symmetry
+  of symMirror:
+    let image = rect.mirrorX(gameMap.width)
+    if image notin result:
+      result.add image
+  of symRot180:
+    let image = rect.rot180(gameMap.width, gameMap.height)
+    if image notin result:
+      result.add image
+  of symRot90:
+    var image = rect
+    for _ in 0 ..< 3:
+      image = image.rot90(gameMap.width)
+      if image notin result:
+        result.add image
+
+proc symmetryImages*(gameMap: CtfMap, point: MapPoint): seq[MapPoint] =
+  ## Returns one point's full orbit under the map's own symmetry, original
+  ## first. Two-team images go through teamImagePoint so pickups authored by
+  ## the editor cannot regress to mirroring on rot180 terrain; rot90 images
+  ## walk the same exact quarter-turn orbit as team-owned sim geometry.
+  result.add point
+  case gameMap.symmetry
+  of symMirror, symRot180:
+    let image = gameMap.teamImagePoint(point, Blue)
+    if image notin result:
+      result.add image
+  of symRot90:
+    var image = point
+    for _ in 0 ..< 3:
+      image = image.rot90Point(gameMap.width)
+      if image notin result:
+        result.add image
+
 proc inRect*(x, y: int, rect: MapRect): bool =
   ## Returns true when (x, y) lies inside the rectangle.
   x >= rect.x and x < rect.x + rect.w and

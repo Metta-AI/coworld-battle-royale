@@ -30,7 +30,136 @@ proc poolRenderOptions(maxDimension = 0): MapRenderOptions =
     pickupKinds: {pickupMedKitActive, pickupMedKitCandidate},
   )
 
+proc surroundingsMap(symmetry: MapSymmetry): CtfMap =
+  let (width, height) =
+    if symmetry == symRot90: (101, 101)
+    else: (101, 81)
+  result = CtfMap(
+    width: width,
+    height: height,
+    center: MapPoint(x: width div 2, y: height div 2),
+    flagRing: 5,
+    captureClear: 15,
+    spawnClearW: 3,
+    spawnClearH: 3,
+    homeDepth: 700,
+    symmetry: symmetry,
+    layout: (if symmetry == symRot90: layoutCorners else: layoutSides),
+    leftObstacles: @[
+      ArenaShape(
+        kind: shapeRect,
+        rect: MapRect(x: 20, y: 25, w: 7, h: 11),
+      ),
+    ],
+  )
+
+proc checkSymmetricSurroundings(gameMap: CtfMap, source: MapPoint) =
+  ## A coordinate orbit is only useful when it carries the same terrain
+  ## with it. Sample both stone and floor so an empty patch cannot make this
+  ## fairness assertion pass vacuously.
+  let
+    obstacles = buildArenaObstacles(gameMap)
+    wall = rasterizeRestWallMask(
+      gameMap,
+      obstacles,
+      proc (x, y: int): bool = mapProtectedFloorAt(gameMap, x, y),
+    )
+    sourceOrbit = gameMap.symmetryImages(source)
+  var sawWall, sawFloor: bool
+  for dy in -8 .. 8:
+    for dx in -8 .. 8:
+      let
+        sample = MapPoint(x: source.x + dx, y: source.y + dy)
+        sampleOrbit = gameMap.symmetryImages(sample)
+        sourceIsWall = wall[sample.y * gameMap.width + sample.x]
+      check sampleOrbit.len == sourceOrbit.len
+      if sourceIsWall: sawWall = true
+      else: sawFloor = true
+      for image in sampleOrbit:
+        check wall[image.y * gameMap.width + image.x] == sourceIsWall
+  check sawWall
+  check sawFloor
+
 suite "map editor core":
+  test "symmetry images form exact deduplicated integer orbits":
+    var gameMap = CtfMap(width: 11, height: 9, symmetry: symMirror)
+    check gameMap.symmetryImages(MapPoint(x: 2, y: 3)) == @[
+      MapPoint(x: 2, y: 3),
+      MapPoint(x: 8, y: 3),
+    ]
+    check gameMap.symmetryImages(MapRect(x: 1, y: 2, w: 3, h: 2)) == @[
+      MapRect(x: 1, y: 2, w: 3, h: 2),
+      MapRect(x: 7, y: 2, w: 3, h: 2),
+    ]
+    check gameMap.symmetryImages(MapPoint(x: 5, y: 4)) == @[
+      MapPoint(x: 5, y: 4),
+    ]
+    gameMap.width = 10
+    check gameMap.symmetryImages(MapRect(x: 4, y: 2, w: 2, h: 3)) == @[
+      MapRect(x: 4, y: 2, w: 2, h: 3),
+    ]
+
+    gameMap = CtfMap(width: 11, height: 9, symmetry: symRot180)
+    check gameMap.symmetryImages(MapPoint(x: 2, y: 3)) == @[
+      MapPoint(x: 2, y: 3),
+      MapPoint(x: 8, y: 5),
+    ]
+    check gameMap.symmetryImages(MapRect(x: 1, y: 2, w: 3, h: 2)) == @[
+      MapRect(x: 1, y: 2, w: 3, h: 2),
+      MapRect(x: 7, y: 5, w: 3, h: 2),
+    ]
+    check gameMap.symmetryImages(MapPoint(x: 5, y: 4)) == @[
+      MapPoint(x: 5, y: 4),
+    ]
+    check gameMap.symmetryImages(MapRect(x: 4, y: 3, w: 3, h: 3)) == @[
+      MapRect(x: 4, y: 3, w: 3, h: 3),
+    ]
+
+    gameMap = CtfMap(width: 9, height: 9, symmetry: symRot90)
+    check gameMap.symmetryImages(MapPoint(x: 1, y: 2)) == @[
+      MapPoint(x: 1, y: 2),
+      MapPoint(x: 6, y: 1),
+      MapPoint(x: 7, y: 6),
+      MapPoint(x: 2, y: 7),
+    ]
+    check gameMap.symmetryImages(MapRect(x: 1, y: 2, w: 3, h: 2)) == @[
+      MapRect(x: 1, y: 2, w: 3, h: 2),
+      MapRect(x: 5, y: 1, w: 2, h: 3),
+      MapRect(x: 5, y: 5, w: 3, h: 2),
+      MapRect(x: 2, y: 5, w: 2, h: 3),
+    ]
+    check gameMap.symmetryImages(MapPoint(x: 4, y: 4)) == @[
+      MapPoint(x: 4, y: 4),
+    ]
+    check gameMap.symmetryImages(MapRect(x: 3, y: 3, w: 3, h: 3)) == @[
+      MapRect(x: 3, y: 3, w: 3, h: 3),
+    ]
+    check gameMap.symmetryImages(MapRect(x: 3, y: 2, w: 3, h: 5)) == @[
+      MapRect(x: 3, y: 2, w: 3, h: 5),
+      MapRect(x: 2, y: 3, w: 5, h: 3),
+    ]
+
+  test "symmetry images carry the original wall surroundings":
+    for symmetry in [symMirror, symRot180, symRot90]:
+      surroundingsMap(symmetry).checkSymmetricSurroundings(
+        MapPoint(x: 23, y: 30)
+      )
+
+  test "rectangle expansion matches generated finalized trenches":
+    for symmetry in ["mirror", "rot180"]:
+      let gameMap = generateMapAttempt(
+        1001,
+        MapGenOverrides(
+          size: "small",
+          symmetry: symmetry,
+          windows: -1,
+          pits: 2,
+          pitDensity: -1,
+        ),
+      )
+      check gameMap.trenches.len == 2
+      check gameMap.symmetryImages(gameMap.trenches[0]) == gameMap.trenches
+
   test "generated-map validation matches the pre-refactor baseline":
     var
       cases = 0
