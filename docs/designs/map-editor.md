@@ -415,7 +415,7 @@ selection, and have both the pool renderer and the editor call it.
 
 | Risk | Mitigation |
 | --- | --- |
-| Render latency on `giant` / `colossal` boards (3211–6400 px) makes editing feel bad | Downscale before PNG encode; debounce edits; measure early. `rasterizeRestWallMask` paints per-shape bounding boxes rather than scanning every shape per pixel, so encode is the likely cost, not rasterization. If still bad, the wasm alternative is the escape hatch and the API contract is unchanged. |
+| ~~Render latency on oversize boards makes editing feel bad~~ **CLOSED — measured** | Measured against a release build, one full `POST /api/map` round trip including PNG encode and base64: standard (1235×659) 49 ms, large 79 ms, huge 126 ms, giant (3211×1713) **226 ms** preview / 349 ms native. Comfortable with the existing debounce. The wasm alternative was written in as the escape hatch and is **not needed** — the shared rasterizer paints per-shape bounding boxes instead of scanning every shape per pixel, which is the same change that took a full pool render from ~35 s to ~3 s. Re-measure if the rasterizer stops being bbox-painted. |
 | An invalid hand-authored map reaches the league | `mapFromSpecJson` deliberately runs only `validateMap` (bounds/compat), **not** the play-quality validators — replays must load maps recorded under older rules, so this stays. The editor warns loudly on export instead, and export of an invalid map requires explicit confirmation. |
 | The `mapDiagnostics` refactor changes generation | Parity sweep above; it is the gating test for the whole project. |
 | Scope creep toward a general level editor | Phases below are shippable independently; stop after any of them. |
@@ -463,8 +463,20 @@ selection, and have both the pool renderer and the editor call it.
     change means a new map; fatal once every edit bumps the revision. Split load
     identity from edit revision so only loads refit.
 
-- **Phase 3 — Diagnostics and polish.** Failure overlays (open sightline rows
-  drawn on the board, unreachable regions shaded), snapping, keyboard nudge.
+- **Phase 3 — Diagnostics and polish.** The remaining half of goal 3: the
+  validators already say *that* a map fails, and the server already composites
+  `sightlines` / `reachability` overlays, but a failure is still a sentence in a
+  panel rather than a place on the board.
+
+  - **Anchor each failure to the board.** `open horizontal sightline at y=412`
+    should be selectable and draw a rule at y=412; an unreachable team should
+    shade the region that cannot be reached. The diagnostics already carry every
+    open row and the reachability mask, and drawing a rule at a server-supplied
+    `y` is annotation, not geometry, so this stays inside the architecture rule.
+  - **Editing ergonomics.** Arrow-key nudge (1 px, 10 px with Shift) and optional
+    grid snapping, for authoring at exact integer coordinates.
+  - **A legend** for the diagnostic overlays, which currently rely on the reader
+    knowing what each tint means.
 
 ## Open questions
 
