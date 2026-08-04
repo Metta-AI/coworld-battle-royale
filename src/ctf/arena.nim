@@ -1455,8 +1455,18 @@ proc generateMapAttempt*(
     else: rng.pickRange(cols(4), cols(6))
   let columns =
     if overrides.columns > 0: overrides.columns else: columnsDraw
-  if columns < 3 or columns > 24:
-    raise newException(CtfError, "Config field mapColumns must be 3..24.")
+  ## The ceiling has to admit the generator's OWN widest draw, or a size class
+  ## rejects itself: the flat 24 this bound used to carry predated the oversize
+  ## classes, and at colossal's 5.2x a compact-endzone board draws cols(8) = 42,
+  ## so 32 of 40 two-team colossal seeds raised here instead of generating. (The
+  ## 4-team draw tops out at cols(4) = 21, which is why record_colossal_demo.sh
+  ## never hit it.) Deriving the ceiling from the same cols() the draw uses keeps
+  ## any future class in range automatically; small/standard/large scale by 1, so
+  ## their bound stays exactly 24.
+  let maxColumns = max(24, cols(8))
+  if columns < 3 or columns > maxColumns:
+    raise newException(
+      CtfError, "Config field mapColumns must be 3.." & $maxColumns & ".")
 
   let
     cy = result.center.y
