@@ -269,6 +269,38 @@ Seed the editor from the generator.
 Omitted fields take their unlocked sentinel (`""`, `0`, or `-1` for
 `windows` / `pits` / `pitDensity`).
 
+### `POST /api/symmetry` (Phase 2)
+
+Expands seed-region placements into their full symmetry orbits, so the browser
+never reproduces `mirrorX` / `rot180` / `rot90Point`. Called on drop and on
+numeric commit, not per mousemove.
+
+```jsonc
+// request — the spec supplies width/height/symmetry/layout
+{"spec": { ... }, "rects": [[250,110,56,56]], "points": [[617,219]]}
+
+// response — one orbit per input, in the same order, original first
+{"ok": true,
+ "rects":  [[[250,110,56,56], [929,493,56,56]]],
+ "points": [[[617,219], [617,439]]]}
+```
+
+An orbit has two entries under `mirror` and `rot180` (one when the placement is
+its own image, e.g. a point on the vertical centre line), four under `rot90`.
+
+**Trenches are refused on rot90 maps.** `finalizeTrenches` never places them
+there and `generateMapAttempt` raises `Trenches are not supported on 4-team maps
+yet`, so the editor must disable trench authoring on 4-team maps with that
+reason rather than silently writing a four-way expansion the generator would
+never produce.
+
+**Med-kit authoring semantics.** `medKitCandidates` is the authored set and
+`medKitSpawns` is the active subset. The editor authors *candidate orbits* and
+toggles which are active; `medKitSpawns` must always be a subset of
+`medKitCandidates`. Note `resetMedKits` silently falls back to hardcoded centre
+thirds when fewer than two spawns are present, so the editor should warn rather
+than let a map ship into that fallback.
+
 ### `GET /api/pool` and `GET /api/pool/{index}`
 
 `{"seeds": [1001, ...], "count": 20}` and `{"ok": true, "spec": {...}}`.
