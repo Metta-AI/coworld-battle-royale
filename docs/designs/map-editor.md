@@ -55,7 +55,9 @@ That costs us in three places:
 - **Shipping in the game server binary.** This is `tools/` curation tooling,
   like `render_map_pool.nim`.
 - **Collaborative or multi-user editing.** Local, single-user, one file.
-- **Any use of `async`/`await`.** See Architecture.
+- **Any use of `async`/`await` in Nim.** See Architecture. This is a backend
+  architecture rule and does **not** extend to the browser, where `async`/`await`
+  is idiomatic and clearer than promise chains; the UI uses it throughout.
 
 ## Constraints
 
@@ -442,13 +444,28 @@ selection, and have both the pool renderer and the editor call it.
   proc symmetryImages*(gameMap: CtfMap, point: MapPoint): seq[MapPoint]
   ```
 
-  Each returns the full orbit including the original: two entries under mirror
-  and rot180 (one when the shape is its own image), four under rot90. Note
-  `finalizeTrenches` never places trenches on rot90 maps, so trench authoring
-  there needs an explicit decision rather than a silent four-way expansion.
+  Each returns the full orbit including the original, deduplicated — see the
+  `POST /api/symmetry` section above for the exact orbit sizes and the rot90
+  trench policy.
+
+  Undo/redo belongs here, not in Phase 3: editing is unusable without it, and
+  Phase 1 deliberately shaped the store around transaction boundaries so it
+  could land with the editing work rather than after it.
+
+  Two Phase 1 gaps this phase must also close, both found during Phase 2 plan
+  review:
+
+  - There is **no authored-obstacle list**. Phase 1 planned one and shipped only
+    marker listings. It is the canonical selection route for a shape that
+    protected-floor carving has made partly or wholly invisible, so editing
+    needs it.
+  - The viewport **refits on every document revision** (`updateFromState` calls
+    `fit()` when `renderedDocumentRevision` changes). Correct when a revision
+    change means a new map; fatal once every edit bumps the revision. Split load
+    identity from edit revision so only loads refit.
+
 - **Phase 3 — Diagnostics and polish.** Failure overlays (open sightline rows
-  drawn on the board, unreachable regions shaded), undo/redo, snapping,
-  keyboard nudge.
+  drawn on the board, unreachable regions shaded), snapping, keyboard nudge.
 
 ## Open questions
 
