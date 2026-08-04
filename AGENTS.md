@@ -95,8 +95,12 @@ handlers are deliberately split from the mummy adapter (which is behind
 without a socket or a threaded test build.
 
 Loads any pool entry, `gen` seed + overrides, or pasted `mapSpec`, and
-returns a Nim-rendered board plus live validation. Currently a read-only
-inspector; editing is Phase 2 in the design doc.
+returns a Nim-rendered board plus live validation, and edits it: obstacles,
+trenches, med kits, and the tier-1 map parameters, with undo/redo.
+
+Authoring places a seed item ONCE; `POST /api/symmetry` returns its full
+deduplicated orbit and the editor writes that into the spec. Trench authoring is
+refused on rot90 maps because `finalizeTrenches` never places them there.
 
 Two invariants to keep if you touch it:
 

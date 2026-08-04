@@ -96,6 +96,13 @@ class MapEditorApi {
       body: JSON.stringify(request),
     });
   }
+
+  symmetry(request) {
+    return this.requestJson('/api/symmetry', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
 }
 
 // Mock mode is intentionally a separate API implementation. Its bitmap is fixed
@@ -219,6 +226,16 @@ class MockMapEditorApi {
     };
   }
 
+  async symmetry(request) {
+    // Mock mode proves the client contract and transaction flow only. It does
+    // not reproduce Nim's transforms; each supplied seed is a one-member orbit.
+    return {
+      ok: true,
+      trenches: request.trenches.map((rect) => [cloneJson(rect)]),
+      medKits: request.medKits.map((point) => [cloneJson(point)]),
+    };
+  }
+
   createCannedPng(scale, overlays) {
     const width = Math.ceil(MOCK_SPEC.width * scale);
     const height = Math.ceil(MOCK_SPEC.height * scale);
@@ -304,7 +321,16 @@ class EditorStore {
       document: {
         spec: null,
         revision: 0,
+        loadRevision: 0,
         source: null,
+      },
+      editing: {
+        selection: null,
+        previewSpec: null,
+        placementPreview: null,
+        notice: null,
+        undoStack: [],
+        redoStack: [],
       },
       controls: {
         overlays: new Set(['protected', 'pickups', 'spin', 'seedRegion']),
@@ -343,8 +369,107 @@ class EditorStore {
       state.document.spec = cloneJson(spec);
       state.document.source = source;
       state.document.revision += 1;
+      state.document.loadRevision += 1;
+      state.editing.selection = null;
+      state.editing.previewSpec = null;
+      state.editing.placementPreview = null;
+      state.editing.notice = null;
+      state.editing.undoStack = [];
+      state.editing.redoStack = [];
       state.render.error = null;
     });
+  }
+
+  setSelection(selection) {
+    this.change((state) => {
+      state.editing.selection = selection ? cloneJson(selection) : null;
+      state.editing.placementPreview = null;
+      state.editing.notice = null;
+    });
+  }
+
+  setPreviewSpec(spec) {
+    this.change((state) => {
+      state.editing.previewSpec = spec ? cloneJson(spec) : null;
+    });
+  }
+
+  clearPreview() {
+    if (!this.state.editing.previewSpec) return;
+    this.change((state) => {
+      state.editing.previewSpec = null;
+    });
+  }
+
+  setPlacementPreview(preview) {
+    this.change((state) => {
+      state.editing.placementPreview = preview ? cloneJson(preview) : null;
+    });
+  }
+
+  commitSpec(nextSpec, label, nextSelection = this.state.editing.selection) {
+    const before = this.state.document.spec;
+    if (!before || JSON.stringify(before) === JSON.stringify(nextSpec)) {
+      this.clearPreview();
+      return false;
+    }
+    const entry = {
+      label,
+      before: cloneJson(before),
+      after: cloneJson(nextSpec),
+      beforeSelection: cloneJson(this.state.editing.selection),
+      afterSelection: cloneJson(nextSelection),
+    };
+    this.change((state) => {
+      state.editing.undoStack.push(entry);
+      if (state.editing.undoStack.length > 100) state.editing.undoStack.shift();
+      state.editing.redoStack = [];
+      state.document.spec = cloneJson(nextSpec);
+      state.document.revision += 1;
+      state.editing.selection = cloneJson(nextSelection);
+      state.editing.previewSpec = null;
+      state.editing.placementPreview = null;
+      state.editing.notice = null;
+      state.render.error = null;
+    });
+    return true;
+  }
+
+  undo() {
+    if (!this.state.editing.undoStack.length) return false;
+    this.change((state) => {
+      const entry = state.editing.undoStack.pop();
+      state.editing.redoStack.push(entry);
+      state.document.spec = cloneJson(entry.before);
+      state.document.revision += 1;
+      state.editing.selection = this.validSelection(entry.beforeSelection, entry.before);
+      state.editing.previewSpec = null;
+      state.editing.placementPreview = null;
+      state.editing.notice = `Undid ${entry.label}`;
+      state.render.error = null;
+    });
+    return true;
+  }
+
+  redo() {
+    if (!this.state.editing.redoStack.length) return false;
+    this.change((state) => {
+      const entry = state.editing.redoStack.pop();
+      state.editing.undoStack.push(entry);
+      state.document.spec = cloneJson(entry.after);
+      state.document.revision += 1;
+      state.editing.selection = this.validSelection(entry.afterSelection, entry.after);
+      state.editing.previewSpec = null;
+      state.editing.placementPreview = null;
+      state.editing.notice = `Redid ${entry.label}`;
+      state.render.error = null;
+    });
+    return true;
+  }
+
+  validSelection(selection, spec) {
+    if (!selection || selection.type !== 'obstacle') return null;
+    return (spec.leftObstacles || [])[selection.index] ? cloneJson(selection) : null;
   }
 }
 
@@ -491,8 +616,10 @@ class MapViewport {
     this.panY = 0;
     this.fitted = true;
     this.drag = null;
-    this.lastRenderedDocumentRevision = 0;
+    this.placementController = null;
+    this.lastLoadRevision = 0;
     this.labelBounds = [];
+    this.editingController = null;
 
     this.bindEvents();
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -503,6 +630,12 @@ class MapViewport {
   bindEvents() {
     this.viewport.addEventListener('pointerdown', (event) => {
       if (!this.image || event.button !== 0) return;
+      const point = this.screenToSpec(event.clientX, event.clientY);
+      if (point && this.editingController
+          && this.editingController.pointerDown(event, point)) {
+        this.viewport.setPointerCapture(event.pointerId);
+        return;
+      }
       this.drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
       this.fitted = false;
       this.viewport.classList.add('panning');
@@ -511,6 +644,7 @@ class MapViewport {
 
     this.viewport.addEventListener('pointermove', (event) => {
       this.updatePointerStatus(event);
+      if (this.editingController && this.editingController.pointerMove(event)) return;
       if (!this.drag || this.drag.pointerId !== event.pointerId) return;
       this.panX += event.clientX - this.drag.x;
       this.panY += event.clientY - this.drag.y;
@@ -520,6 +654,7 @@ class MapViewport {
     });
 
     const endPan = (event) => {
+      if (this.editingController && this.editingController.pointerUp(event)) return;
       if (!this.drag || this.drag.pointerId !== event.pointerId) return;
       this.drag = null;
       this.viewport.classList.remove('panning');
@@ -565,8 +700,8 @@ class MapViewport {
       this.emptyState.hidden = true;
       $('fit-map').disabled = false;
 
-      if (render.renderedDocumentRevision !== this.lastRenderedDocumentRevision) {
-        this.lastRenderedDocumentRevision = render.renderedDocumentRevision;
+      if (state.document.loadRevision !== this.lastLoadRevision) {
+        this.lastLoadRevision = state.document.loadRevision;
         this.fit();
       } else {
         this.applyTransform();
@@ -616,6 +751,24 @@ class MapViewport {
       x: this.panX + x * scale * this.zoom,
       y: this.panY + y * scale * this.zoom,
     };
+  }
+
+  screenToSpec(clientX, clientY, requireInside = true) {
+    if (!this.response || !this.image) return null;
+    const bounds = this.viewport.getBoundingClientRect();
+    const imageX = (clientX - bounds.left - this.panX) / this.zoom;
+    const imageY = (clientY - bounds.top - this.panY) / this.zoom;
+    if (requireInside && (imageX < 0 || imageY < 0
+        || imageX >= this.image.naturalWidth || imageY >= this.image.naturalHeight)) return null;
+    return {
+      x: imageX / this.response.renderScale,
+      y: imageY / this.response.renderScale,
+    };
+  }
+
+  setEditingController(controller) {
+    this.editingController = controller;
+    this.drawOverlay();
   }
 
   updatePointerStatus(event) {
@@ -668,6 +821,7 @@ class MapViewport {
     if (this.appliedOverlays.has('pickups')) this.drawPickups(context);
     if (this.appliedOverlays.has('spin')) this.drawSpinningDiamonds(context);
     this.drawTrenches(context);
+    if (this.editingController) this.editingController.drawOverlay(context);
     context.restore();
   }
 
@@ -812,14 +966,12 @@ class MapViewport {
       const [x, y, width, height] = trench;
       const start = this.specToScreen(x, y);
       const end = this.specToScreen(x + width, y + height);
-      const center = this.specToScreen(x + width / 2, y + height / 2);
       context.save();
       context.strokeStyle = MARKER_COLORS.trench;
       context.setLineDash([3, 3]);
       context.lineWidth = 1;
       context.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
       context.restore();
-      this.drawLabel(context, center.x, center.y, 'trench · read-only', MARKER_COLORS.trench);
     }
   }
 
@@ -894,6 +1046,1426 @@ class MapViewport {
     context.textBaseline = 'middle';
     context.fillText(text, chosen.x + paddingX, chosen.y + labelHeight / 2 + 0.5);
     context.restore();
+  }
+}
+
+function obstacleFields(shape) {
+  switch (shape.kind) {
+    case 'rect': return ['x', 'y', 'w', 'h'];
+    case 'disc':
+    case 'diamond': return ['cx', 'cy', 'r'];
+    case 'diagonal': return ['x0', 'y0', 'x1', 'y1', 't'];
+    default: return [];
+  }
+}
+
+function obstacleSummary(shape) {
+  if (shape.kind === 'rect') return `x ${shape.x}, y ${shape.y} · ${shape.w}×${shape.h}`;
+  if (shape.kind === 'disc' || shape.kind === 'diamond') {
+    return `(${shape.cx}, ${shape.cy}) · r ${shape.r}`;
+  }
+  if (shape.kind === 'diagonal') {
+    return `(${shape.x0}, ${shape.y0})→(${shape.x1}, ${shape.y1}) · t ${shape.t}`;
+  }
+  return 'Unknown obstacle';
+}
+
+function pointSegmentDistance(px, py, x0, y0, x1, y1) {
+  const vx = x1 - x0;
+  const vy = y1 - y0;
+  const lengthSquared = vx * vx + vy * vy;
+  if (lengthSquared === 0) return Math.hypot(px - x0, py - y0);
+  const projection = Math.max(0, Math.min(1, ((px - x0) * vx + (py - y0) * vy) / lengthSquared));
+  return Math.hypot(px - (x0 + projection * vx), py - (y0 + projection * vy));
+}
+
+class EditingController {
+  constructor(store, coordinator, viewport) {
+    this.store = store;
+    this.coordinator = coordinator;
+    this.viewport = viewport;
+    this.drag = null;
+    this.lastListKey = '';
+    this.lastEditorKey = '';
+    this.bindControls();
+    this.store.subscribe((state) => this.render(state));
+  }
+
+  bindControls() {
+    for (const button of document.querySelectorAll('[data-create-obstacle]')) {
+      button.addEventListener('click', () => this.createObstacle(button.dataset.createObstacle));
+    }
+    $('undo-edit').addEventListener('click', () => this.undo());
+    $('redo-edit').addEventListener('click', () => this.redo());
+
+    $('obstacle-list').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-obstacle-index]');
+      if (!button) return;
+      this.store.setSelection({ type: 'obstacle', index: Number(button.dataset.obstacleIndex) });
+      this.viewport.drawOverlay();
+    });
+
+    $('obstacle-editor').addEventListener('change', (event) => {
+      const field = event.target.closest('[data-obstacle-field]');
+      if (field) this.commitNumericField(field);
+    });
+    $('obstacle-editor').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && event.target.matches('[data-obstacle-field]')) {
+        event.preventDefault();
+        event.target.blur();
+      } else if (event.key === 'Escape' && event.target.matches('[data-obstacle-field]')) {
+        event.preventDefault();
+        this.render(this.store.state, true);
+        event.target.blur();
+      }
+    });
+    $('obstacle-editor').addEventListener('click', (event) => {
+      const action = event.target.closest('[data-obstacle-action]');
+      if (!action) return;
+      if (action.dataset.obstacleAction === 'delete') this.deleteSelection();
+      if (action.dataset.obstacleAction === 'window') this.toggleWindow();
+    });
+
+    window.addEventListener('keydown', (event) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      if (event.target.matches('input, textarea, select')) return;
+      if (modifier && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) this.redo();
+        else this.undo();
+        return;
+      }
+      if (event.ctrlKey && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        this.redo();
+        return;
+      }
+      if ((event.key === 'Delete' || event.key === 'Backspace')
+          && !event.target.matches('input, textarea, select')) {
+        event.preventDefault();
+        this.deleteSelection();
+      }
+      if (event.key === 'Escape' && this.drag) this.cancelDrag();
+    });
+  }
+
+  currentSpec() {
+    return this.store.state.editing.previewSpec || this.store.state.document.spec;
+  }
+
+  setPlacementController(controller) {
+    this.placementController = controller;
+  }
+
+  selectedObstacle(spec = this.currentSpec()) {
+    const selection = this.store.state.editing.selection;
+    if (!spec || !selection || selection.type !== 'obstacle') return null;
+    return (spec.leftObstacles || [])[selection.index] || null;
+  }
+
+  render(state, force = false) {
+    const spec = state.editing.previewSpec || state.document.spec;
+    const selection = state.editing.selection;
+    const selectedIndex = selection && selection.type === 'obstacle' ? selection.index : -1;
+    const listKey = `${state.document.revision}:${selectedIndex}`;
+    if (force || listKey !== this.lastListKey) {
+      this.lastListKey = listKey;
+      this.renderObstacleList(spec, selectedIndex);
+    }
+
+    const selected = spec && selectedIndex >= 0 ? (spec.leftObstacles || [])[selectedIndex] : null;
+    const editorKey = selected ? `${selectedIndex}:${selected.kind}` : 'none';
+    if (force || editorKey !== this.lastEditorKey) {
+      this.lastEditorKey = editorKey;
+      this.renderNumericEditor(selected, selectedIndex);
+    }
+    if (selected) this.updateNumericValues(selected);
+
+    const hasSpec = Boolean(state.document.spec);
+    for (const button of document.querySelectorAll('[data-create-obstacle]')) button.disabled = !hasSpec;
+    $('undo-edit').disabled = !state.editing.undoStack.length;
+    $('redo-edit').disabled = !state.editing.redoStack.length;
+    $('undo-edit').title = state.editing.undoStack.length
+      ? `Undo ${state.editing.undoStack.at(-1).label} (Ctrl/Cmd-Z)` : 'Nothing to undo';
+    $('redo-edit').title = state.editing.redoStack.length
+      ? `Redo ${state.editing.redoStack.at(-1).label}` : 'Nothing to redo';
+    this.renderWarning(spec, selected);
+    this.viewport.drawOverlay();
+  }
+
+  renderObstacleList(spec, selectedIndex) {
+    const root = $('obstacle-list');
+    root.replaceChildren();
+    const obstacles = spec && Array.isArray(spec.leftObstacles) ? spec.leftObstacles : [];
+    if (!spec || !obstacles.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty-detail';
+      empty.textContent = spec ? 'No authored obstacles. Create one above.' : 'Load a map to edit obstacles.';
+      root.append(empty);
+      return;
+    }
+    obstacles.forEach((shape, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'authored-item';
+      button.dataset.obstacleIndex = String(index);
+      button.setAttribute('aria-pressed', String(index === selectedIndex));
+      const number = document.createElement('span');
+      number.className = 'authored-index';
+      number.textContent = `#${index + 1}`;
+      const kind = document.createElement('span');
+      kind.className = 'authored-kind';
+      kind.textContent = `${humanizeToken(shape.kind)}${shape.window ? ' · glass' : ''}`;
+      const detail = document.createElement('span');
+      detail.className = 'authored-detail';
+      detail.textContent = obstacleSummary(shape);
+      button.append(number, kind, detail);
+      root.append(button);
+    });
+  }
+
+  renderNumericEditor(shape, index) {
+    const root = $('obstacle-editor');
+    root.replaceChildren();
+    root.hidden = !shape;
+    if (!shape) return;
+
+    const heading = document.createElement('div');
+    heading.className = 'numeric-editor-heading';
+    const title = document.createElement('strong');
+    title.textContent = `Obstacle ${index + 1} · ${humanizeToken(shape.kind)}`;
+    const glass = document.createElement('span');
+    glass.className = 'quiet-label';
+    glass.textContent = shape.window ? 'Glass window' : 'Stone';
+    heading.append(title, glass);
+
+    const grid = document.createElement('div');
+    grid.className = 'numeric-grid';
+    for (const name of obstacleFields(shape)) {
+      const label = document.createElement('label');
+      label.textContent = `${name} · px`;
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.step = '1';
+      input.required = true;
+      input.dataset.obstacleField = name;
+      input.setAttribute('aria-label', `${humanizeToken(name)} in map pixels`);
+      label.append(input);
+      grid.append(label);
+    }
+
+    const hint = document.createElement('p');
+    hint.className = 'section-intro';
+    hint.textContent = shape.kind === 'diagonal'
+      ? 'Any angle is valid. Hold Shift while dragging an endpoint to snap to 45° increments.'
+      : 'Fields are integer map pixels and commit on Enter or when focus leaves the field.';
+
+    const actions = document.createElement('div');
+    actions.className = 'selection-actions';
+    const windowButton = document.createElement('button');
+    windowButton.type = 'button';
+    windowButton.dataset.obstacleAction = 'window';
+    windowButton.textContent = shape.window ? 'Make stone' : 'Make glass window';
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'danger-action';
+    deleteButton.dataset.obstacleAction = 'delete';
+    deleteButton.textContent = 'Delete obstacle';
+    actions.append(windowButton, deleteButton);
+    root.append(heading, grid, hint, actions);
+  }
+
+  updateNumericValues(shape) {
+    for (const input of $('obstacle-editor').querySelectorAll('[data-obstacle-field]')) {
+      if (document.activeElement !== input) input.value = String(shape[input.dataset.obstacleField]);
+    }
+  }
+
+  renderWarning(spec, shape) {
+    const warning = $('editing-warning');
+    if (!spec || !shape) {
+      warning.hidden = true;
+      return;
+    }
+    const messages = [
+      'The dashed envelope is authoring chrome, not terrain. Nim carves protected floor from it; the server PNG is the playable result.',
+    ];
+    if (this.shapeOutsideBoard(shape, spec)) {
+      messages.push('Part of this authored envelope lies outside the current board.');
+    }
+    const seed = this.store.state.render.lastGoodResponse?.derived?.seedRegion;
+    if (seed && !this.shapeCenterInside(shape, seed)) {
+      messages.push('Its authoring center is outside the conventional seed guide; this is allowed.');
+    }
+    warning.textContent = messages.join(' ');
+    warning.hidden = false;
+  }
+
+  shapeCenterInside(shape, rect) {
+    let x;
+    let y;
+    if (shape.kind === 'rect') {
+      x = shape.x + shape.w / 2;
+      y = shape.y + shape.h / 2;
+    } else if (shape.kind === 'diagonal') {
+      x = (shape.x0 + shape.x1) / 2;
+      y = (shape.y0 + shape.y1) / 2;
+    } else {
+      x = shape.cx;
+      y = shape.cy;
+    }
+    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+  }
+
+  shapeOutsideBoard(shape, spec) {
+    if (shape.kind === 'rect') {
+      return shape.x < 0 || shape.y < 0 || shape.x + shape.w > spec.width || shape.y + shape.h > spec.height;
+    }
+    if (shape.kind === 'disc' || shape.kind === 'diamond') {
+      return shape.cx - shape.r < 0 || shape.cy - shape.r < 0
+        || shape.cx + shape.r >= spec.width || shape.cy + shape.r >= spec.height;
+    }
+    const half = shape.t / 2;
+    return Math.min(shape.x0, shape.x1) - half < 0 || Math.min(shape.y0, shape.y1) - half < 0
+      || Math.max(shape.x0, shape.x1) + half >= spec.width
+      || Math.max(shape.y0, shape.y1) + half >= spec.height;
+  }
+
+  createObstacle(kind) {
+    const spec = this.store.state.document.spec;
+    if (!spec) return;
+    const next = cloneJson(spec);
+    if (!Array.isArray(next.leftObstacles)) next.leftObstacles = [];
+    const seed = this.store.state.render.lastGoodResponse?.derived?.seedRegion
+      || { x: 0, y: 0, w: spec.width, h: spec.height };
+    const cx = Math.round(seed.x + seed.w / 2);
+    const cy = Math.round(seed.y + seed.h / 2);
+    const shapes = {
+      rect: { kind: 'rect', x: cx - 24, y: cy - 24, w: 48, h: 48 },
+      disc: { kind: 'disc', cx, cy, r: 24 },
+      diamond: { kind: 'diamond', cx, cy, r: 28 },
+      diagonal: { kind: 'diagonal', x0: cx - 24, y0: cy - 24, x1: cx + 24, y1: cy + 24, t: 12 },
+    };
+    next.leftObstacles.push(shapes[kind]);
+    const selection = { type: 'obstacle', index: next.leftObstacles.length - 1 };
+    if (this.store.commitSpec(next, `create ${kind}`, selection)) this.coordinator.schedule({ immediate: true });
+  }
+
+  deleteSelection() {
+    if (this.drag) this.cancelDrag();
+    const spec = this.store.state.document.spec;
+    const selection = this.store.state.editing.selection;
+    if (!spec || !selection || selection.type !== 'obstacle') return;
+    const obstacles = spec.leftObstacles || [];
+    if (!obstacles[selection.index]) return;
+    const next = cloneJson(spec);
+    const [removed] = next.leftObstacles.splice(selection.index, 1);
+    if (this.store.commitSpec(next, `delete ${removed.kind}`, null)) this.coordinator.schedule({ immediate: true });
+  }
+
+  toggleWindow() {
+    const spec = this.store.state.document.spec;
+    const selection = this.store.state.editing.selection;
+    if (!spec || !selection || selection.type !== 'obstacle') return;
+    const next = cloneJson(spec);
+    const shape = next.leftObstacles[selection.index];
+    if (!shape) return;
+    if (shape.window) delete shape.window;
+    else shape.window = true;
+    if (this.store.commitSpec(next, 'toggle glass window')) this.coordinator.schedule({ immediate: true });
+  }
+
+  commitNumericField(input) {
+    const selection = this.store.state.editing.selection;
+    const spec = this.store.state.document.spec;
+    if (!spec || !selection || selection.type !== 'obstacle') return;
+    const value = input.value === '' ? Number.NaN : Number(input.value);
+    if (!Number.isInteger(value)) {
+      input.setCustomValidity('Enter an integer number of map pixels.');
+      input.reportValidity();
+      return;
+    }
+    const next = cloneJson(spec);
+    const shape = next.leftObstacles[selection.index];
+    if (!shape) return;
+    const field = input.dataset.obstacleField;
+    if (['w', 'h', 'r', 't'].includes(field) && value < 1) {
+      input.setCustomValidity(`${field} must be at least 1 px.`);
+      input.reportValidity();
+      return;
+    }
+    input.setCustomValidity('');
+    shape[field] = value;
+    if (this.store.commitSpec(next, `edit ${shape.kind} ${field}`)) this.coordinator.schedule({ immediate: true });
+  }
+
+  undo() {
+    if (this.drag) this.cancelDrag();
+    if (this.store.undo()) this.coordinator.schedule({ immediate: true });
+  }
+
+  redo() {
+    if (this.drag) this.cancelDrag();
+    if (this.store.redo()) this.coordinator.schedule({ immediate: true });
+  }
+
+  pointerDown(event, point) {
+    const spec = this.store.state.document.spec;
+    if (!spec) return false;
+    const selection = this.store.state.editing.selection;
+    if (selection && ['trench', 'medKit'].includes(selection.type) && this.placementController) {
+      const group = this.placementController.selectedGroup();
+      if (group && !group.readOnly) {
+        const seed = group.orbit[0];
+        let handle = null;
+        if (selection.type === 'trench') {
+          const shape = { kind: 'rect', x: seed[0], y: seed[1], w: seed[2], h: seed[3] };
+          handle = this.hitHandle(shape, event.clientX, event.clientY);
+          if (!handle && this.hitAuthoringProxy(shape, point)) handle = 'move';
+        } else {
+          const screen = this.viewport.specToScreen(seed[0], seed[1]);
+          const bounds = this.viewport.viewport.getBoundingClientRect();
+          if (Math.hypot(event.clientX - bounds.left - screen.x, event.clientY - bounds.top - screen.y) <= 10) {
+            handle = 'move';
+          }
+        }
+        if (handle) {
+          this.drag = {
+            pointerId: event.pointerId,
+            placement: true,
+            type: selection.type,
+            index: selection.index,
+            handle,
+            start: point,
+            baseSeed: cloneJson(seed),
+            group,
+          };
+          this.viewport.viewport.classList.add('editing');
+          return true;
+        }
+      }
+    }
+    if (selection && selection.type === 'obstacle') {
+      const shape = (spec.leftObstacles || [])[selection.index];
+      if (shape) {
+        const handle = this.hitHandle(shape, event.clientX, event.clientY);
+        if (handle || this.hitAuthoringProxy(shape, point)) {
+          this.drag = {
+            pointerId: event.pointerId,
+            index: selection.index,
+            handle: handle || 'move',
+            start: point,
+            baseSpec: cloneJson(spec),
+            moved: false,
+            thicknessHandleOffset: handle === 'thickness' ? this.diagonalHandleOffset() : 0,
+          };
+          this.viewport.viewport.classList.add('editing');
+          return true;
+        }
+      }
+    }
+    const hit = this.pickObstacle(spec, point);
+    if (hit >= 0) {
+      this.store.setSelection({ type: 'obstacle', index: hit });
+      return true;
+    }
+    return false;
+  }
+
+  pointerMove(event) {
+    if (!this.drag || this.drag.pointerId !== event.pointerId) return false;
+    const point = this.viewport.screenToSpec(event.clientX, event.clientY, false);
+    if (!point) return true;
+    if (this.drag.placement) {
+      const seed = this.draggedPlacement(point);
+      this.store.setPlacementPreview({
+        type: this.drag.type,
+        index: this.drag.index,
+        seed,
+      });
+      return true;
+    }
+    const next = this.draggedSpec(point, event.shiftKey);
+    this.drag.moved = JSON.stringify(next) !== JSON.stringify(this.drag.baseSpec);
+    this.store.setPreviewSpec(next);
+    return true;
+  }
+
+  pointerUp(event) {
+    if (!this.drag || this.drag.pointerId !== event.pointerId) return false;
+    if (event.type === 'pointercancel') {
+      this.cancelDrag();
+      return true;
+    }
+    if (this.drag.placement) {
+      const drag = this.drag;
+      const preview = this.store.state.editing.placementPreview;
+      this.drag = null;
+      this.viewport.viewport.classList.remove('editing');
+      if (preview) {
+        this.placementController.replaceOrbit(
+          { type: drag.type, index: drag.index },
+          drag.group,
+          preview.seed,
+          `drag ${drag.type === 'trench' ? 'trench' : 'med-kit orbit'}`,
+        );
+      }
+      return true;
+    }
+    const next = this.store.state.editing.previewSpec;
+    const shape = this.drag.baseSpec.leftObstacles[this.drag.index];
+    this.viewport.viewport.classList.remove('editing');
+    this.drag = null;
+    if (next && this.store.commitSpec(next, `drag ${shape.kind}`)) {
+      this.coordinator.schedule({ immediate: true });
+    } else {
+      this.store.clearPreview();
+    }
+    return true;
+  }
+
+  cancelDrag() {
+    this.drag = null;
+    this.viewport.viewport.classList.remove('editing');
+    this.store.clearPreview();
+    this.store.setPlacementPreview(null);
+  }
+
+  draggedPlacement(point) {
+    const base = this.drag.baseSeed;
+    const dx = Math.round(point.x - this.drag.start.x);
+    const dy = Math.round(point.y - this.drag.start.y);
+    if (this.drag.type === 'medKit') return [base[0] + dx, base[1] + dy];
+    if (this.drag.handle === 'move') return [base[0] + dx, base[1] + dy, base[2], base[3]];
+    let x0 = base[0];
+    let y0 = base[1];
+    let x1 = base[0] + base[2];
+    let y1 = base[1] + base[3];
+    if (this.drag.handle.includes('w')) x0 = Math.round(point.x);
+    if (this.drag.handle.includes('e')) x1 = Math.round(point.x);
+    if (this.drag.handle.includes('n')) y0 = Math.round(point.y);
+    if (this.drag.handle.includes('s')) y1 = Math.round(point.y);
+    return [Math.min(x0, x1), Math.min(y0, y1), Math.max(1, Math.abs(x1 - x0)), Math.max(1, Math.abs(y1 - y0))];
+  }
+
+  draggedSpec(point, snapDiagonal) {
+    const next = cloneJson(this.drag.baseSpec);
+    const shape = next.leftObstacles[this.drag.index];
+    const base = this.drag.baseSpec.leftObstacles[this.drag.index];
+    const dx = Math.round(point.x - this.drag.start.x);
+    const dy = Math.round(point.y - this.drag.start.y);
+    const handle = this.drag.handle;
+    if (handle === 'move' || handle === 'midpoint') {
+      if (shape.kind === 'rect') {
+        shape.x = base.x + dx;
+        shape.y = base.y + dy;
+      } else if (shape.kind === 'disc' || shape.kind === 'diamond') {
+        shape.cx = base.cx + dx;
+        shape.cy = base.cy + dy;
+      } else {
+        shape.x0 = base.x0 + dx;
+        shape.y0 = base.y0 + dy;
+        shape.x1 = base.x1 + dx;
+        shape.y1 = base.y1 + dy;
+      }
+      return next;
+    }
+
+    if (shape.kind === 'rect') {
+      let x0 = base.x;
+      let x1 = base.x + base.w;
+      let y0 = base.y;
+      let y1 = base.y + base.h;
+      if (handle.includes('w')) x0 = Math.round(point.x);
+      if (handle.includes('e')) x1 = Math.round(point.x);
+      if (handle.includes('n')) y0 = Math.round(point.y);
+      if (handle.includes('s')) y1 = Math.round(point.y);
+      shape.x = Math.min(x0, x1);
+      shape.y = Math.min(y0, y1);
+      shape.w = Math.max(1, Math.abs(x1 - x0));
+      shape.h = Math.max(1, Math.abs(y1 - y0));
+    } else if (shape.kind === 'disc') {
+      shape.r = Math.max(1, Math.round(Math.hypot(point.x - base.cx, point.y - base.cy)));
+    } else if (shape.kind === 'diamond') {
+      shape.r = Math.max(1, Math.round(Math.abs(point.x - base.cx) + Math.abs(point.y - base.cy)));
+    } else if (handle === 'start' || handle === 'end') {
+      const fixedX = handle === 'start' ? base.x1 : base.x0;
+      const fixedY = handle === 'start' ? base.y1 : base.y0;
+      let x = Math.round(point.x);
+      let y = Math.round(point.y);
+      if (snapDiagonal) {
+        const vx = point.x - fixedX;
+        const vy = point.y - fixedY;
+        const length = Math.hypot(vx, vy);
+        const angle = Math.round(Math.atan2(vy, vx) / (Math.PI / 4)) * (Math.PI / 4);
+        x = Math.round(fixedX + Math.cos(angle) * length);
+        y = Math.round(fixedY + Math.sin(angle) * length);
+      }
+      if (handle === 'start') {
+        shape.x0 = x;
+        shape.y0 = y;
+      } else {
+        shape.x1 = x;
+        shape.y1 = y;
+      }
+    } else if (handle === 'thickness') {
+      const vx = base.x1 - base.x0;
+      const vy = base.y1 - base.y0;
+      const length = Math.hypot(vx, vy);
+      const nx = length ? -vy / length : 0;
+      const ny = length ? vx / length : -1;
+      const mx = (base.x0 + base.x1) / 2;
+      const my = (base.y0 + base.y1) / 2;
+      const distance = Math.abs((point.x - mx) * nx + (point.y - my) * ny)
+        - this.drag.thicknessHandleOffset;
+      shape.t = Math.max(1, Math.round(2 * Math.max(0, distance)));
+    }
+    return next;
+  }
+
+  pickObstacle(spec, point) {
+    const obstacles = spec.leftObstacles || [];
+    for (let index = obstacles.length - 1; index >= 0; index -= 1) {
+      if (this.hitAuthoringProxy(obstacles[index], point)) return index;
+    }
+    return -1;
+  }
+
+  hitAuthoringProxy(shape, point) {
+    const scale = this.viewport.response.renderScale * this.viewport.zoom;
+    const tolerance = 7 / Math.max(scale, 0.001);
+    // Selection deliberately uses parameter envelopes, not Nim's wall
+    // predicates. In particular, discs and diamonds share the same square
+    // proxy and diagonals use only their centerline; carving and thickness do
+    // not decide selection. The authored list remains the canonical fallback.
+    if (shape.kind === 'rect') {
+      return point.x >= shape.x - tolerance && point.x <= shape.x + shape.w + tolerance
+        && point.y >= shape.y - tolerance && point.y <= shape.y + shape.h + tolerance;
+    }
+    if (shape.kind === 'disc' || shape.kind === 'diamond') {
+      return point.x >= shape.cx - shape.r - tolerance && point.x <= shape.cx + shape.r + tolerance
+        && point.y >= shape.cy - shape.r - tolerance && point.y <= shape.cy + shape.r + tolerance;
+    }
+    return pointSegmentDistance(point.x, point.y, shape.x0, shape.y0, shape.x1, shape.y1)
+      <= tolerance;
+  }
+
+  handlePoints(shape) {
+    if (shape.kind === 'rect') {
+      const x0 = shape.x;
+      const x1 = shape.x + shape.w;
+      const y0 = shape.y;
+      const y1 = shape.y + shape.h;
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      return { nw: [x0, y0], n: [cx, y0], ne: [x1, y0], e: [x1, cy], se: [x1, y1], s: [cx, y1], sw: [x0, y1], w: [x0, cy], move: [cx, cy] };
+    }
+    if (shape.kind === 'disc' || shape.kind === 'diamond') {
+      return { n: [shape.cx, shape.cy - shape.r], e: [shape.cx + shape.r, shape.cy], s: [shape.cx, shape.cy + shape.r], w: [shape.cx - shape.r, shape.cy], move: [shape.cx, shape.cy] };
+    }
+    const mx = (shape.x0 + shape.x1) / 2;
+    const my = (shape.y0 + shape.y1) / 2;
+    const vx = shape.x1 - shape.x0;
+    const vy = shape.y1 - shape.y0;
+    const length = Math.hypot(vx, vy);
+    const nx = length ? -vy / length : 0;
+    const ny = length ? vx / length : -1;
+    const thicknessDistance = shape.t / 2 + this.diagonalHandleOffset();
+    return {
+      start: [shape.x0, shape.y0],
+      end: [shape.x1, shape.y1],
+      midpoint: [mx, my],
+      thickness: [mx + nx * thicknessDistance, my + ny * thicknessDistance],
+    };
+  }
+
+  diagonalHandleOffset() {
+    if (!this.viewport.response) return 0;
+    // Keep the thickness handle clear of the midpoint at every zoom. This is
+    // screen-space editing chrome; the authored `t` remains the exact full
+    // perpendicular thickness sent to Nim.
+    return 14 / Math.max(this.viewport.response.renderScale * this.viewport.zoom, 0.001);
+  }
+
+  hitHandle(shape, clientX, clientY) {
+    const bounds = this.viewport.viewport.getBoundingClientRect();
+    const x = clientX - bounds.left;
+    const y = clientY - bounds.top;
+    const handles = this.handlePoints(shape);
+    let closest = null;
+    let closestDistance = 10;
+    for (const [name, value] of Object.entries(handles)) {
+      const point = this.viewport.specToScreen(value[0], value[1]);
+      const distance = Math.hypot(x - point.x, y - point.y);
+      if (distance <= 9 && distance < closestDistance) {
+        closest = name;
+        closestDistance = distance;
+      }
+    }
+    return closest;
+  }
+
+  drawOverlay(context) {
+    const selection = this.store.state.editing.selection;
+    if (selection && ['trench', 'medKit'].includes(selection.type) && this.placementController) {
+      this.drawPlacementOverlay(context, selection);
+      return;
+    }
+    const shape = this.selectedObstacle();
+    if (!shape || !this.viewport.response) return;
+    const toScreen = (x, y) => this.viewport.specToScreen(x, y);
+    context.save();
+    context.strokeStyle = '#f0a64b';
+    context.lineWidth = 1.5;
+    context.setLineDash([5, 4]);
+    context.beginPath();
+    if (shape.kind === 'rect') {
+      const start = toScreen(shape.x, shape.y);
+      const end = toScreen(shape.x + shape.w, shape.y + shape.h);
+      context.rect(start.x, start.y, end.x - start.x, end.y - start.y);
+    } else if (shape.kind === 'disc') {
+      const center = toScreen(shape.cx, shape.cy);
+      const radius = shape.r * this.viewport.response.renderScale * this.viewport.zoom;
+      context.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    } else if (shape.kind === 'diamond') {
+      const north = toScreen(shape.cx, shape.cy - shape.r);
+      const east = toScreen(shape.cx + shape.r, shape.cy);
+      const south = toScreen(shape.cx, shape.cy + shape.r);
+      const west = toScreen(shape.cx - shape.r, shape.cy);
+      context.moveTo(north.x, north.y);
+      context.lineTo(east.x, east.y);
+      context.lineTo(south.x, south.y);
+      context.lineTo(west.x, west.y);
+      context.closePath();
+    } else {
+      const start = toScreen(shape.x0, shape.y0);
+      const end = toScreen(shape.x1, shape.y1);
+      context.moveTo(start.x, start.y);
+      context.lineTo(end.x, end.y);
+      const handles = this.handlePoints(shape);
+      const midpoint = toScreen(...handles.midpoint);
+      const thickness = toScreen(...handles.thickness);
+      context.moveTo(midpoint.x, midpoint.y);
+      context.lineTo(thickness.x, thickness.y);
+    }
+    context.stroke();
+    context.setLineDash([]);
+
+    const handles = this.handlePoints(shape);
+    for (const [name, value] of Object.entries(handles)) {
+      const point = toScreen(value[0], value[1]);
+      context.beginPath();
+      if (name === 'move' || name === 'midpoint') {
+        context.arc(point.x, point.y, 5, 0, Math.PI * 2);
+      } else {
+        context.rect(point.x - 4, point.y - 4, 8, 8);
+      }
+      context.fillStyle = '#f3ede2';
+      context.fill();
+      context.strokeStyle = '#8b531b';
+      context.lineWidth = 1.5;
+      context.stroke();
+    }
+    context.restore();
+  }
+
+  drawPlacementOverlay(context, selection) {
+    const group = this.placementController.selectedGroup();
+    if (!group) return;
+    const preview = this.store.state.editing.placementPreview;
+    const seed = preview && preview.type === selection.type && preview.index === selection.index
+      ? preview.seed : group.orbit[0];
+    context.save();
+    context.strokeStyle = '#f0a64b';
+    context.fillStyle = '#f3ede2';
+    context.lineWidth = 1.5;
+    context.setLineDash([5, 4]);
+    if (selection.type === 'trench') {
+      const shape = { kind: 'rect', x: seed[0], y: seed[1], w: seed[2], h: seed[3] };
+      const start = this.viewport.specToScreen(shape.x, shape.y);
+      const end = this.viewport.specToScreen(shape.x + shape.w, shape.y + shape.h);
+      context.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
+      if (group.readOnly) {
+        context.restore();
+        return;
+      }
+      context.setLineDash([]);
+      for (const [name, value] of Object.entries(this.handlePoints(shape))) {
+        const point = this.viewport.specToScreen(value[0], value[1]);
+        context.beginPath();
+        if (name === 'move') context.arc(point.x, point.y, 5, 0, Math.PI * 2);
+        else context.rect(point.x - 4, point.y - 4, 8, 8);
+        context.fill();
+        context.strokeStyle = '#8b531b';
+        context.stroke();
+      }
+    } else {
+      const point = this.viewport.specToScreen(seed[0], seed[1]);
+      context.setLineDash([]);
+      context.beginPath();
+      context.arc(point.x, point.y, 6, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = '#8b531b';
+      context.stroke();
+      if (group.readOnly) {
+        context.restore();
+        return;
+      }
+      context.beginPath();
+      context.moveTo(point.x - 10, point.y);
+      context.lineTo(point.x + 10, point.y);
+      context.moveTo(point.x, point.y - 10);
+      context.lineTo(point.x, point.y + 10);
+      context.stroke();
+    }
+    context.restore();
+  }
+}
+
+function memberKey(member) {
+  return JSON.stringify(member);
+}
+
+function uniqueMembers(members) {
+  const seen = new Set();
+  const result = [];
+  for (const member of members) {
+    const key = memberKey(member);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(cloneJson(member));
+  }
+  return result;
+}
+
+function orbitKey(orbit) {
+  return uniqueMembers(orbit).map(memberKey).sort().join('|');
+}
+
+function replaceMembers(values, removedKeys, replacements) {
+  const result = [];
+  let inserted = false;
+  for (const value of values || []) {
+    if (removedKeys.has(memberKey(value))) {
+      if (!inserted) {
+        result.push(...replacements);
+        inserted = true;
+      }
+    } else {
+      result.push(value);
+    }
+  }
+  if (!inserted) result.push(...replacements);
+  return uniqueMembers(result);
+}
+
+class SymmetryPlacementController {
+  constructor(api, store, coordinator) {
+    this.api = api;
+    this.store = store;
+    this.coordinator = coordinator;
+    this.trenchGroups = [];
+    this.medKitGroups = [];
+    this.sourceKey = '';
+    this.operationRevision = 0;
+    this.busy = false;
+    this.ready = false;
+    this.error = null;
+    this.lastEditorKey = '';
+    this.bindControls();
+    this.store.subscribe((state) => this.update(state));
+  }
+
+  bindControls() {
+    $('new-trench').addEventListener('click', () => this.addPlacement('trench'));
+    $('new-med-kit').addEventListener('click', () => this.addPlacement('medKit'));
+    for (const id of ['trench-list', 'med-kit-list']) {
+      $(id).addEventListener('click', (event) => {
+        const item = event.target.closest('[data-placement-type]');
+        if (!item) return;
+        this.store.setSelection({
+          type: item.dataset.placementType,
+          index: Number(item.dataset.placementIndex),
+        });
+      });
+    }
+    $('placement-editor').addEventListener('change', (event) => {
+      const field = event.target.closest('[data-placement-field]');
+      if (field) this.commitNumericField(field);
+    });
+    $('placement-editor').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && event.target.matches('[data-placement-field]')) {
+        event.preventDefault();
+        event.target.blur();
+      }
+    });
+    $('placement-editor').addEventListener('click', (event) => {
+      const action = event.target.closest('[data-placement-action]');
+      if (!action) return;
+      if (action.dataset.placementAction === 'delete') this.deleteSelection();
+      if (action.dataset.placementAction === 'active') this.toggleActive();
+    });
+  }
+
+  structuralKey(spec) {
+    if (!spec) return '';
+    return JSON.stringify({
+      width: spec.width,
+      height: spec.height,
+      symmetry: spec.symmetry,
+      layout: spec.layout,
+      trenches: spec.trenches || [],
+      medKitCandidates: spec.medKitCandidates || [],
+      medKitSpawns: spec.medKitSpawns || [],
+    });
+  }
+
+  update(state) {
+    const spec = state.document.spec;
+    const key = this.structuralKey(spec);
+    if (key !== this.sourceKey) {
+      this.sourceKey = key;
+      this.reconstruct(spec);
+    }
+    this.render(state);
+  }
+
+  async reconstruct(spec) {
+    const revision = ++this.operationRevision;
+    this.ready = false;
+    this.error = null;
+    if (!spec) {
+      this.trenchGroups = [];
+      this.medKitGroups = [];
+      this.render(this.store.state);
+      return;
+    }
+    this.busy = true;
+    this.render(this.store.state);
+    try {
+      const trenches = spec.symmetry === 'rot90' ? [] : (spec.trenches || []);
+      const response = await this.api.symmetry({
+        spec: cloneJson(spec),
+        trenches: cloneJson(trenches),
+        medKits: cloneJson(spec.medKitCandidates || []),
+      });
+      if (revision !== this.operationRevision) return;
+      if (!response || response.ok !== true) {
+        throw new Error(response?.error || 'The symmetry service rejected the placements.');
+      }
+      this.trenchGroups = spec.symmetry === 'rot90'
+        ? (spec.trenches || []).map((rect) => ({ orbit: [cloneJson(rect)], readOnly: true }))
+        : this.groupOrbits(response.trenches || []);
+      const active = new Set((spec.medKitSpawns || []).map(memberKey));
+      this.medKitGroups = this.groupOrbits(response.medKits || []).map((group) => ({
+        ...group,
+        active: group.orbit.every((member) => active.has(memberKey(member))),
+        partiallyActive: group.orbit.some((member) => active.has(memberKey(member)))
+          && !group.orbit.every((member) => active.has(memberKey(member))),
+      }));
+      this.ready = true;
+    } catch (error) {
+      if (revision !== this.operationRevision) return;
+      this.error = error instanceof Error ? error.message : String(error);
+      this.trenchGroups = (spec.trenches || []).map((rect) => ({ orbit: [cloneJson(rect)], readOnly: true }));
+      this.medKitGroups = (spec.medKitCandidates || []).map((point) => ({
+        orbit: [cloneJson(point)], readOnly: true,
+      }));
+    } finally {
+      if (revision === this.operationRevision) {
+        this.busy = false;
+        this.store.setPlacementPreview(null);
+        this.render(this.store.state);
+      }
+    }
+  }
+
+  groupOrbits(orbits) {
+    const groups = [];
+    const seen = new Set();
+    for (const orbit of orbits) {
+      const members = uniqueMembers(orbit || []);
+      const key = orbitKey(members);
+      if (!members.length || seen.has(key)) continue;
+      seen.add(key);
+      groups.push({ orbit: members, readOnly: false });
+    }
+    return groups;
+  }
+
+  render(state) {
+    const spec = state.document.spec;
+    const selection = state.editing.selection;
+    $('new-trench').disabled = !spec || this.busy || !this.ready || spec.symmetry === 'rot90';
+    $('new-med-kit').disabled = !spec || this.busy || !this.ready;
+    const status = $('placement-status');
+    if (!spec) status.textContent = 'Load a map to author placements.';
+    else if (this.busy) status.textContent = 'Resolving symmetry orbits with Nim…';
+    else if (this.error) status.textContent = `Symmetry authoring unavailable: ${this.error}`;
+    else status.textContent = 'Symmetry orbits resolved by Nim.';
+    this.renderGroupList('trench-list', 'Trenches', 'trench', this.trenchGroups, selection);
+    this.renderGroupList('med-kit-list', 'Med-kit candidates', 'medKit', this.medKitGroups, selection);
+    this.renderEditor(selection);
+    this.updatePreviewValues(selection, state.editing.placementPreview);
+    this.renderWarning(spec);
+  }
+
+  updatePreviewValues(selection, preview) {
+    if (!selection || !preview || selection.type !== preview.type || selection.index !== preview.index) return;
+    const fieldIndexes = selection.type === 'trench'
+      ? { x: 0, y: 1, w: 2, h: 3 }
+      : { x: 0, y: 1 };
+    for (const input of $('placement-editor').querySelectorAll('[data-placement-field]')) {
+      if (document.activeElement !== input) input.value = String(preview.seed[fieldIndexes[input.dataset.placementField]]);
+    }
+  }
+
+  renderGroupList(rootId, heading, type, groups, selection) {
+    const root = $(rootId);
+    root.replaceChildren();
+    const title = document.createElement('h3');
+    title.textContent = `${heading} · ${groups.length} orbit${groups.length === 1 ? '' : 's'}`;
+    root.append(title);
+    const list = document.createElement('div');
+    list.className = 'authored-list';
+    if (!groups.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty-detail';
+      empty.textContent = `No ${heading.toLowerCase()}.`;
+      list.append(empty);
+    }
+    groups.forEach((group, index) => {
+      const seed = group.orbit[0];
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'authored-item';
+      button.dataset.placementType = type;
+      button.dataset.placementIndex = String(index);
+      button.setAttribute('aria-pressed', String(selection?.type === type && selection.index === index));
+      const number = document.createElement('span');
+      number.className = 'authored-index';
+      number.textContent = `#${index + 1}`;
+      const kind = document.createElement('span');
+      kind.className = 'authored-kind';
+      kind.textContent = type === 'trench' ? 'Trench' : 'Med kit';
+      if (type === 'medKit' && group.active) kind.classList.add('active-state');
+      const detail = document.createElement('span');
+      detail.className = 'authored-detail';
+      detail.textContent = type === 'trench'
+        ? `${seed[0]}, ${seed[1]} · ${seed[2]}×${seed[3]} · ${group.orbit.length} image${group.orbit.length === 1 ? '' : 's'}`
+        : `${seed[0]}, ${seed[1]} · ${group.active ? 'active' : group.partiallyActive ? 'mixed active state' : 'candidate'} · ${group.orbit.length} image${group.orbit.length === 1 ? '' : 's'}`;
+      button.append(number, kind, detail);
+      list.append(button);
+    });
+    root.append(list);
+  }
+
+  selectedGroup() {
+    const selection = this.store.state.editing.selection;
+    if (!selection) return null;
+    if (selection.type === 'trench') return this.trenchGroups[selection.index] || null;
+    if (selection.type === 'medKit') return this.medKitGroups[selection.index] || null;
+    return null;
+  }
+
+  renderEditor(selection) {
+    const root = $('placement-editor');
+    const group = this.selectedGroup();
+    const key = group ? `${selection.type}:${selection.index}:${orbitKey(group.orbit)}:${group.active}` : 'none';
+    if (key === this.lastEditorKey) return;
+    this.lastEditorKey = key;
+    root.replaceChildren();
+    root.hidden = !group;
+    if (!group) return;
+    const isTrench = selection.type === 'trench';
+    const seed = group.orbit[0];
+    const heading = document.createElement('div');
+    heading.className = 'numeric-editor-heading';
+    const title = document.createElement('strong');
+    title.textContent = `${isTrench ? 'Trench' : 'Med-kit'} orbit ${selection.index + 1}`;
+    const count = document.createElement('span');
+    count.className = 'quiet-label';
+    count.textContent = `${group.orbit.length} deduplicated image${group.orbit.length === 1 ? '' : 's'}`;
+    heading.append(title, count);
+    const grid = document.createElement('div');
+    grid.className = 'numeric-grid';
+    const fields = isTrench ? ['x', 'y', 'w', 'h'] : ['x', 'y'];
+    fields.forEach((name, index) => {
+      const label = document.createElement('label');
+      label.textContent = `${name} · px`;
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.step = '1';
+      input.required = true;
+      input.value = String(seed[index]);
+      input.dataset.placementField = name;
+      input.disabled = this.busy || group.readOnly;
+      label.append(input);
+      grid.append(label);
+    });
+    const actions = document.createElement('div');
+    actions.className = 'selection-actions';
+    if (!isTrench) {
+      const active = document.createElement('button');
+      active.type = 'button';
+      active.dataset.placementAction = 'active';
+      active.disabled = this.busy || group.readOnly;
+      active.textContent = group.active ? 'Make candidate only' : 'Make active';
+      actions.append(active);
+    }
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger-action';
+    remove.dataset.placementAction = 'delete';
+    remove.disabled = this.busy;
+    remove.textContent = isTrench && group.readOnly ? 'Remove this stored trench' : 'Delete orbit';
+    actions.append(remove);
+    root.append(heading, grid, actions);
+  }
+
+  renderWarning(spec) {
+    const warning = $('placement-warning');
+    if (!spec) {
+      warning.hidden = true;
+      return;
+    }
+    const messages = [];
+    if (spec.symmetry === 'rot90') messages.push('Trench authoring is unavailable on rot90 maps; the generator does not support 4-team trenches.');
+    if ((spec.medKitSpawns || []).length < 2) messages.push('Fewer than two active med-kit points triggers the runtime hardcoded centre-thirds fallback.');
+    const active = new Set((spec.medKitSpawns || []).map(memberKey));
+    const candidates = new Set((spec.medKitCandidates || []).map(memberKey));
+    if ([...active].some((key) => !candidates.has(key))) messages.push('Active med-kit spawns must be a subset of candidates.');
+    warning.textContent = messages.join(' ');
+    warning.hidden = !messages.length;
+  }
+
+  seedCenter(spec) {
+    const seed = this.store.state.render.lastGoodResponse?.derived?.seedRegion
+      || { x: 0, y: 0, w: spec.width, h: spec.height };
+    return [Math.round(seed.x + seed.w / 2), Math.round(seed.y + seed.h / 2)];
+  }
+
+  async expand(spec, trenches, medKits) {
+    const response = await this.api.symmetry({
+      spec: cloneJson(spec),
+      trenches: cloneJson(trenches),
+      medKits: cloneJson(medKits),
+    });
+    if (!response || response.ok !== true) throw new Error(response?.error || 'Symmetry expansion failed.');
+    return response;
+  }
+
+  async runMutation(label, operation) {
+    if (this.busy || !this.ready) return;
+    const revision = ++this.operationRevision;
+    const documentRevision = this.store.state.document.revision;
+    this.busy = true;
+    this.error = null;
+    this.render(this.store.state);
+    try {
+      const result = await operation(cloneJson(this.store.state.document.spec));
+      if (revision !== this.operationRevision || !result
+          || documentRevision !== this.store.state.document.revision) return;
+      if (this.store.commitSpec(result.spec, label, result.selection)) {
+        this.coordinator.schedule({ immediate: true });
+      }
+    } catch (error) {
+      if (revision === this.operationRevision) this.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (revision === this.operationRevision) {
+        this.busy = false;
+        this.render(this.store.state);
+      }
+    }
+  }
+
+  addPlacement(type) {
+    const spec = this.store.state.document.spec;
+    if (!spec || (type === 'trench' && spec.symmetry === 'rot90')) return;
+    const [cx, cy] = this.seedCenter(spec);
+    const seed = type === 'trench' ? [cx - 28, cy - 28, 56, 56] : [cx, cy];
+    this.runMutation(`create ${type === 'trench' ? 'trench' : 'med-kit orbit'}`, async (next) => {
+      const response = await this.expand(next, type === 'trench' ? [seed] : [], type === 'medKit' ? [seed] : []);
+      if (type === 'trench') {
+        const orbit = uniqueMembers(response.trenches[0] || []);
+        next.trenches = uniqueMembers([...(next.trenches || []), ...orbit]);
+        return { spec: next, selection: { type: 'trench', index: this.trenchGroups.length } };
+      }
+      const orbit = uniqueMembers(response.medKits[0] || []);
+      next.medKitCandidates = uniqueMembers([...(next.medKitCandidates || []), ...orbit]);
+      return { spec: next, selection: { type: 'medKit', index: this.medKitGroups.length } };
+    });
+  }
+
+  commitNumericField(input) {
+    if (this.busy) return;
+    const selection = this.store.state.editing.selection;
+    const group = this.selectedGroup();
+    if (!selection || !group || group.readOnly) return;
+    const value = input.value === '' ? Number.NaN : Number(input.value);
+    if (!Number.isInteger(value)) {
+      input.setCustomValidity('Enter an integer number of map pixels.');
+      input.reportValidity();
+      return;
+    }
+    const indexByField = selection.type === 'trench'
+      ? { x: 0, y: 1, w: 2, h: 3 }
+      : { x: 0, y: 1 };
+    const field = input.dataset.placementField;
+    if ((field === 'w' || field === 'h') && value < 1) {
+      input.setCustomValidity(`${field} must be at least 1 px.`);
+      input.reportValidity();
+      return;
+    }
+    const seed = cloneJson(group.orbit[0]);
+    seed[indexByField[field]] = value;
+    this.replaceOrbit(selection, group, seed, `edit ${selection.type} ${field}`);
+  }
+
+  replaceOrbit(selection, group, seed, label) {
+    this.runMutation(label, async (next) => {
+      const response = await this.expand(next, selection.type === 'trench' ? [seed] : [], selection.type === 'medKit' ? [seed] : []);
+      const replacement = uniqueMembers(selection.type === 'trench' ? response.trenches[0] : response.medKits[0]);
+      const old = new Set(group.orbit.map(memberKey));
+      if (selection.type === 'trench') {
+        next.trenches = replaceMembers(next.trenches, old, replacement);
+      } else {
+        next.medKitCandidates = replaceMembers(next.medKitCandidates, old, replacement);
+        const active = new Set((next.medKitSpawns || []).map(memberKey));
+        next.medKitSpawns = replaceMembers(next.medKitSpawns, old, []);
+        if (group.active || group.orbit.some((member) => active.has(memberKey(member)))) {
+          next.medKitSpawns = replaceMembers(next.medKitSpawns, new Set(), replacement);
+        }
+      }
+      return { spec: next, selection: cloneJson(selection) };
+    });
+  }
+
+  deleteSelection() {
+    if (this.busy) return;
+    const selection = this.store.state.editing.selection;
+    const group = this.selectedGroup();
+    const spec = this.store.state.document.spec;
+    if (!selection || !group || !spec) return;
+    const old = new Set(group.orbit.map(memberKey));
+    const next = cloneJson(spec);
+    if (selection.type === 'trench') next.trenches = (next.trenches || []).filter((member) => !old.has(memberKey(member)));
+    else {
+      next.medKitCandidates = (next.medKitCandidates || []).filter((member) => !old.has(memberKey(member)));
+      next.medKitSpawns = (next.medKitSpawns || []).filter((member) => !old.has(memberKey(member)));
+    }
+    if (this.store.commitSpec(next, `delete ${selection.type} orbit`, null)) this.coordinator.schedule({ immediate: true });
+  }
+
+  toggleActive() {
+    if (this.busy) return;
+    const selection = this.store.state.editing.selection;
+    const group = this.selectedGroup();
+    const spec = this.store.state.document.spec;
+    if (!selection || selection.type !== 'medKit' || !group || group.readOnly || !spec) return;
+    const next = cloneJson(spec);
+    const members = new Set(group.orbit.map(memberKey));
+    next.medKitSpawns = (next.medKitSpawns || []).filter((point) => !members.has(memberKey(point)));
+    if (!group.active) next.medKitSpawns = uniqueMembers(next.medKitSpawns.concat(group.orbit));
+    if (this.store.commitSpec(next, group.active ? 'deactivate med-kit orbit' : 'activate med-kit orbit')) {
+      this.coordinator.schedule({ immediate: true });
+    }
+  }
+
+  async reexpandForSpec(candidateSpec) {
+    if (!this.ready || this.busy) throw new Error('Wait for the current symmetry orbits to resolve.');
+    if (candidateSpec.symmetry === 'rot90' && (candidateSpec.trenches || []).length) {
+      throw new Error('Remove all trenches before switching to rot90 symmetry.');
+    }
+    const trenchSeeds = this.trenchGroups.map((group) => group.orbit[0]);
+    const medSeeds = this.medKitGroups.map((group) => group.orbit[0]);
+    const response = await this.expand(candidateSpec, trenchSeeds, medSeeds);
+    candidateSpec.trenches = uniqueMembers((response.trenches || []).flat());
+    candidateSpec.medKitCandidates = uniqueMembers((response.medKits || []).flat());
+    candidateSpec.medKitSpawns = uniqueMembers((response.medKits || [])
+      .filter((orbit, index) => this.medKitGroups[index]?.active)
+      .flat());
+    return candidateSpec;
+  }
+}
+
+const TIER_ONE_FIELDS = [
+  { name: 'width', label: 'Width · px', type: 'number', minimum: 1 },
+  { name: 'height', label: 'Height · px', type: 'number', minimum: 1 },
+  { name: 'symmetry', label: 'Symmetry', options: ['mirror', 'rot180', 'rot90'] },
+  { name: 'layout', label: 'Layout', options: ['sides', 'corners', 'plus'] },
+  { name: 'endzone', label: 'Endzone', options: ['column', 'disc', 'square'] },
+  { name: 'endzoneRadius', label: 'Endzone radius · px', type: 'number', minimum: 0 },
+  { name: 'homeDepth', label: 'Home depth · ‰', type: 'number', minimum: 0 },
+  { name: 'flagRing', label: 'Flag ring · px', type: 'number', minimum: 0 },
+  { name: 'captureClear', label: 'Capture clear · px', type: 'number', minimum: 0 },
+  { name: 'spawnClearW', label: 'Spawn clear width · px', type: 'number', minimum: 0 },
+  { name: 'spawnClearH', label: 'Spawn clear height · px', type: 'number', minimum: 0 },
+];
+
+class TierOneController {
+  constructor(store, coordinator, placements) {
+    this.store = store;
+    this.coordinator = coordinator;
+    this.placements = placements;
+    this.busy = false;
+    this.buildFields();
+    this.store.subscribe((state) => this.render(state));
+  }
+
+  buildFields() {
+    const root = $('tier-one-editor');
+    for (const config of TIER_ONE_FIELDS) {
+      const label = document.createElement('label');
+      label.textContent = config.label;
+      let field;
+      if (config.options) {
+        field = document.createElement('select');
+        for (const value of config.options) {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = humanizeToken(value);
+          field.append(option);
+        }
+      } else {
+        field = document.createElement('input');
+        field.type = 'number';
+        field.step = '1';
+        field.min = String(config.minimum);
+        field.required = true;
+      }
+      field.dataset.tierField = config.name;
+      field.addEventListener('change', () => this.commitField(field, config));
+      field.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          field.blur();
+        }
+      });
+      label.append(field);
+      root.append(label);
+    }
+  }
+
+  render(state) {
+    const spec = state.document.spec;
+    for (const field of $('tier-one-editor').querySelectorAll('[data-tier-field]')) {
+      field.disabled = !spec || this.busy;
+      if (spec && document.activeElement !== field) field.value = String(spec[field.dataset.tierField]);
+    }
+    this.renderWarnings(spec);
+  }
+
+  renderWarnings(spec) {
+    const root = $('parameter-warning');
+    if (!spec) {
+      root.hidden = true;
+      return;
+    }
+    const messages = [];
+    if (spec.symmetry === 'rot90' && spec.width !== spec.height) messages.push('rot90 symmetry requires a square board; the service will reject this spec.');
+    if (spec.layout === 'sides' && spec.symmetry === 'rot90') messages.push('Sides layout cannot use rot90 symmetry.');
+    if (spec.layout !== 'sides' && spec.symmetry !== 'rot90') messages.push('Corners and plus layouts require rot90 symmetry.');
+    if (spec.layout !== 'sides' && spec.endzone !== 'column') messages.push('Compact endzones require a 2-team sides layout.');
+    if (spec.endzone === 'column' && spec.endzoneRadius !== 0) messages.push('Column endzones carry no radius; set endzone radius to 0.');
+    if (this.authoredGeometryOutside(spec)) messages.push('Some authored geometry or pickup coordinates lie outside the current dimensions.');
+    root.textContent = messages.join(' ');
+    root.hidden = !messages.length;
+  }
+
+  authoredGeometryOutside(spec) {
+    const pointOutside = (point) => point[0] < 0 || point[1] < 0
+      || point[0] >= spec.width || point[1] >= spec.height;
+    if ((spec.medKitCandidates || []).some(pointOutside) || (spec.medKitSpawns || []).some(pointOutside)) return true;
+    if ((spec.trenches || []).some((rect) => rect[0] < 0 || rect[1] < 0
+        || rect[0] + rect[2] > spec.width || rect[1] + rect[3] > spec.height)) return true;
+    for (const shape of spec.leftObstacles || []) {
+      if (shape.kind === 'rect' && (shape.x < 0 || shape.y < 0
+          || shape.x + shape.w > spec.width || shape.y + shape.h > spec.height)) return true;
+      if ((shape.kind === 'disc' || shape.kind === 'diamond') && (shape.cx - shape.r < 0
+          || shape.cy - shape.r < 0 || shape.cx + shape.r >= spec.width || shape.cy + shape.r >= spec.height)) return true;
+      if (shape.kind === 'diagonal') {
+        const half = shape.t / 2;
+        if (Math.min(shape.x0, shape.x1) - half < 0 || Math.min(shape.y0, shape.y1) - half < 0
+            || Math.max(shape.x0, shape.x1) + half >= spec.width
+            || Math.max(shape.y0, shape.y1) + half >= spec.height) return true;
+      }
+    }
+    return false;
+  }
+
+  async commitField(field, config) {
+    const spec = this.store.state.document.spec;
+    if (!spec || this.busy) return;
+    let value = field.value;
+    if (!config.options) {
+      value = value === '' ? Number.NaN : Number(value);
+      if (!Number.isInteger(value) || value < config.minimum) {
+        field.setCustomValidity(`Enter an integer of at least ${config.minimum}.`);
+        field.reportValidity();
+        return;
+      }
+    }
+    field.setCustomValidity('');
+    if (spec[config.name] === value) return;
+    if (config.name === 'symmetry' && value === 'rot90' && (spec.trenches || []).length) {
+      field.setCustomValidity('Remove all trenches before switching to rot90 symmetry.');
+      field.reportValidity();
+      field.value = spec.symmetry;
+      return;
+    }
+    this.busy = true;
+    const documentRevision = this.store.state.document.revision;
+    this.render(this.store.state);
+    try {
+      let next = cloneJson(spec);
+      next[config.name] = value;
+      // Layout and symmetry are one compatibility choice in the map format.
+      // Commit their required counterpart together so the user is not trapped
+      // between two service-rejected intermediate states.
+      if (config.name === 'layout') {
+        if (value === 'sides' && next.symmetry === 'rot90') next.symmetry = 'mirror';
+        if (value !== 'sides') {
+          next.symmetry = 'rot90';
+          next.endzone = 'column';
+          next.endzoneRadius = 0;
+        }
+      }
+      if (config.name === 'symmetry') {
+        if (value === 'rot90') {
+          if (next.layout === 'sides') next.layout = 'corners';
+          next.endzone = 'column';
+          next.endzoneRadius = 0;
+        } else if (next.layout !== 'sides') {
+          next.layout = 'sides';
+        }
+      }
+      if (['width', 'height', 'symmetry', 'layout'].includes(config.name)) {
+        const intentionallyInvalidRot90 = next.symmetry === 'rot90' && next.width !== next.height;
+        if (!intentionallyInvalidRot90) {
+          try {
+            next = await this.placements.reexpandForSpec(next);
+          } catch (error) {
+            // Dimension edits are allowed to strand authored geometry. Preserve
+            // it verbatim so the map render can report the authoritative error.
+            if (!['width', 'height'].includes(config.name)) throw error;
+          }
+        }
+      }
+      if (documentRevision !== this.store.state.document.revision) {
+        throw new Error('The map changed while this parameter was being derived. Try again.');
+      }
+      if (this.store.commitSpec(next, `edit map ${config.name}`)) {
+        this.coordinator.schedule({ immediate: true });
+      }
+    } catch (error) {
+      field.setCustomValidity(error instanceof Error ? error.message : String(error));
+      field.reportValidity();
+      field.value = String(spec[config.name]);
+    } finally {
+      this.busy = false;
+      this.render(this.store.state);
+    }
   }
 }
 
@@ -1049,7 +2621,7 @@ class InspectorView {
     appendDetail(summary, 'Symmetry', humanizeToken(spec.symmetry));
     appendDetail(summary, 'Endzone', formatEndzone(spec));
     appendDetail(summary, 'Obstacles', `${formatInteger(derived.authoredObstacleCount)} authored · ${formatInteger(derived.expandedObstacleCount)} expanded`);
-    appendDetail(summary, 'Trenches', `${formatInteger((spec.trenches || []).length)} full-map rectangles · read-only`);
+    appendDetail(summary, 'Trenches', `${formatInteger((spec.trenches || []).length)} full-map rectangles`);
     appendDetail(summary, 'Render scale', `${response.renderScale.toFixed(4)} image px per map px`);
 
     const seed = derived.seedRegion;
@@ -1098,7 +2670,7 @@ class InspectorView {
       `${formatPoint(diamond.cx, diamond.cy)} · L1 radius ${formatInteger(diamond.r)} px`
     )));
 
-    addMarkerGroup(root, 'Trenches · read-only', (spec.trenches || []).map((trench) => (
+    addMarkerGroup(root, 'Trenches', (spec.trenches || []).map((trench) => (
       `x ${formatInteger(trench[0])} px · y ${formatInteger(trench[1])} px · ${formatInteger(trench[2])} × ${formatInteger(trench[3])} px`
     )));
   }
@@ -1143,6 +2715,11 @@ class Application {
     this.store = new EditorStore();
     this.coordinator = new RenderCoordinator(this.api, this.store);
     this.viewport = new MapViewport(this.store);
+    this.editing = new EditingController(this.store, this.coordinator, this.viewport);
+    this.viewport.setEditingController(this.editing);
+    this.placements = new SymmetryPlacementController(this.api, this.store, this.coordinator);
+    this.editing.setPlacementController(this.placements);
+    this.parameters = new TierOneController(this.store, this.coordinator, this.placements);
     this.inspector = new InspectorView(this.store);
   }
 

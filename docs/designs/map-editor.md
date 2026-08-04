@@ -4,10 +4,8 @@ A visual editor for CTF / Paintbot maps that reads and writes the existing
 `mapSpec` JSON format, with the Nim sim as the single source of truth for all
 geometry, derivation, and validation.
 
-Status: **Phase 1 (inspector) implemented.** Phase 2 (editing) is in progress —
-its Nim half (`symmetryImages` + `POST /api/symmetry`) has landed, unblocking
-trench and med-kit authoring; the editing UI is still being built. Phase 3
-(diagnostics polish) remains a proposal. See Rollout at the end.
+Status: **Phases 1 and 2 implemented** — inspection and editing both work.
+Phase 3 (diagnostics polish) remains a proposal. See Rollout at the end.
 
 ## Problem
 
@@ -429,11 +427,11 @@ selection, and have both the pool renderer and the editor call it.
   (`tools/map_editor.nim`), and a UI (`tools/map_editor/`) that loads
   pool/seed/spec and renders with overlays and the lint panel. Trenches and
   med kits render read-only.
-- **Phase 2 — Editing.** Shape create/select/move/resize/delete with numeric
+- **Phase 2 — Editing. DONE.** Shape create/select/move/resize/delete with numeric
   inspection, the tier-1 parameter panel with live re-derivation, trench and
   med-kit placement, load/save spec JSON.
 
-  **Blocked on one Nim addition.** Authoring a trench or med kit means placing
+  Was blocked on one Nim addition, now landed. Authoring a trench or med kit means placing
   it once in the seed region and deriving its symmetry image(s), and that
   expansion must happen in Nim — doing it in JavaScript would reproduce
   `mirrorX` / `rot180` in the browser and break this design's central rule. The

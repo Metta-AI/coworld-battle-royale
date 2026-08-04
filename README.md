@@ -186,11 +186,11 @@ seeks.
 - Define sprites once and move objects per tick — every accepted packet is
   stored in the replay, so diff-style authoring keeps files small.
 
-## Inspect maps
+## Inspect and edit maps
 
 Maps come from a seeded procedural generator (see [`docs/RULES.md`](docs/RULES.md)
-for what the terrain features do in play). To look at one interactively, run the
-map inspector:
+for what the terrain features do in play). To look at one interactively — or
+author your own — run the map editor:
 
 ```sh
 nim c --threads:on --mm:orc -r tools/map_editor.nim 8099
@@ -201,6 +201,12 @@ seed with the full override set, or pasted map spec, renders it through the real
 game geometry, and reports the play-quality validators live — cover budget, open
 sightlines, corridor connectivity, and endzone access. Useful for understanding
 why a map plays the way it does, or why a generated candidate was rejected.
+
+You can also edit: add and reshape obstacles, place trenches and med kits, change
+the map parameters, and export the result as a `mapSpec` you can drop straight
+into a config. Maps are authored for one half (or one quadrant on 4-team boards)
+and the server derives the rest, so team fairness is structural — you cannot
+accidentally give one side more cover than the other.
 
 For a static, zoomable view of the whole curated pool without running anything,
 open [`docs/pool-review.html`](docs/pool-review.html).
