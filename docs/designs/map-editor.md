@@ -276,17 +276,34 @@ never reproduces `mirrorX` / `rot180` / `rot90Point`. Called on drop and on
 numeric commit, not per mousemove.
 
 ```jsonc
-// request — the spec supplies width/height/symmetry/layout
-{"spec": { ... }, "rects": [[250,110,56,56]], "points": [[617,219]]}
+// request — the spec supplies width/height/symmetry/layout.
+// Both arrays are required; send [] for the one you are not placing.
+{"spec": { ... }, "trenches": [[250,110,56,56]], "medKits": [[617,219]]}
 
 // response — one orbit per input, in the same order, original first
 {"ok": true,
- "rects":  [[[250,110,56,56], [929,493,56,56]]],
- "points": [[[617,219], [617,439]]]}
+ "trenches": [[[250,110,56,56], [929,493,56,56]]],
+ "medKits":  [[[617,219], [617,439]]]}
 ```
 
-An orbit has two entries under `mirror` and `rot180` (one when the placement is
-its own image, e.g. a point on the vertical centre line), four under `rot90`.
+The fields are named for what they carry rather than for their shape
+(`rects`/`points`), because the rot90 rule below is trench *policy*, not
+geometry — inferring "this rectangle is a trench" from its shape would leave the
+endpoint unable to grow a second rectangular concept. A future third placement
+kind adds a field.
+
+Orbits are **deduplicated**, so an orbit holds *up to* two entries under
+`mirror` and `rot180` and *up to* four under `rot90`. A placement that is its own
+image collapses: a point on the vertical centre line of an odd-width mirror
+board, a rect centred on both axes under rot180, the exact centre point or a
+centred square under rot90 (one entry), or a centred non-square rect under rot90
+(two). Generate the orbit with the canonical integer transforms and dedupe by
+whole-value comparison rather than special-casing the parities — that respects
+the half-pixel rot90 axis automatically.
+
+The underlying geometry proc stays general; bounds and policy are enforced at the
+request boundary, consistent with `validateMapRect`'s existing rule that a rect
+must lie wholly inside the map.
 
 **Trenches are refused on rot90 maps.** `finalizeTrenches` never places them
 there and `generateMapAttempt` raises `Trenches are not supported on 4-team maps
