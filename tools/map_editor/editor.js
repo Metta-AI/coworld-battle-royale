@@ -54,6 +54,23 @@ function fileSafeName(name) {
   return `${safe || 'ctf-map'}.json`;
 }
 
+function groupSightlineRows(values) {
+  const rows = [...new Set((values || []).filter(Number.isInteger))].sort((a, b) => a - b);
+  const groups = [];
+  for (const row of rows) {
+    const current = groups.at(-1);
+    if (current && row === current.at(-1) + 4) current.push(row);
+    else groups.push([row]);
+  }
+  return groups;
+}
+
+function isInteractiveTarget(target) {
+  return target instanceof Element && Boolean(target.closest(
+    'input, textarea, select, button, [contenteditable="true"], [role="tab"]',
+  ));
+}
+
 class MapEditorApi {
   async requestJson(path, options = {}) {
     const response = await fetch(path, {
@@ -214,15 +231,19 @@ class MockMapEditorApi {
         minCoverPermille: 74,
         coverPermilleMin: 40,
         coverPermilleMax: 170,
-        openSightlineRows: [412, 416, 420],
+        openSightlineRows: [412, 416, 420, 508],
+        sightlineXRange: { xLo: 215, xHi: 1020 },
+        redHomeOnOpenFloor: true,
         unreachableTeams: ['blue'],
         centerReachable: true,
+        endzoneFlankChecked: false,
+        rearGateReachesCenterWithoutEndzone: false,
         endzoneGates: [
-          { name: 'north', state: 'open' },
-          { name: 'behind', state: 'sealed' },
+          { name: 'above', state: 'open', x: 185, y: 115 },
+          { name: 'behind', state: 'sealed', x: 41, y: 329 },
         ],
       },
-      derived: cloneJson(MOCK_DERIVED),
+      derived: { ...cloneJson(MOCK_DERIVED), center: { x: 617, y: 329 } },
     };
   }
 
@@ -297,7 +318,7 @@ class MockMapEditorApi {
     if (overlays.has('sightlines')) {
       context.strokeStyle = '#a33b32';
       context.lineWidth = Math.max(1, px(2));
-      for (const y of [412, 416, 420]) {
+      for (const y of [412, 416, 420, 508]) {
         context.beginPath();
         context.moveTo(0, px(y));
         context.lineTo(width, px(y));
@@ -335,6 +356,8 @@ class EditorStore {
       controls: {
         overlays: new Set(['protected', 'pickups', 'spin', 'seedRegion']),
         maxDimension: 1600,
+        snapToGrid: false,
+        gridSize: 8,
       },
       render: {
         pending: false,
@@ -468,8 +491,17 @@ class EditorStore {
   }
 
   validSelection(selection, spec) {
-    if (!selection || selection.type !== 'obstacle') return null;
-    return (spec.leftObstacles || [])[selection.index] ? cloneJson(selection) : null;
+    if (!selection) return null;
+    if (selection.type === 'obstacle') {
+      return (spec.leftObstacles || [])[selection.index] ? cloneJson(selection) : null;
+    }
+    if (selection.type === 'trench') {
+      return (spec.trenches || []).length ? cloneJson(selection) : null;
+    }
+    if (selection.type === 'medKit') {
+      return (spec.medKitCandidates || []).length ? cloneJson(selection) : null;
+    }
+    return null;
   }
 }
 
@@ -620,6 +652,7 @@ class MapViewport {
     this.lastLoadRevision = 0;
     this.labelBounds = [];
     this.editingController = null;
+    this.diagnosticTarget = null;
 
     this.bindEvents();
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -821,7 +854,105 @@ class MapViewport {
     if (this.appliedOverlays.has('pickups')) this.drawPickups(context);
     if (this.appliedOverlays.has('spin')) this.drawSpinningDiamonds(context);
     this.drawTrenches(context);
+    this.drawDiagnosticHighlight(context);
     if (this.editingController) this.editingController.drawOverlay(context);
+    context.restore();
+    if (this.diagnosticTarget?.offMap) this.drawOffMapDiagnostic(context);
+  }
+
+  setDiagnosticTarget(target) {
+    this.diagnosticTarget = target || null;
+    this.drawOverlay();
+  }
+
+  focusDiagnostic(target) {
+    if (!target || !this.response || !this.image) return;
+    const padding = target.kind === 'sightline' ? 28 : 90;
+    const pointX = target.offMap
+      ? Math.max(0, Math.min(this.spec.width - 1, target.x)) : target.x;
+    const pointY = target.offMap
+      ? Math.max(0, Math.min(this.spec.height - 1, target.y)) : target.y;
+    const x0 = target.kind === 'sightline' ? target.xLo : pointX - padding;
+    const x1 = target.kind === 'sightline' ? target.xHi : pointX + padding;
+    const y0 = target.kind === 'sightline' ? target.rows[0] - padding : pointY - padding;
+    const y1 = target.kind === 'sightline' ? target.rows.at(-1) + padding : pointY + padding;
+    const scale = this.response.renderScale;
+    const imageWidth = Math.max(1, (x1 - x0) * scale);
+    const imageHeight = Math.max(1, (y1 - y0) * scale);
+    const availableWidth = Math.max(1, this.viewport.clientWidth - 72);
+    const availableHeight = Math.max(1, this.viewport.clientHeight - 72);
+    this.zoom = Math.min(16, Math.max(0.05, Math.min(
+      availableWidth / imageWidth,
+      availableHeight / imageHeight,
+    )));
+    const centerX = ((x0 + x1) / 2) * scale;
+    const centerY = ((y0 + y1) / 2) * scale;
+    this.panX = this.viewport.clientWidth / 2 - centerX * this.zoom;
+    this.panY = this.viewport.clientHeight / 2 - centerY * this.zoom;
+    this.fitted = false;
+    this.applyTransform();
+  }
+
+  drawDiagnosticHighlight(context) {
+    const target = this.diagnosticTarget;
+    if (!target || target.offMap) return;
+    context.save();
+    context.strokeStyle = '#a33b32';
+    context.fillStyle = 'rgba(163, 59, 50, 0.1)';
+    context.lineWidth = 2.5;
+    if (target.kind === 'sightline') {
+      for (const row of target.rows) {
+        const start = this.specToScreen(target.xLo, row);
+        const end = this.specToScreen(target.xHi, row);
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        context.lineTo(end.x, end.y);
+        context.stroke();
+      }
+      const labelPoint = this.specToScreen(target.xLo, target.rows[0]);
+      this.drawLabel(context, labelPoint.x, labelPoint.y, target.label, '#762b25', {
+        background: 'rgba(243, 237, 226, 0.94)',
+      });
+    } else {
+      const point = this.specToScreen(target.x, target.y);
+      context.beginPath();
+      context.arc(point.x, point.y, 13, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
+      this.drawCrosshair(context, point.x, point.y, '#a33b32', 7);
+      this.drawLabel(context, point.x, point.y, target.label, '#762b25', {
+        background: 'rgba(243, 237, 226, 0.94)',
+      });
+    }
+    context.restore();
+  }
+
+  drawOffMapDiagnostic(context) {
+    const target = this.diagnosticTarget;
+    const x = Math.max(0, Math.min(this.spec.width - 1, target.x));
+    const y = Math.max(0, Math.min(this.spec.height - 1, target.y));
+    const point = this.specToScreen(x, y);
+    const dx = target.x - x;
+    const dy = target.y - y;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const ux = dx / length;
+    const uy = dy / length;
+    const endX = point.x + ux * 18;
+    const endY = point.y + uy * 18;
+    context.save();
+    context.strokeStyle = '#a33b32';
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+    context.lineTo(endX, endY);
+    context.moveTo(endX, endY);
+    context.lineTo(endX - ux * 6 - uy * 4, endY - uy * 6 + ux * 4);
+    context.moveTo(endX, endY);
+    context.lineTo(endX - ux * 6 + uy * 4, endY - uy * 6 - ux * 4);
+    context.stroke();
+    context.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    context.fillStyle = '#762b25';
+    context.fillText(`${target.label} · off map`, endX + 7, endY - 7);
     context.restore();
   }
 
@@ -947,15 +1078,27 @@ class MapViewport {
   drawSpinningDiamonds(context) {
     const diamonds = this.response.derived && this.response.derived.spinningDiamonds;
     if (!Array.isArray(diamonds)) return;
+    // One label for the set, markers for the rest — the same rule drawPickups
+    // follows. A small board can put a dozen diamonds in the centre spin band,
+    // and labelling each one buries the terrain the marks exist to annotate.
+    // Every radius is listed in the marker table below the board.
+    const color = MARKER_COLORS.spinningDiamond;
+    let labelled = false;
     for (const diamond of diamonds) {
       const point = this.specToScreen(diamond.cx, diamond.cy);
-      const color = MARKER_COLORS.spinningDiamond;
       context.save();
       context.strokeStyle = color;
       context.lineWidth = 1.5;
       context.strokeRect(point.x - 4, point.y - 4, 8, 8);
       context.restore();
-      this.drawLabel(context, point.x, point.y, `spinning diamond · r ${diamond.r} px`, color);
+      if (!labelled) {
+        const suffix = diamonds.length > 1 ? ` ×${diamonds.length}` : '';
+        this.drawLabel(
+          context, point.x, point.y,
+          `spinning diamond · r ${diamond.r} px${suffix}`, color
+        );
+        labelled = true;
+      }
     }
   }
 
@@ -1087,6 +1230,8 @@ class EditingController {
     this.drag = null;
     this.lastListKey = '';
     this.lastEditorKey = '';
+    this.nudge = null;
+    this.heldNudgeKeys = new Set();
     this.bindControls();
     this.store.subscribe((state) => this.render(state));
   }
@@ -1097,6 +1242,23 @@ class EditingController {
     }
     $('undo-edit').addEventListener('click', () => this.undo());
     $('redo-edit').addEventListener('click', () => this.redo());
+    $('snap-to-grid').addEventListener('change', (event) => {
+      this.store.change((state) => {
+        state.controls.snapToGrid = event.target.checked;
+      });
+      $('grid-size').disabled = !event.target.checked;
+    });
+    $('grid-size').addEventListener('change', (event) => {
+      const value = Number(event.target.value);
+      if (!Number.isInteger(value) || value < 1) {
+        event.target.setCustomValidity('Grid size must be a positive integer.');
+        event.target.reportValidity();
+        event.target.value = String(this.store.state.controls.gridSize);
+        return;
+      }
+      event.target.setCustomValidity('');
+      this.store.change((state) => { state.controls.gridSize = value; });
+    });
 
     $('obstacle-list').addEventListener('click', (event) => {
       const button = event.target.closest('[data-obstacle-index]');
@@ -1128,7 +1290,7 @@ class EditingController {
 
     window.addEventListener('keydown', (event) => {
       const modifier = event.metaKey || event.ctrlKey;
-      if (event.target.matches('input, textarea, select')) return;
+      if (event.defaultPrevented || isInteractiveTarget(event.target)) return;
       if (modifier && event.key.toLowerCase() === 'z') {
         event.preventDefault();
         if (event.shiftKey) this.redo();
@@ -1141,11 +1303,22 @@ class EditingController {
         return;
       }
       if ((event.key === 'Delete' || event.key === 'Backspace')
-          && !event.target.matches('input, textarea, select')) {
+          && !isInteractiveTarget(event.target)) {
         event.preventDefault();
         this.deleteSelection();
       }
-      if (event.key === 'Escape' && this.drag) this.cancelDrag();
+      if (event.key === 'Escape' && (this.drag || this.nudge)) this.cancelTransientEdit();
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        this.nudgeSelection(event);
+      }
+    });
+    window.addEventListener('keyup', (event) => {
+      if (!this.nudge || !this.heldNudgeKeys.has(event.key)) return;
+      this.heldNudgeKeys.delete(event.key);
+      if (!this.heldNudgeKeys.size) this.finishNudge();
+    });
+    window.addEventListener('blur', () => {
+      if (this.nudge) this.finishNudge();
     });
   }
 
@@ -1182,6 +1355,10 @@ class EditingController {
     if (selected) this.updateNumericValues(selected);
 
     const hasSpec = Boolean(state.document.spec);
+    const placementGroup = selection && selection.type !== 'obstacle'
+      ? this.placementController?.selectedGroup() : null;
+    $('precision-controls').hidden = !selection
+      || (selection.type !== 'obstacle' && (!placementGroup || placementGroup.readOnly));
     for (const button of document.querySelectorAll('[data-create-obstacle]')) button.disabled = !hasSpec;
     $('undo-edit').disabled = !state.editing.undoStack.length;
     $('redo-edit').disabled = !state.editing.redoStack.length;
@@ -1338,8 +1515,8 @@ class EditingController {
     if (!Array.isArray(next.leftObstacles)) next.leftObstacles = [];
     const seed = this.store.state.render.lastGoodResponse?.derived?.seedRegion
       || { x: 0, y: 0, w: spec.width, h: spec.height };
-    const cx = Math.round(seed.x + seed.w / 2);
-    const cy = Math.round(seed.y + seed.h / 2);
+    const cx = this.snapCoordinate(seed.x + seed.w / 2);
+    const cy = this.snapCoordinate(seed.y + seed.h / 2);
     const shapes = {
       rect: { kind: 'rect', x: cx - 24, y: cy - 24, w: 48, h: 48 },
       disc: { kind: 'disc', cx, cy, r: 24 },
@@ -1352,7 +1529,7 @@ class EditingController {
   }
 
   deleteSelection() {
-    if (this.drag) this.cancelDrag();
+    if (this.drag || this.nudge) this.cancelTransientEdit();
     const spec = this.store.state.document.spec;
     const selection = this.store.state.editing.selection;
     if (!spec || !selection || selection.type !== 'obstacle') return;
@@ -1400,12 +1577,12 @@ class EditingController {
   }
 
   undo() {
-    if (this.drag) this.cancelDrag();
+    if (this.drag || this.nudge) this.cancelTransientEdit();
     if (this.store.undo()) this.coordinator.schedule({ immediate: true });
   }
 
   redo() {
-    if (this.drag) this.cancelDrag();
+    if (this.drag || this.nudge) this.cancelTransientEdit();
     if (this.store.redo()) this.coordinator.schedule({ immediate: true });
   }
 
@@ -1531,20 +1708,139 @@ class EditingController {
     this.store.setPlacementPreview(null);
   }
 
+  cancelTransientEdit() {
+    this.nudge = null;
+    this.heldNudgeKeys.clear();
+    this.cancelDrag();
+  }
+
+  nudgeSelection(event) {
+    if (this.drag || event.metaKey || event.ctrlKey || event.altKey) return;
+    const selection = this.store.state.editing.selection;
+    const spec = this.store.state.document.spec;
+    if (!selection || !spec) return;
+    if (selection.type !== 'obstacle') {
+      const group = this.placementController?.selectedGroup();
+      if (!group || group.readOnly || this.placementController.busy) return;
+    }
+    event.preventDefault();
+    const step = event.shiftKey ? 10 : 1;
+    const delta = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    }[event.key];
+    if (!this.nudge) {
+      const group = selection.type === 'obstacle' ? null : this.placementController.selectedGroup();
+      this.nudge = {
+        selection: cloneJson(selection),
+        baseSpec: selection.type === 'obstacle' ? cloneJson(spec) : null,
+        group,
+        baseSeed: group ? cloneJson(group.orbit[0]) : null,
+        dx: 0,
+        dy: 0,
+      };
+    }
+    if (this.nudge.selection.type !== selection.type
+        || this.nudge.selection.index !== selection.index) return;
+    this.heldNudgeKeys.add(event.key);
+    this.nudge.dx += delta[0];
+    this.nudge.dy += delta[1];
+    if (selection.type === 'obstacle') {
+      const next = cloneJson(this.nudge.baseSpec);
+      const shape = next.leftObstacles[selection.index];
+      this.translateObstacle(shape, this.nudge.dx, this.nudge.dy);
+      this.store.setPreviewSpec(next);
+    } else {
+      const seed = cloneJson(this.nudge.baseSeed);
+      seed[0] += this.nudge.dx;
+      seed[1] += this.nudge.dy;
+      this.store.setPlacementPreview({
+        type: selection.type,
+        index: selection.index,
+        seed,
+      });
+    }
+  }
+
+  finishNudge() {
+    if (!this.nudge) return;
+    const nudge = this.nudge;
+    this.nudge = null;
+    this.heldNudgeKeys.clear();
+    const selection = this.store.state.editing.selection;
+    if (!selection || selection.type !== nudge.selection.type
+        || selection.index !== nudge.selection.index) {
+      this.store.clearPreview();
+      this.store.setPlacementPreview(null);
+      return;
+    }
+    const name = nudge.selection.type === 'medKit' ? 'med-kit orbit' : nudge.selection.type;
+    if (nudge.selection.type === 'obstacle') {
+      const next = this.store.state.editing.previewSpec;
+      const shape = nudge.baseSpec.leftObstacles[nudge.selection.index];
+      if (next && this.store.commitSpec(next, `nudge ${shape.kind}`)) {
+        this.coordinator.schedule({ immediate: true });
+      } else {
+        this.store.clearPreview();
+      }
+      return;
+    }
+    const preview = this.store.state.editing.placementPreview;
+    if (!preview) return;
+    this.placementController.replaceOrbit(
+      nudge.selection,
+      nudge.group,
+      preview.seed,
+      `nudge ${name}`,
+    );
+  }
+
+  translateObstacle(shape, dx, dy) {
+    if (shape.kind === 'rect') {
+      shape.x += dx;
+      shape.y += dy;
+    } else if (shape.kind === 'disc' || shape.kind === 'diamond') {
+      shape.cx += dx;
+      shape.cy += dy;
+    } else {
+      shape.x0 += dx;
+      shape.y0 += dy;
+      shape.x1 += dx;
+      shape.y1 += dy;
+    }
+  }
+
+  snapCoordinate(value) {
+    const rounded = Math.round(value);
+    const controls = this.store.state.controls;
+    if (!controls.snapToGrid) return rounded;
+    return Math.round(rounded / controls.gridSize) * controls.gridSize;
+  }
+
+  snapSize(value) {
+    return Math.max(1, this.snapCoordinate(value));
+  }
+
   draggedPlacement(point) {
     const base = this.drag.baseSeed;
     const dx = Math.round(point.x - this.drag.start.x);
     const dy = Math.round(point.y - this.drag.start.y);
-    if (this.drag.type === 'medKit') return [base[0] + dx, base[1] + dy];
-    if (this.drag.handle === 'move') return [base[0] + dx, base[1] + dy, base[2], base[3]];
+    if (this.drag.type === 'medKit') {
+      return [this.snapCoordinate(base[0] + dx), this.snapCoordinate(base[1] + dy)];
+    }
+    if (this.drag.handle === 'move') {
+      return [this.snapCoordinate(base[0] + dx), this.snapCoordinate(base[1] + dy), base[2], base[3]];
+    }
     let x0 = base[0];
     let y0 = base[1];
     let x1 = base[0] + base[2];
     let y1 = base[1] + base[3];
-    if (this.drag.handle.includes('w')) x0 = Math.round(point.x);
-    if (this.drag.handle.includes('e')) x1 = Math.round(point.x);
-    if (this.drag.handle.includes('n')) y0 = Math.round(point.y);
-    if (this.drag.handle.includes('s')) y1 = Math.round(point.y);
+    if (this.drag.handle.includes('w')) x0 = this.snapCoordinate(point.x);
+    if (this.drag.handle.includes('e')) x1 = this.snapCoordinate(point.x);
+    if (this.drag.handle.includes('n')) y0 = this.snapCoordinate(point.y);
+    if (this.drag.handle.includes('s')) y1 = this.snapCoordinate(point.y);
     return [Math.min(x0, x1), Math.min(y0, y1), Math.max(1, Math.abs(x1 - x0)), Math.max(1, Math.abs(y1 - y0))];
   }
 
@@ -1557,16 +1853,18 @@ class EditingController {
     const handle = this.drag.handle;
     if (handle === 'move' || handle === 'midpoint') {
       if (shape.kind === 'rect') {
-        shape.x = base.x + dx;
-        shape.y = base.y + dy;
+        shape.x = this.snapCoordinate(base.x + dx);
+        shape.y = this.snapCoordinate(base.y + dy);
       } else if (shape.kind === 'disc' || shape.kind === 'diamond') {
-        shape.cx = base.cx + dx;
-        shape.cy = base.cy + dy;
+        shape.cx = this.snapCoordinate(base.cx + dx);
+        shape.cy = this.snapCoordinate(base.cy + dy);
       } else {
-        shape.x0 = base.x0 + dx;
-        shape.y0 = base.y0 + dy;
-        shape.x1 = base.x1 + dx;
-        shape.y1 = base.y1 + dy;
+        const x0 = this.snapCoordinate(base.x0 + dx);
+        const y0 = this.snapCoordinate(base.y0 + dy);
+        shape.x0 = x0;
+        shape.y0 = y0;
+        shape.x1 = base.x1 + (x0 - base.x0);
+        shape.y1 = base.y1 + (y0 - base.y0);
       }
       return next;
     }
@@ -1576,23 +1874,23 @@ class EditingController {
       let x1 = base.x + base.w;
       let y0 = base.y;
       let y1 = base.y + base.h;
-      if (handle.includes('w')) x0 = Math.round(point.x);
-      if (handle.includes('e')) x1 = Math.round(point.x);
-      if (handle.includes('n')) y0 = Math.round(point.y);
-      if (handle.includes('s')) y1 = Math.round(point.y);
+      if (handle.includes('w')) x0 = this.snapCoordinate(point.x);
+      if (handle.includes('e')) x1 = this.snapCoordinate(point.x);
+      if (handle.includes('n')) y0 = this.snapCoordinate(point.y);
+      if (handle.includes('s')) y1 = this.snapCoordinate(point.y);
       shape.x = Math.min(x0, x1);
       shape.y = Math.min(y0, y1);
       shape.w = Math.max(1, Math.abs(x1 - x0));
       shape.h = Math.max(1, Math.abs(y1 - y0));
     } else if (shape.kind === 'disc') {
-      shape.r = Math.max(1, Math.round(Math.hypot(point.x - base.cx, point.y - base.cy)));
+      shape.r = this.snapSize(Math.hypot(point.x - base.cx, point.y - base.cy));
     } else if (shape.kind === 'diamond') {
-      shape.r = Math.max(1, Math.round(Math.abs(point.x - base.cx) + Math.abs(point.y - base.cy)));
+      shape.r = this.snapSize(Math.abs(point.x - base.cx) + Math.abs(point.y - base.cy));
     } else if (handle === 'start' || handle === 'end') {
       const fixedX = handle === 'start' ? base.x1 : base.x0;
       const fixedY = handle === 'start' ? base.y1 : base.y0;
-      let x = Math.round(point.x);
-      let y = Math.round(point.y);
+      let x = this.snapCoordinate(point.x);
+      let y = this.snapCoordinate(point.y);
       if (snapDiagonal) {
         const vx = point.x - fixedX;
         const vy = point.y - fixedY;
@@ -1618,7 +1916,7 @@ class EditingController {
       const my = (base.y0 + base.y1) / 2;
       const distance = Math.abs((point.x - mx) * nx + (point.y - my) * ny)
         - this.drag.thicknessHandleOffset;
-      shape.t = Math.max(1, Math.round(2 * Math.max(0, distance)));
+      shape.t = this.snapSize(2 * Math.max(0, distance));
     }
     return next;
   }
@@ -1964,6 +2262,7 @@ class SymmetryPlacementController {
           && !group.orbit.every((member) => active.has(memberKey(member))),
       }));
       this.ready = true;
+      this.reconcileSelection();
     } catch (error) {
       if (revision !== this.operationRevision) return;
       this.error = error instanceof Error ? error.message : String(error);
@@ -1991,6 +2290,13 @@ class SymmetryPlacementController {
       groups.push({ orbit: members, readOnly: false });
     }
     return groups;
+  }
+
+  reconcileSelection() {
+    const selection = this.store.state.editing.selection;
+    if (!selection || !['trench', 'medKit'].includes(selection.type)) return;
+    const groups = selection.type === 'trench' ? this.trenchGroups : this.medKitGroups;
+    if (!groups[selection.index]) this.store.setSelection(null);
   }
 
   render(state) {
@@ -2182,7 +2488,12 @@ class SymmetryPlacementController {
   addPlacement(type) {
     const spec = this.store.state.document.spec;
     if (!spec || (type === 'trench' && spec.symmetry === 'rot90')) return;
-    const [cx, cy] = this.seedCenter(spec);
+    let [cx, cy] = this.seedCenter(spec);
+    if (this.store.state.controls.snapToGrid) {
+      const size = this.store.state.controls.gridSize;
+      cx = Math.round(cx / size) * size;
+      cy = Math.round(cy / size) * size;
+    }
     const seed = type === 'trench' ? [cx - 28, cy - 28, 56, 56] : [cx, cy];
     this.runMutation(`create ${type === 'trench' ? 'trench' : 'med-kit orbit'}`, async (next) => {
       const response = await this.expand(next, type === 'trench' ? [seed] : [], type === 'medKit' ? [seed] : []);
@@ -2469,6 +2780,239 @@ class TierOneController {
   }
 }
 
+class DiagnosticController {
+  constructor(store, viewport) {
+    this.store = store;
+    this.viewport = viewport;
+    this.root = $('validation-failures');
+    this.targets = new Map();
+    this.selectedId = null;
+    this.previewId = null;
+    this.lastResponse = null;
+    this.lastError = '';
+    this.lastLoadRevision = 0;
+    this.bindEvents();
+    this.store.subscribe((state) => this.update(state));
+  }
+
+  bindEvents() {
+    this.root.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-diagnostic-id]');
+      if (!button) return;
+      const id = button.dataset.diagnosticId;
+      const target = this.targets.get(id);
+      if (!target) return;
+      this.selectedId = this.selectedId === id ? null : id;
+      this.previewId = null;
+      this.renderSelection();
+      this.viewport.setDiagnosticTarget(this.selectedId ? target : null);
+      if (this.selectedId) {
+        this.viewport.focusDiagnostic(target);
+        this.announce(`Located ${target.announcement}.`);
+      } else {
+        this.announce('Failure highlight cleared.');
+      }
+    });
+
+    const preview = (event) => {
+      const button = event.target.closest('[data-diagnostic-id]');
+      if (!button) return;
+      this.previewId = button.dataset.diagnosticId;
+      this.viewport.setDiagnosticTarget(this.targets.get(this.previewId));
+    };
+    this.root.addEventListener('pointerover', preview);
+    this.root.addEventListener('focusin', preview);
+    const clearPreview = (event) => {
+      if (event.relatedTarget && this.root.contains(event.relatedTarget)) return;
+      this.previewId = null;
+      this.viewport.setDiagnosticTarget(this.targets.get(this.selectedId) || null);
+    };
+    this.root.addEventListener('pointerleave', clearPreview);
+    this.root.addEventListener('focusout', clearPreview);
+  }
+
+  update(state) {
+    const response = state.render.lastGoodResponse;
+    const error = state.render.error ? `${state.render.error.kind}:${state.render.error.message}` : '';
+    const loadedNewDocument = state.document.loadRevision !== this.lastLoadRevision;
+    if (response === this.lastResponse && error === this.lastError && !loadedNewDocument) return;
+    this.lastResponse = response;
+    this.lastError = error;
+    this.lastLoadRevision = state.document.loadRevision;
+    if (loadedNewDocument) {
+      this.selectedId = null;
+      this.previewId = null;
+      this.viewport.setDiagnosticTarget(null);
+    }
+    if (error) {
+      this.root.hidden = true;
+      return;
+    }
+    const previousSelection = this.selectedId;
+    const targetList = this.buildTargets(error ? null : response);
+    const previousTarget = this.targets.get(this.selectedId);
+    this.targets = new Map(targetList.filter((target) => target.actionable)
+      .map((target) => [target.id, target]));
+    if (this.selectedId && !this.targets.has(this.selectedId)
+        && previousTarget?.kind === 'sightline') {
+      const continued = targetList.find((target) => (
+        target.kind === 'sightline' && target.rows.includes(previousTarget.rows[0])
+      ));
+      if (continued) this.selectedId = continued.id;
+    }
+    if (this.selectedId && !this.targets.has(this.selectedId)) {
+      this.selectedId = null;
+      this.previewId = null;
+      this.viewport.setDiagnosticTarget(null);
+      this.announce('The selected failure is resolved in the latest render.');
+    } else if (this.selectedId) {
+      this.viewport.setDiagnosticTarget(this.targets.get(this.selectedId));
+    }
+    this.renderTargets(targetList);
+    if (previousSelection === this.selectedId) this.renderSelection();
+  }
+
+  buildTargets(response) {
+    if (!response?.validation || response.validation.valid) return [];
+    const validation = response.validation;
+    const derived = response.derived || {};
+    const result = [];
+    const minimum = validation.coverPermilleMin;
+    const maximum = validation.coverPermilleMax;
+    if (Number.isFinite(minimum) && validation.minCoverPermille < minimum) {
+      result.push({
+        id: 'cover:open', actionable: false,
+        label: 'Too little always-solid cover',
+        detail: `${formatInteger(validation.minCoverPermille)}‰ · minimum ${formatInteger(minimum)}‰ · global`,
+      });
+    }
+    if (Number.isFinite(maximum) && validation.coverPermille > maximum) {
+      result.push({
+        id: 'cover:clogged', actionable: false,
+        label: 'Too much swept cover',
+        detail: `${formatInteger(validation.coverPermille)}‰ · maximum ${formatInteger(maximum)}‰ · global`,
+      });
+    }
+
+    const sightlineRange = validation.sightlineXRange;
+    if (sightlineRange) {
+      for (const rows of groupSightlineRows(validation.openSightlineRows)) {
+        const range = rows.length === 1
+          ? `y ${formatInteger(rows[0])} px`
+          : `y ${formatInteger(rows[0])}–${formatInteger(rows.at(-1))} px`;
+        result.push({
+          id: `sightline:${rows.join(',')}`,
+          actionable: true,
+          kind: 'sightline',
+          rows,
+          xLo: sightlineRange.xLo,
+          xHi: sightlineRange.xHi,
+          label: `Open sightline · ${range}`,
+          detail: `${formatInteger(rows.length)} sampled row${rows.length === 1 ? '' : 's'}`,
+          announcement: `open sightline ${range}, x ${formatInteger(sightlineRange.xLo)} to ${formatInteger(sightlineRange.xHi)} pixels`,
+        });
+      }
+    }
+
+    const anchors = derived.anchors || [];
+    const anchorFor = (team) => anchors.find((anchor) => anchor.team === team);
+    if (validation.redHomeOnOpenFloor === false) {
+      const anchor = anchorFor('red');
+      if (anchor) result.push(this.pointTarget(
+        'red-home', anchor, 'Red flag home is not on open floor',
+        'Red pedestal', 'Red flag home',
+      ));
+    }
+    for (const team of validation.unreachableTeams || []) {
+      const anchor = anchorFor(team);
+      if (anchor) result.push(this.pointTarget(
+        `team:${team}`, anchor, `${humanizeToken(team)} route is unreachable`,
+        `${humanizeToken(team)} pedestal`, `${humanizeToken(team)} unreachable route`,
+      ));
+    }
+    if (validation.centerReachable === false && derived.center) {
+      result.push(this.pointTarget(
+        'center', derived.center, 'Map center is unreachable',
+        formatPoint(derived.center.x, derived.center.y), 'unreachable map center',
+      ));
+    }
+    for (const gate of validation.endzoneGates || []) {
+      if (!['sealed', 'offMap'].includes(gate.state)) continue;
+      result.push({
+        id: `gate:${gate.name}`,
+        actionable: true,
+        kind: 'point',
+        x: gate.x,
+        y: gate.y,
+        offMap: gate.state === 'offMap',
+        label: `${humanizeToken(gate.name)} gate · ${humanizeToken(gate.state)}`,
+        detail: formatPoint(gate.x, gate.y),
+        announcement: `${gate.name} endzone gate, ${humanizeToken(gate.state)}, at ${formatPoint(gate.x, gate.y)}`,
+      });
+    }
+    if (validation.endzoneFlankChecked
+        && validation.rearGateReachesCenterWithoutEndzone === false) {
+      const behind = (validation.endzoneGates || []).find((gate) => gate.name === 'behind');
+      const anchor = behind || anchorFor('red');
+      if (anchor) result.push(this.pointTarget(
+        'rear-flank', anchor, 'No route around the endzone',
+        behind ? 'Behind gate to center' : 'Behind the Red base', 'rear-flank route failure',
+      ));
+    }
+    return result;
+  }
+
+  pointTarget(id, point, label, detail, announcement) {
+    return {
+      id,
+      actionable: true,
+      kind: 'point',
+      x: point.x,
+      y: point.y,
+      label,
+      detail,
+      announcement: `${announcement} at ${formatPoint(point.x, point.y)}`,
+    };
+  }
+
+  renderTargets(targets) {
+    this.root.replaceChildren();
+    this.root.hidden = targets.length === 0;
+    if (!targets.length) return;
+    const heading = document.createElement('h3');
+    heading.textContent = 'Failures';
+    const list = document.createElement('div');
+    list.className = 'diagnostic-list';
+    for (const target of targets) {
+      const item = document.createElement(target.actionable ? 'button' : 'div');
+      item.className = target.actionable ? 'diagnostic-item' : 'diagnostic-global';
+      if (target.actionable) {
+        item.type = 'button';
+        item.dataset.diagnosticId = target.id;
+        item.setAttribute('aria-pressed', String(target.id === this.selectedId));
+      }
+      const label = document.createElement('strong');
+      label.textContent = target.label;
+      const detail = document.createElement('span');
+      detail.textContent = target.actionable ? `${target.detail} · Locate` : target.detail;
+      item.append(label, detail);
+      list.append(item);
+    }
+    this.root.append(heading, list);
+  }
+
+  renderSelection() {
+    for (const button of this.root.querySelectorAll('[data-diagnostic-id]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.diagnosticId === this.selectedId));
+    }
+  }
+
+  announce(message) {
+    $('diagnostic-status').textContent = '';
+    window.requestAnimationFrame(() => { $('diagnostic-status').textContent = message; });
+  }
+}
+
 class InspectorView {
   constructor(store) {
     this.store = store;
@@ -2559,22 +3103,26 @@ class InspectorView {
       ? 'The map passes all play-quality checks.'
       : 'The map did not pass validation.');
 
-    const minimum = validation.coverPermilleMin ?? validation.minCoverPermille;
+    const minimum = validation.coverPermilleMin;
     const maximum = validation.coverPermilleMax;
-    let cover = `${formatInteger(validation.coverPermille)}‰ cover`;
-    if (Number.isFinite(minimum) && Number.isFinite(maximum)) {
-      cover += ` · valid ${formatInteger(minimum)}–${formatInteger(maximum)}‰`;
-    } else if (Number.isFinite(minimum)) {
-      cover += ` · minimum ${formatInteger(minimum)}‰`;
-    }
-    appendDetail(details, 'Cover budget', cover);
+    appendDetail(
+      details,
+      'Always-solid cover',
+      `${formatInteger(validation.minCoverPermille)}‰${Number.isFinite(minimum) ? ` · minimum ${formatInteger(minimum)}‰` : ''}`,
+    );
+    appendDetail(
+      details,
+      'Swept cover',
+      `${formatInteger(validation.coverPermille)}‰${Number.isFinite(maximum) ? ` · maximum ${formatInteger(maximum)}‰` : ''}`,
+    );
 
     const rows = validation.openSightlineRows || [];
+    const runs = groupSightlineRows(rows);
     appendDetail(
       details,
       'Sightlines',
       rows.length
-        ? `${rows.length} open rows · y ${rows.map(formatInteger).join(', ')} px`
+        ? `${rows.length} open sampled rows · ${runs.length} run${runs.length === 1 ? '' : 's'}`
         : 'No open cross-field rows',
     );
 
@@ -2720,6 +3268,7 @@ class Application {
     this.placements = new SymmetryPlacementController(this.api, this.store, this.coordinator);
     this.editing.setPlacementController(this.placements);
     this.parameters = new TierOneController(this.store, this.coordinator, this.placements);
+    this.diagnostics = new DiagnosticController(this.store, this.viewport);
     this.inspector = new InspectorView(this.store);
   }
 

@@ -199,8 +199,10 @@ nim c --threads:on --mm:orc -r tools/map_editor.nim 8099
 Then open <http://localhost:8099>. It loads any curated pool entry, generator
 seed with the full override set, or pasted map spec, renders it through the real
 game geometry, and reports the play-quality validators live — cover budget, open
-sightlines, corridor connectivity, and endzone access. Useful for understanding
-why a map plays the way it does, or why a generated candidate was rejected.
+sightlines, corridor connectivity, and endzone access. Failures are **locatable**:
+click an open sightline and it draws a rule across the board where the validator
+found it, so "why was this candidate rejected" has a visible answer rather than a
+sentence.
 
 You can also edit: add and reshape obstacles, place trenches and med kits, change
 the map parameters, and export the result as a `mapSpec` you can drop straight

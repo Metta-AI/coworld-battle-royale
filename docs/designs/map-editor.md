@@ -4,8 +4,9 @@ A visual editor for CTF / Paintbot maps that reads and writes the existing
 `mapSpec` JSON format, with the Nim sim as the single source of truth for all
 geometry, derivation, and validation.
 
-Status: **Phases 1 and 2 implemented** — inspection and editing both work.
-Phase 3 (diagnostics polish) remains a proposal. See Rollout at the end.
+Status: **All three phases implemented.** Inspection, editing, and diagnostics
+all work; every goal below is met. See Rollout at the end for what each phase
+covers.
 
 ## Problem
 
@@ -470,7 +471,7 @@ selection, and have both the pool renderer and the editor call it.
     change means a new map; fatal once every edit bumps the revision. Split load
     identity from edit revision so only loads refit.
 
-- **Phase 3 — Diagnostics and polish.** The remaining half of goal 3: the
+- **Phase 3 — Diagnostics and polish. DONE.** The remaining half of goal 3: the
   validators already say *that* a map fails, and the server already composites
   `sightlines` / `reachability` overlays, but a failure is still a sentence in a
   panel rather than a place on the board.

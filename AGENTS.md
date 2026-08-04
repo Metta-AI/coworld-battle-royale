@@ -81,8 +81,10 @@ generator change — a stale page misrepresents what the pool serves.
 
 ## Map editor
 
-A local service + browser UI for inspecting map geometry against the REAL
-validators — the interactive counterpart to the static pool-review page.
+A local service + browser UI for inspecting and authoring map geometry against
+the REAL validators — the interactive counterpart to the static pool-review
+page. Every validator failure is locatable on the board, which makes it the
+fastest way to answer "why was this seed rejected".
 Design: [docs/designs/map-editor.md](docs/designs/map-editor.md).
 
 ```bash
