@@ -3050,6 +3050,10 @@ proc runBot(url: string) =
       # optname 1 is SO_DEBUG: EACCES without CAP_NET_ADMIN, and a silent
       # no-op for Nagle even when privileged).
       ws.socket.setSockOpt(OptNoDelay, true, level = IPPROTO_TCP.cint)
+      # Sprites Off (0x87), sent before anything else so the server strips
+      # pixel payloads from the very first frame. Servers that predate the
+      # packet ignore unknown client messages, so this is safe everywhere.
+      ws.send(spritesOffBlob(), BinaryMessage)
       echo "connected ", endpoint
       everConnected = true
       client.reset()
