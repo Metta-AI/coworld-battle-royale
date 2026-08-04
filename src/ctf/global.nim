@@ -868,6 +868,13 @@ type
   PlayerViewerState* = ref object
     initialized*: bool
     objectIds*: seq[int]
+    ## Last placement payload sent per object id, flat-indexed by the u16
+    ## id (byte 11 = present flag; 720 KB per viewer, allocated lazily).
+    ## The protocol is retained-mode — a client keeps a placement until it
+    ## is replaced or deleted — so an unchanged placement need never be
+    ## re-sent. Flat array, not a Table: the per-object hashing was itself
+    ## a profiler hot spot.
+    sentPlacements*: seq[array[12, uint8]]
     pendingDebugSprites*: seq[seq[uint8]]
     debugSpriteLimitWarned*: bool
     shoutSlots*: array[ShoutMaxCount, string]  ## slot → owning shouter address
@@ -3004,6 +3011,64 @@ proc stripSpritePixels*(
         result.add(packet[i])
       break
 
+proc dedupObjectPlacements*(
+  packet: seq[uint8],
+  sentPlacements: var seq[array[12, uint8]]
+): seq[uint8] {.measure.} =
+  ## Drops Define Object messages whose full payload matches what this
+  ## viewer was already sent. The sprite protocol is retained-mode — the
+  ## client keeps every placement until it is replaced or deleted — so
+  ## re-sending an identical placement is pure wire noise. Deletes and
+  ## clear-objects update the memory so re-appearing objects re-send.
+  ##
+  ## Kept bytes are coalesced into pass-through runs and block-copied:
+  ## only a SKIPPED placement breaks a run, so a packet with nothing to
+  ## drop costs one copyMem — per-byte appends here were once the hottest
+  ## proc in the whole server.
+  result = newSeqOfCap[uint8](packet.len)
+  if sentPlacements.len == 0:
+    sentPlacements.setLen(65536)
+  var
+    offset = 0
+    keepStart = 0
+  template flushKept(upTo: int) =
+    if upTo > keepStart:
+      let start = result.len
+      result.setLen(start + upTo - keepStart)
+      copyMem(addr result[start], unsafeAddr packet[keepStart],
+        upTo - keepStart)
+  while offset < packet.len:
+    let messageStart = offset
+    let messageType = packet[offset]
+    inc offset
+    case messageType
+    of 0x01:  # sprite: id,w,h (6) + clen (4) + pixels + llen (2) + label
+      offset += 10 + packet.readU32(offset + 6)
+      offset += 2 + packet.readU16(offset)
+    of 0x02:  # object: id (2) + x,y,z (6) + layer (1) + sprite (2)
+      var payload: array[12, uint8]
+      copyMem(addr payload[0], unsafeAddr packet[offset], 11)
+      payload[11] = 1
+      offset += 11
+      let objectId = int(payload[0]) or (int(payload[1]) shl 8)
+      if sentPlacements[objectId] == payload:
+        flushKept(messageStart)
+        keepStart = offset
+      else:
+        sentPlacements[objectId] = payload
+    of 0x03:  # delete object
+      sentPlacements[packet.readU16(offset)][11] = 0
+      offset += 2
+    of 0x04:  # clear objects
+      zeroMem(addr sentPlacements[0], sentPlacements.len * 12)
+    of 0x05, 0x06:
+      offset += (if messageType == 0x05: 5 else: 3)
+    else:
+      # Unknown message: ship the remainder whole — mirrors
+      # chunkSpritePacket's bail-out.
+      offset = packet.len
+  flushKept(packet.len)
+
 proc buildWalkabilitySpritePixels(sim: SimServer): seq[uint8] {.measure.} =
   ## Returns a binary RGBA walkability mask for sprite agents.
   result = newSeq[uint8](sim.gameMap.width * sim.gameMap.height * 4)
@@ -4607,7 +4672,10 @@ proc addRotatingDiamonds(
     let
       spot = AnimatedDiamonds[i]
       frame = diamondSpinFrame(spot.cx, sim.tickCount)
-      (size, pixels) = rotatingDiamondPixels(spot.radius, frame, boardScale)
+      # Pixels are fetched lazily inside the define branches below: the
+      # cached-frame return copies a full pixel buffer, and on the steady
+      # path (sprite already defined) nothing needs it.
+      size = rotatingDiamondSize(spot.radius)
     # A diamond that has been shot carries its paint baked into the stone, so
     # the marks turn with it and stay clipped to its silhouette. Only the frame
     # on screen right now is built/emitted; the rest arrive as the spin reaches
@@ -4625,12 +4693,15 @@ proc addRotatingDiamonds(
       let label = "diamond " & $i & " paint " & $paintCount
       let defIndex = spriteDefs.spriteDefinitionIndex(spriteId)
       if defIndex < 0 or spriteDefs[defIndex].label != label:
+        let (_, basePixels) =
+          rotatingDiamondPixels(spot.radius, frame, boardScale)
         packet.addBoardSpriteChanged(
           spriteDefs, spriteId, size, size,
-          sim.buildPaintedDiamondPixels(i, frame, size, pixels), label,
+          sim.buildPaintedDiamondPixels(i, frame, size, basePixels), label,
           native = boardScale
         )
     elif spriteDefs.spriteDefinitionIndex(spriteId) < 0:
+      let (_, pixels) = rotatingDiamondPixels(spot.radius, frame, boardScale)
       packet.addBoardSpriteChanged(
         spriteDefs, spriteId, size, size, pixels, "diamond",
         native = boardScale
