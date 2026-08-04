@@ -923,9 +923,11 @@ const
   CenterFeatureNames = ["bracket", "ring", "walls"]
   ## Interior cover budget, in permille of the non-protected interior that is
   ## obstacle wall. The hand-tuned arena sits inside this band; layouts
-  ## outside it play too open or too clogged and are re-rolled.
-  CoverPermilleMin = 40
-  CoverPermilleMax = 170
+  ## outside it play too open or too clogged and are re-rolled. Public so
+  ## tooling can report a measured figure against the band it is judged by
+  ## rather than restating the numbers.
+  CoverPermilleMin* = 40
+  CoverPermilleMax* = 170
 
 type
   MapRng = object
@@ -1901,10 +1903,63 @@ proc generateMapAttempt*(
     result.trenches = digs
   result.validateMap()
 
-proc validateGeneratedMap*(gameMap: CtfMap): string =
-  ## Returns "" when the layout passes every play-quality invariant, else a
-  ## human-readable failure reason. The generator's design intent lives HERE,
-  ## not in the draws: anything that passes is fair game.
+type
+  MapDiagnosticArtifact* = enum
+    ## Full-board diagnostic arrays callers may opt into. Summary diagnostics
+    ## never retain these large buffers: a giant board has 5.5 million pixels,
+    ## and the editor's threaded HTTP service may diagnose several maps at once.
+    diagnosticWallMasks
+    diagnosticCorridorOpen
+    diagnosticReachable
+
+  EndzoneGateState* = enum
+    ## Whether one compact-endzone flank gate is usable by the eroded flood.
+    gateOpen
+    gateOffMap
+    gateSealed
+
+  EndzoneGateDiagnostic* = object
+    ## The position and reachability state of one named compact-endzone gate.
+    name*: string
+    point*: MapPoint
+    state*: EndzoneGateState
+
+  MapDiagnostics* = object
+    ## Play-quality measurements for one map. Scalar and compact sequence
+    ## summaries are always populated. Full-board arrays are populated only
+    ## when their matching MapDiagnosticArtifact is requested.
+    reason*: string
+    coverPermille*, minCoverPermille*: int
+    openSightlineRows*: seq[int]
+      ## Every open row in the validator's historical 4px scan, not every
+      ## physical map row.
+    redHomeOnOpenFloor*: bool
+    unreachableTeams*: seq[Team]
+    centerReachable*: bool
+    endzoneGates*: seq[EndzoneGateDiagnostic]
+    endzoneFlankChecked*: bool
+    rearGateReachesCenterWithoutEndzone*: bool
+    maxWall*, minWall*: seq[bool]
+      ## Swept-union / always-stone masks; retained by diagnosticWallMasks.
+    corridorOpen*: seq[bool]
+      ## Player-width-eroded floor; retained by diagnosticCorridorOpen.
+    reachable*: seq[bool]
+      ## Eroded floor reachable from Red; retained by diagnosticReachable.
+
+proc collectMapDiagnostics(
+  gameMap: CtfMap,
+  artifacts: set[MapDiagnosticArtifact],
+  stopAfterFirstFailure: bool,
+): MapDiagnostics =
+  ## The shared staged implementation behind full editor diagnostics and the
+  ## generator's first-failure validator. The latter preserves the old early
+  ## exits, so rejected attempts do not pay for later distance/flood stages.
+  template recordFailure(message: string) =
+    if result.reason.len == 0:
+      result.reason = message
+    if stopAfterFirstFailure:
+      return
+
   let
     w = gameMap.width
     h = gameMap.height
@@ -1923,7 +1978,7 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
   ## axis at rest but only 20 px a third of a turn later, while the swept disc
   ## claims 30 px at all times. Two seeds in the pre-GV29 pool had exactly
   ## that defect, which is why the pool was re-curated with this change.
-  let (maxWall, minWall) = rasterizeWallMasks(gameMap, obstacles)
+  var (maxWall, minWall) = rasterizeWallMasks(gameMap, obstacles)
   var minCoverPixels, coverPixels, interiorPixels = 0
   for y in 0 ..< h:
     for x in 0 ..< w:
@@ -1961,10 +2016,12 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
   let
     permille = coverPixels * 1000 div max(1, interiorPixels)
     minPermille = minCoverPixels * 1000 div max(1, interiorPixels)
+  result.coverPermille = permille
+  result.minCoverPermille = minPermille
   if minPermille < CoverPermilleMin:
-    return "too open: " & $minPermille & " permille cover"
+    recordFailure("too open: " & $minPermille & " permille cover")
   if permille > CoverPermilleMax:
-    return "too clogged: " & $permille & " permille cover"
+    recordFailure("too clogged: " & $permille & " permille cover")
 
   ## With map-wide guns no straight horizontal ray may survive between the
   ## capture columns (the property tests/test_map_los.nim pins for arena).
@@ -1980,8 +2037,16 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
           blocked = true
           break
       if not blocked:
-        return "open horizontal sightline at y=" & $y
+        result.openSightlineRows.add y
+        if result.reason.len == 0:
+          result.reason = "open horizontal sightline at y=" & $y
+        if stopAfterFirstFailure:
+          return
       y += 4
+  if diagnosticWallMasks in artifacts:
+    result.minWall = minWall
+  else:
+    minWall.setLen(0)
 
   ## Corridor + connectivity: chamfer 3-4 distance to the nearest wall,
   ## eroded by half the corridor minimum, then a flood fill — both flags and
@@ -2016,16 +2081,24 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
   var open = newSeq[bool](w * h)
   for i in 0 ..< w * h:
     open[i] = dist[i] >= minChamfer
+  dist.setLen(0)
+  if diagnosticWallMasks in artifacts:
+    result.maxWall = maxWall
+  else:
+    maxWall.setLen(0)
 
   let
     redHome = gameMap.flagHome(Red)
     startIndex = redHome.y * w + redHome.x
   var
     reached = newSeq[bool](w * h)
-    queue = @[startIndex]
-  if not open[startIndex]:
-    return "red flag home is not on open floor"
-  reached[startIndex] = true
+    queue: seq[int]
+  result.redHomeOnOpenFloor = open[startIndex]
+  if not result.redHomeOnOpenFloor:
+    recordFailure("red flag home is not on open floor")
+  else:
+    reached[startIndex] = true
+    queue.add startIndex
   var head = 0
   while head < queue.len:
     let i = queue[head]
@@ -2042,14 +2115,17 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
       continue
     let home = gameMap.flagHome(team)
     if not reached[home.y * w + home.x]:
-      return
+      result.unreachableTeams.add team
+      let message =
         if gameMap.teamCount() == 2:
           "no " & $MinCorridorWidth & "px route between the flags"
         else:
           "no " & $MinCorridorWidth & "px route to the " &
             teamText(team) & " flag"
-  if not reached[gameMap.center.y * w + gameMap.center.x]:
-    return "no " & $MinCorridorWidth & "px route to the center"
+      recordFailure(message)
+  result.centerReachable = reached[gameMap.center.y * w + gameMap.center.x]
+  if not result.centerReachable:
+    recordFailure("no " & $MinCorridorWidth & "px route to the center")
 
   ## Compact endzones must stay OPEN-FLANKED: a base you can only be reached
   ## from the field side is just a column endzone with extra steps. Checked
@@ -2059,40 +2135,76 @@ proc validateGeneratedMap*(gameMap: CtfMap): string =
       anchor = gameMap.teamAnchor(Red)
       gate = gameMap.endzoneRadius + MinCorridorWidth div 2 + 4
       gates = [
-        (name: "behind", x: anchor.x - gate, y: anchor.y),
-        (name: "above", x: anchor.x, y: anchor.y - gate),
-        (name: "below", x: anchor.x, y: anchor.y + gate),
-        (name: "ahead", x: anchor.x + gate, y: anchor.y),
+        (name: "behind", point: MapPoint(x: anchor.x - gate, y: anchor.y)),
+        (name: "above", point: MapPoint(x: anchor.x, y: anchor.y - gate)),
+        (name: "below", point: MapPoint(x: anchor.x, y: anchor.y + gate)),
+        (name: "ahead", point: MapPoint(x: anchor.x + gate, y: anchor.y)),
       ]
+    var allGatesOpen = true
     for g in gates:
-      if g.x < 0 or g.y < 0 or g.x >= w or g.y >= h:
-        return "endzone gate " & g.name & " is off the map"
-      if not reached[g.y * w + g.x]:
-        return "endzone gate " & g.name & " is sealed"
+      var state = gateOpen
+      if g.point.x < 0 or g.point.y < 0 or
+          g.point.x >= w or g.point.y >= h:
+        state = gateOffMap
+        allGatesOpen = false
+        recordFailure("endzone gate " & g.name & " is off the map")
+      elif not reached[g.point.y * w + g.point.x]:
+        state = gateSealed
+        allGatesOpen = false
+        recordFailure("endzone gate " & g.name & " is sealed")
+      result.endzoneGates.add EndzoneGateDiagnostic(
+        name: g.name, point: g.point, state: state)
 
     ## ...and the way in from behind must not run THROUGH the endzone: fill
     ## from the rear gate with the zone itself forbidden and demand the
     ## center. That is the whole point of moving the base off the edge.
-    let zone = gameMap.captureZone(Red)
-    var
-      around = newSeq[bool](w * h)
-      backQueue = @[gates[0].y * w + gates[0].x]
-    around[backQueue[0]] = true
-    head = 0
-    while head < backQueue.len:
-      let i = backQueue[head]
-      inc head
-      for step in [-1, 1, -w, w]:
-        let j = i + step
-        if j < 0 or j >= w * h or not open[j] or around[j]:
-          continue
-        if zone.inCaptureZone(j mod w, j div w):
-          continue
-        around[j] = true
-        backQueue.add j
-    if not around[gameMap.center.y * w + gameMap.center.x]:
-      return "no route around the endzone from behind the base"
-  ""
+    if allGatesOpen:
+      let zone = gameMap.captureZone(Red)
+      var
+        around = newSeq[bool](w * h)
+        backQueue = @[gates[0].point.y * w + gates[0].point.x]
+      result.endzoneFlankChecked = true
+      around[backQueue[0]] = true
+      head = 0
+      while head < backQueue.len:
+        let i = backQueue[head]
+        inc head
+        for step in [-1, 1, -w, w]:
+          let j = i + step
+          if j < 0 or j >= w * h or not open[j] or around[j]:
+            continue
+          if zone.inCaptureZone(j mod w, j div w):
+            continue
+          around[j] = true
+          backQueue.add j
+      result.rearGateReachesCenterWithoutEndzone =
+        around[gameMap.center.y * w + gameMap.center.x]
+      if not result.rearGateReachesCenterWithoutEndzone:
+        recordFailure("no route around the endzone from behind the base")
+
+  if diagnosticCorridorOpen in artifacts:
+    result.corridorOpen = open
+  if diagnosticReachable in artifacts:
+    result.reachable = reached
+
+proc mapDiagnostics*(
+  gameMap: CtfMap,
+  artifacts: set[MapDiagnosticArtifact] = {},
+): MapDiagnostics =
+  ## Computes every play-quality diagnostic for one map. Full-board artifact
+  ## arrays are retained only when explicitly requested; scalar summaries and
+  ## failure details are always complete.
+  collectMapDiagnostics(gameMap, artifacts, stopAfterFirstFailure = false)
+
+proc mapValidationReason*(diagnostics: MapDiagnostics): string =
+  ## Returns the canonical first failure from a completed diagnostic pass.
+  diagnostics.reason
+
+proc validateGeneratedMap*(gameMap: CtfMap): string =
+  ## Returns "" when the layout passes every play-quality invariant, else a
+  ## human-readable failure reason. The generator's design intent lives HERE,
+  ## not in the draws: anything that passes is fair game.
+  collectMapDiagnostics(gameMap, {}, stopAfterFirstFailure = true).reason
 
 proc generateCtfMap*(
   seed: int,
@@ -2331,6 +2443,9 @@ proc resolveCtfMapMetadata*(config: GameConfig): CtfMap =
 ## initialized to the default arena below so tooling that never selects a
 ## map observes a complete default state, never an empty one.
 var
+  ArenaMapG = arenaCtfMap()
+    ## The selected map backing pure-map wrappers used by the installed arena
+    ## renderer. Editor/tool rendering never reads this process global.
   ArenaFlagRing = 70
   ArenaCaptureClear = 210
   ArenaLayoutG = layoutSides
@@ -2355,6 +2470,7 @@ proc selectCtfMap(gameMap: CtfMap) =
   ## map-relative ranges, layout clearances, and the mirrored obstacle set.
   ## Runs before any sim, mask, or render work; the render bakes in
   ## global.nim assume the arena never changes afterward.
+  ArenaMapG = gameMap
   MapWidth = gameMap.width
   MapHeight = gameMap.height
   FovGridW = (MapWidth + FovCellSize - 1) div FovCellSize
@@ -2562,68 +2678,101 @@ proc isArenaWindowPixel*(x, y, cx, cy: int): bool =
       return true
   false
 
-proc isProtectedFloorF(x, y: float, cx, cy: int): bool =
-  ## Float-coordinate isProtectedFloor for the render-scale rasterizer.
-  if ArenaEndzoneRadius > 0:
-    let grown = float(ArenaEndzoneRadius + EndzoneWallMargin)
-    for team in activeTeams(ArenaTeamCount):
+proc mapProtectedFloorAtF*(
+  gameMap: CtfMap, x, y: float, cx, cy: int
+): bool =
+  ## Float-coordinate mapProtectedFloorAt for a map that is NOT installed as
+  ## the process map. Render tools use this form so concurrent arbitrary-spec
+  ## renders never read or mutate the installed arena globals.
+  if gameMap.endzone != ezColumn:
+    let grown = float(gameMap.endzoneRadius + EndzoneWallMargin)
+    for team in gameMap.teams():
+      let anchor = gameMap.teamAnchor(team)
       let
-        adx = abs(x - float(ArenaAnchors[team].x))
-        ady = abs(y - float(ArenaAnchors[team].y))
+        adx = abs(x - float(anchor.x))
+        ady = abs(y - float(anchor.y))
       if adx > grown or ady > grown:
         continue
-      if not ArenaEndzoneDisc or adx * adx + ady * ady <= grown * grown:
+      if gameMap.endzone != ezDisc or
+          adx * adx + ady * ady <= grown * grown:
         return true
     let
       rdx = x - float(cx)
       rdy = y - float(cy)
-    return rdx * rdx + rdy * rdy <= float(ArenaFlagRing * ArenaFlagRing)
+    return rdx * rdx + rdy * rdy <=
+      float(gameMap.flagRing * gameMap.flagRing)
   ## Carries the same doubled-coordinate center as the integer test so the
   ## painted art cannot drift off the collision mask on a rot90 board.
   let
-    nearX = x < float(ArenaCaptureClear) or
-      x >= float(MapWidth - ArenaCaptureClear)
-    nearY = y < float(ArenaCaptureClear) or
-      y >= float(MapHeight - ArenaCaptureClear)
+    nearX = x < float(gameMap.captureClear) or
+      x >= float(gameMap.width - gameMap.captureClear)
+    nearY = y < float(gameMap.captureClear) or
+      y >= float(gameMap.height - gameMap.captureClear)
     (dx2, dy2) =
-      if ArenaSymmetryG == symRot90:
-        (2.0 * x - float(MapWidth - 1), 2.0 * y - float(MapHeight - 1))
+      if gameMap.symmetry == symRot90:
+        (2.0 * x - float(gameMap.width - 1),
+          2.0 * y - float(gameMap.height - 1))
       else:
         (2.0 * (x - float(cx)), 2.0 * (y - float(cy)))
     approach =
-      case ArenaLayoutG
+      case gameMap.layout
       of layoutSides:
         nearX
       of layoutCorners:
         nearX and nearY
       of layoutPlus:
-        (nearX and abs(dy2) <= float(2 * ArenaPlusArmHalf)) or
-          (nearY and abs(dx2) <= float(2 * ArenaPlusArmHalf))
+        let arm = gameMap.plusArmHalf()
+        (nearX and abs(dy2) <= float(2 * arm)) or
+          (nearY and abs(dx2) <= float(2 * arm))
   if approach:
     return true
-  if dx2 * dx2 + dy2 * dy2 <= float(4 * ArenaFlagRing * ArenaFlagRing):
+  if dx2 * dx2 + dy2 * dy2 <=
+      float(4 * gameMap.flagRing * gameMap.flagRing):
     return true
-  for team in activeTeams(ArenaTeamCount):
-    let half = ArenaPocketHalf[team]
-    if abs(x - float(ArenaAnchors[team].x)) <= float(half.w) and
-        abs(y - float(ArenaAnchors[team].y)) <= float(half.h):
+  for team in gameMap.teams():
+    let
+      anchor = gameMap.teamAnchor(team)
+      half = gameMap.spawnPocketHalf(team)
+    if abs(x - float(anchor.x)) <= float(half.w) and
+        abs(y - float(anchor.y)) <= float(half.h):
+      return true
+  false
+
+proc mapObstacleWallAtF*(
+  gameMap: CtfMap,
+  obstacles: openArray[ArenaShape],
+  x, y: float,
+  cx, cy: int,
+): bool =
+  ## Float-coordinate interior-obstacle test for an uninstalled map. The
+  ## border ring is excluded because renderers draw it as separate slabs.
+  if mapProtectedFloorAtF(gameMap, x, y, cx, cy):
+    return false
+  for shape in obstacles:
+    if inShapeF(x, y, shape):
       return true
   false
 
 proc obstacleWallAtF*(x, y: float, cx, cy: int): bool =
   ## Float-coordinate interior-obstacle test (the border ring excluded);
   ## the high-resolution renderer draws the border as separate slabs.
-  if isProtectedFloorF(x, y, cx, cy):
-    return false
-  for shape in ArenaObstacles:
-    if inShapeF(x, y, shape):
-      return true
-  false
+  mapObstacleWallAtF(ArenaMapG, ArenaObstacles, x, y, cx, cy)
+
+proc mapShapeWallAtF*(
+  gameMap: CtfMap,
+  x, y: float,
+  shape: ArenaShape,
+  cx, cy: int,
+): bool =
+  ## Float-coordinate test for one uninstalled-map shape with the canonical
+  ## protected-floor carve applied.
+  inShapeF(x, y, shape) and
+    not mapProtectedFloorAtF(gameMap, x, y, cx, cy)
 
 proc shapeWallAtF*(x, y: float, shape: ArenaShape, cx, cy: int): bool =
   ## Float-coordinate test for one shape with the protected-floor carve
   ## applied, matching what the integer wall mask keeps of that shape.
-  inShapeF(x, y, shape) and not isProtectedFloorF(x, y, cx, cy)
+  mapShapeWallAtF(ArenaMapG, x, y, shape, cx, cy)
 
 proc diamondSpinFrame*(
   cx, tick: int, mirrored = ArenaSpinMirrored, width = MapWidth
@@ -2654,5 +2803,3 @@ proc animatedDiamondCovers*(
   ## True when map pixel (x, y) is stone in one spinning diamond at `frame`.
   rotatedDiamondCovers(
     spot.radius, frame, 2 * (x - spot.cx), 2 * (y - spot.cy), 2)
-
-
