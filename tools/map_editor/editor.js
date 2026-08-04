@@ -1,3 +1,10 @@
+// Browser UI for the local CTF map editor (tools/map_editor.nim).
+// Demo/curation tooling; NOT part of the server or the replay viewer.
+//
+// This file never computes geometry. Walls, symmetry images, capture zones and
+// validity all come from the Nim service; the browser renders its PNG and draws
+// annotations on top. See docs/designs/map-editor.md.
+
 const $ = (id) => document.getElementById(id);
 
 const OVERLAY_ORDER = [

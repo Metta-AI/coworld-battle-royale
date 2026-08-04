@@ -1,4 +1,5 @@
 ## Pure map rasterization shared by the pool review and local map editor.
+## Demo/curation tooling; not part of the server.
 ##
 ## Every geometry query is made against the supplied CtfMap. This module never
 ## installs a map and never reads the process-wide arena globals: mummy serves

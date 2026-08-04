@@ -1,4 +1,8 @@
 ## Local HTTP service for inspecting and editing CTF map specs.
+## Usage: nim c -d:release --threads:on --mm:orc -r tools/map_editor.nim [port] [host]
+## Demo/curation tooling; NOT part of the server. Nothing here ships in the game
+## binary — `src/ctf.nim` never imports it, and it exists to author and inspect
+## the `mapSpec` JSON the server already consumes.
 ##
 ## The request dispatcher is deliberately independent of mummy so the API can
 ## be tested without a socket or a threads-enabled test build. The executable
