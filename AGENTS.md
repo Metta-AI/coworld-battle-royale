@@ -4,6 +4,14 @@ Orientation for coding agents (Claude Code, Codex, etc.) working in this
 repo. Gameplay rules live in [docs/RULES.md](docs/RULES.md); this file
 covers the workflows that are easy to get wrong.
 
+[docs/ENV_VARIATION.md](docs/ENV_VARIATION.md) is the catalog of every knob
+that varies a level (all `GameConfig` fields + `MapGenOverrides` + the
+envelope consts, each cited to `file:line`) — the reference for generating
+new levels/curricula. **Keep it current:** whenever you add, remove, rename,
+or re-bound a `GameConfig` field, a `mapGen` override, or a gameplay const
+(motion/combat/vision/scoring/item), update the matching row in that file in
+the same change.
+
 ## Layout
 
 - `src/ctf.nim` — server entrypoint (seed randomization happens HERE,
