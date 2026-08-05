@@ -27,6 +27,38 @@ proc validateMapPoint(name: string, point: MapPoint, width, height: int) =
   if point.x < 0 or point.y < 0 or point.x >= width or point.y >= height:
     raise newException(CtfError, "Map " & name & " is outside the map.")
 
+proc rectShape*(r: MapRect): ArenaShape =
+  ## Wrap a rectangle as a rect-kind shape (trenches are stored as shapes).
+  ArenaShape(kind: shapeRect, rect: r)
+
+proc shapeAsRect*(s: ArenaShape): MapRect =
+  ## The rectangle for a rect-kind shape; the tight bounding box for any other
+  ## kind. Trench generation and the rect-edge trench art work in rectangles;
+  ## this bridges them to the shape-typed `trenches` field.
+  case s.kind
+  of shapeRect:
+    s.rect
+  of shapeDisc, shapeDiamond:
+    MapRect(x: s.cx - s.radius, y: s.cy - s.radius,
+            w: 2 * s.radius + 1, h: 2 * s.radius + 1)
+  of shapeDiagonal:
+    let half = s.thickness div 2 + 1
+    MapRect(x: min(s.x0, s.x1) - half, y: min(s.y0, s.y1) - half,
+            w: abs(s.x1 - s.x0) + 2 * half, h: abs(s.y1 - s.y0) + 2 * half)
+  of shapePolygon:
+    if s.points.len == 0:
+      MapRect(x: 0, y: 0, w: 0, h: 0)
+    else:
+      var
+        x0 = s.points[0].x
+        y0 = s.points[0].y
+        x1 = s.points[0].x
+        y1 = s.points[0].y
+      for p in s.points:
+        x0 = min(x0, p.x); y0 = min(y0, p.y)
+        x1 = max(x1, p.x); y1 = max(y1, p.y)
+      MapRect(x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1)
+
 proc maxEndzoneRadius*(width: int): int =
   ## The compact-endzone radius ceiling for a board of this width. The
   ## classic EndzoneRadiusMax was authored for the STANDARD 1235-wide field
@@ -80,7 +112,8 @@ proc validateMap(gameMap: CtfMap) =
       gameMap.height
     )
   for i, trench in gameMap.trenches:
-    validateMapRect("trench " & $i, trench, gameMap.width, gameMap.height)
+    validateMapRect(
+      "trench " & $i, shapeAsRect(trench), gameMap.width, gameMap.height)
 
 const
   ArenaName = "arena"
@@ -636,6 +669,11 @@ proc mirrorX(shape: ArenaShape, width: int): ArenaShape =
       y1: shape.y1,
       thickness: shape.thickness
     )
+  of shapePolygon:
+    var pts = newSeq[MapPoint](shape.points.len)
+    for i, p in shape.points:
+      pts[i] = MapPoint(x: width - 1 - p.x, y: p.y)
+    ArenaShape(kind: shapePolygon, window: shape.window, points: pts)
 
 proc `==`*(a, b: ArenaShape): bool =
   ## Field-wise equality (Nim derives no `==` for case objects); lets whole
@@ -650,6 +688,8 @@ proc `==`*(a, b: ArenaShape): bool =
   of shapeDiagonal:
     a.x0 == b.x0 and a.y0 == b.y0 and a.x1 == b.x1 and a.y1 == b.y1 and
       a.thickness == b.thickness
+  of shapePolygon:
+    a.points == b.points
 
 proc rot180(rect: MapRect, width, height: int): MapRect =
   ## Rotates one rectangle 180 degrees about the map center.
@@ -692,6 +732,11 @@ proc rot180(shape: ArenaShape, width, height: int): ArenaShape =
       y1: height - 1 - shape.y1,
       thickness: shape.thickness
     )
+  of shapePolygon:
+    var pts = newSeq[MapPoint](shape.points.len)
+    for i, p in shape.points:
+      pts[i] = MapPoint(x: width - 1 - p.x, y: height - 1 - p.y)
+    ArenaShape(kind: shapePolygon, window: shape.window, points: pts)
 
 proc rot90(rect: MapRect, side: int): MapRect =
   ## Rotates one rectangle 90 degrees clockwise about the center of a
@@ -739,6 +784,11 @@ proc rot90(shape: ArenaShape, side: int): ArenaShape =
       y1: shape.x1,
       thickness: shape.thickness
     )
+  of shapePolygon:
+    var pts = newSeq[MapPoint](shape.points.len)
+    for i, p in shape.points:
+      pts[i] = MapPoint(x: side - 1 - p.y, y: p.x)
+    ArenaShape(kind: shapePolygon, window: shape.window, points: pts)
 
 proc symmetryImages*(gameMap: CtfMap, rect: MapRect): seq[MapRect] =
   ## Returns one rectangle's full orbit under the map's own symmetry,
@@ -786,6 +836,54 @@ proc inRect*(x, y: int, rect: MapRect): bool =
   x >= rect.x and x < rect.x + rect.w and
     y >= rect.y and y < rect.y + rect.h
 
+proc pointInPolygon*(x, y: int, pts: seq[MapPoint]): bool =
+  ## Integer even-odd point-in-polygon over a closed ring. An edge is counted
+  ## only when the scan line at `y` lies STRICTLY between the edge's endpoints
+  ## (`ylo < y < yhi`). That strict straddle is the key: it is symmetric under
+  ## the integer coordinate reflections the map uses — mirror (x -> w-1-x) and
+  ## rot180 (x,y -> w-1-x, h-1-y) — so a polygon and its symmetry image
+  ## rasterize to bit-for-bit mirror-symmetric wall masks. That exactness is
+  ## the team-fairness invariant the diamond (integer-offset) and diagonal
+  ## (int64) tests also protect. Edges that merely touch the scan line at a
+  ## vertex are skipped identically on both sides, so at worst a shape loses a
+  ## 1px sliver at a y-extremum — symmetrically, so fairness holds. int64
+  ## throughout: cross products of map-scale coords overflow int32 on wasm.
+  if pts.len < 3:
+    return false
+  var
+    minx = pts[0].x
+    maxx = pts[0].x
+    miny = pts[0].y
+    maxy = pts[0].y
+  for p in pts:
+    minx = min(minx, p.x); maxx = max(maxx, p.x)
+    miny = min(miny, p.y); maxy = max(maxy, p.y)
+  if x < minx or x > maxx or y < miny or y > maxy:
+    return false
+  var
+    inside = false
+    j = pts.len - 1
+  for i in 0 ..< pts.len:
+    let
+      xi = pts[i].x
+      yi = pts[i].y
+      xj = pts[j].x
+      yj = pts[j].y
+      ylo = min(yi, yj)
+      yhi = max(yi, yj)
+    if y > ylo and y < yhi:
+      # Strict straddle => dy != 0. Flip when the sample is left of the edge's
+      # intersection with the scan line: x < xi + (xj-xi)*(y-yi)/(yj-yi),
+      # cross-multiplied by the (signed) edge dy so there is no division.
+      let
+        dyv = int64(yj - yi)
+        lhs = int64(x - xi) * dyv
+        rhs = int64(xj - xi) * int64(y - yi)
+      if (if dyv > 0: lhs < rhs else: lhs > rhs):
+        inside = not inside
+    j = i
+  inside
+
 proc inShape*(x, y: int, shape: ArenaShape): bool =
   ## Returns true when (x, y) lies inside one arena shape.
   case shape.kind
@@ -798,6 +896,8 @@ proc inShape*(x, y: int, shape: ArenaShape): bool =
     dx * dx + dy * dy <= shape.radius * shape.radius
   of shapeDiamond:
     abs(x - shape.cx) + abs(y - shape.cy) <= shape.radius
+  of shapePolygon:
+    pointInPolygon(x, y, shape.points)
   of shapeDiagonal:
     ## Bounding-box rejection first, then point-to-segment distance in
     ## integers: (x, y) is inside when its distance to the segment is at
@@ -1173,6 +1273,19 @@ proc shapeBounds*(shape: ArenaShape): tuple[x0, y0, x1, y1: int] =
     let half = shape.thickness div 2 + 1
     (min(shape.x0, shape.x1) - half, min(shape.y0, shape.y1) - half,
       max(shape.x0, shape.x1) + half, max(shape.y0, shape.y1) + half)
+  of shapePolygon:
+    if shape.points.len == 0:
+      (0, 0, -1, -1)
+    else:
+      var
+        x0 = shape.points[0].x
+        y0 = shape.points[0].y
+        x1 = shape.points[0].x
+        y1 = shape.points[0].y
+      for p in shape.points:
+        x0 = min(x0, p.x); y0 = min(y0, p.y)
+        x1 = max(x1, p.x); y1 = max(y1, p.y)
+      (x0, y0, x1, y1)
 
 proc rasterizeWallMasks*(
   gameMap: CtfMap, obstacles: seq[ArenaShape]
@@ -1712,12 +1825,12 @@ proc generateMapAttempt*(
     let pit = trenchSquareAt(cand.x, cand.y)
     var blocked = oddCenterPit and rectsIntersect(pit, centerPit)
     for accepted in result.trenches:
-      if rectsIntersect(accepted, pit):
+      if rectsIntersect(shapeAsRect(accepted), pit):
         blocked = true
         break
     if blocked:
       continue
-    result.trenches.add pit
+    result.trenches.add rectShape(pit)
     if cand.kind == pitInstead:
       obstacleRemoved[cand.obstacleIdx] = true
 
@@ -1930,7 +2043,7 @@ proc generateMapAttempt*(
         digs.add image
       true
     for trench in result.trenches:
-      discard result.addPair(digs, trench)
+      discard result.addPair(digs, shapeAsRect(trench))
     ## COUNT mode: pairs lost to sightline-repair walls are topped back up
     ## from the unused candidates that cannot change the wall set (gap and
     ## endzone spots; a late `instead` swap would dodge the repair pass).
@@ -1941,7 +2054,9 @@ proc generateMapAttempt*(
         if cand.kind == pitInstead:
           continue
         discard result.addPair(digs, trenchSquareAt(cand.x, cand.y))
-    result.trenches = digs
+    result.trenches = @[]
+    for d in digs:
+      result.trenches.add rectShape(d)
   result.validateMap()
 
 type
@@ -2294,6 +2409,12 @@ proc shapeSpecNode(shape: ArenaShape): JsonNode =
     result["x1"] = %shape.x1
     result["y1"] = %shape.y1
     result["t"] = %shape.thickness
+  of shapePolygon:
+    result["kind"] = %"polygon"
+    var pts = newJArray()
+    for p in shape.points:
+      pts.add %*[p.x, p.y]
+    result["points"] = pts
   if shape.window:
     result["window"] = %true
 
@@ -2318,6 +2439,11 @@ proc shapeFromSpecNode(node: JsonNode): ArenaShape =
       x0: node["x0"].getInt(), y0: node["y0"].getInt(),
       x1: node["x1"].getInt(), y1: node["y1"].getInt(),
       thickness: node["t"].getInt())
+  of "polygon":
+    var pts: seq[MapPoint]
+    for pt in node["points"]:
+      pts.add MapPoint(x: pt[0].getInt(), y: pt[1].getInt())
+    ArenaShape(kind: shapePolygon, window: window, points: pts)
   else:
     raise newException(
       CtfError, "Unknown map spec shape: " & node["kind"].getStr())
@@ -2351,6 +2477,9 @@ proc mapSpecJson*(gameMap: CtfMap): string =
   var shapes = newJArray()
   for shape in gameMap.leftObstacles:
     shapes.add shape.shapeSpecNode()
+  var trenchShapes = newJArray()
+  for trench in gameMap.trenches:
+    trenchShapes.add trench.shapeSpecNode()
   $(%*{
     "name": gameMap.name,
     "genSeed": gameMap.genSeed,
@@ -2381,8 +2510,9 @@ proc mapSpecJson*(gameMap: CtfMap): string =
     "medKitSpawns": pointsNode(gameMap.medKitSpawns),
     "medKitCandidates": pointsNode(gameMap.medKitCandidates),
     # Trenches are FULL-map (both halves), already symmetrized — playback
-    # re-reads them verbatim, no re-mirroring.
-    "trenches": rectsNode(gameMap.trenches),
+    # re-reads them verbatim, no re-mirroring. Serialized as shapes (the
+    # generator emits rect pits; authored maps may use any shape).
+    "trenches": trenchShapes,
     "leftObstacles": shapes,
   })
 
@@ -2442,8 +2572,18 @@ proc mapFromSpecJson*(text: string): CtfMap =
   result.medKitSpawns = pointsFromNode(node["medKitSpawns"])
   result.medKitCandidates = pointsFromNode(node["medKitCandidates"])
   ## Optional: specs pinned before trenches existed carry none and replay
-  ## without them, exactly as recorded.
-  result.trenches = rectsFromNode(node{"trenches"})
+  ## without them, exactly as recorded. Back-compat: GV<=36 pinned trenches as
+  ## [x, y, w, h] arrays; GV37+ pins them as shape objects (any kind). Detect
+  ## per element so old replays and pool specs still load verbatim.
+  let trenchNode = node{"trenches"}
+  if not trenchNode.isNil and trenchNode.kind == JArray:
+    for item in trenchNode:
+      if item.kind == JArray:
+        result.trenches.add rectShape(MapRect(
+          x: item[0].getInt(), y: item[1].getInt(),
+          w: item[2].getInt(), h: item[3].getInt()))
+      else:
+        result.trenches.add item.shapeFromSpecNode()
   for item in node["leftObstacles"]:
     result.leftObstacles.add item.shapeFromSpecNode()
   result.rooms = result.defaultCtfRooms()
@@ -2504,7 +2644,7 @@ var
     ## must spin in opposite directions. False on rotationally symmetric maps
     ## (rot180 / rot90), where every diamond turns together — see
     ## diamondSpinFrame.
-  ArenaTrenches*: seq[MapRect]
+  ArenaTrenches*: seq[ArenaShape]
 
 proc selectCtfMap(gameMap: CtfMap) =
   ## Installs one map as THE map for this process: dimensions, fog grid,
@@ -2592,7 +2732,7 @@ proc trenchIndexAt*(x, y: int): int =
   ## Returns the index of the trench containing map pixel (x, y), or -1 when
   ## the point is in the open field.
   for i, trench in ArenaTrenches:
-    if inRect(x, y, trench):
+    if inShape(x, y, trench):
       return i
   -1
 
@@ -2633,6 +2773,28 @@ proc inShapeF*(x, y: float, shape: ArenaShape): bool =
   of shapeDiamond:
     abs(x - float(shape.cx)) + abs(y - float(shape.cy)) <=
       float(shape.radius)
+  of shapePolygon:
+    ## Float even-odd for the render rasterizer. Render need not be bit-exact
+    ## with the integer predicate (they may disagree by <1px on the boundary,
+    ## as the doc for this proc notes); the integer `inShape` is what collision,
+    ## FOV, and symmetry use.
+    if shape.points.len < 3:
+      false
+    else:
+      var
+        inside = false
+        j = shape.points.len - 1
+      for i in 0 ..< shape.points.len:
+        let
+          xi = float(shape.points[i].x)
+          yi = float(shape.points[i].y)
+          xj = float(shape.points[j].x)
+          yj = float(shape.points[j].y)
+        if (yi > y) != (yj > y):
+          if x < xi + (xj - xi) * (y - yi) / (yj - yi):
+            inside = not inside
+        j = i
+      inside
   of shapeDiagonal:
     let
       vx = float(shape.x1 - shape.x0)

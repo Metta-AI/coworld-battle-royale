@@ -27,6 +27,11 @@ proc withinBounds(shapes: seq[ArenaShape], region: MapRect): bool =
       if s.cy + s.radius > region.y + region.h: return false
     of shapeDiagonal:
       discard
+    of shapePolygon:
+      for p in s.points:
+        if p.x < region.x or p.y < region.y or
+            p.x > region.x + region.w or p.y > region.y + region.h:
+          return false
   true
 
 proc testRegion(base: CtfMap): MapRect =
@@ -101,3 +106,47 @@ suite "mapgen styles":
         if validateGeneratedMap(base).len == 0:
           inc passed
       check passed >= 1
+
+suite "polygon obstacles":
+  test "pointInPolygon matches a known square":
+    let sq = @[MapPoint(x: 100, y: 100), MapPoint(x: 200, y: 100),
+               MapPoint(x: 200, y: 200), MapPoint(x: 100, y: 200)]
+    check pointInPolygon(150, 150, sq)
+    check pointInPolygon(101, 101, sq)
+    check not pointInPolygon(50, 150, sq)
+    check not pointInPolygon(250, 150, sq)
+    check not pointInPolygon(150, 250, sq)
+
+  test "a polygon obstacle builds an exactly mirror-symmetric wall set":
+    ## The fairness invariant: integer vertex transforms make a polygon and its
+    ## image rasterize to bit-identical mirror masks (no boundary drift).
+    var base = generateMapAttempt(5, MapGenOverrides(
+      size: "standard", symmetry: "mirror", windows: -1, pits: 0, pitDensity: -1))
+    base.leftObstacles = @[ArenaShape(kind: shapePolygon, points: @[
+      MapPoint(x: 210, y: 150), MapPoint(x: 268, y: 172),
+      MapPoint(x: 252, y: 262), MapPoint(x: 188, y: 250),
+      MapPoint(x: 172, y: 198)])]
+    let obstacles = buildArenaObstacles(base)
+    var sawWall = false
+    var y = 30
+    while y < base.height - 30:
+      var x = 30
+      while x < base.width - 30:
+        let inside = mapWallAt(base, obstacles, x, y)
+        check inside == mapWallAt(base, obstacles, base.width - 1 - x, y)
+        if inside: sawWall = true
+        x += 9
+      y += 9
+    check sawWall
+
+  test "a polygon obstacle round-trips through mapSpec":
+    var base = generateMapAttempt(
+      5, MapGenOverrides(size: "standard", windows: -1, pits: 0, pitDensity: -1))
+    let poly = ArenaShape(kind: shapePolygon, points: @[
+      MapPoint(x: 210, y: 150), MapPoint(x: 268, y: 172),
+      MapPoint(x: 252, y: 262), MapPoint(x: 188, y: 250)])
+    base.leftObstacles = @[poly]
+    base.trenches = @[poly]  # trenches are shapes too now
+    let rt = mapFromSpecJson(mapSpecJson(base))
+    check rt.leftObstacles == @[poly]
+    check rt.trenches == @[poly]

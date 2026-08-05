@@ -12,8 +12,10 @@
 ## every shape inside it; the seam side is where a shape meets its own mirror
 ## image, so cover placed near the seam becomes a central feature.
 
-import std/random
+import std/[random, math]
 import sim_types
+
+const BlobMaxVerts = 48  ## soft cap on vertices per authored blob polygon.
 
 type
   MapStyle* = enum
@@ -49,7 +51,7 @@ proc defaultParams*(style: MapStyle): StyleParams =
       radMin: 16, radMax: 32, jitter: 40)
   of styleCaves:
     StyleParams(
-      cell: 64, fillProb: 0.38, steps: 4, birth: 5, death: 4, blobScale: 0.70)
+      cell: 46, fillProb: 0.24, steps: 4, birth: 5, death: 4, blobScale: 0.52)
   of styleMaze:
     StyleParams(cell: 96, wallThick: 16, braid: 0.2)
   of styleBsp:
@@ -86,6 +88,31 @@ proc clampCenter(region: MapRect, cx, cy, radius: int): (int, int) =
     y = clamp(cy, region.y + radius, region.y + region.h - radius)
   (x, y)
 
+proc blobPolygon(
+    r: var Rand, region: MapRect, cx, cy, radius, verts: int
+): ArenaShape =
+  ## An organic closed blob: a base radius wobbled by two low-frequency
+  ## sinusoids at random phase, sampled at integer vertices. Vertices are
+  ## clamped into the placement band (so the whole set stays fair under the
+  ## symmetry). This is what makes caves read as landscape, not stacked discs.
+  let
+    n = clamp(verts, 6, BlobMaxVerts)
+    a2 = 0.20 + rand(r, 1.0) * 0.22
+    a3 = 0.10 + rand(r, 1.0) * 0.18
+    p2 = rand(r, 1.0) * TAU
+    p3 = rand(r, 1.0) * TAU
+  var pts = newSeq[MapPoint](n)
+  for i in 0 ..< n:
+    let
+      t = TAU * float(i) / float(n)
+      rr = float(radius) * (1.0 + a2 * sin(2.0 * t + p2) + a3 * sin(3.0 * t + p3))
+      px = clamp(cx + int(round(cos(t) * rr)),
+                 region.x, region.x + region.w)
+      py = clamp(cy + int(round(sin(t) * rr)),
+                 region.y, region.y + region.h)
+    pts[i] = MapPoint(x: px, y: py)
+  ArenaShape(kind: shapePolygon, points: pts)
+
 # --- scatter -----------------------------------------------------------------
 
 type AnchorKind = enum akRect, akBlob
@@ -104,7 +131,7 @@ proc verticalAnchors(
     loX = region.x + region.w * 50 div 100
     hiX = region.x + region.w * 82 div 100
     h = period + 24
-    blobR = 22
+    blobR = max(12, thick)  ## akBlob: `thick` doubles as the anchor blob radius
   var gy = region.y
   while gy <= region.y + region.h:
     let x = clamp(ri(r, loX, hiX + 1), region.x, region.x + region.w - thick)
@@ -115,13 +142,13 @@ proc verticalAnchors(
         hh = min(h, region.y + region.h - y)
       result.add rectShape(x, y, thick, hh)
     of akBlob:
-      # A vertical RIDGE of overlapping discs at one x — reads as a rock spine,
-      # not a bar, and blends with organic styles while still blocking the row.
+      # A vertical RIDGE of overlapping ORGANIC blobs at one x — reads as a
+      # rock spine, not a bar, and blends with organic styles while still
+      # blocking the row.
       var yy = max(region.y, gy - 12)
       let yEnd = min(region.y + region.h, gy + period + 12)
       while yy <= yEnd:
-        let (cx, cy) = clampCenter(region, x, yy, blobR)
-        result.add discShape(cx, cy, blobR)
+        result.add blobPolygon(r, region, x, yy, blobR, 10)
         yy += blobR + blobR div 2
     gy += period
 
@@ -177,7 +204,7 @@ proc genCaves(r: var Rand, region: MapRect, p: StyleParams): seq[ArenaShape] =
           if wall[idx(c, row)]: n >= p.death
           else: n >= p.birth
     wall = nextGrid
-  result.add verticalAnchors(r, region, cell, 20, akRect)
+  result.add verticalAnchors(r, region, cell, 15, akBlob)
   let radius = max(6, int(float(cell) * p.blobScale))
   for row in 0 ..< rows:
     for c in 0 ..< cols:
@@ -185,8 +212,8 @@ proc genCaves(r: var Rand, region: MapRect, p: StyleParams): seq[ArenaShape] =
         let
           cx = region.x + c * cell + cell div 2
           cy = region.y + row * cell + cell div 2
-          (x, y) = clampCenter(region, cx, cy, radius)
-        result.add discShape(x, y, radius)
+        # Organic blob per cell; adjacent blobs overlap into merged rock.
+        result.add blobPolygon(r, region, cx, cy, radius, 14)
 
 # --- maze (recursive-backtracker lattice) -----------------------------------
 

@@ -1317,7 +1317,7 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       by = grenade.ty + oy
     if bx < 0 or by < 0 or bx >= MapWidth or by >= MapHeight:
       continue
-    if landingTrench >= 0 and not inRect(bx, by, ArenaTrenches[landingTrench]):
+    if landingTrench >= 0 and not inShape(bx, by, ArenaTrenches[landingTrench]):
       continue
     sim.addPaintStain(bx, by, throwerColor)
   sim.logGameEvent("grenade landed")
@@ -1756,7 +1756,7 @@ proc applyInput*(
     negBoundY = -maxSpeed
   if trench >= 0:
     let
-      pit = ArenaTrenches[trench]
+      pit = shapeAsRect(ArenaTrenches[trench])
       relX = (player.x + CollisionW div 2) - (pit.x + pit.w div 2)
       relY = (player.y + CollisionH div 2) - (pit.y + pit.h div 2)
     if relX > 0: posBoundX = slowSpeed

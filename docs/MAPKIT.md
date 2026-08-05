@@ -41,7 +41,7 @@ is a plain array of shapes, and symmetry keeps every edit fair.
 | Style | Terrain | Key `--param` knobs |
 |---|---|---|
 | `bsp` | rooms + corridors (rect walls, doored) | `cell` (room size), `wallThick` |
-| `caves` | cellular-automata organic cover (discs) | `cell`, `fillProb`, `steps`, `birth`, `death`, `blobScale` |
+| `caves` | cellular-automata organic cover (curved **blob polygons**) | `cell`, `fillProb`, `steps`, `birth`, `death`, `blobScale` |
 | `maze` | recursive-backtracker lattice (thin walls) | `cell`, `wallThick`, `braid` |
 | `scatter` | clumped boulder/pillar field | `period`, `prob`, `clusterMin/Max`, `radMin/Max`, `jitter` |
 

@@ -18,7 +18,9 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "36"  ## GV36 (aim rule): THE AIM HAS EXACTLY 32 ROTATIONS.
+  GameVersion* = "37"  ## GV37 (obstacle format): map obstacles and trenches
+    ## may be `polygon` shapes (integer vertex rings), so curved / organic
+    ## terrain is authorable. Older viewers cannot parse the new spec kind.
                        ## The aim angle is one of 32 discrete slots (8 brads
                        ## = 11.25 deg apart), the classic fixed-rotation-count
                        ## scheme. A held rotate button steps whole slots
@@ -674,6 +676,7 @@ type
     shapeDisc
     shapeDiamond
     shapeDiagonal
+    shapePolygon
 
   ArenaShape* = object
     ## One arena obstacle. Discs and diamonds are center + radius (L2 and L1
@@ -689,6 +692,14 @@ type
       cx*, cy*, radius*: int
     of shapeDiagonal:
       x0*, y0*, x1*, y1*, thickness*: int
+    of shapePolygon:
+      ## A closed ring of INTEGER vertices. Curves (Beziers, metaballs,
+      ## superellipses) are flattened to one of these by the authoring tools
+      ## BEFORE they reach the sim, so the runtime never evaluates a curve —
+      ## only integer even-odd point-in-polygon (`inShape`). Integer vertices
+      ## keep symmetry transforms bit-exact, so a polygon and its mirror image
+      ## rasterize to exactly mirror-symmetric wall masks (team fairness).
+      points*: seq[MapPoint]
 
   MapPoint* = object
     x*, y*: int
@@ -762,9 +773,15 @@ type
                                      ## generated maps; equals the active
                                      ## pair on hand-authored maps).
     leftObstacles*: seq[ArenaShape]
-    trenches*: seq[MapRect]    ## walkable dug-pit squares (config-gated trenches): standing
+    trenches*: seq[ArenaShape]  ## walkable dug pits (config-gated): standing
                                ## inside slows movement and fire, and most
-                               ## incoming gun shots fly straight over.
+                               ## incoming gun shots fly straight over. FULL-map
+                               ## (both halves, already symmetrized). The
+                               ## generator emits `rect` pits; authored maps may
+                               ## use any shape, including `polygon` (curved
+                               ## pits). Membership is `inShape`, so the mechanic
+                               ## is shape-agnostic; only the organic-edge ART is
+                               ## rect-specific (other kinds fill flat for now).
 
   CrewSprite* = ref object
     width*, height*: int

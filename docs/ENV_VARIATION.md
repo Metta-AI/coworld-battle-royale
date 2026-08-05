@@ -111,6 +111,11 @@ Per-slot config `PlayerSlotConfig` [sim_types.nim:787](../src/ctf/sim_types.nim#
 Counts are **not** individually config-numbered — they scale with `teams` and map
 layout, and trench count via `mapGen`. Spawn placement in `sim.nim`.
 
+Obstacles and trenches are `ArenaShape`s in five kinds: `rect`, `disc`,
+`diamond`, `diagonal`, and (GV37+) `polygon` — a closed ring of integer vertices
+for curved/organic terrain. Trenches are also `ArenaShape` (the generator emits
+`rect` pits; authored maps may use any shape).
+
 | Item | Count | Key consts (sim_types.nim) |
 |---|---|---|
 | Flags/hearts | 1 per active team | `FlagPickupRange`=12, `CaptureZoneWidth`=40, `PedestalCoverSize`=96 |

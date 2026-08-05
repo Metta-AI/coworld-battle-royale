@@ -141,6 +141,15 @@ symmetry, protected floor, or endzones — those live in `arena.nim`. Raw
 generation passes the validator ~55–65% of the time by design; the workflow is
 generate-many-then-curate/edit, not one-shot.
 
+Obstacles and trenches are `ArenaShape`s in five kinds: `rect`/`disc`/`diamond`/
+`diagonal` and (GV37) `polygon` — a closed ring of INTEGER vertices for curved
+terrain. Curves are flattened to polygons in the authoring tools; the sim only
+ever runs integer even-odd `pointInPolygon` (see the STRICT-STRADDLE convention
+that keeps mirror/rot180 masks bit-exact — fairness rests on it, so do not swap
+in a boundary convention without re-checking the parity test). Runtime is
+unaffected: LoS/nav read the baked `wallMask` bitmap, shapes only stamp it at
+load. Design: [docs/plans/2026-08-04-vector-obstacles-design.md](docs/plans/2026-08-04-vector-obstacles-design.md).
+
 ## Replay fixtures
 
 `tests/fixtures/*.bitreplay` + `tests/replays/ctf.bitreplay` are recorded
