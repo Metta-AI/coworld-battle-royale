@@ -238,6 +238,11 @@
     let offscreenCtx = null;
     let nativeW = 1, nativeH = 1;
     let scale = 1, offsetX = 0, offsetY = 0;
+    let fitScale = 1;                 // scale that fits the whole board (zoom 1).
+    let zoom = 1;                     // multiplier over the fit, >= 1.
+    let focusX = 0, focusY = 0;       // map px held at the viewport center.
+    const maxZoom = 12;               // ~1 map px per 12 css px: past this the
+                                      // art is blocks, not detail.
     let reconnectDelay = 1000;
     const maxReconnectDelay = 8000;
     let reconnecting = false;
@@ -334,18 +339,84 @@
       }
     }
 
+    // View zoom. `zoom` multiplies the fit scale and `focusX/focusY` name the
+    // MAP-space point held at the viewport center, so the view survives every
+    // relayout: a container resize, a hudscale swing, or a mid-replay board
+    // change (a generated map can be 960x960 where the arena is 1235x659)
+    // recomputes the fit and keeps looking at the same part of the board.
+    // Zoom exists because a big map is unreadable letterboxed whole: a 4992px
+    // colossal board fits a ~760px stage at 0.15x, where a cog is one pixel.
+    function clampView() {
+      zoom = Math.min(maxZoom, Math.max(1, zoom));
+      const size = canvasCssSize();
+      // Half the viewport, in map px. At zoom 1 this covers the whole board on
+      // the fitted axis, so the focus pins to the center and the letterbox
+      // bands stay symmetric exactly as before.
+      const halfW = size.w / (fitScale * zoom) / 2;
+      const halfH = size.h / (fitScale * zoom) / 2;
+      // Never pan past the edges: if the viewport is wider than the board, the
+      // board stays centered on that axis instead of drifting into the void.
+      focusX = halfW * 2 >= nativeW ?
+        nativeW / 2 : Math.min(nativeW - halfW, Math.max(halfW, focusX));
+      focusY = halfH * 2 >= nativeH ?
+        nativeH / 2 : Math.min(nativeH - halfH, Math.max(halfH, focusY));
+    }
+
     function computeFit() {
       const size = canvasCssSize();
       const cssW = size.w;
       const cssH = size.h;
       const scaleX = cssW / nativeW;
       const scaleY = cssH / nativeH;
-      scale = Math.min(scaleX, scaleY);
-      const drawW = nativeW * scale;
-      const drawH = nativeH * scale;
-      offsetX = (cssW - drawW) / 2;
-      offsetY = (cssH - drawH) / 2;
+      fitScale = Math.min(scaleX, scaleY);
+      if (!(focusX > 0) || !(focusY > 0)) {
+        focusX = nativeW / 2;
+        focusY = nativeH / 2;
+      }
+      clampView();
+      scale = fitScale * zoom;
+      // Place the focus point at the viewport center. At zoom 1 this reduces to
+      // the old centered letterbox, to the pixel.
+      offsetX = cssW / 2 - focusX * scale;
+      offsetY = cssH / 2 - focusY * scale;
       notifyTransform();
+    }
+
+    function zoomAt(factor, cssX, cssY) {
+      // Zoom toward a point (the cursor, usually): hold the map pixel under it
+      // still, so the board grows out from what you are looking at rather than
+      // from the center.
+      if (!(factor > 0)) return;
+      const size = canvasCssSize();
+      const anchorX = typeof cssX === 'number' ? cssX : size.w / 2;
+      const anchorY = typeof cssY === 'number' ? cssY : size.h / 2;
+      const mapX = (anchorX - offsetX) / scale;
+      const mapY = (anchorY - offsetY) / scale;
+      const before = zoom;
+      zoom = Math.min(maxZoom, Math.max(1, zoom * factor));
+      if (zoom === before) return;
+      // Shift the focus so (mapX, mapY) lands back under the anchor.
+      const nextScale = fitScale * zoom;
+      focusX = mapX + (size.w / 2 - anchorX) / nextScale;
+      focusY = mapY + (size.h / 2 - anchorY) / nextScale;
+      computeFit();
+      scheduleDraw();
+    }
+
+    function panBy(cssDX, cssDY) {
+      if (zoom <= 1) return;          // fitted whole: there is nowhere to pan.
+      focusX -= cssDX / scale;
+      focusY -= cssDY / scale;
+      computeFit();
+      scheduleDraw();
+    }
+
+    function resetView() {
+      zoom = 1;
+      focusX = nativeW / 2;
+      focusY = nativeH / 2;
+      computeFit();
+      scheduleDraw();
     }
 
     // Static map-band cache. The full-board map bands (object ids 40 up, on
@@ -868,7 +939,9 @@
         offsetX,
         offsetY,
         nativeW,
-        nativeH
+        nativeH,
+        zoom,
+        fitScale
       };
     }
 
@@ -938,6 +1011,9 @@
       setViewportFit,
       setViewportSize,
       getPaceStats,
+      zoomAt,
+      panBy,
+      resetView,
       stop
     };
   }
