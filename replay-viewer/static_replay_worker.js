@@ -180,6 +180,14 @@ self.onmessage = function (event) {
       sendRuntimeInput(new Uint8Array(message.bytes));
     } else if (message.type === 'resize' && core) {
       core.setViewportSize(message.width, message.height, message.dpr);
+    } else if (message.type === 'view' && core) {
+      // The canvas is an OffscreenCanvas here, so wheel/drag land on the main
+      // thread's placeholder element and arrive as view commands. The core's
+      // transform (and the transform echoed back for click mapping) stays the
+      // single source of truth either way.
+      if (message.action === 'zoom') core.zoomAt(message.factor, message.x, message.y);
+      else if (message.action === 'pan') core.panBy(message.dx, message.dy);
+      else if (message.action === 'reset') core.resetView();
     } else if (message.type === 'dispose') {
       disposed = true;
       if (core) core.stop();

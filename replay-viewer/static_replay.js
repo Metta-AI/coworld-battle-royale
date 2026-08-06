@@ -173,6 +173,18 @@
       clickMap: function (mapX, mapY) {
         if (worker) worker.postMessage({ type: 'click', x: mapX, y: mapY });
       },
+      // Zoom/pan forwarded to the worker that owns the OffscreenCanvas. Same
+      // signatures as the in-process core, so the page drives one API whether
+      // it renders here or in a worker.
+      zoomAt: function (factor, x, y) {
+        if (worker) worker.postMessage({ type: 'view', action: 'zoom', factor: factor, x: x, y: y });
+      },
+      panBy: function (dx, dy) {
+        if (worker) worker.postMessage({ type: 'view', action: 'pan', dx: dx, dy: dy });
+      },
+      resetView: function () {
+        if (worker) worker.postMessage({ type: 'view', action: 'reset' });
+      },
       getTransform: function () { return transform; },
       setViewportFit: postViewport,
       getPaceStats: function () {

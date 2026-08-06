@@ -3551,6 +3551,11 @@ body[data-embed] #board { top: 0; height: 100%; }
     else if (k === '+' || k === '=') send('+');
     else if (k === '-' || k === '_') send('-');
     else if (k === 'o') setSpoilers(!getSpoilers());
+    // Board zoom rides z/x/0: +/- and 1..9 are already the server's speed
+    // commands, so they can't double as view keys.
+    else if (k === 'z') core.zoomAt(1.35);
+    else if (k === 'x') core.zoomAt(1 / 1.35);
+    else if (k === '0') core.resetView();
     else if (k >= '1' && k <= '9') send(k);
     // keydown never crosses the iframe boundary: relay Esc to the league
     // shell, which relays it on to the Observatory theater host.
@@ -3563,7 +3568,61 @@ body[data-embed] #board { top: 0; height: 100%; }
   // HTML overlays, so a canvas click is always a MAP-space click. Invert the
   // core's letterbox transform to recover native map pixels, then hand them to
   // clickMap — the server hit-tests the soldier footprint and toggles selection.
+  // ---- zoom + pan -------------------------------------------------------
+  // A generated board can be 4992px square; letterboxed whole into a ~760px
+  // stage that is 0.15x, where a cog is a single pixel. Wheel zooms toward the
+  // cursor, drag pans, double-click (or 0) refits. The transform lives in
+  // broadcast_core, so click-to-select below inverts the SAME numbers and keeps
+  // hitting what you actually clicked at any zoom.
+  var dragging = false, dragMoved = 0, lastDragX = 0, lastDragY = 0;
+  function canvasPoint(ev) {
+    var rect = canvas.getBoundingClientRect();
+    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top, ok: rect.width > 0 };
+  }
+  canvas.addEventListener('wheel', function (ev) {
+    // The board owns the wheel only once there is somewhere to zoom; otherwise
+    // let the page (or the Observatory host) scroll as it always did.
+    var t = core.getTransform();
+    var zoomingOut = ev.deltaY > 0;
+    if (zoomingOut && (!t || !(t.zoom > 1))) return;
+    ev.preventDefault();
+    var p = canvasPoint(ev);
+    if (!p.ok) return;
+    // deltaMode 1 is lines, 2 is pages: normalize so a trackpad and a mouse
+    // wheel travel at comparable rates.
+    var unit = ev.deltaMode === 1 ? 16 : (ev.deltaMode === 2 ? 100 : 1);
+    core.zoomAt(Math.exp(-ev.deltaY * unit * 0.0022), p.x, p.y);
+  }, { passive: false });
+  canvas.addEventListener('pointerdown', function (ev) {
+    if (ev.button !== 0) return;
+    dragging = true;
+    dragMoved = 0;
+    lastDragX = ev.clientX;
+    lastDragY = ev.clientY;
+  });
+  window.addEventListener('pointermove', function (ev) {
+    if (!dragging) return;
+    var dx = ev.clientX - lastDragX, dy = ev.clientY - lastDragY;
+    lastDragX = ev.clientX;
+    lastDragY = ev.clientY;
+    dragMoved += Math.abs(dx) + Math.abs(dy);
+    core.panBy(dx, dy);
+    var t = core.getTransform();
+    canvas.style.cursor = t && t.zoom > 1 ? 'grabbing' : '';
+  });
+  window.addEventListener('pointerup', function () {
+    dragging = false;
+    canvas.style.cursor = '';
+  });
+  canvas.addEventListener('dblclick', function (ev) {
+    ev.preventDefault();
+    core.resetView();
+  });
+
   canvas.addEventListener('click', function (ev) {
+    // A pan is not a click: dragging the board must never also select the cog
+    // that happened to be under the pointer when the drag ended.
+    if (dragMoved > 4) { dragMoved = 0; return; }
     var rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     // getBoundingClientRect is CSS px; the core's transform lives in the same
