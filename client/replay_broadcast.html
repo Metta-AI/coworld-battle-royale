@@ -1717,17 +1717,15 @@ body[data-embed] #board { top: 0; height: 100%; }
   // ---- core (board renderer + WS) ----
   var lastState = null;
   var replayAdapter = window.CtfStaticReplay || null;
-  var core = window.BroadcastCore.create({
+  var coreConfig = {
     canvas: canvas,
     onText: function (txt) { onFrame(txt); },
     onStatus: function (st) { onStatus(st); },
-    onFirstFrame: function () { core.setViewportFit(); },
-    websocket: !replayAdapter,
-    onSendPacket: replayAdapter ? function (bytes) {
-      replayAdapter.sendPacket(bytes);
-    } : null
-  });
-  if (replayAdapter) replayAdapter.attachCore(core);
+    onFirstFrame: function () { core.setViewportFit(); }
+  };
+  var core = replayAdapter
+    ? replayAdapter.createCore(coreConfig)
+    : window.BroadcastCore.create(coreConfig);
 
   // Tell the League Replayer shell the board is alive and showing its
   // locker-room curtain, so the shell can drop its own "loading replay…"
