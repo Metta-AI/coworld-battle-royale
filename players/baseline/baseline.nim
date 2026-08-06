@@ -3051,18 +3051,62 @@ const ShoutVocab = [
   ## A short kid-friendly chatter set. Only emitted when CTF_BOT_SHOUT is set
   ## (fixture recording), so tournament play is unchanged.
 
+type BaselineComponent* = object
+  bot: Bot
+  client: ProtocolClient
+  lastMask: uint8
+  hasSent: bool
+
+proc initBaselineComponent*(slot: int): BaselineComponent =
+  ## Builds the deterministic baseline policy without a websocket transport.
+  let
+    team = (if slot mod 2 == 0: Team.Red else: Team.Blue)
+    role = roleForSeat(clamp(slot div 2, 0, 7), team)
+  randomize(slot * 7919 + 1)
+  SelfStrategyTeam = team
+  result.bot = Bot(
+    slot: slot,
+    team: team,
+    role: role,
+    myColor: (if team == Red: "red" else: "blue")
+  )
+  result.bot.resetTransient()
+  result.client = initProtocolClient()
+
+proc advancePolicy(component: var BaselineComponent, advance: int) =
+  component.bot.tick += advance
+  component.bot.estAim = floorMod(
+    component.bot.estAim + component.bot.rotSign * AimRate * advance,
+    AimBrads
+  )
+
+proc policyReplies(component: var BaselineComponent): seq[string] =
+  if not component.client.mapCameraReady:
+    component.bot.resetTransient()
+    return
+  if not component.bot.navBuilt and component.client.walkabilityReady:
+    component.bot.buildNavGrid(component.client)
+  let mask = component.bot.decide(component.client)
+  if not component.hasSent or mask != component.lastMask:
+    result.add(inputBlob(mask))
+    component.lastMask = mask
+    component.hasSent = true
+
+proc onMessage*(component: var BaselineComponent, message: string): seq[string] =
+  ## Applies one game frame and returns the baseline's changed input frame.
+  component.client.applyFrame(message)
+  component.advancePolicy(component.client.frameAdvance)
+  component.policyReplies()
+
 proc runBot(url: string) =
   ## Connects, then loops frames forever, reconnecting on disconnect.
   let
     slot = slotFromUrl(url)
-    team = (if slot mod 2 == 0: Team.Red else: Team.Blue)
-    role = roleForSeat(clamp(slot div 2, 0, 7), team)
     endpoint = ensureWsPath(url, WebSocketPath)
-  randomize(slot * 7919 + 1)
-  SelfStrategyTeam = team
+  var component = initBaselineComponent(slot)
   let
-    bot = Bot(slot: slot, team: team, role: role,
-      myColor: (if team == Red: "red" else: "blue"))
+    bot = component.bot
+    client = component.client
     shoutEnabled = getEnv("CTF_BOT_SHOUT").len > 0
     # Opt-in ONLY (fixture recording): the per-frame ready send measurably
     # corrupts input-application timing in league play — the bot's
@@ -3072,11 +3116,9 @@ proc runBot(url: string) =
     # 0W-23L-1M to 8W-10L-6M vs the champion, p=0.0039). League/xreq runners
     # never set this env, so competitive builds do not send ready at all.
     fastReadyEnabled = getEnv("CTF_BOT_FAST_READY").len > 0
-  bot.resetTransient()
   startProfileTrace()
-  echo "baseline slot=", slot, " team=", team, " role=", role, " -> ", endpoint
-  artInit(slot, $team, $role)
-  let client = initProtocolClient()
+  echo "baseline slot=", slot, " team=", bot.team, " role=", bot.role, " -> ", endpoint
+  artInit(slot, $bot.team, $bot.role)
   when defined(taunt):
     startTaunts()                        # worker thread + bank prefetch
   var everConnected = false
@@ -3097,18 +3139,14 @@ proc runBot(url: string) =
       client.reset()
       bot.navBuilt = false
       bot.resetTransient()
-      var lastMask = 0xff'u8
+      component.hasSent = false
       while true:
         if not client.receiveLatestFrame(ws, false):
           continue
         let advance = max(1, client.frameAdvance)
-        bot.tick += advance
+        component.advancePolicy(advance)
         if profileShouldDump(bot.tick):
           finishProfileTrace()
-        # Dead-reckon the aim: the last sent mask keeps rotating on the
-        # server for every elapsed sim tick until we change it.
-        bot.estAim = floorMod(
-          bot.estAim + bot.rotSign * AimRate * advance, AimBrads)
         if not client.mapCameraReady:
           if playing:
             playing = false
@@ -3118,12 +3156,8 @@ proc runBot(url: string) =
         if not playing:
           playing = true
           artEvent(bot.tick, "game_start")
-        if not bot.navBuilt and client.walkabilityReady:
-          bot.buildNavGrid(client)
-        let mask = bot.decide(client)
-        if mask != lastMask:
-          ws.send(inputBlob(mask), BinaryMessage)
-          lastMask = mask
+        for reply in component.policyReplies():
+          ws.send(reply, BinaryMessage)
         # Fixture-only chatter: shout on a slot-staggered ~2s cadence so a
         # recorded episode carries live shouts to exercise the bubble render.
         if shoutEnabled and
