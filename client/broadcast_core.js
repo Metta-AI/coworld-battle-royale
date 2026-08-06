@@ -237,10 +237,13 @@
     let offscreenCanvas = null;
     let offscreenCtx = null;
     let nativeW = 1, nativeH = 1;
+    let lastBoardW = 0, lastBoardH = 0;  // last REAL board size; see updateNativeSize
     let scale = 1, offsetX = 0, offsetY = 0;
     let fitScale = 1;                 // scale that fits the whole board (zoom 1).
     let zoom = 1;                     // multiplier over the fit, >= 1.
     let focusX = 0, focusY = 0;       // map px held at the viewport center.
+    const minZoom = 1;                // 1 IS "fitted whole": the board can never
+                                      // be smaller than the frame it lives in.
     const maxZoom = 12;               // ~1 map px per 12 css px: past this the
                                       // art is blocks, not detail.
     let reconnectDelay = 1000;
@@ -308,6 +311,26 @@
 
     function updateNativeSize() {
       const size = computeNativeSize();
+      // A new board ALWAYS opens fitted. You see the whole map first and then
+      // choose where to go in — never dropped into the corner of a board you
+      // have not seen yet. Zoom and focus from the previous board mean nothing
+      // on this one anyway (a 4992px colossal map and the 1235px arena share no
+      // coordinates), so this also keeps a mid-replay board change from landing
+      // the view in the void.
+      //
+      // "New" is measured against the last REAL board, not against the current
+      // nativeW/H. A replay that loops or seeks re-emits its layers, and for a
+      // frame or two computeNativeSize answers the 1x1 placeholder; comparing
+      // frame-to-frame would read that blink as two board changes and refit the
+      // view out from under someone who is mid-inspection on the SAME map.
+      if (size.w > 1 && size.h > 1 &&
+          (size.w !== lastBoardW || size.h !== lastBoardH)) {
+        lastBoardW = size.w;
+        lastBoardH = size.h;
+        zoom = minZoom;
+        focusX = size.w / 2;
+        focusY = size.h / 2;
+      }
       nativeW = size.w;
       nativeH = size.h;
       if (!offscreenCanvas) {
@@ -326,18 +349,37 @@
       };
     }
 
+    // Everything a view control needs, in ONE object. The page never reaches
+    // into the core for view state: it reads this (getTransform, or the
+    // onTransform push — the static bundle's core lives in a Worker and can
+    // only answer with a message, so a synchronous getter would have to lie).
+    // visW/visH are the map-space span actually on screen, which is what the
+    // minimap's view box and the arrow-key pan step are both sized from.
+    function viewSnapshot() {
+      const size = canvasCssSize();
+      return {
+        scale, offsetX, offsetY, nativeW, nativeH,
+        zoom, minZoom, maxZoom, fitScale, focusX, focusY,
+        visW: Math.min(nativeW, size.w / scale),
+        visH: Math.min(nativeH, size.h / scale)
+      };
+    }
+
     function notifyTransform() {
-      // Same shape as getTransform(): the worker mirrors this payload to the
-      // page, whose wheel handler reads `zoom` to decide if zoom-out may
-      // consume the scroll.
-      const next = { scale, offsetX, offsetY, nativeW, nativeH, zoom, fitScale };
+      // Same shape as getTransform(), which is what #245 established: the
+      // Worker mirrors this payload to the page, and a payload missing `zoom`
+      // left the static viewer unable to answer "am I zoomed?". It now carries
+      // the whole view, because the controls need the bounds and the focus too.
+      const next = viewSnapshot();
       if (!lastTransform ||
           next.scale !== lastTransform.scale ||
           next.offsetX !== lastTransform.offsetX ||
           next.offsetY !== lastTransform.offsetY ||
           next.nativeW !== lastTransform.nativeW ||
           next.nativeH !== lastTransform.nativeH ||
-          next.zoom !== lastTransform.zoom) {
+          next.zoom !== lastTransform.zoom ||
+          next.focusX !== lastTransform.focusX ||
+          next.focusY !== lastTransform.focusY) {
         lastTransform = next;
         onTransform(next);
       }
@@ -351,7 +393,7 @@
     // Zoom exists because a big map is unreadable letterboxed whole: a 4992px
     // colossal board fits a ~760px stage at 0.15x, where a cog is one pixel.
     function clampView() {
-      zoom = Math.min(maxZoom, Math.max(1, zoom));
+      zoom = Math.min(maxZoom, Math.max(minZoom, zoom));
       const size = canvasCssSize();
       // Half the viewport, in map px. At zoom 1 this covers the whole board on
       // the fitted axis, so the focus pins to the center and the letterbox
@@ -397,7 +439,7 @@
       const mapX = (anchorX - offsetX) / scale;
       const mapY = (anchorY - offsetY) / scale;
       const before = zoom;
-      zoom = Math.min(maxZoom, Math.max(1, zoom * factor));
+      zoom = Math.min(maxZoom, Math.max(minZoom, zoom * factor));
       if (zoom === before) return;
       // Shift the focus so (mapX, mapY) lands back under the anchor.
       const nextScale = fitScale * zoom;
@@ -407,20 +449,130 @@
       scheduleDraw();
     }
 
+    // Absolute zoom, for the slider and the +/- buttons. Zoom is a GEOMETRIC
+    // quantity (1x -> 12x), so a control that wants a linear feel maps its own
+    // travel through a log; the core only ever takes a level.
+    function setZoom(level, cssX, cssY) {
+      if (!(level > 0)) return;
+      const target = Math.min(maxZoom, Math.max(minZoom, level));
+      if (target === zoom) return;
+      zoomAt(target / zoom, cssX, cssY);
+    }
+
     function panBy(cssDX, cssDY) {
-      if (zoom <= 1) return;          // fitted whole: there is nowhere to pan.
+      if (zoom <= minZoom) return;    // fitted whole: there is nowhere to pan.
       focusX -= cssDX / scale;
       focusY -= cssDY / scale;
       computeFit();
       scheduleDraw();
     }
 
+    // Pan by a MAP-space delta (the arrow keys, which step by a share of what
+    // is on screen rather than by screen pixels — a nudge means the same thing
+    // at 2x and at 12x).
+    function panByMap(mapDX, mapDY) {
+      if (zoom <= minZoom) return;
+      focusX += mapDX;
+      focusY += mapDY;
+      computeFit();
+      scheduleDraw();
+    }
+
+    // Put a map point at the viewport center (clicking or dragging the minimap).
+    function panTo(mapX, mapY) {
+      if (!(mapX >= 0) || !(mapY >= 0)) return;
+      focusX = mapX;
+      focusY = mapY;
+      computeFit();
+      scheduleDraw();
+    }
+
     function resetView() {
-      zoom = 1;
+      zoom = minZoom;
       focusX = nativeW / 2;
       focusY = nativeH / 2;
       computeFit();
       scheduleDraw();
+    }
+
+    // ---- Minimap ----------------------------------------------------------
+    // The core draws it, not the page, for the same reason the transform lives
+    // here: the static bundle composites inside a Worker, so the page has no
+    // board pixels to shrink and no view state to outline. The page hands over
+    // a surface (a canvas, or an OffscreenCanvas transferred to the Worker) and
+    // the core keeps it in sync with what it just drew.
+    let minimapSurface = null;
+    let minimapCtx = null;
+    let minimapDrawnAt = 0;
+    let minimapDrawnZoom = 0, minimapDrawnX = -1, minimapDrawnY = -1;
+    const MinimapSpanPx = 240;        // backing-store cap on the long edge
+    const MinimapMinBoxPx = 14;       // floor on the view box, so deep zoom on a
+                                      // colossal board still shows you WHERE
+
+    function attachMinimap(surface) {
+      minimapSurface = surface || null;
+      minimapCtx = minimapSurface ? minimapSurface.getContext('2d') : null;
+      drawMinimap();
+    }
+
+    function drawMinimap() {
+      if (!minimapCtx || !offscreenCanvas || nativeW < 1 || nativeH < 1) return;
+      // Shrinking a 4992x4992 board into 240px is a ~25M-pixel resample. Two
+      // rules keep it off the frame budget: never pay it while the minimap is
+      // hidden (fitted board — the common case), and once it IS up, refresh the
+      // board picture at ~12fps rather than the board's 24. A view change still
+      // redraws immediately, because THAT is the frame the eye is waiting on.
+      if (zoom <= minZoom) { minimapDrawnAt = 0; return; }
+      const now = performance.now();
+      const moved = zoom !== minimapDrawnZoom ||
+        focusX !== minimapDrawnX || focusY !== minimapDrawnY;
+      if (!moved && now - minimapDrawnAt < 80) return;
+      minimapDrawnAt = now;
+      minimapDrawnZoom = zoom;
+      minimapDrawnX = focusX;
+      minimapDrawnY = focusY;
+      // The backing store carries the BOARD's aspect, so the view box stays a
+      // true rectangle no matter what shape the CSS box ends up.
+      const k = MinimapSpanPx / Math.max(nativeW, nativeH);
+      const w = Math.max(1, Math.round(nativeW * k));
+      const h = Math.max(1, Math.round(nativeH * k));
+      if (minimapSurface.width !== w) minimapSurface.width = w;
+      if (minimapSurface.height !== h) minimapSurface.height = h;
+      // Resizing a canvas resets its context state, so this must follow.
+      minimapCtx.imageSmoothingEnabled = true;
+      minimapCtx.clearRect(0, 0, w, h);
+      minimapCtx.drawImage(offscreenCanvas, 0, 0, w, h);
+
+      const size = canvasCssSize();
+      const visW = Math.min(nativeW, size.w / scale);
+      const visH = Math.min(nativeH, size.h / scale);
+      // A 4992px board at 12x holds ~1/40th of its width, which is 6 minimap
+      // pixels: below a floor the box stops being a shape you can find. Grow it
+      // around the same center instead of letting it vanish.
+      const bw = Math.max(MinimapMinBoxPx, visW * (w / nativeW));
+      const bh = Math.max(MinimapMinBoxPx, visH * (h / nativeH));
+      const bx = Math.min(w - bw, Math.max(0, focusX * (w / nativeW) - bw / 2));
+      const by = Math.min(h - bh, Math.max(0, focusY * (h / nativeH) - bh / 2));
+      // Everything OUTSIDE the box goes down a stop. That is what makes it read
+      // as a window rather than a drawn rectangle — the eye finds the bright
+      // patch before it finds the outline.
+      minimapCtx.fillStyle = 'rgba(10, 7, 4, 0.5)';
+      minimapCtx.fillRect(0, 0, w, Math.max(0, by));
+      minimapCtx.fillRect(0, by + bh, w, Math.max(0, h - by - bh));
+      minimapCtx.fillRect(0, by, Math.max(0, bx), bh);
+      minimapCtx.fillRect(bx + bw, by, Math.max(0, w - bx - bw), bh);
+      // White box over a dark halo: the board under it can be pale concrete or
+      // near-black pit, and a bare white line disappears into the first. The
+      // strokes are deliberately heavy for a 240px surface — this canvas is
+      // displayed SMALLER than its backing store, so a hairline would be
+      // resampled away to nothing.
+      minimapCtx.lineJoin = 'miter';
+      minimapCtx.strokeStyle = 'rgba(8, 5, 3, 0.9)';
+      minimapCtx.lineWidth = 5;
+      minimapCtx.strokeRect(bx + 1, by + 1, Math.max(2, bw - 2), Math.max(2, bh - 2));
+      minimapCtx.strokeStyle = '#ffffff';
+      minimapCtx.lineWidth = 2.5;
+      minimapCtx.strokeRect(bx + 1, by + 1, Math.max(2, bw - 2), Math.max(2, bh - 2));
     }
 
     // Static map-band cache. The full-board map bands (object ids 40 up, on
@@ -583,6 +735,8 @@
         ctx.drawImage(offscreenCanvas, 0, 0, nativeW * scale, nativeH * scale);
         ctx.restore();
       }
+
+      drawMinimap();
     }
 
     function scheduleDraw() {
@@ -938,15 +1092,7 @@
     }
 
     function getTransform() {
-      return {
-        scale,
-        offsetX,
-        offsetY,
-        nativeW,
-        nativeH,
-        zoom,
-        fitScale
-      };
+      return viewSnapshot();
     }
 
     function setViewportFit() {
@@ -1016,8 +1162,12 @@
       setViewportSize,
       getPaceStats,
       zoomAt,
+      setZoom,
       panBy,
+      panByMap,
+      panTo,
       resetView,
+      attachMinimap,
       stop
     };
   }
