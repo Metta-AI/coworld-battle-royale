@@ -19,7 +19,9 @@
 
 import
   std/[algorithm, json, math, strutils],
-  sim
+  sim,
+  global   # boardRenderScaleFor: the per-board supersample factor the chrome
+           # frame reports so the viewer can convert board px <-> world px
 
 type
   BroadcastTracker* = object
@@ -691,6 +693,14 @@ proc buildStateJson*(
     "ff": fastForwarding,
     "en": transportEnabled,
     "mm": mismatchTick,
+    # BOARD pixels per LOGICAL map pixel. Everything the viewer positions with —
+    # the letterbox transform, click-to-select, the minimap — lives in board
+    # pixels, so a control that has to move a fixed WORLD distance (the viewer's
+    # arrow-key pan cell) can only do it by multiplying through this. It cannot
+    # be a wire constant: it is per-BOARD, because an oversize map renders at 1x
+    # rather than blow the wasm32 viewer's address space (see
+    # MaxSupersampledMapPixels), while every normal board renders at RenderScale.
+    "bs": boardRenderScaleFor(sim.gameMap.width, sim.gameMap.height),
     "pov": povSlot,
     "teams": teams,
     "roster": sim.rosterJson(),
