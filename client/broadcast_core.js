@@ -4,6 +4,24 @@
 (function() {
   'use strict';
 
+  // The native replay client runs this core in a Window. The static bundle
+  // runs the same parser/compositor in a Dedicated Worker with an
+  // OffscreenCanvas. Keep one implementation so protocol and rendering fixes
+  // cannot drift between the two delivery modes.
+  const globalScope = typeof window !== 'undefined' ? window : self;
+  const requestFrame = typeof globalScope.requestAnimationFrame === 'function'
+    ? globalScope.requestAnimationFrame.bind(globalScope)
+    : callback => setTimeout(() => callback(performance.now()), 1000 / 60);
+  const cancelFrame = typeof globalScope.cancelAnimationFrame === 'function'
+    ? globalScope.cancelAnimationFrame.bind(globalScope)
+    : clearTimeout;
+
+  function createCanvasSurface() {
+    if (typeof document !== 'undefined') return document.createElement('canvas');
+    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(1, 1);
+    throw new Error('Canvas rendering is unavailable in this execution context');
+  }
+
   // ========== Vendored SnappyJS (MIT) ==========
   // @license MIT (http://opensource.org/licenses/MIT)
   // author: Zhipeng Jia
@@ -100,7 +118,7 @@
 
   function ensureLayer(layers, id) {
     if (!layers.has(id)) {
-      const canvas = document.createElement('canvas');
+      const canvas = createCanvasSurface();
       const ctx = canvas.getContext('2d');
       ctx.imageSmoothingEnabled = false;
       layers.set(id, {
@@ -204,6 +222,7 @@
     const onFirstFrame = config.onFirstFrame || (() => {});
     const websocketEnabled = config.websocket !== false;
     const onSendPacket = config.onSendPacket || null;
+    const onTransform = config.onTransform || (() => {});
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
 
@@ -223,6 +242,11 @@
     const maxReconnectDelay = 8000;
     let reconnecting = false;
     let stopped = false;
+    let viewportWidth = Number(config.viewportWidth) || 0;
+    let viewportHeight = Number(config.viewportHeight) || 0;
+    let pixelRatio = Number(config.devicePixelRatio) ||
+      globalScope.devicePixelRatio || 1;
+    let lastTransform = null;
 
     // ---- Playout buffer (jitter absorption) ----
     // The stream leaves the server at a clean source cadence (~24fps), but the
@@ -282,7 +306,7 @@
       nativeW = size.w;
       nativeH = size.h;
       if (!offscreenCanvas) {
-        offscreenCanvas = document.createElement('canvas');
+        offscreenCanvas = createCanvasSurface();
         offscreenCtx = offscreenCanvas.getContext('2d');
         offscreenCtx.imageSmoothingEnabled = false;
       }
@@ -290,10 +314,30 @@
       if (offscreenCanvas.height !== nativeH) offscreenCanvas.height = nativeH;
     }
 
+    function canvasCssSize() {
+      return {
+        w: viewportWidth || canvas.clientWidth || canvas.width / pixelRatio,
+        h: viewportHeight || canvas.clientHeight || canvas.height / pixelRatio
+      };
+    }
+
+    function notifyTransform() {
+      const next = { scale, offsetX, offsetY, nativeW, nativeH };
+      if (!lastTransform ||
+          next.scale !== lastTransform.scale ||
+          next.offsetX !== lastTransform.offsetX ||
+          next.offsetY !== lastTransform.offsetY ||
+          next.nativeW !== lastTransform.nativeW ||
+          next.nativeH !== lastTransform.nativeH) {
+        lastTransform = next;
+        onTransform(next);
+      }
+    }
+
     function computeFit() {
-      const dpr = window.devicePixelRatio || 1;
-      const cssW = canvas.clientWidth || canvas.width / dpr;
-      const cssH = canvas.clientHeight || canvas.height / dpr;
+      const size = canvasCssSize();
+      const cssW = size.w;
+      const cssH = size.h;
       const scaleX = cssW / nativeW;
       const scaleY = cssH / nativeH;
       scale = Math.min(scaleX, scaleY);
@@ -301,6 +345,7 @@
       const drawH = nativeH * scale;
       offsetX = (cssW - drawW) / 2;
       offsetY = (cssH - drawH) / 2;
+      notifyTransform();
     }
 
     // Static map-band cache. The full-board map bands (object ids 40 up, on
@@ -433,9 +478,10 @@
     }
 
     function draw() {
-      const dpr = window.devicePixelRatio || 1;
-      const cssW = canvas.clientWidth || canvas.width / dpr;
-      const cssH = canvas.clientHeight || canvas.height / dpr;
+      const dpr = pixelRatio;
+      const size = canvasCssSize();
+      const cssW = size.w;
+      const cssH = size.h;
       if (canvas.width !== cssW * dpr) canvas.width = cssW * dpr;
       if (canvas.height !== cssH * dpr) canvas.height = cssH * dpr;
 
@@ -466,7 +512,7 @@
 
     function scheduleDraw() {
       if (rafHandle) return;
-      rafHandle = requestAnimationFrame(() => {
+      rafHandle = requestFrame(() => {
         rafHandle = null;
         draw();
       });
@@ -622,7 +668,7 @@
       // throttles or fully stops in hidden/occluded tabs — the timer backstop
       // keeps presentation and backlog control running there. Whichever fires
       // first cancels the other.
-      if (!paceRaf) paceRaf = requestAnimationFrame(pacePumpRaf);
+      if (!paceRaf) paceRaf = requestFrame(pacePumpRaf);
       if (!paceTimer) {
         paceTimer = setTimeout(pacePumpTimer, Math.max(25, paceInterval * 1.5));
       }
@@ -640,7 +686,7 @@
     function pacePumpTimer() {
       paceTimer = null;
       if (paceRaf) {
-        cancelAnimationFrame(paceRaf);
+        cancelFrame(paceRaf);
         paceRaf = null;
       }
       pacePump(performance.now());
@@ -832,6 +878,14 @@
       scheduleDraw();
     }
 
+    function setViewportSize(width, height, dpr) {
+      viewportWidth = Math.max(1, Number(width) || 1);
+      viewportHeight = Math.max(1, Number(height) || 1);
+      pixelRatio = Math.max(0.1, Number(dpr) || 1);
+      computeFit();
+      scheduleDraw();
+    }
+
     function start() {
       updateNativeSize();
       computeFit();
@@ -852,11 +906,11 @@
         socket = null;
       }
       if (rafHandle) {
-        cancelAnimationFrame(rafHandle);
+        cancelFrame(rafHandle);
         rafHandle = null;
       }
       if (paceRaf) {
-        cancelAnimationFrame(paceRaf);
+        cancelFrame(paceRaf);
         paceRaf = null;
       }
       if (paceTimer) {
@@ -882,6 +936,7 @@
       clickMap,
       getTransform,
       setViewportFit,
+      setViewportSize,
       getPaceStats,
       stop
     };
