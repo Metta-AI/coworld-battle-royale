@@ -70,6 +70,7 @@ team score GREEN <n>/0
 team score RED <n>/0
 team score YELLOW <n>/0
 throw target
+trench <n>,<n> <n>,<n>
 walkability map
 weapon gun
 weapon spray

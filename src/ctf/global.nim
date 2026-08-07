@@ -603,6 +603,36 @@ const
   MapMarkerSpriteBase = 20000
   MapMarkerObjectBase = 20000
   MapMarkerZ = -32767
+  TrenchMarkerSpriteBase = 36000  ## one invisible 1x1 marker per trench, in
+                                  ## the free gap between the tracer-dot and
+                                  ## damage-pop sprite pools (own reserved
+                                  ## range rather than sharing the general
+                                  ## map-marker pool's `index` counter — see
+                                  ## the pool audit below).
+  TrenchMarkerObjectBase = 36000 ## Same value on the object side, in the
+                                  ## free gap between the tracer-dot and
+                                  ## damage-pop OBJECT pools; the two
+                                  ## namespaces are independent (see the pool
+                                  ## audits below) so sharing one base value
+                                  ## is convention only, mirroring
+                                  ## MapMarkerSpriteBase/-ObjectBase above.
+  TrenchMarkerPoolWidth = 256     ## ⚠️ NOT a proven ceiling: the mapPits
+                                  ## COUNT-mode override caps a match at 64
+                                  ## trenches, but DENSITY mode (mapPitDensity,
+                                  ## what an unadorned "gen" map path actually
+                                  ## uses — see arena.nim's pit-selection block)
+                                  ## has no such cap at all; candidate count
+                                  ## scales with map size/columns. An empirical
+                                  ## sweep of 3000 generated-map seeds found 549
+                                  ## (18%) over 64 and a max of 144 — so 64 was
+                                  ## WRONG (2026-08-07: crashed the server on
+                                  ## ~1 in 5 generated maps). 256 is a wide
+                                  ## empirical margin over that observed max,
+                                  ## not a derived bound — addMapMarkers below
+                                  ## still clamps defensively rather than
+                                  ## asserting, so a future map that exceeds
+                                  ## even this loses trench MARKERS past the
+                                  ## pool, never crashes the server.
   ProtocolTextSpriteBase = 9000
   ProtocolTextObjectBase = 9000
   ProtocolTextZ = 30010
@@ -678,6 +708,7 @@ const
     ("shield carry markers", ShieldCarryObjectBase, MaxPlayers),
     ("shield bubbles", ShieldBubbleObjectBase, MaxPlayers),
     ("map markers", MapMarkerObjectBase, 1000),
+    ("trench markers", TrenchMarkerObjectBase, TrenchMarkerPoolWidth),
     ("fog runs", FogObjectBase, FogMaxRuns),
     ("tracer dots", TracerDotObjectBase, TracerMaxDots),
     ("damage pops", DamagePopObjectBase, DamagePopMaxCount),
@@ -785,6 +816,7 @@ const
     ("splatters", SplatterSpriteBase, 64),
     ("hit splats", HitSpriteBase, 64),
     ("map markers", MapMarkerSpriteBase, 1000),
+    ("trench markers", TrenchMarkerSpriteBase, TrenchMarkerPoolWidth),
     ("fog runs", FogRunSpriteBase, 1000),
     ("shout bubbles", ShoutSpriteBase, ShoutMaxCount),
     ("damage pops", DamagePopSpriteBase,
@@ -3200,6 +3232,36 @@ proc addMapMarker(
   )
   packet.addBoardObject(objectId, x, y, MapMarkerZ, MapLayerId, spriteId)
 
+proc trenchMarkerSpriteId(index: int): int =
+  ## Returns the stable sprite id for one trench marker.
+  TrenchMarkerSpriteBase + index
+
+proc trenchMarkerObjectId(index: int): int =
+  ## Returns the stable object id for one trench marker.
+  TrenchMarkerObjectBase + index
+
+proc addTrenchMarker(
+  packet: var seq[uint8],
+  spriteDefs: var seq[SpriteDefinition],
+  index, x, y: int,
+  label: string
+) {.measure.} =
+  ## Adds one invisible labeled trench-bbox marker object to the map layer,
+  ## from the reserved TrenchMarkerObjectBase/-SpriteBase range (its own pool,
+  ## not the shared map-marker `index` counter — see the pool audits above).
+  let
+    spriteId = trenchMarkerSpriteId(index)
+    objectId = trenchMarkerObjectId(index)
+  packet.addBoardSpriteChanged(
+    spriteDefs,
+    spriteId,
+    1,
+    1,
+    newRgbaPixels(1, 1),
+    label
+  )
+  packet.addBoardObject(objectId, x, y, MapMarkerZ, MapLayerId, spriteId)
+
 proc endzoneShapeToken(gameMap: CtfMap, zone: CaptureZone): string =
   ## Maps one team's capture zone onto the closed shape vocabulary of the
   ## endzone marker (see LabelEndzoneShapes). The zone's own refinement flags
@@ -3306,6 +3368,27 @@ proc addMapMarkers(
       )
     )
     inc index
+  ## One stated bounding-box marker per trench (see LabelPrefixTrench):
+  ## empty on the hand-authored default arena and on every 4-team map
+  ## (trenches are a 2-team generated-map feature — arena.nim never fills
+  ## `trenches` on symRot90/symQuadMirror symmetry), so this loop runs zero
+  ## times there and emits nothing. Own reserved id range
+  ## (TrenchMarkerObjectBase/-SpriteBase), not the shared marker `index`.
+  ## Clamped defensively at TrenchMarkerPoolWidth rather than asserted: a
+  ## map whose DENSITY-mode roll (unbounded, unlike the mapPits COUNT-mode
+  ## cap of 64 — see TrenchMarkerPoolWidth's doc) exceeds the pool loses
+  ## markers for the overflow trenches, never crashes the server. A short
+  ## marker set is still strictly additive over today's zero.
+  let markedTrenches = min(sim.gameMap.trenches.len, TrenchMarkerPoolWidth)
+  for i in 0 ..< markedTrenches:
+    let box = shapeAsRect(sim.gameMap.trenches[i])
+    packet.addTrenchMarker(
+      spriteDefs,
+      i,
+      box.x,
+      box.y,
+      labelTrench(box.x, box.y, box.x + box.w - 1, box.y + box.h - 1)
+    )
 
 proc buildFogRunSprite(widthCells: int): seq[uint8] {.measure.} =
   ## Builds one translucent dark fog run sprite covering `widthCells`
