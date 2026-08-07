@@ -31,6 +31,7 @@ fog
 game teams <n> map <n>x<n>
 grenade
 grenade air
+grenade barrage depth <n> rate <n> start <n>
 grenade carried
 grenade sound
 handicap <color> <n> hp <n> lives <n> spd <n> miss <n>
@@ -49,8 +50,6 @@ muzzle bloom stage <n>
 name p<n>
 name p<n> flag <n>
 own aim <n>
-paint flood
-paint flood depth <n> rate <n> start <n>
 paint stain <color> variant <n>
 player <color>
 player <color> <side>

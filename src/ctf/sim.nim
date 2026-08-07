@@ -221,8 +221,8 @@ proc startGame*(sim: var SimServer) =
   sim.phase = Playing
   sim.gameStartTick = sim.tickCount
   sim.timeLimitReached = false
-  sim.overtimeTicks = 0
-  sim.paintFloodStartTick = -1
+  sim.barrageStartTick = -1
+  sim.barrageAccum = 0
   sim.isDraw = false
   sim.lastLobbyPlayersLogged = -1
   sim.lastLobbyNeededLogged = -1
@@ -538,39 +538,46 @@ proc gameTicksElapsed*(sim: SimServer): int =
   max(0, sim.tickCount - sim.gameStartTick)
 
 proc effectiveMaxTicks*(sim: SimServer): int =
-  ## Returns the game's tick limit including banked action-floor overtime
-  ## (0 stays "no limit").
-  if sim.config.maxTicks <= 0:
-    return 0
-  sim.config.maxTicks + sim.overtimeTicks
+  ## Returns the game's scheduled tick limit (0 = no limit). GV41 removed
+  ## the action-floor overtime, so this is exactly config.maxTicks; kept as
+  ## a proc because the broadcast chrome reads the schedule through it.
+  max(0, sim.config.maxTicks)
 
-proc floorGameClock(sim: var SimServer) =
-  ## Guarantees at least ActionClockFloorTicks of clock remain. Kills and
-  ## heart steals call this so a timed game never ends mid-action; the
-  ## extension banks into overtimeTicks (per-game, part of gameHash).
-  if sim.config.maxTicks <= 0 or sim.phase != Playing:
-    return
-  let remaining = sim.effectiveMaxTicks() - sim.gameTicksElapsed()
-  if remaining < ActionClockFloorTicks:
-    sim.overtimeTicks += ActionClockFloorTicks - remaining
-
-proc paintFloodMaxDepth*(): int =
-  ## The edge depth at which the four flood bands cover the whole board:
+proc barrageFullDepth*(): int =
+  ## The edge depth at which the four target bands cover the whole board:
   ## past half the shorter axis the two bands on that axis meet.
   min(MapWidth, MapHeight) div 2 + 1
 
-proc paintFloodDepth*(sim: SimServer): int =
-  ## Returns how far the paint flood has advanced inward from every map
-  ## edge, in px; 0 while the flood is off or not yet latched. Pure integer
-  ## math off deterministic state (latch tick + tick count), so native,
-  ## wasm, and replays all agree.
-  if sim.paintFloodStartTick < 0 or sim.config.paintFloodPxPerSec <= 0:
+proc barrageProgressPermille*(sim: SimServer): int =
+  ## Returns how far the barrage has escalated, 0..1000: 0 at the latch,
+  ## 1000 once a full pre-latch window (barrageStartSec) has elapsed — i.e.
+  ## exactly when the nominal clock would have run out, the whole board is
+  ## under maximum bombardment. Pure integer math off deterministic state
+  ## (latch tick + tick count), so native, wasm, and replays all agree.
+  if sim.barrageStartTick < 0 or sim.config.barrageMaxPerSec <= 0:
     return 0
-  let ticksIn = sim.tickCount - sim.paintFloodStartTick
-  min(
-    ticksIn * sim.config.paintFloodPxPerSec div TargetFps,
-    paintFloodMaxDepth()
-  )
+  let rampTicks = max(1, sim.config.barrageStartSec * TargetFps)
+  min(1000, (sim.tickCount - sim.barrageStartTick) * 1000 div rampTicks)
+
+proc barrageDepth*(sim: SimServer): int =
+  ## Returns how deep inside every map edge the barrage currently targets,
+  ## in px; 0 while the barrage is off or not yet latched. Starts at
+  ## BarrageEdgeBandPx and deepens linearly to full board coverage.
+  if sim.barrageStartTick < 0:
+    return 0
+  let progress = sim.barrageProgressPermille()
+  BarrageEdgeBandPx +
+    (barrageFullDepth() - BarrageEdgeBandPx) * progress div 1000
+
+proc barrageRatePermille*(sim: SimServer): int =
+  ## Returns the current launch rate in permille grenades/second: the
+  ## configured start rate at the latch, ramping linearly to the max rate as
+  ## the escalation completes.
+  if sim.barrageStartTick < 0:
+    return 0
+  sim.config.barrageStartPerSec * 1000 +
+    (sim.config.barrageMaxPerSec - sim.config.barrageStartPerSec) *
+      sim.barrageProgressPermille()
 
 proc killPlayer*(
   sim: var SimServer,
@@ -601,8 +608,6 @@ proc killPlayer*(
         playerColorText(sim.players[targetIndex].color) &
           " killed by " & sim.playerText(killerIndex)
       )
-  # A kill is action: keep at least ActionClockFloorTicks on the clock.
-  sim.floorGameClock()
   # A dying trigger pull never releases, and a carried grenade is lost.
   sim.players[targetIndex].fireWindup = 0
   sim.players[targetIndex].windupBrads = -1
@@ -1362,7 +1367,15 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
     legacyThrowerIndex = sim.legacyGrenadeThrowerIndex(grenade)
     throwerSlot = sim.grenadeThrowerSlot(grenade)
     throwerIndex = sim.playerIndexForSlot(throwerSlot)
-    throwerColor = teamColor(sim.teamForSlot(throwerSlot))
+    # An environment shell (grenade barrage, throwerSlot -1) has no owning
+    # team: its splat cycles the ACTIVE team colors by launch tick, staying
+    # inside the same team-keyed blast sprite pool a player lob uses.
+    # (teamForSlot(-1) would index Team(-1) — never call it for a shell.)
+    throwerColor =
+      if throwerSlot < 0:
+        teamColor(Team(grenade.launchTick mod sim.gameMap.teamCount()))
+      else:
+        teamColor(sim.teamForSlot(throwerSlot))
     landingTrench = trenchIndexAt(grenade.tx, grenade.ty)
   sim.recentBlasts.add BlastFx(
     x: grenade.tx, y: grenade.ty, tick: sim.tickCount, color: throwerColor,
@@ -1452,7 +1465,12 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       amount: dmg, color: sim.players[i].color
     )
     if sim.players[i].hp <= 0:
-      sim.killPlayer(i, throwerIndex, throwerSlot)
+      # An environment shell logs its own death line instead of the combat
+      # "killed by" attribution (there is nobody to credit).
+      sim.killPlayer(
+        i, throwerIndex, throwerSlot,
+        cause = (if throwerSlot < 0: "shelled by the grenade barrage" else: "")
+      )
       if throwerSlot >= 0 and throwerSlot != sim.eventSlot(i):
         if grenade.throwerAccount >= 0 and
             grenade.throwerAccount < sim.rewardAccounts.len:
@@ -1732,8 +1750,6 @@ proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
     if distSq(px, py, sim.flags[flagTeam].x, sim.flags[flagTeam].y) <= rangeSq:
       sim.flags[flagTeam].carrier = playerIndex
       sim.players[playerIndex].carryingFlag = true
-      # A steal is action: keep at least ActionClockFloorTicks on the clock.
-      sim.floorGameClock()
       sim.emitEvent(
         FlagSteal, source = playerIndex,
         x = float(sim.flags[flagTeam].x), y = float(sim.flags[flagTeam].y)
@@ -2212,7 +2228,13 @@ proc finishGame*(sim: var SimServer, winner: Team, isDraw = false, timeLimitReac
       sim.rewardAccounts[i].reward += lossReward
 
 proc maxTicksReached(sim: SimServer): bool =
-  sim.config.maxTicks > 0 and sim.phase == Playing and
+  ## Whether the scheduled draw ceiling ends the game this tick. A game
+  ## with the grenade barrage configured has NO draw ceiling: past the
+  ## deadline the clock reads 0:00 and the full-intensity bombardment
+  ## grinds on until at most one team stands (GV41) — a draw then needs
+  ## the last players of two teams to die on the same tick.
+  sim.config.barrageMaxPerSec <= 0 and
+    sim.config.maxTicks > 0 and sim.phase == Playing and
     sim.gameTicksElapsed() >= sim.effectiveMaxTicks()
 
 proc teamLivesRemaining*(sim: SimServer, team: Team): int =
@@ -2308,38 +2330,85 @@ proc eliminateTeam(sim: var SimServer, team: Team, killerIndex: int) =
     if sim.players[i].alive:
       sim.killPlayer(i, killerIndex, elimination = true)
 
-proc updatePaintFlood*(sim: var SimServer) =
-  ## One tick of the paint-flood endgame: latch the flood when the game
-  ## clock drops to paintFloodStartSec remaining, then drown every live cog
-  ## whose solid body the advancing band touches. Runs before the win check
-  ## so flood deaths feed the same tick's wipe resolution. Kills go through
-  ## killPlayer, so each one also banks action-floor overtime — the clock
-  ## stretches, but the latched flood never retreats, so the sweep always
-  ## finishes and a timed game ends on a wipe instead of a timeout draw.
-  if sim.config.paintFloodPxPerSec <= 0 or sim.config.maxTicks <= 0:
+proc launchBarrageShell(sim: var SimServer) =
+  ## Launches one environment grenade: the landing point is drawn from the
+  ## deterministic sim RNG inside the current target band (within
+  ## barrageDepth of some map edge), and the shell arcs in from the nearest
+  ## point of that edge with the same fixed fuse a player lob has. Thrower
+  ## -1 marks it environmental: no kill credit, no rewards, no multi-kills.
+  let
+    depth = max(1, sim.barrageDepth())
+    side = sim.rng.rand(3)
+    inset = sim.rng.rand(depth - 1)
+  var tx, ty, sx, sy: int
+  case side
+  of 0:                                  # north edge, raining downward.
+    tx = sim.rng.rand(MapWidth - 1)
+    ty = inset
+    sx = tx
+    sy = 0
+  of 1:                                  # south edge.
+    tx = sim.rng.rand(MapWidth - 1)
+    ty = MapHeight - 1 - inset
+    sx = tx
+    sy = MapHeight - 1
+  of 2:                                  # west edge.
+    ty = sim.rng.rand(MapHeight - 1)
+    tx = inset
+    sx = 0
+    sy = ty
+  else:                                  # east edge.
+    ty = sim.rng.rand(MapHeight - 1)
+    tx = MapWidth - 1 - inset
+    sx = MapWidth - 1
+    sy = ty
+  tx = clamp(tx, ArenaBorder + 2, MapWidth - ArenaBorder - 2)
+  ty = clamp(ty, ArenaBorder + 2, MapHeight - ArenaBorder - 2)
+  sim.airborneGrenades.add AirborneGrenade(
+    sx: sx,
+    sy: sy,
+    tx: tx,
+    ty: ty,
+    launchTick: sim.tickCount,
+    flightTicks: max(1, GrenadeFlightMultiple * sim.config.fireWindupTicks),
+    thrower: -1,
+    throwerSlot: -1,
+    throwerAccount: -1
+  )
+
+proc updateBarrage*(sim: var SimServer) =
+  ## One tick of the grenade-barrage endgame: latch when the game clock
+  ## drops to barrageStartSec remaining, then rain environment grenades —
+  ## barrageStartPerSec along the map edges at first, ramping linearly to
+  ## barrageMaxPerSec across the whole board as the escalation completes
+  ## (barrageProgressPermille). The shells land through the ordinary
+  ## grenade pipeline, so blast kills bank action-floor overtime; the
+  ## latched barrage only ever escalates through the extension, so a timed
+  ## game ends on a wipe or capture instead of a timeout draw.
+  if sim.config.barrageMaxPerSec <= 0 or sim.config.maxTicks <= 0:
     return
   if sim.phase != Playing:
     return
-  if sim.paintFloodStartTick < 0:
+  if sim.barrageStartTick < 0:
     let remaining = sim.effectiveMaxTicks() - sim.gameTicksElapsed()
-    if remaining <= sim.config.paintFloodStartSec * TargetFps:
-      sim.paintFloodStartTick = sim.tickCount
-      sim.logGameEvent("paint flood rising")
+    if remaining <= sim.config.barrageStartSec * TargetFps:
+      sim.barrageStartTick = sim.tickCount
+      sim.barrageAccum = 0
+      sim.logGameEvent("grenade barrage incoming")
     return
-  let depth = sim.paintFloodDepth()
-  if depth <= 0:
-    return
-  for i in 0 ..< sim.players.len:
-    if not sim.players[i].alive:
-      continue
-    let
-      x = sim.players[i].x
-      y = sim.players[i].y
-    # The same solid footprint the movement code collides: a box of
-    # half-extent PlayerHalf centered on (x, y). Touching the band kills.
-    if x - PlayerHalf < depth or x + PlayerHalf >= MapWidth - depth or
-        y - PlayerHalf < depth or y + PlayerHalf >= MapHeight - depth:
-      sim.killPlayer(i, -1, cause = "swallowed by the paint flood")
+  # Fractional launch pacing: the rate is permille grenades/second, one
+  # grenade costs TargetFps*1000 accumulator units, so any integer rate
+  # spreads its launches evenly with zero drift.
+  const UnitsPerGrenade = TargetFps * 1000
+  sim.barrageAccum += sim.barrageRatePermille()
+  while sim.barrageAccum >= UnitsPerGrenade:
+    sim.barrageAccum -= UnitsPerGrenade
+    # The drawn-orb pool holds MaxPlayers in-flight grenades; at the config
+    # ceiling (BarrageAbsMaxPerSec x the ~10-tick fuse) the barrage stays
+    # well inside it, so this cap is a belt-and-suspenders skip, and the
+    # accumulator still drains so a capped stretch never banks a burst.
+    if sim.airborneGrenades.len < MaxPlayers:
+      sim.launchBarrageShell()
 
 proc checkWinCondition*(sim: var SimServer) {.measure.} =
   ## Resolves capture and wipe win conditions.
@@ -2782,7 +2851,8 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.gameStartTick = -1
   result.startWaitTimer = 0
   result.lobbyWaitTimer = 0
-  result.paintFloodStartTick = -1
+  result.barrageStartTick = -1
+  result.barrageAccum = 0
   result.gameEventLoggingEnabled = true
   result.resetFlags()
   result.resetGrenades()
@@ -2827,8 +2897,8 @@ proc resetToLobby*(sim: var SimServer) =
   sim.startWaitTimer = 0
   sim.lobbyWaitTimer = 0
   sim.timeLimitReached = false
-  sim.overtimeTicks = 0
-  sim.paintFloodStartTick = -1
+  sim.barrageStartTick = -1
+  sim.barrageAccum = 0
   sim.isDraw = false
   sim.needsReregister = true
   sim.resetFlags()
@@ -2978,7 +3048,7 @@ proc step*(
     sim.tryPickupPlasmaArcs(playerIndex)
   sim.updateFlags()
   sim.respawnPlayers()
-  sim.updatePaintFlood()
+  sim.updateBarrage()
 
   sim.checkWinCondition()
   sim.checkMaxTicks()

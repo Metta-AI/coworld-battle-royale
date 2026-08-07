@@ -157,23 +157,18 @@ const
     ## the interpolation formula. One marker per team in the game, emitted
     ## even at permille 0 — absence means an old engine, not "no handicap".
     ## See `labelHandicap` for the exact tail arity.
-  LabelPaintFlood* = "paint flood"
-    ## The visible flood-band strips of the paint-flood endgame: solid paint
-    ## advancing inward from every map edge that kills any cog it touches.
-    ## Drawn on BOTH the board and the PLAYER stream (deadly terrain, not
-    ## floor art). Positional strip objects only — a policy reads the exact
-    ## front from the stated depth marker below, not from strip geometry.
-  LabelPrefixPaintFlood* = "paint flood depth "
-    ## The stated flood marker,
-    ## `paint flood depth <n> rate <n> start <n>`: an invisible 1x1 marker on
-    ## both streams, present whenever the paint-flood endgame is configured
-    ## (paintFloodPxPerSec > 0), stating how many map pixels of every edge
-    ## are already deadly (`depth`, 0 until the flood latches), the advance
-    ## rate in px/second (`rate`), and the clock threshold in seconds that
-    ## latches it (`start`). Absence means the mode is off (or an old
-    ## engine). NOT prefixed by the strip label above alone: strips are
-    ## exactly `paint flood`, the marker adds ` depth ...`, so a consumer
-    ## matching this prefix never false-positives on a strip.
+  LabelPrefixBarrage* = "grenade barrage depth "
+    ## The stated grenade-barrage marker,
+    ## `grenade barrage depth <n> rate <n> start <n>`: an invisible 1x1
+    ## marker on both streams, present whenever the barrage endgame is
+    ## configured (barrageMaxPerSec > 0), stating how deep inside every map
+    ## edge the shells currently land (`depth` map px, 0 until the barrage
+    ## latches; full board once the escalation completes), the CURRENT
+    ## launch rate in grenades/second (`rate`), and the clock threshold in
+    ## seconds that latches it (`start`). Absence means the mode is off (or
+    ## an old engine). The shells themselves carry the ordinary grenade
+    ## labels (`grenade air`, `blast stage <n>`), so an incoming barrage
+    ## reads like any other lob — this marker is the escalation schedule.
   LabelPrefixTrench* = "trench "
     ## One trench's bounding-box marker, `trench <x0>,<y0> <x1>,<y1>`: an
     ## invisible 1x1 object in the init snapshot stating one dug pit's
@@ -339,14 +334,15 @@ proc labelTrench*(x0, y0, x1, y1: int): string =
   ## pixels.
   LabelPrefixTrench & $x0 & "," & $y0 & " " & $x1 & "," & $y1
 
-proc labelPaintFlood*(depth, pxPerSec, startSec: int): string =
-  ## The paint-flood marker label, `paint flood depth <n> rate <n> start <n>`.
-  ## A consumer matches LabelPrefixPaintFlood and splits the tail on spaces
-  ## into exactly `["<depth>", "rate", "<n>", "start", "<n>"]` — the `rate`
-  ## and `start` tokens are fixed. Every map pixel within `depth` of any map
-  ## edge is deadly on the rendered tick.
-  LabelPrefixPaintFlood & $depth &
-    " rate " & $pxPerSec & " start " & $startSec
+proc labelBarrage*(depth, perSec, startSec: int): string =
+  ## The grenade-barrage marker label,
+  ## `grenade barrage depth <n> rate <n> start <n>`. A consumer matches
+  ## LabelPrefixBarrage and splits the tail on spaces into exactly
+  ## `["<depth>", "rate", "<n>", "start", "<n>"]` — the `rate` and `start`
+  ## tokens are fixed. Shells land only within `depth` map px of some map
+  ## edge on the rendered tick, at `rate` grenades/second.
+  LabelPrefixBarrage & $depth &
+    " rate " & $perSec & " start " & $startSec
 
 proc labelOwnAim*(brads: int): string =
   ## The own-aim marker label, `own aim <brads>`. A consumer matches
