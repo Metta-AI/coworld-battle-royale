@@ -567,7 +567,9 @@ const
                               ## on down the ray. Shots fired from inside the
                               ## same trench never miss this way.
 
-  PuddleSize* = 64            ## side length of a paint-puddle hazard square.
+  PuddleSize* = 64            ## nominal diameter of a paint-puddle splat
+                              ## (the core disc; lobes reach a little
+                              ## further — see arena.nim's PuddleMaxRadiusPx).
                               ## Like obstacles and trenches, puddles never
                               ## scale with the map's size class.
   PuddleRollTicks* = TargetFps  ## one damage roll per full SECOND of
@@ -724,6 +726,21 @@ type
   MapRect* = object
     x*, y*, w*, h*: int
 
+  PuddleSpot* = object
+    ## One disc of a paint puddle's splat cluster.
+    cx*, cy*, r*: int
+
+  Puddle* = object
+    ## A paint puddle: the UNION of a handful of overlapping paint discs —
+    ## the classic splat silhouette. Discs (not polygons) because disc
+    ## membership is pure integer math that transforms BIT-EXACTLY under the
+    ## map symmetries (mirror/rot180 move a center, never change a
+    ## distance), so a puddle pair — and the stitched center puddle — is
+    ## exactly team-fair; the polygon scanline rule would drop whole pixel
+    ## rows at pass-through vertices (see pointInPolygon's strict-straddle
+    ## doc).
+    spots*: seq[PuddleSpot]
+
   ArenaShapeKind* = enum
     shapeRect
     shapeDisc
@@ -841,8 +858,8 @@ type
                                ## pits). Membership is `inShape`, so the mechanic
                                ## is shape-agnostic; only the organic-edge ART is
                                ## rect-specific (other kinds fill flat for now).
-    puddles*: seq[ArenaShape]  ## paint-puddle hazard squares (config-gated):
-                               ## every full second a cog's center spends
+    puddles*: seq[Puddle]      ## paint-puddle hazards (config-gated): every
+                               ## full second a cog's center spends
                                ## continuously inside one rolls a
                                ## puddleDamagePct chance of 1 damage. Pure
                                ## floor hazard — no movement, fire, or vision

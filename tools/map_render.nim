@@ -275,34 +275,32 @@ proc renderMap*(
           if edge < 3: TrenchRimColor else: TrenchColor
 
   for puddle in gameMap.puddles:
-    ## Paint puddles reuse the trench rough-edge machinery on their own
-    ## rects, in the hazard's violet so previews tell the two apart.
+    ## Paint puddles are organic disc-union splats: the gameplay outline is
+    ## the spill itself, drawn in the hazard's violet (rim by union depth)
+    ## so previews tell them apart from the brown trenches.
     let
-      pr = shapeAsRect(puddle)
-      x0 = max(0, outputCoordinate(pr.x - TrenchArtPadPx, scale))
-      y0 = max(0, outputCoordinate(pr.y - TrenchArtPadPx, scale))
-      x1 = min(
-        outputWidth,
-        outputCoordinate(pr.x + pr.w + TrenchArtPadPx, scale),
-      )
-      y1 = min(
-        outputHeight,
-        outputCoordinate(pr.y + pr.h + TrenchArtPadPx, scale),
-      )
+      pr = puddleBounds(puddle)
+      x0 = max(0, outputCoordinate(pr.x - 1, scale))
+      y0 = max(0, outputCoordinate(pr.y - 1, scale))
+      x1 = min(outputWidth, outputCoordinate(pr.x + pr.w + 1, scale))
+      y1 = min(outputHeight, outputCoordinate(pr.y + pr.h + 1, scale))
     for y in y0 ..< y1:
       let mapY = logicalPixel(y, gameMap.height, scale)
       for x in x0 ..< x1:
-        let
-          mapX = logicalPixel(x, gameMap.width, scale)
-          edge =
-            if puddle.kind == shapeRect: trenchRoughEdge(pr, mapX, mapY)
-            elif inShape(mapX, mapY, puddle): 5.0
-            else: -1.0
-          existing = result.image.unsafe[x, y].rgba
-        if edge < 0 or existing == StoneColor or existing == GlassColor:
+        let mapX = logicalPixel(x, gameMap.width, scale)
+        var depth = -1.0
+        for s in puddle.spots:
+          let
+            dx = float(mapX - s.cx)
+            dy = float(mapY - s.cy)
+          depth = max(depth, float(s.r) - sqrt(dx * dx + dy * dy))
+        if depth < 0.0:
+          continue
+        let existing = result.image.unsafe[x, y].rgba
+        if existing == StoneColor or existing == GlassColor:
           continue
         result.image.unsafe[x, y] =
-          if edge < 3: PuddleRimColor else: PuddleColor
+          if depth < 3.0: PuddleRimColor else: PuddleColor
 
   if overlayReachability in options.overlays:
     var unreachableOpen = newSeq[bool](gameMap.width * gameMap.height)

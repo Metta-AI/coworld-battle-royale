@@ -189,6 +189,9 @@ const
     ## an invisible 1x1 object in the init snapshot stating one hazard blob's
     ## bounding box outright, in inclusive map-pixel corners — one marker per
     ## entry in `gameMap.puddles`, same contract as the trench marker above.
+    ## Puddles are ORGANIC disc-union splats (see puddleSplatAt), so the box
+    ## is slightly loose (conservative) geometry, exactly like a non-rect
+    ## trench's marker.
     ## Standing inside rolls a puddleDamagePct (default 10%) chance of 1
     ## damage per full second of continuous occupancy; the puddle never slows
     ## movement or fire and never blocks shots or vision. Absent entirely on

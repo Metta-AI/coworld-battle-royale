@@ -3454,7 +3454,7 @@ proc addMapMarkers(
   ## generated maps at the pool width, but an authored spec can pin more.
   let markedPuddles = min(sim.gameMap.puddles.len, PuddleMarkerPoolWidth)
   for i in 0 ..< markedPuddles:
-    let box = shapeAsRect(sim.gameMap.puddles[i])
+    let box = puddleBounds(sim.gameMap.puddles[i])
     packet.addPuddleMarker(
       spriteDefs,
       i,

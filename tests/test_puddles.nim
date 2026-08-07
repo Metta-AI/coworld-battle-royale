@@ -1,5 +1,5 @@
 import
-  std/[json, strutils, unittest],
+  std/[algorithm, json, strutils, unittest],
   ctf/sim
 import helpers except twoTeamGame
 
@@ -43,17 +43,40 @@ suite "paint puddles":
     check not echoed.hasKey("mapPuddles")
     check not echoed.hasKey("puddleDamagePct")
 
-  test "mapPuddles:1 anchors one puddle at the generated map's center":
+  test "mapPuddles:1 anchors one organic splat at the generated map's center":
     let game = puddleGame()
     check ArenaPuddles.len == 1
     let
       cx = game.gameMap.center.x
       cy = game.gameMap.center.y
-      blob = shapeAsRect(ArenaPuddles[0])
-    check blob.w == PuddleSize
-    check blob.h == PuddleSize
+      splat = ArenaPuddles[0]
+      box = puddleBounds(splat)
+    # An organic union of overlapping paint discs, not a square: several
+    # spots, bbox inside the radius envelope, and the map center submerged.
+    check splat.spots.len >= 4
+    check box.w >= PuddleSize div 2
+    check box.h >= PuddleSize div 2
+    check box.w <= 2 * PuddleMaxRadiusPx + 2
+    check box.h <= 2 * PuddleMaxRadiusPx + 2
     check puddleIndexAt(cx, cy) == 0
-    check puddleIndexAt(cx - PuddleSize, cy) == -1
+    check puddleIndexAt(cx - 2 * PuddleSize, cy) == -1
+
+  test "the center splat is exactly its own symmetry image":
+    let game = puddleGame()
+    let splat = ArenaPuddles[0]
+    let image =
+      case game.gameMap.symmetry
+      of symMirror: splat.mirrorX(game.gameMap.width)
+      of symRot180: splat.rot180(game.gameMap.width, game.gameMap.height)
+      else: splat
+    # The stitched cluster is self-symmetric as a DISC SET (the transform
+    # reorders the discs, never moves one off the set) — the exact
+    # team-fairness invariant the rect center pit had.
+    proc sortedSpots(puddle: Puddle): seq[(int, int, int)] =
+      for s in puddle.spots:
+        result.add (s.cx, s.cy, s.r)
+      result.sort()
+    check sortedSpots(image) == sortedSpots(splat)
 
   test "an even request places mirror-symmetric pairs on open floor":
     let game = puddleGame(puddles = 6)
@@ -61,16 +84,20 @@ suite "paint puddles":
     check blobs.len > 0
     check blobs.len mod 2 == 0
     check blobs.len <= 6
-    # Every blob's mirror image is in the set (the fixture map's symmetry
-    # is the classic x-reflection), and every blob sits on open floor clear
-    # of both base pockets.
+    # Every splat's symmetry image is in the set — as an exact DISC set,
+    # not just a matching box — and every splat sits clear of both base
+    # pockets.
     for blob in blobs:
       let
-        rect = shapeAsRect(blob)
-        image = rect.mirrorX(game.gameMap.width)
+        rect = puddleBounds(blob)
+        image =
+          case game.gameMap.symmetry
+          of symMirror: blob.mirrorX(game.gameMap.width)
+          of symRot180: blob.rot180(game.gameMap.width, game.gameMap.height)
+          else: blob
       var found = false
       for other in blobs:
-        if shapeAsRect(other) == image:
+        if other.spots == image.spots:
           found = true
           break
       check found
@@ -88,7 +115,7 @@ suite "paint puddles":
     let rebuilt = mapFromSpecJson(spec)
     check rebuilt.puddles.len == game.gameMap.puddles.len
     for i in 0 ..< rebuilt.puddles.len:
-      check shapeAsRect(rebuilt.puddles[i]) == shapeAsRect(game.gameMap.puddles[i])
+      check rebuilt.puddles[i].spots == game.gameMap.puddles[i].spots
     # A puddle-free map pins NO key (pre-puddle specs must stay byte-stable),
     # and a spec without the key loads as puddle-free.
     let plain = initCtfForTest(defaultGameConfig())

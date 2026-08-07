@@ -548,9 +548,13 @@ What that means in practice:
 
 ## Paint puddles
 
-- A **paint puddle is a 64×64 px floor hazard** that draws as a violet
-  paint spill on the ground. It never blocks movement, bullets, or vision,
-  and never slows anything — its only rule is damage over time.
+- A **paint puddle is an organic splat-shaped floor hazard, nominally ~64 px
+  across** — a union of overlapping paint discs (one core plus a few flung
+  lobes, reaching at most 45 px from the anchor) drawn as a violet spill on
+  the ground. The painted spill IS the gameplay footprint — you take the
+  damage roll exactly where you see paint. It never blocks movement,
+  bullets, or vision, and never slows anything — its only rule is damage
+  over time.
 - **Every full second (24 ticks) your body center spends CONTINUOUSLY
   inside a puddle rolls a `puddleDamagePct` (default 10%) chance of 1
   damage.** The roll's damage goes through the shield layer first, like
@@ -562,11 +566,14 @@ What that means in practice:
 - **Puddles are config-gated and ship in NO map by default.** `mapPuddles`
   (0..64, COUNT mode only — there is no density mode) places that many on a
   2-team generated map: even counts place mirror-symmetric pairs, an odd
-  count anchors its extra puddle dead center. Spots are drawn from the map
-  seed on open floor clear of walls, trenches, other puddles, and both
-  teams' base pockets; the exact set is pinned in the replay's `mapSpec`, so
-  playback never re-rolls it. 4-team maps do not support puddles yet (an
-  explicit request errors).
+  count anchors its extra puddle dead center. Each blob's shape is drawn
+  from the map seed; a placed pair is the blob plus its exact symmetry image
+  (bit-exact integer transforms), and the center blob's ring is stitched
+  self-symmetric, so the hazard is always team-fair. Spots land on open
+  floor clear of walls, trenches, other puddles, and both teams' base
+  pockets; the exact set is pinned in the replay's `mapSpec`, so playback
+  never re-rolls it. 4-team maps do not support puddles yet (an explicit
+  request errors).
 - Each puddle is stated to policies as an init-snapshot marker,
   `puddle <x0>,<y0> <x1>,<y1>` — see the stated-marker section below.
 
@@ -759,7 +766,7 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Trench miss chance (`TrenchMissPct`) | 70% | Incoming gun shots that fly over an occupant and carry on (same-trench shots exempt) |
 | Pit count (`mapPits`) | -1 (unset) | Generated maps: exact total pits (0..64); odd counts anchor one at map center |
 | Pit density (`mapPitDensity`) | 100 | Generated maps: percent multiplier on per-class dig chances; used when `mapPits` is unset |
-| Puddle size (`PuddleSize`) | 64px | Side of a paint-puddle hazard square |
+| Puddle size (`PuddleSize`) | 64px | Nominal diameter of a paint-puddle splat (disc union; spill reaches at most 45px from its anchor) |
 | Puddle count (`mapPuddles`) | 0 (none) | Generated maps: exact total puddles (0..64); odd counts anchor one at map center |
 | Puddle damage chance (`puddleDamagePct`) | 10% | Chance of 1 damage per full second of continuous puddle occupancy (rolled at each completed second; shield soaks first) |
 | Endzone shape (`mapEndzone`) | "" (drawn) | Generated 2-team maps: `column` (classic home strip), `disc` or `square` (compact zone around a base set back from the edge) |
@@ -858,7 +865,9 @@ than dropping the whole snapshot.
 1x1 marker per puddle labeled `puddle <x0>,<y0> <x1>,<y1>`: the blob's
 INCLUSIVE bounding-box corners in map pixels, one marker per entry in the
 map's puddle list, with exactly the trench marker's tail contract (split the
-tail on spaces, each corner on the comma). A puddle is a pure floor hazard:
+tail on spaces, each corner on the comma). Puddles are organic disc-union
+splats, so the box is slightly LOOSE (conservative) geometry — treat the
+whole box as hazardous rather than trying to trace the spill's exact edge. A puddle is a pure floor hazard:
 standing inside rolls a `puddleDamagePct` (default 10%) chance of 1 damage
 per full second of continuous occupancy, and it never slows movement or
 fire, never blocks shots or vision. Like the trench floor, a puddle reads

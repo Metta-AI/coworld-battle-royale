@@ -30,9 +30,6 @@ const
                                              ## may reach; must stay >=
                                              ## WaveAmp + ChipAmp.
 
-  PuddleArtPadPx* = 5                        ## the puddle spill's wander
-                                             ## envelope; same rule as
-                                             ## TrenchArtPadPx.
   PuddleRimColor = rgba(88, 24, 108, 255)    ## dark violet edge line tracing
                                              ## the spill — deliberately NO
                                              ## team's paint color, so the
@@ -134,27 +131,29 @@ proc trenchArtColorAt(base: ColorRGBA, x, y: int): ColorRGBA =
   base
 
 proc puddleArtColorAt(base: ColorRGBA, x, y: int): ColorRGBA =
-  ## Returns the floor color with paint-puddle art applied at logical (x, y):
-  ## a rough spill edge (the trench wobble machinery, run on the puddle's
-  ## rect), a dark rim line, a near-opaque violet paint body, and an
-  ## off-center sheen so the surface reads wet. Cosmetic only — gameplay
-  ## (puddleIndexAt) keeps the exact square; the art wanders at most
-  ## PuddleArtPadPx around it.
+  ## Returns the floor color with paint-puddle art applied at logical (x, y).
+  ## A puddle is a UNION of overlapping paint discs (the splat silhouette),
+  ## and the spill outline IS the gameplay shape: pixels outside every disc
+  ## stay clean floor, the union boundary's inner 2px trace a dark rim, and
+  ## the body is near-opaque violet with an off-center sheen so the surface
+  ## reads wet. The painted area therefore matches the damage area exactly.
   for puddle in ArenaPuddles:
-    let pr = shapeAsRect(puddle)
-    if x < pr.x - PuddleArtPadPx or
-        x >= pr.x + pr.w + PuddleArtPadPx or
-        y < pr.y - PuddleArtPadPx or
-        y >= pr.y + pr.h + PuddleArtPadPx:
+    let pr = puddleBounds(puddle)
+    if x < pr.x - 1 or x >= pr.x + pr.w + 1 or
+        y < pr.y - 1 or y >= pr.y + pr.h + 1:
       continue
-    # Rect blobs get the rough spilled edge; other kinds fill flat.
-    let edge =
-      if puddle.kind == shapeRect: trenchRoughEdge(pr, x, y)
-      elif inShape(x, y, puddle): float(TrenchBevelPx) + 1.0
-      else: -1.0
-    if edge < 0:
-      continue                # clean floor inside the pad ring
-    if edge < 1.5:
+    ## Depth into the union: the deepest any single disc submerges the
+    ## pixel (its radius minus the distance to its center). Negative =
+    ## outside every disc; the union's boundary is depth 0.
+    var depth = -1.0
+    for s in puddle.spots:
+      let
+        dx = float(x - s.cx)
+        dy = float(y - s.cy)
+      depth = max(depth, float(s.r) - sqrt(dx * dx + dy * dy))
+    if depth < 0.0:
+      continue                # clean floor: the paint never leaves the splat
+    if depth < 2.0:
       return PuddleRimColor
     var color = overTint(base, PuddleFillTint)
     # The sheen: an off-center inner ellipse, brightest toward its middle.
@@ -850,11 +849,9 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
   ## Same fast-skip mask for the puddle spills.
   var puddleNear = newSeq[bool](w * h)
   for puddle in ArenaPuddles:
-    let pr = shapeAsRect(puddle)
-    for y in max(0, pr.y - PuddleArtPadPx) ..<
-        min(h, pr.y + pr.h + PuddleArtPadPx):
-      for x in max(0, pr.x - PuddleArtPadPx) ..<
-          min(w, pr.x + pr.w + PuddleArtPadPx):
+    let pr = puddleBounds(puddle)
+    for y in max(0, pr.y - 1) ..< min(h, pr.y + pr.h + 1):
+      for x in max(0, pr.x - 1) ..< min(w, pr.x + pr.w + 1):
         puddleNear[y * w + x] = true
   ## The capture endzones: the exact score-columns from checkWinConditions'
   ## captureZoneXRange (Red's inclusive right threshold, Blue's inclusive left),
