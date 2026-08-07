@@ -635,14 +635,15 @@ default; a league turns it on with `barrageMaxPerSec > 0` (requires a time
 limit).
 
 - When the game clock reaches **`barrageStartSec` seconds remaining**
-  (default 20), environment grenades start raining onto the field: **4 per
-  second** (`barrageStartPerSec`) landing within a **40px band inside every
-  map edge** at first.
-- The barrage **escalates linearly** over one more `barrageStartSec` window:
-  the target band deepens until it covers the **whole board**, and the rate
-  ramps to **`barrageMaxPerSec`** (10-20/s recommended, hard cap 50) — so at
-  the moment the nominal clock runs out, the entire arena is under maximum
-  bombardment.
+  (default 30 — 4:30 elapsed on the default 5:00 clock), environment
+  grenades start raining onto the field: **4 per second**
+  (`barrageStartPerSec`) landing within a **40px band inside every map
+  edge** at first.
+- The barrage **escalates linearly over `barrageSaturateSec` seconds**
+  (default 30): the target band deepens until it covers the **whole
+  board**, and the rate ramps to **`barrageMaxPerSec`** (10-20/s
+  recommended, hard cap 50) — with the defaults, the entire arena is under
+  maximum bombardment exactly as the clock reads 5:00 / 0:00 remaining.
 - Shells are **ordinary paint-bomb blasts** (same radius, damage, trench
   rules, shield soak, and floor stains as a player lob) with nobody to
   credit: no kill/multi-kill stats for the environment, and a victim's death
@@ -734,10 +735,11 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Endzone shape (`mapEndzone`) | "" (drawn) | Generated 2-team maps: `column` (classic home strip), `disc` or `square` (compact zone around a base set back from the edge) |
 | Endzone radius (`mapEndzoneRadius`) | 0 (drawn 110-140, size-scaled) | Compact endzones only: scoring radius / half-extent in px, 90..220. Needs `mapEndzone` |
 | Base depth (`mapBaseDepth`) | 0 (drawn 520-620) | Compact endzones only: home anchor permille of the half-field, 400..800; SMALLER sets the base further from the edge. Needs `mapEndzone` |
-| Time limit (`MaxTicks`) | 5000 ticks (~3.5 min) | Round length cap before the lose-lose draw |
+| Time limit (`MaxTicks`) | 7200 ticks (5:00) | Scheduled end; the scoreless-draw ceiling without the barrage, ignored with it |
 | Barrage max rate (`barrageMaxPerSec`) | 0 (off) | Endgame grenade rain ramps up to this many shells/s (cap 50); see "Grenade barrage". Needs a time limit |
 | Barrage start rate (`barrageStartPerSec`) | 4/s | Launch rate at the latch, along the map edges |
-| Barrage start (`barrageStartSec`) | 20s | Clock seconds remaining that latch the barrage; it only escalates once latched |
+| Barrage start (`barrageStartSec`) | 30s | Clock seconds remaining that latch the barrage (4:30 elapsed on the 5:00 clock); it only escalates once latched |
+| Barrage saturation (`barrageSaturateSec`) | 30s | Seconds from latch to full saturation — whole board at max rate, landing exactly at 5:00 with the defaults |
 | Map size | 1235×659 (default) | Varies by map class; the actual size and team count are stated in the `game teams <count> map <width>x<height>` init marker |
 
 Engine tick rate is **24 ticks/sec** (inherited from Crewrift); all

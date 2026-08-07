@@ -5892,7 +5892,8 @@ proc addBarrageMarker(
     labelBarrage(
       sim.barrageDepth(),
       sim.barrageRatePermille() div 1000,
-      sim.config.barrageStartSec
+      sim.config.barrageStartSec,
+      sim.config.barrageSaturateSec
     )
   )
   packet.addBoardObject(

@@ -14,10 +14,12 @@ edges probabilistically instead of walling them off.)
 ## Behavior
 
 - When the game clock has **`barrageStartSec` seconds remaining** (default
-  20), the barrage latches on: environment grenades start landing at
-  **`barrageStartPerSec`/second** (default 4) inside a **40px band along
-  every map edge** (`BarrageEdgeBandPx`).
-- Over one more `barrageStartSec` window the barrage **escalates linearly**
+  30 — 4:30 elapsed on the default 5:00 clock), the barrage latches on:
+  environment grenades start landing at **`barrageStartPerSec`/second**
+  (default 4) inside a **40px band along every map edge**
+  (`BarrageEdgeBandPx`).
+- Over **`barrageSaturateSec` seconds** (default 30) the barrage
+  **escalates linearly**
   (`barrageProgressPermille`): the target band deepens to **full board
   coverage** and the launch rate ramps to **`barrageMaxPerSec`** (0 = mode
   off — the default; hard cap `BarrageAbsMaxPerSec` = 50). At the moment the
@@ -49,7 +51,8 @@ Shells carry `thrower/throwerSlot/throwerAccount = -1`. In `explodeGrenade`:
 |---|---|---|
 | `barrageMaxPerSec` | 0 (off) | 0..50; > 0 requires `maxTicks > 0` |
 | `barrageStartPerSec` | 4 | 1..`barrageMaxPerSec` (when on) |
-| `barrageStartSec` | 20 | >= 1 |
+| `barrageStartSec` | 30 | >= 1 |
+| `barrageSaturateSec` | 30 | >= 1 |
 
 `configJson` emits the keys **only when the mode is on** (handicaps pattern),
 so a default game's replay config echo is byte-identical.

@@ -405,11 +405,17 @@ const
 
   StartWaitTicks* = 5 * TargetFps
   GameOverTicks* = 360
-  MaxTicks* = 5_000  ## 0 = no limit.
-  BarrageStartSec* = 20       ## grenade-barrage default: the barrage latches
+  MaxTicks* = 7_200  ## a 5:00 game at 24 ticks/sec; 0 = no limit.
+  BarrageStartSec* = 30       ## grenade-barrage default: the barrage latches
                               ## on with this many clock seconds remaining
                               ## (config barrageStartSec; the mode itself
-                              ## arms via barrageMaxPerSec > 0).
+                              ## arms via barrageMaxPerSec > 0). On the
+                              ## default 5:00 clock that is 4:30 elapsed.
+  BarrageSaturateSec* = 30    ## grenade-barrage default: seconds from the
+                              ## latch to full saturation (whole board at
+                              ## barrageMaxPerSec). Start 30 + saturate 30
+                              ## = fully saturated exactly at 5:00 on the
+                              ## default clock.
   BarrageStartPerSec* = 4     ## grenade-barrage default: launch rate at the
                               ## latch, grenades/second along the map edges.
   BarrageAbsMaxPerSec* = 50   ## config ceiling on barrageMaxPerSec: keeps
@@ -946,13 +952,17 @@ type
     barrageStartPerSec*: int  ## grenade-barrage endgame: the launch rate at
                               ## the moment the barrage latches (default
                               ## BarrageStartPerSec); ramps linearly to
-                              ## barrageMaxPerSec over the same duration as
-                              ## the pre-latch window.
+                              ## barrageMaxPerSec over barrageSaturateSec.
     barrageStartSec*: int     ## grenade-barrage endgame: the barrage latches
                               ## on when the game clock has this many seconds
-                              ## remaining (default BarrageStartSec). Once
-                              ## latched it only ever escalates — action-
-                              ## floor overtime never winds it back.
+                              ## remaining (default BarrageStartSec — 4:30
+                              ## elapsed on the default 5:00 clock). Once
+                              ## latched it only ever escalates.
+    barrageSaturateSec*: int  ## grenade-barrage endgame: seconds from the
+                              ## latch until the ramp completes — whole
+                              ## board targeted at barrageMaxPerSec
+                              ## (default BarrageSaturateSec, landing full
+                              ## saturation exactly at the scheduled end).
     handicaps*: array[Team, int]  ## per-team handicap in PERMILLE (0..1000),
                                   ## authored as a 0.0..1.0 float. 0 = normal
                                   ## (the default, byte-identical to no

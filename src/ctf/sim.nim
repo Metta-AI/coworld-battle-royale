@@ -550,13 +550,14 @@ proc barrageFullDepth*(): int =
 
 proc barrageProgressPermille*(sim: SimServer): int =
   ## Returns how far the barrage has escalated, 0..1000: 0 at the latch,
-  ## 1000 once a full pre-latch window (barrageStartSec) has elapsed — i.e.
-  ## exactly when the nominal clock would have run out, the whole board is
-  ## under maximum bombardment. Pure integer math off deterministic state
-  ## (latch tick + tick count), so native, wasm, and replays all agree.
+  ## 1000 once barrageSaturateSec has elapsed — at the default settings
+  ## (latch 30s before the end, saturate in 30s) the whole board is under
+  ## maximum bombardment exactly when the clock reads 0:00. Pure integer
+  ## math off deterministic state (latch tick + tick count), so native,
+  ## wasm, and replays all agree.
   if sim.barrageStartTick < 0 or sim.config.barrageMaxPerSec <= 0:
     return 0
-  let rampTicks = max(1, sim.config.barrageStartSec * TargetFps)
+  let rampTicks = max(1, sim.config.barrageSaturateSec * TargetFps)
   min(1000, (sim.tickCount - sim.barrageStartTick) * 1000 div rampTicks)
 
 proc barrageDepth*(sim: SimServer): int =

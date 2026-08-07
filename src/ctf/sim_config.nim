@@ -48,7 +48,8 @@ proc defaultGameConfig*(): GameConfig =
     slots: @[],
     barrageMaxPerSec: 0,
     barrageStartPerSec: BarrageStartPerSec,
-    barrageStartSec: BarrageStartSec
+    barrageStartSec: BarrageStartSec,
+    barrageSaturateSec: BarrageSaturateSec
   )
 
 proc readConfigInt(node: JsonNode, name: string, value: var int) =
@@ -425,6 +426,9 @@ proc validate(config: GameConfig) =
     if config.barrageStartSec < 1:
       raise newException(
         CtfError, "Config field barrageStartSec must be at least 1.")
+    if config.barrageSaturateSec < 1:
+      raise newException(
+        CtfError, "Config field barrageSaturateSec must be at least 1.")
   if config.slots.len > MaxPlayers:
     raise newException(CtfError, "Config field slots cannot have more than 8 entries.")
   if config.closedRoster and config.slots.len < config.minPlayers:
@@ -500,6 +504,7 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("barrageMaxPerSec", config.barrageMaxPerSec)
   node.readConfigInt("barrageStartPerSec", config.barrageStartPerSec)
   node.readConfigInt("barrageStartSec", config.barrageStartSec)
+  node.readConfigInt("barrageSaturateSec", config.barrageSaturateSec)
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
   node.readConfigBool("fastMode", config.fastMode)
   node.readConfigInt("teams", config.teams)
@@ -645,6 +650,7 @@ proc configJson*(config: GameConfig): string =
     node["barrageMaxPerSec"] = %config.barrageMaxPerSec
     node["barrageStartPerSec"] = %config.barrageStartPerSec
     node["barrageStartSec"] = %config.barrageStartSec
+    node["barrageSaturateSec"] = %config.barrageSaturateSec
   if config.mapSpec.len > 0:
     node["mapSpec"] = fromJson(config.mapSpec)
   $node

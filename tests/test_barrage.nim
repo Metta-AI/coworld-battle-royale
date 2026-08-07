@@ -14,6 +14,7 @@ proc barrageGame(
   maxPerSec: int,
   startPerSec = BarrageStartPerSec,
   startSec = BarrageStartSec,
+  saturateSec = BarrageSaturateSec,
   maxTicks = 1000
 ): SimServer =
   ## A started Red-vs-Blue game with the grenade barrage configured.
@@ -22,6 +23,7 @@ proc barrageGame(
   config.barrageMaxPerSec = maxPerSec
   config.barrageStartPerSec = startPerSec
   config.barrageStartSec = startSec
+  config.barrageSaturateSec = saturateSec
   result = initCtfForTest(config)
   discard result.addPlayer("red0")
   discard result.addPlayer("blue0")
@@ -51,27 +53,36 @@ suite "grenade barrage config":
     check config.barrageMaxPerSec == 0
     check config.barrageStartPerSec == BarrageStartPerSec
     check config.barrageStartSec == BarrageStartSec
+    check config.barrageSaturateSec == BarrageSaturateSec
+    # The shipped schedule: a 5:00 default clock, latch at 4:30 elapsed,
+    # fully saturated exactly at 5:00.
+    check config.maxTicks == 5 * 60 * TargetFps
+    check BarrageStartSec == 30
+    check BarrageSaturateSec == 30
 
   test "JSON round-trip through update and the config echo":
     var config = defaultGameConfig()
     config.update(
       """{"barrageMaxPerSec": 18, "barrageStartPerSec": 6,
-          "barrageStartSec": 30}""")
+          "barrageStartSec": 25, "barrageSaturateSec": 45}""")
     check config.barrageMaxPerSec == 18
     check config.barrageStartPerSec == 6
-    check config.barrageStartSec == 30
+    check config.barrageStartSec == 25
+    check config.barrageSaturateSec == 45
     let echo = config.configJson()
     var reread = defaultGameConfig()
     reread.update(echo)
     check reread.barrageMaxPerSec == 18
     check reread.barrageStartPerSec == 6
-    check reread.barrageStartSec == 30
+    check reread.barrageStartSec == 25
+    check reread.barrageSaturateSec == 45
 
   test "a default game's config echo carries no barrage keys":
     let node = parseJson(defaultGameConfig().configJson())
     check not node.hasKey("barrageMaxPerSec")
     check not node.hasKey("barrageStartPerSec")
     check not node.hasKey("barrageStartSec")
+    check not node.hasKey("barrageSaturateSec")
 
   test "rates outside 0..the ceiling are rejected":
     var config = defaultGameConfig()
@@ -98,6 +109,11 @@ suite "grenade barrage config":
     expect CtfError:
       config.update("""{"barrageMaxPerSec": 5, "barrageStartSec": 0}""")
 
+  test "a saturate window under one second is rejected":
+    var config = defaultGameConfig()
+    expect CtfError:
+      config.update("""{"barrageMaxPerSec": 5, "barrageSaturateSec": 0}""")
+
 suite "grenade barrage sim":
   test "latches when the clock reaches the threshold":
     var sim = barrageGame(maxPerSec = 12)
@@ -118,23 +134,27 @@ suite "grenade barrage sim":
     check sim.barrageStartTick == -1
 
   test "the ramp runs edge band + start rate to full board + max rate":
-    var sim = barrageGame(maxPerSec = 16, startPerSec = 4)
+    # Saturate is its OWN knob: a 10s ramp under a 30s start window.
+    var sim = barrageGame(maxPerSec = 16, startPerSec = 4, saturateSec = 10)
     sim.runClockTo(sim.config.barrageStartSec * TargetFps)
     sim.stepIdle(1)                    # latch tick.
     check sim.barrageProgressPermille() == 0
     check sim.barrageDepth() == BarrageEdgeBandPx
     check sim.barrageRatePermille() == 4000
-    # Halfway through the ramp: depth and rate interpolate linearly.
-    sim.tickCount += sim.config.barrageStartSec * TargetFps div 2
+    # Halfway through the saturate window: linear interpolation.
+    sim.tickCount += sim.config.barrageSaturateSec * TargetFps div 2
     check sim.barrageProgressPermille() == 500
     check sim.barrageDepth() ==
       BarrageEdgeBandPx + (barrageFullDepth() - BarrageEdgeBandPx) div 2
     check sim.barrageRatePermille() == 10000
     # Past the full window: pinned at total coverage and max rate.
-    sim.tickCount += sim.config.barrageStartSec * TargetFps
+    sim.tickCount += sim.config.barrageSaturateSec * TargetFps
     check sim.barrageProgressPermille() == 1000
     check sim.barrageDepth() == barrageFullDepth()
     check sim.barrageRatePermille() == 16000
+    # The default schedule saturates exactly at the scheduled end: latch at
+    # startSec remaining + a saturateSec ramp = clock zero.
+    check BarrageStartSec == BarrageSaturateSec
 
   test "GV41: kills never extend the clock":
     var sim = barrageGame(maxPerSec = 12)
@@ -250,7 +270,7 @@ suite "grenade barrage emission":
     for message in sim.buildGlobalMessages(state):
       if message.kind == spkSprite and
           message.sprite.label == labelBarrage(
-            BarrageEdgeBandPx, 6, BarrageStartSec):
+            BarrageEdgeBandPx, 6, BarrageStartSec, BarrageSaturateSec):
         found = true
     check found
 
