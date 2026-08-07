@@ -2,6 +2,7 @@
 {.warning[UnusedImport]: off.}
 import
   test_agent_skins,
+  test_barrage,
   test_broadcast_state,
   test_corpse_label,
   test_extract_events,
@@ -10,8 +11,8 @@ import
   test_identity_badges,
   test_label_contract,
   test_map_export,
-  test_barrage,
   test_movement_slide,
+  test_perks,
   test_puddles,
   test_replay_controls,
   test_trenches,
