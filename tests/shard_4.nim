@@ -10,6 +10,7 @@ import
   test_identity_badges,
   test_label_contract,
   test_map_export,
+  test_barrage,
   test_movement_slide,
   test_puddles,
   test_replay_controls,
