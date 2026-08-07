@@ -501,6 +501,16 @@ proc trenchSquareAt(cx, cy: int): MapRect =
     h: TrenchSize
   )
 
+proc puddleSquareAt(cx, cy: int): MapRect =
+  ## A PuddleSize×PuddleSize paint blob centered on (cx, cy). Like obstacle
+  ## and trench sizes, the blob never scales with the map's size class.
+  MapRect(
+    x: cx - PuddleSize div 2,
+    y: cy - PuddleSize div 2,
+    w: PuddleSize,
+    h: PuddleSize
+  )
+
 proc rectsIntersect(a, b: MapRect): bool =
   ## Returns true when the two rectangles overlap by at least one pixel.
   a.x < b.x + b.w and b.x < a.x + a.w and
@@ -1964,6 +1974,9 @@ proc generateMapAttempt*(
   ## so both parities stay exactly team-fair.
   if overrides.pits < -1 or overrides.pits > 64:
     raise newException(CtfError, "Config field mapPits must be 0..64.")
+  if overrides.puddles > MaxPuddles:
+    raise newException(
+      CtfError, "Config field mapPuddles must be 0.." & $MaxPuddles & ".")
   if overrides.pitDensity < -1 or overrides.pitDensity > 1000:
     raise newException(
       CtfError, "Config field mapPitDensity must be 0..1000.")
@@ -1983,6 +1996,10 @@ proc generateMapAttempt*(
     if overrides.pits > 0:
       raise newException(
         CtfError, "Trenches are not supported on 4-team maps yet.")
+    if overrides.puddles > 0:
+      ## Same pair accounting as trenches: one symmetry image per blob.
+      raise newException(
+        CtfError, "Puddles are not supported on 4-team maps yet.")
     pitCandidates.setLen(0)
   if pitPairsWanted >= 0:
     rng.shuffle(pitCandidates)
@@ -2330,6 +2347,82 @@ proc generateMapAttempt*(
     result.trenches = @[]
     for d in digs:
       result.trenches.add rectShape(d)
+
+  ## Place the paint puddles. COUNT mode only, and AFTER the trench set is
+  ## final so acceptance sees every dug pit: sample random left-half spots
+  ## from the map rng and accept a spot when the blob AND its symmetry
+  ## image sit on open floor, clear of every trench, every accepted
+  ## puddle, and every team's base pocket. An odd request anchors its
+  ## extra puddle dead center (its own image under mirror AND rot180),
+  ## like the odd center pit. Best-effort like pits: when the attempts run
+  ## out the map ships with as many as fit. (4-team symmetries raise on an
+  ## explicit request above and place nothing here.)
+  block finalizePuddles:
+    if overrides.puddles <= 0 or
+        result.symmetry in {symRot90, symQuadMirror}:
+      break finalizePuddles
+    let
+      obstacles = buildArenaObstacles(result)
+      margin = PuddleSize div 2 + 8
+    var baseRooms: seq[MapRect]
+    for room in result.defaultCtfRooms():
+      if room.name != "Center":
+        baseRooms.add MapRect(x: room.x, y: room.y, w: room.w, h: room.h)
+    proc addPuddlePair(
+      gameMap: CtfMap, blobs: var seq[MapRect], blob: MapRect
+    ): bool =
+      ## Accepts one left-half blob plus its symmetry image when both sit
+      ## on open floor clear of everything above. A blob whose image is
+      ## blocked drops WITH it — fairness before density, as with trenches.
+      let image =
+        case gameMap.symmetry
+        of symMirror: blob.mirrorX(gameMap.width)
+        of symRot180: blob.rot180(gameMap.width, gameMap.height)
+        of symRot90, symQuadMirror:
+          raiseAssert "puddles never place on 4-team maps"
+      if blob != image and rectsIntersect(blob, image):
+        return false
+      for cand in [blob, image]:
+        if not rectOnOpenFloor(gameMap, obstacles, cand):
+          return false
+        for trench in gameMap.trenches:
+          if rectsIntersect(shapeAsRect(trench), cand):
+            return false
+        for base in baseRooms:
+          if rectsIntersect(base, cand):
+            return false
+      for accepted in blobs:
+        if rectsIntersect(accepted, blob) or rectsIntersect(accepted, image):
+          return false
+      blobs.add blob
+      if image != blob:
+        blobs.add image
+      true
+    var blobs: seq[MapRect]
+    if overrides.puddles mod 2 == 1:
+      ## The odd blob sits dead center, inside the always-open flag ring —
+      ## unless an odd PIT request already dug the center out (paint on a
+      ## trench floor would double-stack the two hazards' art and rules).
+      let center = puddleSquareAt(result.center.x, result.center.y)
+      var centerOpen = true
+      for trench in result.trenches:
+        if rectsIntersect(shapeAsRect(trench), center):
+          centerOpen = false
+          break
+      if centerOpen:
+        blobs.add center
+    ## Bounded rejection sampling: enough tries that a normal board fills
+    ## the request, deterministic from the map seed either way.
+    var attempts = overrides.puddles * 40
+    while blobs.len < overrides.puddles and attempts > 0:
+      dec attempts
+      let
+        cxHi = result.center.x - PuddleSize div 2 - 4
+        cx = rng.pickRange(margin, max(margin, cxHi))
+        cy = rng.pickRange(margin, max(margin, result.height - margin))
+      discard result.addPuddlePair(blobs, puddleSquareAt(cx, cy))
+    for blob in blobs:
+      result.puddles.add rectShape(blob)
   result.validateMap()
 
 type
@@ -2788,7 +2881,7 @@ proc mapSpecJson*(gameMap: CtfMap): string =
   var trenchShapes = newJArray()
   for trench in gameMap.trenches:
     trenchShapes.add trench.shapeSpecNode()
-  $(%*{
+  let spec = %*{
     "name": gameMap.name,
     "genSeed": gameMap.genSeed,
     "width": gameMap.width,
@@ -2823,7 +2916,16 @@ proc mapSpecJson*(gameMap: CtfMap): string =
     # generator emits rect pits; authored maps may use any shape).
     "trenches": trenchShapes,
     "leftObstacles": shapes,
-  })
+  }
+  ## Puddles pin only when present: an unconditional (empty) key would
+  ## change every puddle-free pinned spec — and with it every default
+  ## fixture's config echo — for nothing.
+  if gameMap.puddles.len > 0:
+    var puddleShapes = newJArray()
+    for puddle in gameMap.puddles:
+      puddleShapes.add puddle.shapeSpecNode()
+    spec["puddles"] = puddleShapes
+  $spec
 
 proc mapFromSpecJson*(text: string): CtfMap =
   ## Rebuilds one map from its expanded replay spec. Rooms are derived from
@@ -2894,6 +2996,12 @@ proc mapFromSpecJson*(text: string): CtfMap =
           w: item[2].getInt(), h: item[3].getInt()))
       else:
         result.trenches.add item.shapeFromSpecNode()
+  ## Optional like trenches: specs pinned before puddles existed carry none
+  ## and replay without them, exactly as recorded.
+  let puddleNode = node{"puddles"}
+  if not puddleNode.isNil and puddleNode.kind == JArray:
+    for item in puddleNode:
+      result.puddles.add item.shapeFromSpecNode()
   for item in node["leftObstacles"]:
     result.leftObstacles.add item.shapeFromSpecNode()
   result.rooms = result.defaultCtfRooms()
@@ -2958,6 +3066,7 @@ var
     ## turns together, and on quad-mirror maps, whose per-axis direction
     ## rule reads ArenaSymmetryG instead — see diamondSpinDir.
   ArenaTrenches*: seq[ArenaShape]
+  ArenaPuddles*: seq[ArenaShape]
 
 proc selectCtfMap(gameMap: CtfMap) =
   ## Installs one map as THE map for this process: dimensions, fog grid,
@@ -2988,6 +3097,7 @@ proc selectCtfMap(gameMap: CtfMap) =
   AnimatedDiamonds = buildAnimatedDiamonds(gameMap, ArenaObstacles)
   ArenaSpinMirrored = gameMap.symmetry == symMirror
   ArenaTrenches = gameMap.trenches
+  ArenaPuddles = gameMap.puddles
 
 proc installDefaultArena*() =
   ## Installs the hand-tuned default arena into the process-wide map globals.
@@ -3054,6 +3164,23 @@ proc playerTrench*(sim: SimServer, playerIndex: int): int =
   ## or -1 in the open field. Occupancy is instantaneous: the slowdowns and
   ## the fly-over shot misses apply exactly while the center is inside.
   trenchIndexAt(
+    sim.players[playerIndex].x + CollisionW div 2,
+    sim.players[playerIndex].y + CollisionH div 2
+  )
+
+proc puddleIndexAt*(x, y: int): int =
+  ## Returns the index of the puddle containing map pixel (x, y), or -1 when
+  ## the point is on clean floor.
+  for i, puddle in ArenaPuddles:
+    if inShape(x, y, puddle):
+      return i
+  -1
+
+proc playerPuddle*(sim: SimServer, playerIndex: int): int =
+  ## Returns the index of the puddle the player's center is standing in, or
+  ## -1 on clean floor. Center-based like trench occupancy: the damage clock
+  ## runs exactly while the center is inside.
+  puddleIndexAt(
     sim.players[playerIndex].x + CollisionW div 2,
     sim.players[playerIndex].y + CollisionH div 2
   )
