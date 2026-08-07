@@ -616,9 +616,23 @@ const
                                   ## audits below) so sharing one base value
                                   ## is convention only, mirroring
                                   ## MapMarkerSpriteBase/-ObjectBase above.
-  TrenchMarkerPoolWidth = 64      ## mapPits (arena.nim) caps a match at 64
-                                  ## trenches; this pool is exactly that
-                                  ## ceiling, not a generous envelope.
+  TrenchMarkerPoolWidth = 256     ## ⚠️ NOT a proven ceiling: the mapPits
+                                  ## COUNT-mode override caps a match at 64
+                                  ## trenches, but DENSITY mode (mapPitDensity,
+                                  ## what an unadorned "gen" map path actually
+                                  ## uses — see arena.nim's pit-selection block)
+                                  ## has no such cap at all; candidate count
+                                  ## scales with map size/columns. An empirical
+                                  ## sweep of 3000 generated-map seeds found 549
+                                  ## (18%) over 64 and a max of 144 — so 64 was
+                                  ## WRONG (2026-08-07: crashed the server on
+                                  ## ~1 in 5 generated maps). 256 is a wide
+                                  ## empirical margin over that observed max,
+                                  ## not a derived bound — addMapMarkers below
+                                  ## still clamps defensively rather than
+                                  ## asserting, so a future map that exceeds
+                                  ## even this loses trench MARKERS past the
+                                  ## pool, never crashes the server.
   ProtocolTextSpriteBase = 9000
   ProtocolTextObjectBase = 9000
   ProtocolTextZ = 30010
@@ -3360,10 +3374,14 @@ proc addMapMarkers(
   ## `trenches` on symRot90/symQuadMirror symmetry), so this loop runs zero
   ## times there and emits nothing. Own reserved id range
   ## (TrenchMarkerObjectBase/-SpriteBase), not the shared marker `index`.
-  doAssert sim.gameMap.trenches.len <= TrenchMarkerPoolWidth,
-    "more trenches than the reserved trench-marker pool can hold"
-  for i, trench in sim.gameMap.trenches:
-    let box = shapeAsRect(trench)
+  ## Clamped defensively at TrenchMarkerPoolWidth rather than asserted: a
+  ## map whose DENSITY-mode roll (unbounded, unlike the mapPits COUNT-mode
+  ## cap of 64 — see TrenchMarkerPoolWidth's doc) exceeds the pool loses
+  ## markers for the overflow trenches, never crashes the server. A short
+  ## marker set is still strictly additive over today's zero.
+  let markedTrenches = min(sim.gameMap.trenches.len, TrenchMarkerPoolWidth)
+  for i in 0 ..< markedTrenches:
+    let box = shapeAsRect(sim.gameMap.trenches[i])
     packet.addTrenchMarker(
       spriteDefs,
       i,

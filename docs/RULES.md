@@ -777,9 +777,13 @@ trenches were invisible to a policy: the `walkability map` sprite is a
 BINARY mask, and a trench floor reads identically to open floor on it — a
 policy could stand in one, or walk through one under fire, with no signal it
 was there at all. Trenches are a 2-team generated-map feature (never on
-4-team maps, and the hand-authored default `arena` never digs any) with up
-to 64 per match; a map that rolled zero pits emits zero markers, not an
-empty-box one.
+4-team maps, and the hand-authored default `arena` never digs any); a map
+that rolled zero pits emits zero markers, not an empty-box one. The marker
+pool holds up to 256 trenches per match — a wide empirical margin (an
+explicit `mapPits` count locks 0..64, but the default DENSITY roll has no
+fixed cap and can exceed that on a large generated map) — and a map that
+somehow rolls past even that loses markers for the overflow trenches rather
+than dropping the whole snapshot.
 
 **So is your own aim.** Every player frame carries an invisible 1x1 HUD
 marker labeled `own aim <brads>`: your turret angle as of the rendered tick,
