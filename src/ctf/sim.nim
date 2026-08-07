@@ -222,6 +222,7 @@ proc startGame*(sim: var SimServer) =
   sim.gameStartTick = sim.tickCount
   sim.timeLimitReached = false
   sim.overtimeTicks = 0
+  sim.paintFloodStartTick = -1
   sim.isDraw = false
   sim.lastLobbyPlayersLogged = -1
   sim.lastLobbyNeededLogged = -1
@@ -553,12 +554,31 @@ proc floorGameClock(sim: var SimServer) =
   if remaining < ActionClockFloorTicks:
     sim.overtimeTicks += ActionClockFloorTicks - remaining
 
+proc paintFloodMaxDepth*(): int =
+  ## The edge depth at which the four flood bands cover the whole board:
+  ## past half the shorter axis the two bands on that axis meet.
+  min(MapWidth, MapHeight) div 2 + 1
+
+proc paintFloodDepth*(sim: SimServer): int =
+  ## Returns how far the paint flood has advanced inward from every map
+  ## edge, in px; 0 while the flood is off or not yet latched. Pure integer
+  ## math off deterministic state (latch tick + tick count), so native,
+  ## wasm, and replays all agree.
+  if sim.paintFloodStartTick < 0 or sim.config.paintFloodPxPerSec <= 0:
+    return 0
+  let ticksIn = sim.tickCount - sim.paintFloodStartTick
+  min(
+    ticksIn * sim.config.paintFloodPxPerSec div TargetFps,
+    paintFloodMaxDepth()
+  )
+
 proc killPlayer*(
   sim: var SimServer,
   targetIndex,
   killerIndex: int,
   killerSlot = -1,
-  elimination = false
+  elimination = false,
+  cause = ""
 ) =
   ## Applies a fatal hit: return any carried flag to its pedestal, decrement
   ## lives, start respawn. GV35: an `elimination` death (the team's heart was
@@ -571,10 +591,16 @@ proc killPlayer*(
   if not sim.players[targetIndex].alive:
     return
   if not elimination:
-    sim.logGameEvent(
-      playerColorText(sim.players[targetIndex].color) &
-        " killed by " & sim.playerText(killerIndex)
-    )
+    # An environmental death (cause text, no killer) logs its own line; a
+    # combat death keeps the classic "killed by" attribution.
+    if cause.len > 0:
+      sim.logGameEvent(
+        playerColorText(sim.players[targetIndex].color) & " " & cause)
+    else:
+      sim.logGameEvent(
+        playerColorText(sim.players[targetIndex].color) &
+          " killed by " & sim.playerText(killerIndex)
+      )
   # A kill is action: keep at least ActionClockFloorTicks on the clock.
   sim.floorGameClock()
   # A dying trigger pull never releases, and a carried grenade is lost.
@@ -2282,6 +2308,39 @@ proc eliminateTeam(sim: var SimServer, team: Team, killerIndex: int) =
     if sim.players[i].alive:
       sim.killPlayer(i, killerIndex, elimination = true)
 
+proc updatePaintFlood*(sim: var SimServer) =
+  ## One tick of the paint-flood endgame: latch the flood when the game
+  ## clock drops to paintFloodStartSec remaining, then drown every live cog
+  ## whose solid body the advancing band touches. Runs before the win check
+  ## so flood deaths feed the same tick's wipe resolution. Kills go through
+  ## killPlayer, so each one also banks action-floor overtime — the clock
+  ## stretches, but the latched flood never retreats, so the sweep always
+  ## finishes and a timed game ends on a wipe instead of a timeout draw.
+  if sim.config.paintFloodPxPerSec <= 0 or sim.config.maxTicks <= 0:
+    return
+  if sim.phase != Playing:
+    return
+  if sim.paintFloodStartTick < 0:
+    let remaining = sim.effectiveMaxTicks() - sim.gameTicksElapsed()
+    if remaining <= sim.config.paintFloodStartSec * TargetFps:
+      sim.paintFloodStartTick = sim.tickCount
+      sim.logGameEvent("paint flood rising")
+    return
+  let depth = sim.paintFloodDepth()
+  if depth <= 0:
+    return
+  for i in 0 ..< sim.players.len:
+    if not sim.players[i].alive:
+      continue
+    let
+      x = sim.players[i].x
+      y = sim.players[i].y
+    # The same solid footprint the movement code collides: a box of
+    # half-extent PlayerHalf centered on (x, y). Touching the band kills.
+    if x - PlayerHalf < depth or x + PlayerHalf >= MapWidth - depth or
+        y - PlayerHalf < depth or y + PlayerHalf >= MapHeight - depth:
+      sim.killPlayer(i, -1, cause = "swallowed by the paint flood")
+
 proc checkWinCondition*(sim: var SimServer) {.measure.} =
   ## Resolves capture and wipe win conditions.
   if sim.phase != Playing or sim.players.len == 0:
@@ -2723,6 +2782,7 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.gameStartTick = -1
   result.startWaitTimer = 0
   result.lobbyWaitTimer = 0
+  result.paintFloodStartTick = -1
   result.gameEventLoggingEnabled = true
   result.resetFlags()
   result.resetGrenades()
@@ -2768,6 +2828,7 @@ proc resetToLobby*(sim: var SimServer) =
   sim.lobbyWaitTimer = 0
   sim.timeLimitReached = false
   sim.overtimeTicks = 0
+  sim.paintFloodStartTick = -1
   sim.isDraw = false
   sim.needsReregister = true
   sim.resetFlags()
@@ -2917,6 +2978,7 @@ proc step*(
     sim.tryPickupPlasmaArcs(playerIndex)
   sim.updateFlags()
   sim.respawnPlayers()
+  sim.updatePaintFlood()
 
   sim.checkWinCondition()
   sim.checkMaxTicks()

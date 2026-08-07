@@ -452,6 +452,39 @@ const
                                ## the client's static-band cache stays valid (it
                                ## requires every dynamic object to sort strictly
                                ## above the bands).
+  ## --- Paint-flood endgame overlay (BOARD + POV) ---
+  ## The killer paint closing in from every edge (sim.paintFloodDepth). Four
+  ## bands of solid paint drawn from two strip sprites; rows a viewer has seen
+  ## are permanent stain-style objects (the flood only ever advances within a
+  ## game, so a submerged row never has to move), and one frontier strip per
+  ## side re-places each frame so the front advances pixel-smooth. Unlike the
+  ## stains this IS shipped to the POV/RL stream: the band is deadly terrain a
+  ## bot must be able to read, not floor art.
+  PaintFloodSpriteBase* = 35200 ## 3 ids in the stain/diamond-paint gap:
+                               ## base = horizontal strip (MapWidth x
+                               ## FloodStripPx), base+1 = vertical strip
+                               ## (FloodStripPx x MapHeight), base+2 = the
+                               ## invisible stated depth marker (see
+                               ## LabelPrefixPaintFlood).
+  FloodStripPx* = 8             ## strip thickness; also the permanent-row
+                               ## pitch, so a row ships once per 8 px of
+                               ## advance and the frontier strip covers the
+                               ## remainder exactly.
+  PaintFloodMaxRowsPerSide* = 320 ## row-object pool per side. Covers the
+                               ## colossal short axis (4992 div 2 = 2496 px
+                               ## of depth = 312 rows); no shipped board
+                               ## exceeds colossal (the wasm viewer budget
+                               ## caps size first).
+  PaintFloodObjectBase* = 36300 ## the stated depth marker, then 4 frontier
+                               ## ids, then 4x320 row ids: 36300..37584, in
+                               ## the gap between the trench markers
+                               ## (..36255) and the damage pops (38000..).
+  PaintFloodZ = 28000          ## above every actor and floor decal (player
+                               ## z is its y, <= 4992 on colossal), below
+                               ## the debug overlays (29000): drowned cogs
+                               ## disappear under the paint.
+  PaintFloodColor = rgba(84, 48, 122, 255) ## deep violet — reads as paint,
+                               ## matches no team.
   DamagePopSpriteBase = 31000  ## floating "-N" damage-number sprites keyed
                                ## color×bucket×stage: 31000..31255 (above tracers).
                                ## The bucket is NOT amount-1: the amounts in
@@ -718,6 +751,7 @@ const
     ("rig wheels", RigWheelObjectBase, MaxPlayers * 3),
     ("rig guns", RigGunObjectBase, MaxPlayers),
     ("paint stains", StainObjectBase, StainMaxCount),
+    ("paint flood", PaintFloodObjectBase, 5 + 4 * PaintFloodMaxRowsPerSide),
   ]
 
 static:
@@ -823,6 +857,7 @@ const
       16 * DamagePopBucketCount * DamagePopStages),
     ("kill pops", KillPopSpriteBase, 16 * DamagePopStages),
     ("paint stains", StainSpriteBase, StainMaxCount),
+    ("paint flood", PaintFloodSpriteBase, 3),
     ("diamond paint", DiamondPaintSpriteBase, 8 * 16),
   ]
 
@@ -903,6 +938,13 @@ type
                                  ## emitted once each (addPaintStains), so this
                                  ## is the incremental cursor into
                                  ## sim.paintStains — never a re-send.
+    floodRowsSent*: array[4, int] ## per-side count of permanent paint-flood
+                                 ## rows this viewer already holds (top,
+                                 ## bottom, left, right). Incremental cursor
+                                 ## like stainsSent; a cursor ahead of the
+                                 ## sim's flood (new game, backward scrub)
+                                 ## deletes the surplus and re-arms. See
+                                 ## addPaintFlood.
     shoutSlots*: array[ShoutMaxCount, string]  ## slot → owning shouter address
                                  ## ("" = free), so a bubble keeps one wire
                                  ## sprite/object id for its whole life however
@@ -931,6 +973,8 @@ type
     debugSpriteLimitWarned*: bool
     shoutSlots*: array[ShoutMaxCount, string]  ## slot → owning shouter address
                                  ## ("" = free); see GlobalViewerState.shoutSlots.
+    floodRowsSent*: array[4, int] ## per-side permanent paint-flood row cursor;
+                                 ## see GlobalViewerState.floodRowsSent.
     spriteDefs: seq[SpriteDefinition]
 
   ProtocolTextItem = ref object
@@ -5857,6 +5901,133 @@ proc addPaintStains(
     )
     inc state.stainsSent
 
+proc paintFloodRowObjectId*(side, row: int): int {.inline.} =
+  ## The permanent-row object id for one side (0 top, 1 bottom, 2 left,
+  ## 3 right) and row index; the marker and the 4 frontier strips sit below.
+  PaintFloodObjectBase + 5 + side * PaintFloodMaxRowsPerSide + row
+
+proc buildPaintFloodStrip(width, height: int): seq[uint8] =
+  ## Builds one solid flood-paint strip in true color.
+  result = newRgbaPixels(width, height)
+  for i in 0 ..< width * height:
+    result.putRawRgbaPixel(
+      i,
+      PaintFloodColor.r,
+      PaintFloodColor.g,
+      PaintFloodColor.b,
+      PaintFloodColor.a
+    )
+
+proc paintFloodStripCurrent(
+  defs: seq[SpriteDefinition],
+  spriteId, width, height: int
+): bool =
+  ## Whether this viewer's def for one flood strip matches the current map's
+  ## strip geometry — the same dims-staleness signal the endzone bands use,
+  ## checked so the per-frame pass never rebuilds strip pixels it holds.
+  let index = defs.spriteDefinitionIndex(spriteId)
+  index >= 0 and defs[index].width == width * boardScale and
+    defs[index].height == height * boardScale
+
+proc addPaintFlood(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  floodRowsSent: var array[4, int],
+  currentIds: var seq[int],
+  packet: var seq[uint8]
+) {.measure.} =
+  ## Draws the paint-flood endgame: four bands of killer paint advancing
+  ## inward from the map edges (depth = sim.paintFloodDepth), on BOTH the
+  ## board and the POV stream — the band is deadly terrain a bot must read,
+  ## not floor art, so unlike the stains it ships to players too.
+  ##
+  ## Emission is stain-style incremental: a row fully submerged is placed
+  ## once, left out of currentIds, and persists at zero per-frame cost (the
+  ## flood only advances within a game). Four frontier strips re-place each
+  ## frame through currentIds so the front moves pixel-smooth between row
+  ## boundaries. A cursor ahead of the sim's flood (new game in a maxGames
+  ## match, or a backward replay scrub) deletes the surplus rows and re-arms.
+  ## An invisible 1x1 marker states the depth and config outright whenever
+  ## the mode is on (see labelPaintFlood).
+  let
+    depth = sim.paintFloodDepth()
+    rowsCovered = min(depth div FloodStripPx, PaintFloodMaxRowsPerSide)
+  for side in 0 ..< 4:
+    if floodRowsSent[side] > rowsCovered:
+      for row in rowsCovered ..< floodRowsSent[side]:
+        packet.addDeleteObject(paintFloodRowObjectId(side, row))
+      floodRowsSent[side] = rowsCovered
+  if sim.config.paintFloodPxPerSec <= 0:
+    return
+  # The stated marker rides every frame the mode is on — depth 0 says "the
+  # flood is coming" (config visible up front), and once latched the label
+  # updates only on ticks the depth actually advanced (1x1 resend, own-aim
+  # pattern).
+  let markerObjectId = PaintFloodObjectBase
+  currentIds.add(markerObjectId)
+  packet.addBoardSpriteChanged(
+    spriteDefs,
+    PaintFloodSpriteBase + 2,
+    1,
+    1,
+    newRgbaPixels(1, 1),
+    labelPaintFlood(
+      depth, sim.config.paintFloodPxPerSec, sim.config.paintFloodStartSec)
+  )
+  packet.addBoardObject(
+    markerObjectId, 0, 0, PaintFloodZ, MapLayerId, PaintFloodSpriteBase + 2)
+  if depth <= 0:
+    return
+  # The two strip defs, shipped once per viewer (re-shipped only when a
+  # replay hot-switch changes the map dims under the same ids).
+  if not spriteDefs.paintFloodStripCurrent(
+      PaintFloodSpriteBase, MapWidth, FloodStripPx):
+    packet.addBoardSpriteChanged(
+      spriteDefs,
+      PaintFloodSpriteBase,
+      MapWidth,
+      FloodStripPx,
+      buildPaintFloodStrip(MapWidth, FloodStripPx),
+      LabelPaintFlood
+    )
+  if not spriteDefs.paintFloodStripCurrent(
+      PaintFloodSpriteBase + 1, FloodStripPx, MapHeight):
+    packet.addBoardSpriteChanged(
+      spriteDefs,
+      PaintFloodSpriteBase + 1,
+      FloodStripPx,
+      MapHeight,
+      buildPaintFloodStrip(FloodStripPx, MapHeight),
+      LabelPaintFlood
+    )
+  # Permanent rows: place the newly submerged ones once, stain-style.
+  for side in 0 ..< 4:
+    while floodRowsSent[side] < rowsCovered:
+      let row = floodRowsSent[side]
+      let (x, y, spriteId) =
+        case side
+        of 0: (0, row * FloodStripPx, PaintFloodSpriteBase)
+        of 1: (0, MapHeight - (row + 1) * FloodStripPx, PaintFloodSpriteBase)
+        of 2: (row * FloodStripPx, 0, PaintFloodSpriteBase + 1)
+        else: (MapWidth - (row + 1) * FloodStripPx, 0, PaintFloodSpriteBase + 1)
+      packet.addBoardObject(
+        paintFloodRowObjectId(side, row), x, y, PaintFloodZ, MapLayerId,
+        spriteId
+      )
+      inc floodRowsSent[side]
+  # Frontier strips: one per side, re-placed each frame at the exact front
+  # (overlapping the permanent rows behind it — same solid color, no seam).
+  for side in 0 ..< 4:
+    let (x, y, spriteId) =
+      case side
+      of 0: (0, depth - FloodStripPx, PaintFloodSpriteBase)
+      of 1: (0, MapHeight - depth, PaintFloodSpriteBase)
+      of 2: (depth - FloodStripPx, 0, PaintFloodSpriteBase + 1)
+      else: (MapWidth - depth, 0, PaintFloodSpriteBase + 1)
+    let objectId = PaintFloodObjectBase + 1 + side
+    currentIds.add(objectId)
+    packet.addBoardObject(objectId, x, y, PaintFloodZ, MapLayerId, spriteId)
+
 proc damagePopBucket(amount: int): int =
   ## Maps a "-N" pop's HP-loss amount to one of DamagePopBucketCount sprite
   ## buckets. The amounts actually in play are sparse (1 shot/grenade-splash,
@@ -6098,6 +6269,13 @@ proc buildSpriteProtocolPlayerUpdates*(
         MapLayerId,
         spriteId
       )
+
+    # The paint-flood bands: deadly terrain, drawn for every player viewer —
+    # bots included and unfogged (the flood spans the whole board and its
+    # front is world knowledge, like the map itself; the stated depth marker
+    # inside is the machine contract).
+    sim.addPaintFlood(
+      nextState.spriteDefs, nextState.floodRowsSent, currentIds, result)
 
     sim.addAimIndicators(
       nextState.spriteDefs,
@@ -6932,6 +7110,9 @@ proc buildSpriteProtocolUpdates*(
     # objects — must re-arm the cursor, or the board would come back with every
     # stain object referencing a sprite id the client no longer has defined.
     nextState.stainsSent = 0
+    # The paint-flood rows are once-emitted the same way; re-arm their cursors
+    # too so a mode switch re-ships the submerged rows.
+    nextState.floodRowsSent = [0, 0, 0, 0]
     if not povActive:
       nextState.initialized = false
   nextState.povActive = povActive
@@ -7016,6 +7197,8 @@ proc buildSpriteProtocolUpdates*(
   # Permanent terrain paint: incremental (only stains this viewer lacks) and
   # intentionally NOT tracked in currentIds, so it persists like the map bands.
   sim.addPaintStains(nextState, result)
+  sim.addPaintFlood(
+    nextState.spriteDefs, nextState.floodRowsSent, currentIds, result)
   sim.addSplatters(nextState.spriteDefs, currentIds, result)
   sim.addDamagePops(nextState.spriteDefs, currentIds, result)
   sim.addShotTracers(nextState.spriteDefs, currentIds, result)

@@ -45,7 +45,9 @@ proc defaultGameConfig*(): GameConfig =
     mapGen: MapGenOverrides(windows: -1, pits: -1, pitDensity: -1),
     mapSpec: "",
     closedRoster: false,
-    slots: @[]
+    slots: @[],
+    paintFloodPxPerSec: 0,
+    paintFloodStartSec: PaintFloodStartSec
   )
 
 proc readConfigInt(node: JsonNode, name: string, value: var int) =
@@ -402,6 +404,18 @@ proc validate(config: GameConfig) =
     raise newException(CtfError, "Timer config fields must not be negative.")
   if config.gameOverTicks < 0 or config.maxTicks < 0 or config.maxGames < 0:
     raise newException(CtfError, "Timer config fields must not be negative.")
+  if config.paintFloodPxPerSec < 0:
+    raise newException(
+      CtfError, "Config field paintFloodPxPerSec must not be negative.")
+  if config.paintFloodPxPerSec > 0 and config.maxTicks <= 0:
+    raise newException(
+      CtfError,
+      "Config field paintFloodPxPerSec requires a time limit (maxTicks > 0): " &
+        "the flood starts off the game clock."
+    )
+  if config.paintFloodStartSec < 1:
+    raise newException(
+      CtfError, "Config field paintFloodStartSec must be at least 1.")
   if config.slots.len > MaxPlayers:
     raise newException(CtfError, "Config field slots cannot have more than 8 entries.")
   if config.closedRoster and config.slots.len < config.minPlayers:
@@ -474,6 +488,8 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("maxTicks", config.maxTicks)
   node.readConfigInt("maxGameTicks", config.maxTicks)
   node.readConfigInt("maxGames", config.maxGames)
+  node.readConfigInt("paintFloodPxPerSec", config.paintFloodPxPerSec)
+  node.readConfigInt("paintFloodStartSec", config.paintFloodStartSec)
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
   node.readConfigBool("fastMode", config.fastMode)
   node.readConfigInt("teams", config.teams)
@@ -613,6 +629,11 @@ proc configJson*(config: GameConfig): string =
       handicaps[teamText(team)] = %(config.handicaps[team].float / 1000.0)
   if handicaps.len > 0:
     node["handicaps"] = handicaps
+  # Echo the paint-flood keys only when the mode is on, so a default game's
+  # replay config stays byte-identical to the pre-flood echo.
+  if config.paintFloodPxPerSec > 0:
+    node["paintFloodPxPerSec"] = %config.paintFloodPxPerSec
+    node["paintFloodStartSec"] = %config.paintFloodStartSec
   if config.mapSpec.len > 0:
     node["mapSpec"] = fromJson(config.mapSpec)
   $node

@@ -49,6 +49,8 @@ muzzle bloom stage <n>
 name p<n>
 name p<n> flag <n>
 own aim <n>
+paint flood
+paint flood depth <n> rate <n> start <n>
 paint stain <color> variant <n>
 player <color>
 player <color> <side>

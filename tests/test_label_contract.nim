@@ -45,10 +45,19 @@ proc fullFeatureGame(teams4 = false): SimServer =
     config.mapGen.layout = "corners"
     config.mapSeed = 42
   config.slots.setLen(6)
+  # The paint-flood endgame, posed as ALREADY LATCHED at a shallow depth so
+  # the band strips (`paint flood`) and the stated marker (`paint flood
+  # depth ...`) enter the vocabulary on both streams. The tick advance runs
+  # BEFORE every FX pose below, so their ages stay zero; 12 px of depth
+  # (144 ticks at 2 px/s) keeps the band well clear of every posed seat and
+  # every pickup-spawn stop the sweep hovers at.
+  config.paintFloodPxPerSec = 2
   result = initCtfForTest(config)
   for i in 0 ..< 6:
     discard result.addPlayer("p" & $i)
   result.startGame()
+  result.paintFloodStartTick = 0
+  result.tickCount = 144
   for i in 0 ..< result.players.len:
     result.players[i].team = (if i mod 2 == 0: Red else: Blue)
   let

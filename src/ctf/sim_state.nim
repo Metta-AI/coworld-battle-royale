@@ -161,6 +161,12 @@ proc gameHash*(sim: SimServer): uint64 =
   result.mixHashInt(sim.startWaitTimer)
   result.mixHashBool(sim.timeLimitReached)
   result.mixHashInt(sim.overtimeTicks)
+  # Mixed only once the flood latches: a flood-off game's hash stream stays
+  # byte-identical to the pre-flood engine (no GameVersion bump, fixtures
+  # unchanged), while a latched flood pins its start tick into every replay
+  # hash from that tick on.
+  if sim.paintFloodStartTick >= 0:
+    result.mixHashInt(sim.paintFloodStartTick)
   result.mixHashBool(sim.isDraw)
   result.mixHashBool(sim.needsReregister)
   result.mixHashInt(sim.nextJoinOrder)

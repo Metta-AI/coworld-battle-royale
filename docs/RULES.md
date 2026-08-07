@@ -627,6 +627,29 @@ guarantees at least **500 ticks** remain on the clock, extending the time
 limit if needed — a timed round never ends in the middle of a fight or a
 heart run. The broadcast clock counts down against the extended limit.
 
+## Paint flood (config-gated endgame)
+
+An anti-stalling mode that makes timeout draws effectively impossible. Off by
+default; a league turns it on with `paintFloodPxPerSec > 0` (requires a time
+limit).
+
+- When the game clock reaches **`paintFloodStartSec` seconds remaining**
+  (default 20), killer paint starts flowing in from **all four map edges** at
+  **`paintFloodPxPerSec` map-pixels per second**, shrinking the safe area
+  toward the center.
+- **Touching the flooded band is death** — a normal death (lives, deaths
+  stat, heart return, respawn if lives remain). Respawning still uses your
+  endzone; once the flood has swallowed it, each fresh spawn is consumed too,
+  so lives drain until a team is wiped.
+- The flood **never retreats**: kills still floor the clock (see above), but
+  the band keeps advancing through the extension, so the round always ends in
+  a capture, a wipe, or the flood consuming the field — not a timeout.
+- **Observability**: the band is drawn on both the board and the player
+  stream (unfogged — the front is world knowledge), and an invisible marker
+  states it outright: `paint flood depth <n> rate <n> start <n>`, present
+  from the first tick whenever the mode is on (depth 0 until the flood
+  latches). Every map pixel within `depth` of any edge is deadly.
+
 ## Scoring
 
 Scoring is **sparse and win-only**:
@@ -701,6 +724,8 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Endzone radius (`mapEndzoneRadius`) | 0 (drawn 110-140, size-scaled) | Compact endzones only: scoring radius / half-extent in px, 90..220. Needs `mapEndzone` |
 | Base depth (`mapBaseDepth`) | 0 (drawn 520-620) | Compact endzones only: home anchor permille of the half-field, 400..800; SMALLER sets the base further from the edge. Needs `mapEndzone` |
 | Time limit (`MaxTicks`) | 5000 ticks (~3.5 min) | Round length cap before the lose-lose draw |
+| Paint-flood rate (`paintFloodPxPerSec`) | 0 (off) | Endgame flood advance in px/s from every edge; killer paint, see "Paint flood". Needs a time limit |
+| Paint-flood start (`paintFloodStartSec`) | 20s | Clock seconds remaining that latch the flood on; it never retreats once latched |
 | Map size | 1235×659 (default) | Varies by map class; the actual size and team count are stated in the `game teams <count> map <width>x<height>` init marker |
 
 Engine tick rate is **24 ticks/sec** (inherited from Crewrift); all

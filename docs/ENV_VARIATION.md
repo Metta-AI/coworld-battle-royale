@@ -153,6 +153,8 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 | `maxTicks` | int / `5000` | `maxGameTicks` | `>=0` | Time limit per game (0 = unlimited). |
 | `gameOverTicks` | int / `360` | | `>=0` | End-screen dwell ticks. |
 | `maxGames` | int / `0` | | `>=0` | Games before server stops (0 = unlimited). |
+| `paintFloodPxPerSec` | int / `0` (off) | | `>=0`; `>0` needs `maxTicks>0` | Paint-flood endgame: killer paint advances inward from every map edge at this many px/s, killing on touch (see RULES.md "Paint flood"). |
+| `paintFloodStartSec` | int / `20` | | `>=1` | Clock seconds remaining that latch the flood on; once latched it never retreats. |
 
 Reward consts: `WinReward`=+1, `LossReward`=−1, `TimeoutReward`=−1 (draw penalty).
 `ActionClockFloorTicks`=500 keeps a timed game from ending mid-action. Win logic:

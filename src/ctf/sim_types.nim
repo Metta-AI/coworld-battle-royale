@@ -399,6 +399,10 @@ const
   ActionClockFloorTicks* = 500  ## a kill or heart steal leaves at least this
                                 ## many ticks on the clock, so a timed game
                                 ## never ends mid-action.
+  PaintFloodStartSec* = 20    ## paint-flood default: the flood latches on
+                              ## with this many clock seconds remaining
+                              ## (config paintFloodStartSec; the mode itself
+                              ## arms via paintFloodPxPerSec > 0).
   MaxGames* = 0  ## 0 = no limit.
   MaxPlayers* = 32
   MinPlayers* = 16
@@ -917,6 +921,17 @@ type
                               ## geometry and never re-runs the generator.
     closedRoster*: bool
     slots*: seq[PlayerSlotConfig]
+    paintFloodPxPerSec*: int  ## paint-flood endgame: how fast the killer
+                              ## paint advances inward from every map edge,
+                              ## in map px/second (integer; TargetFps ticks
+                              ## per second). 0 = the mode is off — the
+                              ## default, byte-identical to the pre-flood
+                              ## game. Requires maxTicks > 0 when set.
+    paintFloodStartSec*: int  ## paint-flood endgame: the flood latches on
+                              ## when the game clock has this many seconds
+                              ## remaining (default PaintFloodStartSec).
+                              ## Once latched it advances monotonically —
+                              ## action-floor overtime never retreats it.
     handicaps*: array[Team, int]  ## per-team handicap in PERMILLE (0..1000),
                                   ## authored as a 0.0..1.0 float. 0 = normal
                                   ## (the default, byte-identical to no
@@ -1277,6 +1292,11 @@ type
     timeLimitReached*: bool
     overtimeTicks*: int        ## clock extension banked by the action floor
                                ## (kills / heart steals); resets each game.
+    paintFloodStartTick*: int  ## tickCount at which the paint flood latched
+                               ## on; -1 before. Deterministic (derived from
+                               ## the clock), so replays re-derive it; mixed
+                               ## into gameHash only once latched, keeping
+                               ## flood-off games hash-identical.
     isDraw*: bool
     needsReregister*: bool
     gameEventLoggingEnabled*: bool
