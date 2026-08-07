@@ -331,6 +331,35 @@ suite "sprite label contract":
     var emitted = game.collectLabels()
     for label in emitted4:
       emitted.incl(label)
+    # Trenches never appear in EITHER fixture above: the hand-authored
+    # default arena ships none (see test_trenches.nim, "the default arena
+    # digs no trenches") and 4-team maps never dig any either — so the
+    # `trench <n>,<n> <n>,<n>` marker family needs its own minimal fixture.
+    # Reuses test_trenches.nim's exact deterministic recipe (mapPits:1,
+    # mapSeed 4242 — one pit, anchored at the generated map's center by the
+    # odd-count rule) and just the INIT snapshot (the marker is stated once
+    # at t=0, in addMapMarkers, not re-emitted per frame — the full
+    # collectLabels() walk is unneeded here). Player names match "p0"/"p1"
+    # (fullFeatureGame's convention): a literal "red"/"blue" name collides
+    # with the color-token normalization pass below and salts in unrelated
+    # ADDED lines. Only the `trench ` family is merged in — this fixture's
+    # 2-player roster also emits a differently-shaped team-score denominator
+    # than fullFeatureGame's 6-player one, which is roster noise this
+    # addition has no business dragging into the golden vocabulary.
+    var trenchConfig = defaultGameConfig()
+    trenchConfig.update("""{"mapPath": "gen", "mapSeed": 4242, "mapPits": 1}""")
+    var trenchGame = initCtfForTest(trenchConfig)
+    discard trenchGame.addPlayer("p0")
+    discard trenchGame.addPlayer("p1")
+    trenchGame.startGame()
+    doAssert trenchGame.gameMap.trenches.len == 1,
+      "trench label fixture rolled zero trenches — recheck the seed"
+    var trenchViewer = initGlobalViewerState()
+    for message in trenchGame.buildGlobalMessages(trenchViewer):
+      if message.kind == spkSprite:
+        let normalized = message.sprite.label.normalizeLabel()
+        if normalized.startsWith(LabelPrefixTrench):
+          emitted.incl(normalized)
     # Regenerating: `nim r -d:writeLabelManifest tests/test_label_contract.nim`
     # rewrites the golden from what the engine emits NOW, and the resulting git
     # diff is the artifact to review. Deliberately opt-in — if the test could

@@ -764,6 +764,23 @@ engine predating it, never "no handicap". The deltas are stated so a policy
 can adapt to a weakened team (its own or an enemy's) without re-deriving the
 interpolation formula.
 
+**So are the trenches.** The same init snapshot carries one invisible 1x1
+marker per dug pit labeled `trench <x0>,<y0> <x1>,<y1>`: the pit's INCLUSIVE
+bounding-box corners in map pixels, one marker per entry in the map's
+trench list. Match the prefix `trench `; the tail splits on spaces into
+`["<x0>,<y0>", "<x1>,<y1>"]`, each corner splitting once more on the comma.
+Trenches are dug pits you can stand in for cover: climbing OUT (moving away
+from the pit's center) costs 1/5 max speed, firing from inside triples your
+cooldown, and an incoming gun shot has a 70% chance to be ducked while you're
+inside — none of that changes line of sight. Before this marker existed,
+trenches were invisible to a policy: the `walkability map` sprite is a
+BINARY mask, and a trench floor reads identically to open floor on it — a
+policy could stand in one, or walk through one under fire, with no signal it
+was there at all. Trenches are a 2-team generated-map feature (never on
+4-team maps, and the hand-authored default `arena` never digs any) with up
+to 64 per match; a map that rolled zero pits emits zero markers, not an
+empty-box one.
+
 **So is your own aim.** Every player frame carries an invisible 1x1 HUD
 marker labeled `own aim <brads>`: your turret angle as of the rendered tick,
 in brads (256 per turn, 0 = east, counter-clockwise). Match the prefix `own aim `
