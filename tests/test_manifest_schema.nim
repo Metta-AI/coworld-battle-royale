@@ -124,8 +124,9 @@ suite "league manifest config_schema vs GameConfig":
     # perkVocabulary block (falling back to parsing the description's
     # "Vocabulary: name (effect), …" sentence), so the block must exist,
     # cover EXACTLY the engine's perk names, and restate what the prose
-    # says — a perk added to the engine or a copy edit to the description
-    # fails here instead of silently desyncing the picker.
+    # says — a perk added to the engine, or an edit to a perk's "name
+    # (effect)" phrase in the description, fails here instead of silently
+    # desyncing the picker.
     let
       perksSchema = schema["properties"]["perks"]
       vocabulary = perksSchema["perkVocabulary"]
