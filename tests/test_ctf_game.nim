@@ -2,7 +2,7 @@ import
   helpers,
   std/unittest,
   bitworld/spriteprotocol,
-  ctf/sim
+  ctf/[global, labels, sim]
 
 suite "ctf game":
   test "starts in playing with both flags home on their pedestals":
@@ -39,6 +39,44 @@ suite "ctf game":
     check sim.flags[Red].carrier == -1
     check sim.flags[Red].x == redHome.x
     check sim.flags[Red].y == redHome.y
+
+  test "the planted heart sprite is centered on the grab point":
+    # tryPickupFlags grabs within FlagPickupRange (12px) of flag.x/flag.y,
+    # and a sprite object's CENTER is the only position a label-scanning
+    # policy can read (mapPos in players/baseline). The old bottom-anchored
+    # placement of the 60px planted banner put that perceived center 28px
+    # above the grab point — outside the grab radius — so policies walked
+    # to the heart they saw, stood on it, and could never pick it up. Both
+    # streams must place the banner's center on the exact grab point.
+    var sim = twoTeamGame()
+    var
+      gstate = initGlobalViewerState()
+      pstate: PlayerViewerState
+    let streams = [
+      (sim.buildPlayerMessages(0, pstate), 1),
+      (sim.buildGlobalMessages(gstate),
+        boardRenderScaleFor(sim.gameMap.width, sim.gameMap.height))
+    ]
+    for (messages, scale) in streams:
+      for team in sim.teams():
+        # The planted-banner sprite def, found by its contract label.
+        var
+          spriteId = -1
+          w, h: int
+        for m in messages:
+          if m.kind == spkSprite and
+              m.sprite.label == labelFlagPlanted(teamText(team)):
+            spriteId = m.sprite.id
+            w = m.sprite.width
+            h = m.sprite.height
+        check spriteId >= 0
+        var placed = false
+        for m in messages:
+          if m.kind == spkObject and m.objectDef.spriteId == spriteId:
+            placed = true
+            check m.objectDef.x + w div 2 == sim.flags[team].x * scale
+            check m.objectDef.y + h div 2 == sim.flags[team].y * scale
+        check placed
 
   test "a dead player cannot steal a flag":
     var sim = twoTeamGame()

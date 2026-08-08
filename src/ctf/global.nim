@@ -6382,11 +6382,17 @@ proc buildSpriteProtocolPlayerUpdates*(
             FlagSpriteBase + ord(team)
           )
         else:
-          # Home: the BIG planted banner, centered + bottom-anchored on the pedestal.
+          # Home: the BIG planted banner, CENTERED on the pedestal. The sprite
+          # object's center is the only heart position a policy can read, and
+          # tryPickupFlags measures its FlagPickupRange touch radius from
+          # flag.x/flag.y — so the drawn center must be that exact point. The
+          # old bottom-anchored placement put the perceived center 28px above
+          # the grab point, outside the 12px radius: policies walked to the
+          # heart they saw and could never pick it up.
           result.addBoardObject(
             objectId,
             flag.x - PlantedFlagW div 2,
-            flag.y - (PlantedFlagH - 2),
+            flag.y - PlantedFlagH div 2,
             flag.y + 1,
             MapLayerId,
             PlantedFlagSpriteBase + ord(team)
@@ -7532,11 +7538,13 @@ proc buildSpriteProtocolUpdates*(
         heartSpriteId
       )
     else:
-      # Home: the BIG planted banner, centered + bottom-anchored on the pedestal.
+      # Home: the BIG planted banner, CENTERED on the pedestal — same anchor
+      # as the player stream (see the comment there): the sprite center must
+      # sit on flag.x/flag.y, the point tryPickupFlags actually grabs at.
       result.addBoardObject(
         objectId,
         flag.x - PlantedFlagW div 2,
-        flag.y - (PlantedFlagH - 2),
+        flag.y - PlantedFlagH div 2,
         flag.y + 1,
         MapLayerId,
         PlantedFlagSpriteBase + ord(team)

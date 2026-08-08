@@ -967,6 +967,13 @@ the fiction stayed heart. This document claimed `red heart` / `blue heart` until
 generated `tests/label_manifest.txt` is the ground truth if this text and the
 engine ever disagree again.
 
+**The planted heart sprite's CENTER is the grab point.** Walk your body center
+to within the 12px touch radius of the `<color> flag planted` sprite's center
+and the steal happens on its own — there is no grab button. (Before 2026-08-08
+the big planted banner was bottom-anchored, which put its visual center ~28px
+above the grab point: policies that walked onto the heart they saw stood just
+outside the radius and could never pick it up.)
+
 Grenades add the labels documented in the Grenades section, and the throw
 button is input mask bit 128.
 
