@@ -2,6 +2,7 @@ import
   helpers,
   std/unittest,
   bitworld/spriteprotocol,
+  supersnappy,
   ctf/[global, labels, sim]
 
 suite "ctf game":
@@ -77,6 +78,38 @@ suite "ctf game":
             check m.objectDef.x + w div 2 == sim.flags[team].x * scale
             check m.objectDef.y + h div 2 == sim.flags[team].y * scale
         check placed
+
+  test "the planted heart gem is painted erect above the grab point":
+    # The companion to the center == grab-point test above, guarding the half
+    # that test cannot see: WHERE the paint sits inside the canvas. Centering
+    # the object on the grab point with the gem filling the whole canvas
+    # passed that test while drawing the gem sunk halfway into the pedestal
+    # (the 2026-08-08 regression). The contract is a double-height canvas with
+    # every painted pixel in the TOP half — the gem stands on the pedestal
+    # with its tip at the object center — so the bottom half must be fully
+    # transparent and the top half must actually carry the gem.
+    var sim = twoTeamGame()
+    var gstate = initGlobalViewerState()
+    let messages = sim.buildGlobalMessages(gstate)
+    for team in sim.teams():
+      var found = false
+      for m in messages:
+        if m.kind == spkSprite and
+            m.sprite.label == labelFlagPlanted(teamText(team)):
+          found = true
+          let raw = supersnappy.uncompress(m.sprite.compressedPixels)
+          # Wire dims are the actual raster dims of the payload.
+          let
+            w = m.sprite.width
+            h = m.sprite.height
+          check raw.len >= w * h * 4
+          var topAlpha, bottomAlpha = 0
+          for i in 0 ..< w * h:
+            if raw[i * 4 + 3] > 0'u8:
+              if i div w < h div 2: inc topAlpha else: inc bottomAlpha
+          check bottomAlpha == 0
+          check topAlpha > 0
+      check found
 
   test "a dead player cannot steal a flag":
     var sim = twoTeamGame()

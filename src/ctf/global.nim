@@ -125,6 +125,17 @@ const
                                ## reads as a real objective on the 96px pedestal.
   PlantedFlagW = FlagBannerW * PlantedFlagScale
   PlantedFlagH = FlagBannerH * PlantedFlagScale
+  PlantedFlagCanvasH = PlantedFlagH * 2
+                               ## The planted banner's canvas is double the gem's
+                               ## height, gem painted in the TOP half, transparent
+                               ## below. The OBJECT stays centered on flag.x/flag.y
+                               ## (the grab point, the only heart position a
+                               ## label-scanning policy can read — see the
+                               ## sprite-center == grab-point regression test), and
+                               ## the padding puts the DRAWN gem's tip at the canvas
+                               ## center: the gem stands erect on the pedestal with
+                               ## its point on the grab spot, instead of lying sunk
+                               ## in the disc.
   PlantedFlagSpriteBase = 708  ## scaled home-heart sprites: 708..711 by team.
   GameOverIconSpriteBase = 712 ## compact roster-chip soldiers: 712..715 by team.
   GameOverIconSize = 14        ## roster chip footprint (fits the game-over row).
@@ -4152,7 +4163,17 @@ proc buildPlantedFlagSprite(team: Team): seq[uint8] {.measure.} =
   ## The HOME heart-gem, loaded NATIVELY at the big pedestal footprint (not an
   ## upscale of the tiny carried sprite) so the hand-painted facets stay crisp.
   ## It reads as a real objective standing on the pedestal, not a thumbnail.
-  loadHeartSprite(team, PlantedFlagW * boardScale)
+  ##
+  ## Painted into the TOP half of a PlantedFlagW x PlantedFlagCanvasH canvas
+  ## (see PlantedFlagCanvasH): the object centers on the grab point while the
+  ## gem's tip lands ON it, so the heart stands erect out of the pedestal. The
+  ## gem raster is square and canvas-wide, so it is exactly the canvas's first
+  ## gemSize x gemSize pixels; the bottom half stays transparent.
+  let
+    gemSize = PlantedFlagW * boardScale
+    gem = loadHeartSprite(team, gemSize)
+  result = newSeq[uint8](gemSize * PlantedFlagCanvasH * boardScale * 4)
+  copyMem(result[0].addr, gem[0].addr, gem.len)
 
 proc buildFlagAuraSprite(team: Team): seq[uint8] {.measure.} =
   ## Builds the soft carrier halo in the FLAG's team color: a feathered disc
@@ -4210,7 +4231,7 @@ proc addFlagSprites(
       spriteDefs,
       PlantedFlagSpriteBase + ord(team),
       PlantedFlagW,
-      PlantedFlagH,
+      PlantedFlagCanvasH,
       buildPlantedFlagSprite(team),
       labelFlagPlanted(teamText(team)),
       native = boardScale
@@ -6382,17 +6403,18 @@ proc buildSpriteProtocolPlayerUpdates*(
             FlagSpriteBase + ord(team)
           )
         else:
-          # Home: the BIG planted banner, CENTERED on the pedestal. The sprite
-          # object's center is the only heart position a policy can read, and
-          # tryPickupFlags measures its FlagPickupRange touch radius from
-          # flag.x/flag.y — so the drawn center must be that exact point. The
-          # old bottom-anchored placement put the perceived center 28px above
-          # the grab point, outside the 12px radius: policies walked to the
-          # heart they saw and could never pick it up.
+          # Home: the BIG planted banner. The sprite object's CENTER is the only
+          # heart position a policy can read, and tryPickupFlags measures its
+          # FlagPickupRange touch radius from flag.x/flag.y — so the object
+          # center must be that exact point (the sprite-center == grab-point
+          # regression test pins this). The canvas is double-height with the gem
+          # painted in the TOP half (PlantedFlagCanvasH), so the DRAWN gem still
+          # stands erect on the pedestal with its tip at the grab point rather
+          # than lying sunk in the disc.
           result.addBoardObject(
             objectId,
             flag.x - PlantedFlagW div 2,
-            flag.y - PlantedFlagH div 2,
+            flag.y - PlantedFlagCanvasH div 2,
             flag.y + 1,
             MapLayerId,
             PlantedFlagSpriteBase + ord(team)
@@ -7538,13 +7560,14 @@ proc buildSpriteProtocolUpdates*(
         heartSpriteId
       )
     else:
-      # Home: the BIG planted banner, CENTERED on the pedestal — same anchor
-      # as the player stream (see the comment there): the sprite center must
-      # sit on flag.x/flag.y, the point tryPickupFlags actually grabs at.
+      # Home: the BIG planted banner — same anchor as the player stream (see
+      # the comment there): the OBJECT center sits on flag.x/flag.y, the point
+      # tryPickupFlags actually grabs at, while the double-height canvas keeps
+      # the drawn gem erect with its tip on that point.
       result.addBoardObject(
         objectId,
         flag.x - PlantedFlagW div 2,
-        flag.y - PlantedFlagH div 2,
+        flag.y - PlantedFlagCanvasH div 2,
         flag.y + 1,
         MapLayerId,
         PlantedFlagSpriteBase + ord(team)
