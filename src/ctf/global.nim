@@ -303,6 +303,30 @@ const
                                  ## few fading per-tick snapshots and respawns
                                  ## let carriers overlap, so size to the
                                  ## player count like every shooter pool.
+  ## Cardboard barriers (config-gated pickups + standing half-hexes).
+  ## Static sprites sit in the 1488..1499 gap (above the bubble deform
+  ## variants at 1424..1487, clear of the corpses at 1500); the standing pool
+  ## sits at 16200 (above the hit splats at 16100..16163, clear of the
+  ## splatter/hit families below 16164). Objects take a fresh 36600 zone
+  ## (above the puddle markers at 36500..36563, clear of the damage pops at
+  ## 38000).
+  BarrierPickupSpriteId = 1490   ## folded cardboard sheet on its spawn.
+  BarrierCarrySpriteId = 1491    ## the "barrier carried" marker over a carrier.
+  BarrierUpSpriteBase = 16200    ## per-instance standing half-hex art:
+                                 ## 16200..16215 (MaxBarriersPlaced). The pixels
+                                 ## are baked from the barrier's OWN vertex
+                                 ## geometry (facing included) and its damage
+                                 ## state; the label carries x,y/facing/hp, so
+                                 ## a state change re-ships the definition —
+                                 ## the rotating-diamond idiom.
+  BarrierPickupSize = 18         ## px footprint of the folded pickup sheet.
+  BarrierCarrySize = 10          ## px footprint of the carried marker.
+  BarrierPickupObjectBase = 36600  ## pickup spawns: up to 2 per team on a
+                                 ## 4-team map (8), width 8.
+  BarrierCarryObjectBase = 36620 ## carried markers: one per player,
+                                 ## 36620..36651.
+  BarrierUpObjectBase = 36660    ## standing barriers: 36660..36675
+                                 ## (MaxBarriersPlaced).
   RotDiamondSpriteBase = 1401    ## spinning diamond frames: 1401..1416;
                                  ## 850 collided with CorpseSpriteBase.
   RotDiamondObjectBase = 19610   ## spinning center diamonds: 19610..19617;
@@ -735,6 +759,9 @@ const
     ("map markers", MapMarkerObjectBase, 1000),
     ("trench markers", TrenchMarkerObjectBase, TrenchMarkerPoolWidth),
     ("puddle markers", PuddleMarkerObjectBase, PuddleMarkerPoolWidth),
+    ("barrier pickups", BarrierPickupObjectBase, 8),
+    ("barrier carry markers", BarrierCarryObjectBase, MaxPlayers),
+    ("barriers standing", BarrierUpObjectBase, MaxBarriersPlaced),
     ("fog runs", FogObjectBase, FogMaxRuns),
     ("tracer dots", TracerDotObjectBase, TracerMaxDots),
     ("damage pops", DamagePopObjectBase, DamagePopMaxCount),
@@ -845,6 +872,8 @@ const
     ("map markers", MapMarkerSpriteBase, 1000),
     ("trench markers", TrenchMarkerSpriteBase, TrenchMarkerPoolWidth),
     ("puddle markers", PuddleMarkerSpriteBase, PuddleMarkerPoolWidth),
+    ("barrier statics", BarrierPickupSpriteId, 2),
+    ("barriers standing", BarrierUpSpriteBase, MaxBarriersPlaced),
     ("fog runs", FogRunSpriteBase, 1000),
     ("shout bubbles", ShoutSpriteBase, ShoutMaxCount),
     ("damage pops", DamagePopSpriteBase,
@@ -5130,11 +5159,11 @@ proc addPlasmaArcFlashes(
         diameter = plasmaPulseDiameter(pulse, stage)
         px = pose.x + int(round(ux * forward + rx * right))
         py = pose.y + int(round(uy * forward + ry * right))
-      # The damage cone is blocked by walls (selectArcVictims runs a
-      # line-of-sight test per victim), so the animation must not sail
-      # through them either: stop placing mist puffs at the first wall
-      # along the aim ray.
-      if not sim.lineOfSightClear(pose.x, pose.y, px, py):
+      # The damage cone is blocked by walls and standing cardboard
+      # (selectArcVictims runs the paint-path test per victim), so the
+      # animation must not sail through either: stop placing mist puffs at
+      # the first wall or barrier along the aim ray.
+      if not sim.paintPathClear(pose.x, pose.y, px, py):
         break
       if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
         packet.addBoardSpriteChanged(
@@ -5470,6 +5499,195 @@ proc addGrenades(
         blast.y + dy - SoundRingSize div 2,
         30000, MapLayerId, SoundRingSpriteId
       )
+
+proc barrierTeamTint(team: Team): (uint8, uint8, uint8) =
+  ## The team display color for a barrier's tape stripe, from the exported
+  ## endzone colors (the canonical "new team-colored art tints from these").
+  let c =
+    case team
+    of Red: RedEndzoneColor
+    of Blue: BlueEndzoneColor
+    of Green: GreenEndzoneColor
+    of Yellow: YellowEndzoneColor
+  (c.r, c.g, c.b)
+
+proc buildBarrierSheetSprite(): seq[uint8] =
+  ## The folded pickup: a flat cardboard sheet lying on the floor — a tan
+  ## rectangle with a darker rim and two fold creases.
+  const
+    size = BarrierPickupSize
+    left = 1
+    right = size - 2
+    top = 5
+    bottom = size - 6
+  result = newRgbaPixels(size, size)
+  for y in top .. bottom:
+    for x in left .. right:
+      let rim = x == left or x == right or y == top or y == bottom
+      let crease = (x - left) == (right - left) div 3 or
+        (x - left) == 2 * (right - left) div 3
+      if rim:
+        result.putRawRgbaPixel(y * size + x, 128, 99, 62, 255)
+      elif crease:
+        result.putRawRgbaPixel(y * size + x, 168, 133, 86, 255)
+      else:
+        result.putRawRgbaPixel(y * size + x, 205, 168, 112, 255)
+
+proc buildBarrierCarrySprite(): seq[uint8] =
+  ## The carried marker: a mini folded sheet over the carrier's head.
+  const size = BarrierCarrySize
+  result = newRgbaPixels(size, size)
+  for y in 2 .. size - 3:
+    for x in 0 ..< size:
+      let rim = x == 0 or x == size - 1 or y == 2 or y == size - 3
+      if rim:
+        result.putRawRgbaPixel(y * size + x, 128, 99, 62, 255)
+      else:
+        result.putRawRgbaPixel(y * size + x, 205, 168, 112, 255)
+
+proc buildBarrierUpSprite(barrier: PlacedBarrier): (int, int, seq[uint8]) =
+  ## Rasterizes one standing barrier's half-hex band into an RGBA buffer the
+  ## exact size of its coverage bbox, from the SAME integer vertex geometry
+  ## the sim tests paint against — the art can never disagree with the
+  ## blocking. Cardboard tan with a dark rim, a team-color tape stripe along
+  ## the flat middle side, and one dark dent per paintball hit taken.
+  let
+    w = barrier.maxX - barrier.minX + 1
+    h = barrier.maxY - barrier.minY + 1
+    (tr, tg, tb) = barrierTeamTint(barrier.team)
+  const
+    bandSq = BarrierHalfThick * BarrierHalfThick
+    coreSq = (BarrierHalfThick - 1) * (BarrierHalfThick - 1)
+  var pixels = newRgbaPixels(w, h)
+  # Dent centers: one per hit taken, walking deterministic spots along the
+  # three sides (purely cosmetic, derived from the hit count alone).
+  var dents: seq[(int, int)] = @[]
+  for k in 0 ..< clamp(BarrierHp - barrier.hp, 0, BarrierHp):
+    let
+      side = k mod 3
+      (ax, ay) = barrier.verts[side]
+      (bx, by) = barrier.verts[side + 1]
+      num = (k div 3) * 2 + 1
+      den = 2 * ((BarrierHp + 2) div 3)
+    dents.add((ax + (bx - ax) * num div den, ay + (by - ay) * num div den))
+  for py in 0 ..< h:
+    for px in 0 ..< w:
+      let
+        mx = barrier.minX + px
+        my = barrier.minY + py
+      var inBand = false
+      var inCore = false
+      var onTape = false
+      for side in 0 .. 2:
+        let
+          (ax, ay) = barrier.verts[side]
+          (bx, by) = barrier.verts[side + 1]
+        if segDistSqWithin(mx, my, ax, ay, bx, by, bandSq):
+          inBand = true
+          if segDistSqWithin(mx, my, ax, ay, bx, by, coreSq):
+            inCore = true
+            if side == 1:
+              onTape = true
+      if not inBand:
+        continue
+      var (r, g, b) = (uint8(205), uint8(168), uint8(112))
+      if not inCore:
+        (r, g, b) = (uint8(128), uint8(99), uint8(62))
+      elif onTape:
+        (r, g, b) = (tr, tg, tb)
+      for dent in dents:
+        if distSq(mx, my, dent[0], dent[1]) <= 4:
+          (r, g, b) = (uint8(84), uint8(64), uint8(40))
+          break
+      pixels.putRawRgbaPixel(py * w + px, r, g, b, 255)
+  (w, h, pixels)
+
+proc addBarriers(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  currentIds: var seq[int],
+  packet: var seq[uint8],
+  viewerIndex = -1
+) {.measure.} =
+  ## Places every cardboard-barrier visual for one view: folded pickups and
+  ## standing half-hexes fog-gated by map position, the carried marker gated
+  ## by seeing that player — the same contract as addGrenades. All-quiet on
+  ## default configs: no spawns, no carriers, no placements, nothing emitted.
+  let viewer = viewerIndex
+  template mapVisible(mx, my: int): bool =
+    viewer < 0 or sim.fovVisibleAt(viewer, mx, my)
+
+  # Folded pickups on their spawns.
+  for i in 0 ..< sim.barrierSpawns.len:
+    let spawn = sim.barrierSpawns[i]
+    if not spawn.present or not mapVisible(spawn.x, spawn.y):
+      continue
+    if spriteDefs.spriteDefinitionIndex(BarrierPickupSpriteId) < 0:
+      packet.addBoardSpriteChanged(
+        spriteDefs, BarrierPickupSpriteId,
+        BarrierPickupSize, BarrierPickupSize,
+        buildBarrierSheetSprite(), LabelBarrier
+      )
+    let objectId = BarrierPickupObjectBase + i
+    currentIds.add(objectId)
+    packet.addBoardObject(
+      objectId,
+      spawn.x - BarrierPickupSize div 2,
+      spawn.y - BarrierPickupSize div 2,
+      spawn.y, MapLayerId, BarrierPickupSpriteId
+    )
+
+  # Carried markers over the heads of carriers the viewer can see.
+  for i in 0 ..< sim.players.len:
+    let player = sim.players[i]
+    if not player.alive or not player.hasBarrier:
+      continue
+    if viewer >= 0 and i != viewer and not sim.playerVisibleTo(viewer, i):
+      continue
+    if spriteDefs.spriteDefinitionIndex(BarrierCarrySpriteId) < 0:
+      packet.addBoardSpriteChanged(
+        spriteDefs, BarrierCarrySpriteId,
+        BarrierCarrySize, BarrierCarrySize,
+        buildBarrierCarrySprite(), LabelBarrierCarried
+      )
+    let objectId = BarrierCarryObjectBase + i
+    currentIds.add(objectId)
+    packet.addBoardObject(
+      objectId,
+      player.x + CollisionW div 2 + HpBarWidth div 2 - BarrierCarrySize div 2,
+      player.overheadAnchorY() - OverheadYOffset - BarrierCarrySize,
+      30006, MapLayerId, BarrierCarrySpriteId
+    )
+
+  # Standing barriers: per-instance art baked from the instance's own vertex
+  # geometry. The label carries x,y/facing/hp, so a hit (new label) re-ships
+  # the dented definition — the rotating-diamond idiom; addSpriteChanged
+  # dedups when nothing changed.
+  for i in 0 ..< min(sim.placedBarriers.len, MaxBarriersPlaced):
+    let barrier = sim.placedBarriers[i]
+    if not mapVisible(barrier.x, barrier.y):
+      continue
+    let
+      spriteId = BarrierUpSpriteBase + i
+      label = labelBarrierUp(
+        barrier.x, barrier.y, barrier.facingBrads, barrier.hp)
+      cached = spriteDefs.spriteDefinitionIndex(spriteId)
+    if cached < 0 or spriteDefs[cached].label != label:
+      # Only rasterize when the definition will actually ship (first sight of
+      # this slot, or the hp/geometry label moved); the label mismatch makes
+      # addSpriteChanged re-send without a force flag.
+      let (w, h, pixels) = buildBarrierUpSprite(barrier)
+      packet.addBoardSpriteChanged(
+        spriteDefs, spriteId, w, h, pixels, label
+      )
+    let objectId = BarrierUpObjectBase + i
+    currentIds.add(objectId)
+    packet.addBoardObject(
+      objectId,
+      barrier.minX,
+      barrier.minY,
+      barrier.maxY, MapLayerId, spriteId
+    )
 
 proc shoutOffset(shout: Shout): (int, int) =
   ## The deterministic jitter for one shout's heard position, salted apart
@@ -6276,6 +6494,12 @@ proc buildSpriteProtocolPlayerUpdates*(
       viewerIndex = playerIndex
     )
     sim.addGrenades(
+      nextState.spriteDefs,
+      currentIds,
+      result,
+      viewerIndex = playerIndex
+    )
+    sim.addBarriers(
       nextState.spriteDefs,
       currentIds,
       result,
@@ -7157,6 +7381,7 @@ proc buildSpriteProtocolUpdates*(
   sim.addMedKits(nextState.spriteDefs, currentIds, result)
   sim.addShields(nextState.spriteDefs, currentIds, result)
   sim.addGrenades(nextState.spriteDefs, currentIds, result)
+  sim.addBarriers(nextState.spriteDefs, currentIds, result)
   sim.addPlasmaArcs(nextState.spriteDefs, currentIds, result)
   sim.addPlasmaArcFlashes(nextState.spriteDefs, currentIds, result)
   sim.addBoardShouts(nextState, currentIds, result)

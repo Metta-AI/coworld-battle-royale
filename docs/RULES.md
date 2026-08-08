@@ -90,6 +90,9 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
 - **Paint puddles** — damage-over-time floor hazards — are a **config-gated
   terrain feature**: no map has any unless `mapPuddles` requests them. See
   the Paint puddles section for their rules.
+- **Cardboard barriers** — placeable paint-blocking cover — are a
+  **config-gated pickup**: no map has any unless `barrierPickups` requests
+  them. See the Cardboard barriers section for their rules.
 - **Procedurally generated terrain is available as a config option**
   (`mapPath: "pool"` draws from a curated 20-map pool, `"gen"` + `mapSeed`
   generates directly; `mapSize` / `mapSymmetry` / `mapColumns` /
@@ -624,6 +627,43 @@ What that means in practice:
   grenade pickups: you see one only where you have vision, and a small
   marker floats over a shield carrier you can see.
 
+## Cardboard barriers
+
+- **Config-gated** (`barrierPickups`, default 0 = none): when on, each team
+  gets that many folded-cardboard pickups (1 or 2), staged on the line from
+  the team's base anchor toward map center — one at the midpoint, two at the
+  thirds — nudged to the nearest walkable floor. Every other team's spots
+  are Red's under the map's own symmetry, like the shields and spray cans.
+- **Touch a pickup to carry one folded barrier.** Either team may take
+  either side's pickups. **A barrier and a grenade cannot be carried
+  together** — both are spent with button C — so a grenade carrier walks
+  over the pickup untouched and vice versa. A taken pickup **respawns 30
+  seconds later**; the carried sheet is **lost when you die** (never
+  dropped).
+- **Press C to place it where you stand.** The cardboard unfolds instantly
+  into a **standing half-hex** — three sides of a hexagon, vertices
+  `BarrierRadius` (24px) from your center at aim −90°/−30°/+30°/+90° — with
+  the **flat middle side across your aim** (~21px in front), wrapping your
+  front. Placement is a press-edge, no charge; the grenade's hold-to-charge
+  lives on the same button but the mutually-exclusive carry keeps the press
+  unambiguous.
+- **Cardboard blocks paint, never sight.** The ~5px band stops gun shots
+  and the spray cone (both damage and the drawn mist) exactly like a wall —
+  but fog-of-war vision, movement, and grenades (which fly over every
+  obstacle) ignore it entirely. Cover you can see through and walk through.
+- **It takes 10 paintball hits** (`BarrierHp`): each blocked gun shot splats
+  on the cardboard and chips one hit; the tenth shreds it. The spray cone is
+  blocked but does no damage to it; grenade blasts ignore it.
+- **Any cog that drives into the band flattens it instantly** — including
+  the placer walking forward through their own front wall. Standing inside
+  the half-hex is safe: the band is ~21px out, well clear of a body.
+- At most **16 barriers stand at once** (`MaxBarriersPlaced`); placing past
+  the cap folds the oldest standing barrier.
+- Observation labels: `barrier` (folded pickup, fog-gated), `barrier
+  carried` (marker over a carrier you can see), and the standing half-hex
+  itself: `barrier up <x>,<y> f<brads> hp <n>` — placement center, facing,
+  and hits left, updated live as it takes paint.
+
 ## Lives & respawn
 
 - Each player has a fixed number of **lives**.
@@ -769,6 +809,9 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Puddle size (`PuddleSize`) | 64px | Nominal diameter of a paint-puddle splat (disc union; spill reaches at most 45px from its anchor) |
 | Puddle count (`mapPuddles`) | 0 (none) | Generated maps: exact total puddles (0..64); odd counts anchor one at map center |
 | Puddle damage chance (`puddleDamagePct`) | 10% | Chance of 1 damage per full second of continuous puddle occupancy (rolled at each completed second; shield soaks first) |
+| Barrier pickups (`barrierPickups`) | 0 (none) | Folded cardboard barriers per team (0..2), staged between base and center; carrying one excludes carrying a grenade |
+| Barrier strength (`BarrierHp`) | 10 hits | Gun shots a standing half-hex soaks before shredding; any cog driving into it flattens it instantly |
+| Barrier radius (`BarrierRadius`) | 24px | Center-to-vertex of the placed half-hex; the flat side stands one apothem (~21px) down the placer's aim |
 | Endzone shape (`mapEndzone`) | "" (drawn) | Generated 2-team maps: `column` (classic home strip), `disc` or `square` (compact zone around a base set back from the edge) |
 | Endzone radius (`mapEndzoneRadius`) | 0 (drawn 110-140, size-scaled) | Compact endzones only: scoring radius / half-extent in px, 90..220. Needs `mapEndzone` |
 | Base depth (`mapBaseDepth`) | 0 (drawn 520-620) | Compact endzones only: home anchor permille of the half-field, 400..800; SMALLER sets the base further from the edge. Needs `mapEndzone` |

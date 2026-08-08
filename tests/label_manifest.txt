@@ -13,6 +13,9 @@ Room Center
 Room Green Base
 Room Red Base
 Room Yellow Base
+barrier
+barrier carried
+barrier up <n>,<n> f<n> hp <n>
 blast stage <n>
 cog arm <color>
 cog gun <color>

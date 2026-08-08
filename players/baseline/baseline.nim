@@ -154,6 +154,8 @@ const
                               # reach is GrenadeBlastRadius + PlayerHalf
   NadeFullChargeTicks = 24    # ~1s of holding C reaches max range
   NadePickupDetour = 90.0     # grab a corner pickup within this detour range
+  BarrierDetour = 60.0        # worthwhile detour to grab a cardboard barrier
+  BarrierPlaceRange = 170.0   # a threat this close is worth walling off
   NadeCampTicks = 360         # -d:campNade: a STATIONARY remembered enemy stays
                               # lob-eligible this long after fogging out — a
                               # camper's position is durable knowledge, and the
@@ -2518,6 +2520,13 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     if dist(client.mapPos(o), me) <= 30.0:
       carryingNade = true
       break
+  # Cardboard barrier (config-gated): carrying one blocks grenade pickups
+  # (both spend button C), so the carry state gates the nade detours below.
+  var carryingBarrier = false
+  for o in client.spriteObjectsWithLabel(LabelBarrierCarried):
+    if dist(client.mapPos(o), me) <= 30.0:
+      carryingBarrier = true
+      break
   when defined(nadeRelay):
     if carryingNade and not bot.wasNade:
       # Fresh pickup: announce WHICH spot so the team shares the 5s respawn
@@ -2709,7 +2718,8 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       target = bot.kitPos[kit]
       objMode = "heal_detour"
 
-  if not carryingNade and not iCarry and not mateCarry and not pocketRush:
+  if not carryingNade and not carryingBarrier and not iCarry and
+      not mateCarry and not pocketRush:
     # Collect a pickup: anyone grabs one within a short detour, and the two
     # flankers own their lane's friendly-side corner spawn — it sits right on
     # their border route, so they arm up on the way out every respawn cycle.
@@ -2761,6 +2771,18 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
           if dist(p, me) <= reach:
             target = p
             break
+
+  # Cardboard barrier pickup: a cheap detour when our hands are empty (the
+  # sim refuses the grab while a grenade is carried, and vice versa). The
+  # grenade detour above wins when both are in reach.
+  if not carryingNade and not carryingBarrier and not iCarry and
+      not mateCarry and not pocketRush and objMode != "nade_grab":
+    for o in client.spriteObjectsWithLabel(LabelBarrier):
+      let p = client.mapPos(o)
+      if dist(p, me) <= BarrierDetour:
+        target = p
+        objMode = "barrier_grab"
+        break
 
   # Grenade danger: a visible throw-target ring marks where an enemy's lob
   # will land, and an airborne grenade is seconds from bursting — anything
@@ -3023,6 +3045,10 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   var mask = moveMask or rotBits
   if wantFire and not bot.firedLast:
     mask = moveMask or ButtonA
+  if carryingBarrier and nearThreat >= 0 and nearThreatD < BarrierPlaceRange:
+    # Wall off the closest threat: placement is a press-edge, so holding C
+    # across ticks costs nothing once the cardboard is down.
+    nadeC = true
   if nadeC:
     mask = mask or ButtonC
   bot.firedLast = (mask and ButtonA) != 0

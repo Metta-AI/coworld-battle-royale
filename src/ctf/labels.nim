@@ -56,6 +56,13 @@ const
     ## One mist puff of a firing spray cone; a burst emits a run of them.
   LabelGrenade* = "grenade"
     ## Corner paint-bomb pickup on the floor, fog-gated by map position.
+  LabelBarrier* = "barrier"
+    ## Folded cardboard barrier pickup on the floor (config-gated:
+    ## barrierPickups > 0), fog-gated by map position. Carrying one blocks
+    ## picking up a grenade and vice versa — both use button C.
+  LabelBarrierCarried* = "barrier carried"
+    ## Marker floating over a barrier carrier you can see. Press C to unfold
+    ## the cardboard where you stand, flat side across your aim.
   LabelGrenadeAir* = "grenade air"
     ## A grenade in flight. It travels OVER walls, so an airborne orb is a
     ## threat even with no line of sight to the thrower.
@@ -197,6 +204,17 @@ const
     ## entirely on 4-team maps (trenches are a 2-team-map feature) and on any
     ## map that rolled zero pits — zero markers, not an empty-box marker. See
     ## `labelTrench` for the exact tail arity.
+  LabelPrefixBarrierUp* = "barrier up "
+    ## One STANDING cardboard barrier,
+    ## `barrier up <x>,<y> f<brads> hp <n>`: the visible half-hex sprite's
+    ## own label (not an invisible marker), fog-gated by the barrier's center.
+    ## `<x>,<y>` is the placement center in map pixels, `f<brads>` the
+    ## placer's aim at placement (0..255, the flat middle side faces that
+    ## way, BarrierRadius=24px out), and `hp <n>` the paintball hits it can
+    ## still take (starts at 10). The band blocks every PAINT path — gun and
+    ## spray — but never sight, movement, or grenades; any cog that drives
+    ## into the band flattens it instantly. See `labelBarrierUp` for the
+    ## exact tail arity.
   LabelPrefixPuddle* = "puddle "
     ## One paint puddle's bounding-box marker, `puddle <x0>,<y0> <x1>,<y1>`:
     ## an invisible 1x1 object in the init snapshot stating one hazard blob's
@@ -353,6 +371,14 @@ proc labelHandicap*(color: string; permille, hp, lives, spdPct,
   LabelPrefixHandicap & color & " " & $permille &
     " hp " & $hp & " lives " & $lives & " spd " & $spdPct & " miss " & $missPct
 
+proc labelBarrierUp*(x, y, facingBrads, hp: int): string =
+  ## One standing barrier's label, `barrier up <x>,<y> f<brads> hp <n>`. A
+  ## consumer matches LabelPrefixBarrierUp and splits the tail on spaces into
+  ## exactly `["<x>,<y>", "f<brads>", "hp", "<n>"]`; the corner splits once
+  ## more on the comma. The hp tail doubles as the render-cache buster: a hit
+  ## changes the label, which re-ships the (newly dented) sprite definition.
+  LabelPrefixBarrierUp & $x & "," & $y & " f" & $facingBrads & " hp " & $hp
+
 proc labelPerks*(color: string; groups: seq[string];
     armorHp, scopeAim, grenadeRange, thrusterSpeed, luckChance,
     luckDamage: int): string =
@@ -497,6 +523,8 @@ const PolicyScannedLabels* = [
   LabelGrenade,
   LabelGrenadeAir,
   LabelGrenadeCarried,
+  LabelBarrier,
+  LabelBarrierCarried,
   LabelThrowTarget,
   labelFlag("red"),
   labelFlag("blue"),

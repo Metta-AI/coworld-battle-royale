@@ -2,6 +2,7 @@
 {.warning[UnusedImport]: off.}
 import
   test_artlog,
+  test_barriers,
   test_blocked_damage,
   test_debug_overlay,
   test_endzone_shapes,

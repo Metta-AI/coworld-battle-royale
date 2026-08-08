@@ -114,6 +114,24 @@ proc plasmaArcSpawnPoints*(gameMap: CtfMap): seq[tuple[x, y: int]] =
           MapPoint(x: inset, y: gameMap.center.y - gameMap.plusArmHalf() div 2)
   gameMap.teamOrbitPoints(red)
 
+proc barrierSpawnPoints*(gameMap: CtfMap, perTeam: int): seq[tuple[x, y: int]] =
+  ## `perTeam` cardboard barrier pickup points per team (config-gated; empty
+  ## by default). RED's spots are staged on the line from its anchor toward
+  ## map center — the walk out of the base every attacker and defender makes —
+  ## and every other team's are its images under the map's own symmetry
+  ## (`teamImagePoint` via teamOrbitPoints), so no team's pickup sits in
+  ## terrain the others' don't get. One spot lands at the midpoint; two
+  ## split the line in thirds.
+  let
+    anchor = gameMap.teamAnchor(Red)
+    center = gameMap.center
+  for k in 0 ..< perTeam:
+    let red = MapPoint(
+      x: anchor.x + (center.x - anchor.x) * (k + 1) div (perTeam + 1),
+      y: anchor.y + (center.y - anchor.y) * (k + 1) div (perTeam + 1)
+    )
+    result.add(gameMap.teamOrbitPoints(red))
+
 template placeWalkablePickups(
   sim: var SimServer,
   spawnsField: untyped,
@@ -178,6 +196,18 @@ proc resetPlasmaArcs*(sim: var SimServer) =
     sim.players[i].arcAimBrads = -1
     sim.players[i].arcHitMask = 0
 
+proc resetBarriers*(sim: var SimServer) =
+  ## Places the config-gated barrier pickups (none by default), clears every
+  ## standing barrier off the field, and empties every cog's hands of
+  ## cardboard.
+  sim.placeWalkablePickups(
+    barrierSpawns,
+    sim.gameMap.barrierSpawnPoints(sim.config.barrierPickups)
+  )
+  sim.placedBarriers = @[]
+  for i in 0 ..< sim.players.len:
+    sim.players[i].hasBarrier = false
+
 proc startGame*(sim: var SimServer) =
   sim.logGameEvent("game started: players=" & $sim.players.len)
   sim.recentShots = @[]
@@ -218,6 +248,7 @@ proc startGame*(sim: var SimServer) =
   sim.resetGrenades()
   sim.resetShields()
   sim.resetPlasmaArcs()
+  sim.resetBarriers()
   sim.emitPhaseChange(Playing)
   sim.phase = Playing
   sim.gameStartTick = sim.tickCount
@@ -532,6 +563,99 @@ proc lineOfSightClear*(sim: SimServer, ax, ay, bx, by: int): bool =
       return false
   true
 
+proc segDistSqWithin*(px, py, ax, ay, bx, by, maxDistSq: int): bool =
+  ## True when the point is within sqrt(maxDistSq) of the segment. All-integer
+  ## (int64 intermediates so wasm32 and native agree bit-for-bit): the closest
+  ## point a + (t/len2)*d is compared without the division by scaling both
+  ## sides by len2^2.
+  let
+    dx = int64(bx - ax)
+    dy = int64(by - ay)
+    len2 = dx * dx + dy * dy
+    apx = int64(px - ax)
+    apy = int64(py - ay)
+  if len2 == 0:
+    return apx * apx + apy * apy <= int64(maxDistSq)
+  let t = clamp(apx * dx + apy * dy, 0'i64, len2)
+  let
+    ex = apx * len2 - t * dx
+    ey = apy * len2 - t * dy
+  ex * ex + ey * ey <= int64(maxDistSq) * len2 * len2
+
+proc barrierIndexAt*(sim: SimServer, mx, my: int): int =
+  ## Index of the standing barrier whose cardboard band covers this map pixel,
+  ## or -1. A pixel is covered when it lies within BarrierHalfThick of one of
+  ## the three half-hex sides.
+  const bandSq = BarrierHalfThick * BarrierHalfThick
+  for i in 0 ..< sim.placedBarriers.len:
+    let b = sim.placedBarriers[i]
+    if mx < b.minX or mx > b.maxX or my < b.minY or my > b.maxY:
+      continue
+    for side in 0 .. 2:
+      if segDistSqWithin(mx, my, b.verts[side].x, b.verts[side].y,
+          b.verts[side + 1].x, b.verts[side + 1].y, bandSq):
+        return i
+  -1
+
+proc playerTouchesBarrier(sim: SimServer, playerIndex, barrierIndex: int): bool =
+  ## True when the player's solid footprint reaches the barrier's cardboard
+  ## band (the footprint box is treated as a disc of PlayerHalf — the same
+  ## radius, deterministic, and a hair forgiving on the corners, which reads
+  ## right for "drove into the cardboard").
+  const reachSq = (PlayerHalf + BarrierHalfThick) * (PlayerHalf + BarrierHalfThick)
+  let
+    b = sim.placedBarriers[barrierIndex]
+    px = sim.players[playerIndex].x + CollisionW div 2
+    py = sim.players[playerIndex].y + CollisionH div 2
+  if px < b.minX - PlayerHalf or px > b.maxX + PlayerHalf or
+      py < b.minY - PlayerHalf or py > b.maxY + PlayerHalf:
+    return false
+  for side in 0 .. 2:
+    if segDistSqWithin(px, py, b.verts[side].x, b.verts[side].y,
+        b.verts[side + 1].x, b.verts[side + 1].y, reachSq):
+      return true
+  false
+
+proc paintPathClear*(sim: SimServer, ax, ay, bx, by: int): bool =
+  ## The check every PAINT path uses (gun corridor samples, spray cone): like
+  ## lineOfSightClear, but also stopped by standing cardboard barriers.
+  ## Vision (fog shadowcast and the render-side LOS) keeps the wall-only
+  ## test — cardboard blocks paint, never sight. Zero extra cost when no
+  ## barrier stands.
+  if not sim.lineOfSightClear(ax, ay, bx, by):
+    return false
+  if sim.placedBarriers.len == 0:
+    return true
+  let
+    dx = bx - ax
+    dy = by - ay
+    steps = max(abs(dx), abs(dy))
+  for s in 1 .. steps:
+    if sim.barrierIndexAt(ax + dx * s div steps, ay + dy * s div steps) >= 0:
+      return false
+  true
+
+proc flattenBarrier(sim: var SimServer, index: int, color: uint8,
+                    cause: string) =
+  ## Removes one standing barrier with a crumple splatter at its center
+  ## (cosmetic only) and a log line; `color` picks the splatter/log actor.
+  let b = sim.placedBarriers[index]
+  sim.splatters.add SplatterFx(
+    x: b.x, y: b.y, tick: sim.tickCount, color: color, hit: false
+  )
+  sim.logGameEvent(playerColorText(color) & " " & cause)
+  sim.placedBarriers.delete(index)
+
+proc damageBarrier(sim: var SimServer, index, hitX, hitY: int, color: uint8) =
+  ## Applies one paintball hit to a standing barrier: a splat on the
+  ## cardboard, and after BarrierHp hits the barrier is gone.
+  sim.splatters.add SplatterFx(
+    x: hitX, y: hitY, tick: sim.tickCount, color: color, hit: false
+  )
+  dec sim.placedBarriers[index].hp
+  if sim.placedBarriers[index].hp <= 0:
+    sim.flattenBarrier(index, color, "shredded a cardboard barrier")
+
 proc gameTicksElapsed*(sim: SimServer): int =
   ## Returns ticks elapsed since the current game left the lobby.
   if sim.gameStartTick < 0:
@@ -620,6 +744,7 @@ proc killPlayer*(
   sim.players[targetIndex].arcTicksLeft = 0
   sim.players[targetIndex].arcAimBrads = -1
   sim.players[targetIndex].throwCharge = 0
+  sim.players[targetIndex].hasBarrier = false  # carried cardboard is lost too.
   sim.players[targetIndex].puddleTicks = 0
   for team in sim.teams():
     if sim.flags[team].carrier == targetIndex:
@@ -743,7 +868,7 @@ proc selectArcVictims(
       continue
     if perpendicular > forward * halfWidthSlope + float(PlasmaArcBodyRadius):
       continue
-    if not sim.lineOfSightClear(
+    if not sim.paintPathClear(
       ax,
       ay,
       sim.players[i].x + CollisionW div 2,
@@ -991,7 +1116,7 @@ proc selectFireTarget(
         continue
       if abs(vx * uy - vy * ux) > BulletHalfWidth:
         continue
-      if not sim.lineOfSightClear(sx, sy, int(round(px)), int(round(py))):
+      if not sim.paintPathClear(sx, sy, int(round(px)), int(round(py))):
         continue
       crossed.add((t, i))
       break
@@ -1103,10 +1228,19 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
       wallX = 0
       wallY = 0
       struckWall = false
+      struckBarrier = -1
     for step in 1 .. maxRange:
       let
         rx = sx + int(round(ux * float(step)))
         ry = sy + int(round(uy * float(step)))
+      # Cardboard before stone: a standing barrier soaks the paintball (one
+      # of its BarrierHp hits) where a wall would merely wear the stain.
+      if sim.placedBarriers.len > 0:
+        struckBarrier = sim.barrierIndexAt(rx, ry)
+        if struckBarrier >= 0:
+          wallX = rx
+          wallY = ry
+          break
       if sim.isWall(rx, ry):
         struckWall = true
         wallX = rx
@@ -1115,6 +1249,12 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
       lastClear = step
     ex = sx + int(round(ux * float(lastClear)))
     ey = sy + int(round(uy * float(lastClear)))
+    if struckBarrier >= 0:
+      # The tracer visibly ends ON the cardboard, and the hit splat lands
+      # there; the paint never reaches the terrain behind it.
+      ex = wallX
+      ey = wallY
+      sim.damageBarrier(struckBarrier, wallX, wallY, shooter.color)
     # Paint that MISSES every cog carries on until it hits geometry, and dries
     # there for the rest of the match. The mark goes on the WALL PIXEL it
     # struck — not the last clear pixel in front of it, which would leave the
@@ -1355,6 +1495,71 @@ proc throwGrenade(sim: var SimServer, playerIndex: int) =
   sim.players[playerIndex].throwCharge = 0
   sim.logGameEvent(playerColorText(player.color) & " threw a grenade")
 
+proc placeBarrier(sim: var SimServer, playerIndex: int) =
+  ## Unfolds the carried cardboard into a standing half-hex centered on the
+  ## placer, flat side across their aim: vertices at aim -90/-30/+30/+90
+  ## degrees, BarrierRadius out, snapped to map pixels (every later coverage
+  ## test is integer-only). The apothem (~21px) clears the placer's own
+  ## 6px-half footprint, so placing never crushes the fresh barrier — walking
+  ## forward into it afterwards does.
+  const vertAngles = [-PI / 2.0, -PI / 6.0, PI / 6.0, PI / 2.0]
+  let
+    player = sim.players[playerIndex]
+    cx = player.x + CollisionW div 2
+    cy = player.y + CollisionH div 2
+    (ux, uy) = aimVector(player.aimBrads)
+  var barrier = PlacedBarrier(
+    x: cx,
+    y: cy,
+    facingBrads: player.aimBrads,
+    hp: BarrierHp,
+    team: player.team,
+    placedTick: sim.tickCount
+  )
+  for k in 0 .. 3:
+    let
+      c = cos(vertAngles[k])
+      s = sin(vertAngles[k])
+    barrier.verts[k] = (
+      cx + int(round(float(BarrierRadius) * (ux * c - uy * s))),
+      cy + int(round(float(BarrierRadius) * (ux * s + uy * c)))
+    )
+  barrier.minX = barrier.verts[0].x
+  barrier.maxX = barrier.verts[0].x
+  barrier.minY = barrier.verts[0].y
+  barrier.maxY = barrier.verts[0].y
+  for k in 1 .. 3:
+    barrier.minX = min(barrier.minX, barrier.verts[k].x)
+    barrier.maxX = max(barrier.maxX, barrier.verts[k].x)
+    barrier.minY = min(barrier.minY, barrier.verts[k].y)
+    barrier.maxY = max(barrier.maxY, barrier.verts[k].y)
+  barrier.minX -= BarrierHalfThick + 1
+  barrier.minY -= BarrierHalfThick + 1
+  barrier.maxX += BarrierHalfThick + 1
+  barrier.maxY += BarrierHalfThick + 1
+  # The pool is bounded (it sizes the render id block): past the cap the
+  # OLDEST standing barrier folds so the new one can stand.
+  if sim.placedBarriers.len >= MaxBarriersPlaced:
+    sim.placedBarriers.delete(0)
+  sim.placedBarriers.add(barrier)
+  sim.players[playerIndex].hasBarrier = false
+  sim.logGameEvent(
+    playerColorText(player.color) & " placed a cardboard barrier")
+
+proc applyBarrierInput(
+  sim: var SimServer,
+  playerIndex: int,
+  input, prev: InputState
+) =
+  ## Press C to unfold a carried barrier where you stand — instant, no
+  ## charge. C is the grenade button too, but a cog never holds both
+  ## (pickups are mutually exclusive), so the press is unambiguous.
+  if not sim.players[playerIndex].alive or
+      not sim.players[playerIndex].hasBarrier:
+    return
+  if input.c and not prev.c:
+    sim.placeBarrier(playerIndex)
+
 proc applyGrenadeInput(
   sim: var SimServer,
   playerIndex: int,
@@ -1590,8 +1795,12 @@ template refillElapsedPickups(sim: var SimServer, spawnsField: untyped) =
 
 proc tryPickupGrenades*(sim: var SimServer, playerIndex: int) =
   ## Lets a living player pick up a corner grenade by touch (one carried
-  ## grenade max; either team may take either side's pickups).
-  if not sim.players[playerIndex].alive or sim.players[playerIndex].hasGrenade:
+  ## grenade max; either team may take either side's pickups). A cog carrying
+  ## a cardboard barrier walks over the pickup untouched — grenade and
+  ## barrier share button C, so a cog holds one or the other, never both.
+  if not sim.players[playerIndex].alive or
+      sim.players[playerIndex].hasGrenade or
+      sim.players[playerIndex].hasBarrier:
     return
   sim.pickupByTouch(playerIndex, grenadeSpawns, GrenadePickupRange,
       GrenadeRespawnTicks):
@@ -1675,6 +1884,45 @@ proc tryPickupPlasmaArcs*(sim: var SimServer, playerIndex: int) =
       playerColorText(sim.players[playerIndex].color) &
         " picked up a spray can"
     )
+
+proc tryPickupBarriers*(sim: var SimServer, playerIndex: int) =
+  ## Lets a living player pick up one folded cardboard barrier by touch. The
+  ## grenade shares button C, so carrying either blocks picking up the other
+  ## (the grenade side of the gate lives in tryPickupGrenades).
+  if not sim.players[playerIndex].alive or
+      sim.players[playerIndex].hasBarrier or
+      sim.players[playerIndex].hasGrenade:
+    return
+  sim.pickupByTouch(playerIndex, barrierSpawns, BarrierPickupRange,
+      BarrierRespawnTicks):
+    sim.players[playerIndex].hasBarrier = true
+    sim.emitPickup(playerIndex, "barrier", spawn.x, spawn.y)
+    sim.logGameEvent(
+      playerColorText(sim.players[playerIndex].color) &
+        " picked up a cardboard barrier"
+    )
+
+proc updateBarriers*(sim: var SimServer) =
+  ## Refills barrier pickups whose respawn timer elapsed, then flattens any
+  ## standing barrier a cog drove into this tick — cardboard stops paint,
+  ## not a rolling bot. Runs after movement, so the crush lands the same
+  ## tick as the contact.
+  sim.refillElapsedPickups(barrierSpawns)
+  if sim.placedBarriers.len == 0:
+    return
+  var index = 0
+  while index < sim.placedBarriers.len:
+    var crusher = -1
+    for playerIndex in 0 ..< sim.players.len:
+      if sim.players[playerIndex].alive and
+          sim.playerTouchesBarrier(playerIndex, index):
+        crusher = playerIndex
+        break
+    if crusher >= 0:
+      sim.flattenBarrier(
+        index, sim.players[crusher].color, "flattened a cardboard barrier")
+    else:
+      inc index
 
 proc sanitizeShout*(text: string): string =
   ## Reduces raw chat text to a legal shout: printable ASCII only, at most
@@ -2953,6 +3201,7 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.resetMedKits()
   result.resetShields()
   result.resetPlasmaArcs()
+  result.resetBarriers()
   result.lastLobbyPlayersLogged = -1
   result.lastLobbyNeededLogged = -1
   result.lastLobbySecondsLogged = -1
@@ -2976,6 +3225,7 @@ proc resetToLobby*(sim: var SimServer) =
   sim.resetMedKits()
   sim.resetShields()
   sim.resetPlasmaArcs()
+  sim.resetBarriers()
   sim.recentBlasts = @[]
   sim.plasmaArcFlashes = @[]
   sim.recentShouts = @[]
@@ -3115,6 +3365,7 @@ proc step*(
       else: InputState()
     sim.applyInput(playerIndex, input)
     sim.applyGrenadeInput(playerIndex, input, prev)
+    sim.applyBarrierInput(playerIndex, input, prev)
     if input.attack and not prev.attack:
       if sim.players[playerIndex].hasPlasmaArc:
         if sim.canFireArc(playerIndex):
@@ -3134,6 +3385,7 @@ proc step*(
   sim.updateMedKits()
   sim.updateShields()
   sim.updatePlasmaArcs()
+  sim.updateBarriers()
 
   for playerIndex in 0 ..< sim.players.len:
     sim.tryPickupFlags(playerIndex)
@@ -3141,6 +3393,7 @@ proc step*(
     sim.tryPickupMedKits(playerIndex)
     sim.tryPickupShields(playerIndex)
     sim.tryPickupPlasmaArcs(playerIndex)
+    sim.tryPickupBarriers(playerIndex)
   sim.updateFlags()
   sim.respawnPlayers()
   # Puddle damage resolves after movement and pickups, before the win check,
