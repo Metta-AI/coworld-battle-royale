@@ -119,6 +119,28 @@ suite "league manifest config_schema vs GameConfig":
     for key, _ in samples:
       check schema["properties"].hasKey(key)
 
+  test "perks schema declares the engine's perk vocabulary, in sync with its prose":
+    # The platform's campaign perk picker reads the machine-readable
+    # perkVocabulary block (falling back to parsing the description's
+    # "Vocabulary: name (effect), …" sentence), so the block must exist,
+    # cover EXACTLY the engine's perk names, and restate what the prose
+    # says — a perk added to the engine, or an edit to a perk's "name
+    # (effect)" phrase in the description, fails here instead of silently
+    # desyncing the picker.
+    let
+      perksSchema = schema["properties"]["perks"]
+      vocabulary = perksSchema["perkVocabulary"]
+      description = perksSchema["description"].getStr
+    # require, not check: a short block must abort here with the length
+    # mismatch, not fall into an IndexDefect on the per-perk loop below.
+    require vocabulary.len == PerkNames.len
+    for perk in Perk:
+      let entry = vocabulary[ord(perk)]
+      check entry["id"].getStr == PerkNames[perk]
+      let effect = entry["effect"].getStr
+      check effect.len > 0
+      check (entry["id"].getStr & " (" & effect & ")") in description
+
   test "platform-only keys are documented as such in the schema":
     for key in PlatformOnlyKeys:
       let description = schema["properties"][key]["description"].getStr
