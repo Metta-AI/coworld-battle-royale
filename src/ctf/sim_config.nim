@@ -47,6 +47,7 @@ proc defaultGameConfig*(): GameConfig =
     closedRoster: false,
     slots: @[],
     puddleDamagePct: DefaultPuddleDamagePct,
+    barrierPickups: 0,
     barrageMaxPerSec: 0,
     barrageStartPerSec: BarrageStartPerSec,
     barrageStartSec: BarrageStartSec,
@@ -394,6 +395,10 @@ proc validate(config: GameConfig) =
     raise newException(CtfError, "Config field visionConeDeg must be between 0 and 180.")
   if config.puddleDamagePct < 0 or config.puddleDamagePct > 100:
     raise newException(CtfError, "Config field puddleDamagePct must be 0..100.")
+  if config.barrierPickups < 0 or
+      config.barrierPickups > MaxBarrierPickupsPerTeam:
+    raise newException(CtfError,
+      "Config field barrierPickups must be 0.." & $MaxBarrierPickupsPerTeam & ".")
   if config.visionBubble < 0:
     raise newException(CtfError, "Config field visionBubble must be non-negative.")
   if config.speed notin [1, 2, 3, 4, 8, 16]:
@@ -524,6 +529,7 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("mapPitDensity", config.mapGen.pitDensity)
   node.readConfigInt("mapPuddles", config.mapGen.puddles)
   node.readConfigInt("puddleDamagePct", config.puddleDamagePct)
+  node.readConfigInt("barrierPickups", config.barrierPickups)
   node.readConfigString("mapCenterFeature", config.mapGen.centerFeature)
   node.readConfigString("mapLayout", config.mapGen.layout)
   node.readConfigString("mapEndzone", config.mapGen.endzone)
@@ -649,6 +655,10 @@ proc configJson*(config: GameConfig): string =
   if config.mapGen.puddles > 0 or
       config.puddleDamagePct != DefaultPuddleDamagePct:
     node["puddleDamagePct"] = %config.puddleDamagePct
+  # Same rule for the barrier knob: echoed only when the mode is on, so a
+  # barrier-free game's replay config stays byte-identical to older builds.
+  if config.barrierPickups > 0:
+    node["barrierPickups"] = %config.barrierPickups
   # Echo only the handicapped teams, as their authored 0..1 floats, so a
   # default (unhandicapped) game's replay config carries no handicaps key.
   var handicaps = newJObject()

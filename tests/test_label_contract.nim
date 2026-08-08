@@ -51,6 +51,9 @@ proc fullFeatureGame(teams4 = false): SimServer =
   # covers every state), while no environment shells rain on the posed
   # frame during the sweep's few steps.
   config.barrageMaxPerSec = 15
+  # One cardboard-barrier pickup per team, so the folded-pickup label enters
+  # the sweep (the stop list hovers next to barrierSpawns[0]).
+  config.barrierPickups = 1
   result = initCtfForTest(config)
   for i in 0 ..< 6:
     discard result.addPlayer("p" & $i)
@@ -76,6 +79,33 @@ proc fullFeatureGame(teams4 = false): SimServer =
   result.players[4].x = cx - 90
   result.players[4].y = cy + 20
   result.players[4].hasPlasmaArc = true
+  # The shield carrier also carries a folded cardboard barrier, so the
+  # `barrier carried` marker renders (a barrier excludes a GRENADE, not a
+  # shield — seat 2 keeps the grenade).
+  result.players[1].hasBarrier = true
+  # A STANDING half-hex in the viewer's cone: injected directly with the
+  # east-facing vertex set placeBarrier derives (the input path needs a
+  # press-edge step this posed frame never takes). Its label carries
+  # x,y/facing/hp, all of which normalize to <n>.
+  block:
+    let
+      bx = cx + 30
+      by = cy - 40
+    var standing = PlacedBarrier(
+      x: bx, y: by, facingBrads: 0, hp: BarrierHp, team: Blue,
+      placedTick: result.tickCount
+    )
+    standing.verts = [
+      (bx, by - BarrierRadius),
+      (bx + 21, by - BarrierRadius div 2),
+      (bx + 21, by + BarrierRadius div 2),
+      (bx, by + BarrierRadius)
+    ]
+    standing.minX = bx - BarrierHalfThick - 1
+    standing.maxX = bx + 21 + BarrierHalfThick + 1
+    standing.minY = by - BarrierRadius - BarrierHalfThick - 1
+    standing.maxY = by + BarrierRadius + BarrierHalfThick + 1
+    result.placedBarriers.add standing
   # A CHARGING thrower right next to the viewer: `throw target` is drawn only
   # in a player view, only while throwCharge > 0, and only for a player the
   # viewer can see — three gates that a normal frame passes through untouched.
@@ -287,6 +317,7 @@ proc collectLabels(sim: var SimServer): HashSet[string] =
     (sim.shieldSpawns[0].x, sim.shieldSpawns[0].y),
     (sim.plasmaArcSpawns[0].x, sim.plasmaArcSpawns[0].y),
     (sim.medKitSpawns[0].x, sim.medKitSpawns[0].y),
+    (sim.barrierSpawns[0].x, sim.barrierSpawns[0].y),
   ]
   for stop in stops:
     # Hover NEXT TO each spawn, never on it, so nothing is picked up (a pickup

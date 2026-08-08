@@ -490,6 +490,7 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
     for sp in sim.medKitSpawns: addPickup("medkit", sp)
     for sp in sim.shieldSpawns: addPickup("shield", sp)
     for sp in sim.plasmaArcSpawns: addPickup("spray", sp)
+    for sp in sim.barrierSpawns: addPickup("barrier", sp)
 
     # --- paintball beams in flight (sim.recentShots; cosmetic, never hashed) ---
     # A hitscan shot has no travelling body, so the board draws it as a COMET: a
@@ -578,6 +579,7 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
   if self.hasGrenade: carriedItems.add(%"grenade")
   if self.hasShield: carriedItems.add(%"shield")
   if self.hasPlasmaArc: carriedItems.add(%"spray")
+  if self.hasBarrier: carriedItems.add(%"barrier")
   let selfJson = %*{
     "hp": self.hp,
     "lives": self.lives,
@@ -625,6 +627,7 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
   for sp in sim.medKitSpawns: addMapItem("medkit", sp)
   for sp in sim.shieldSpawns: addMapItem("shield", sp)
   for sp in sim.plasmaArcSpawns: addMapItem("spray", sp)
+  for sp in sim.barrierSpawns: addMapItem("barrier", sp)
 
   let mapJson = %*{
     "w": MapWidth,

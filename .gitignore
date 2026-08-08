@@ -57,3 +57,4 @@ pool-preview/
 /arena/.nimcache/
 /arena/*.wasm
 data/replays/
+barrier-demo.bitreplay

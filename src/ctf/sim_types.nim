@@ -548,6 +548,28 @@ const
                               ## rate. Shield+heart do not stack (max, not
                               ## product).
 
+  BarrierPickupRange* = 12    ## touch radius to pick a cardboard barrier up.
+  BarrierRespawnTicks* = 30 * ReplayFps  ## a taken barrier pickup refills after 30s.
+  BarrierHp* = 10             ## paintball hits a placed barrier soaks before
+                              ## it is gone. Only the gun chips it; the spray
+                              ## cone is merely blocked, and grenades fly
+                              ## over it like every other obstacle.
+  BarrierRadius* = 24         ## half-hex circumradius in px: the distance
+                              ## from the placement center (the placer's own
+                              ## center) to each of the four vertices. The
+                              ## flat middle side sits at the apothem
+                              ## (~0.87R = 21px) straight down the placer's
+                              ## aim, so the cardboard wraps their front.
+  BarrierHalfThick* = 2       ## half-thickness of the cardboard band: a map
+                              ## pixel within this distance of one of the
+                              ## three sides is covered (band ~5px wide, so
+                              ## a 1px-stepped paint ray can never lace
+                              ## through it diagonally).
+  MaxBarriersPlaced* = 16     ## most placed barriers standing at once
+                              ## (sizes the render pools); placing past the
+                              ## cap flattens the OLDEST standing barrier.
+  MaxBarrierPickupsPerTeam* = 2  ## cap on the barrierPickups config knob.
+
   TrenchSize* = 56            ## side length of the walkable trench square
                               ## open flag ring (corner reach ~40px < the
                               ## 70px ring), so it never touches a wall.
@@ -1023,6 +1045,13 @@ type
                                   ## — and its RNG draw — only happens while
                                   ## a cog stands in one, so the default
                                   ## path stays byte-identical: no GV bump).
+    barrierPickups*: int          ## cardboard barrier pickups PER TEAM
+                                  ## (0..MaxBarrierPickupsPerTeam), staged on
+                                  ## the line from each team's anchor toward
+                                  ## map center. 0 = the mode is off — the
+                                  ## default, byte-identical to the
+                                  ## pre-barrier game (no spawns, no carries,
+                                  ## no placements, no new RNG draws).
 
   Player* = object
     x*, y*: int
@@ -1095,6 +1124,16 @@ type
     arcKillsThisFire*: int     ## kills scored by the current spray
                                ## activation; transient multi-kill
                                ## bookkeeping, excluded from gameHash.
+    hasBarrier*: bool          ## carrying one folded cardboard barrier
+                               ## (config-gated). Mutually exclusive with
+                               ## hasGrenade — both place/throw on button C,
+                               ## so a cog holds one or the other, never
+                               ## both. Deterministic gameplay state, but NOT
+                               ## mixed into gameHash: hashing a new
+                               ## always-false field would shift every
+                               ## pre-barrier replay's hash chain (keyframe
+                               ## scrub still restores it exactly via the
+                               ## flatty sim snapshot — the puddleTicks rule).
 
   PlayerFov* = object
     ## One player's cached fog-of-war visibility grid (FovGridW x FovGridH
@@ -1306,6 +1345,25 @@ type
     present*: bool
     respawnAt*: int            ## tick the pickup refills (when not present).
 
+  PlacedBarrier* = object
+    ## One standing cardboard barrier: three sides of a hexagon (a half-hex)
+    ## whose flat middle side faces where the placer was aiming. It blocks
+    ## every PAINT path (gun corridor and spray cone) but never sight, never
+    ## movement, and never grenades. The four vertices are snapped to map
+    ## pixels at placement, so every later coverage test is integer-only and
+    ## native/wasm agree.
+    x*, y*: int                ## placement center (the placer's center).
+    facingBrads*: int          ## the placer's aim at placement (render/label).
+    verts*: array[4, tuple[x, y: int]]  ## half-hex vertices at aim -90,
+                               ## -30, +30, +90 degrees; the three sides are
+                               ## the consecutive pairs, the middle one flat
+                               ## across the aim.
+    minX*, minY*, maxX*, maxY*: int  ## coverage bounding box (band included)
+                               ## for cheap point rejection.
+    hp*: int                   ## paintball hits left (starts at BarrierHp).
+    team*: Team                ## the placer's team (tints the tape stripe).
+    placedTick*: int
+
   AirborneGrenade* = object
     ## One thrown grenade in flight: it flies OVER walls in a straight line
     ## from the throw point to the target and explodes on landing.
@@ -1402,6 +1460,19 @@ type
     lastLobbyPlayersLogged*: int
     lastLobbyNeededLogged*: int
     lastLobbySecondsLogged*: int
+    barrierSpawns*: seq[PickupSpawn]  ## config-gated cardboard barrier
+                               ## pickups (barrierPickups per team); empty on
+                               ## default configs. Appended at the END of the
+                               ## type: keyframes are flatty-positional, and
+                               ## they are derived in-process (never read
+                               ## from a replay file), so appending is safe
+                               ## without a GameVersion bump.
+    placedBarriers*: seq[PlacedBarrier]  ## standing cardboard barriers,
+                               ## oldest first (the placement cap flattens
+                               ## index 0). Deterministic gameplay state,
+                               ## kept OUT of gameHash like puddleTicks so
+                               ## barrier-free games hash identically to
+                               ## pre-barrier builds.
 
 
 # Team endzone display colors (shared by the map bake and the paint FX).
