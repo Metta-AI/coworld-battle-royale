@@ -131,7 +131,9 @@ suite "league manifest config_schema vs GameConfig":
       perksSchema = schema["properties"]["perks"]
       vocabulary = perksSchema["perkVocabulary"]
       description = perksSchema["description"].getStr
-    check vocabulary.len == PerkNames.len
+    # require, not check: a short block must abort here with the length
+    # mismatch, not fall into an IndexDefect on the per-perk loop below.
+    require vocabulary.len == PerkNames.len
     for perk in Perk:
       let entry = vocabulary[ord(perk)]
       check entry["id"].getStr == PerkNames[perk]
