@@ -51,6 +51,14 @@ proc fullFeatureGame(teams4 = false): SimServer =
   # covers every state), while no environment shells rain on the posed
   # frame during the sweep's few steps.
   config.barrageMaxPerSec = 15
+  # Team perks, one team per authored shape (flat = team-wide, nested =
+  # per-policy groups): the PERKED marker patterns enter the vocabulary, so a
+  # rename inside PerkNames diffs the manifest instead of slipping through.
+  # The 4-team run keeps green/yellow bare, covering the unperked `-` form.
+  config.perks[Red] = @[PerkGroup(perks: {PerkArmor, PerkScope})]
+  config.perks[Blue] = @[
+    PerkGroup(perks: {PerkGrenade}),
+    PerkGroup(perks: {PerkThruster, PerkLuck})]
   # One cardboard-barrier pickup per team, so the folded-pickup label enters
   # the sweep (the stop list hovers next to barrierSpawns[0]).
   config.barrierPickups = 1

@@ -734,6 +734,43 @@ type
     DefaultSkin
     CrownSkin
 
+  Perk* = enum
+    ## Named, icon-badged team buffs (docs/plans/2026-08-07-team-perks-design.md).
+    ## Assignment and magnitudes are config (`GameConfig.perks` / the perkMods
+    ## knobs); a default config carries none and plays byte-identical to an
+    ## engine without perks.
+    PerkArmor     ## +perkMods.armorHp max hit points per bot.
+    PerkScope     ## gun aim-jitter sigma reduced by perkMods.scopeAim.
+    PerkGrenade   ## grenade max throw range +perkMods.grenadeRange.
+    PerkThruster  ## max speed +perkMods.thrusterSpeed.
+    PerkLuck      ## perkMods.luckChance of landed gun shots deal luckDamage.
+
+  PerkSet* = set[Perk]
+
+  PerkGroup* = object
+    ## One perk group of a team: the set one policy seat carries, optionally
+    ## PINNED to a policy by name. `pol == ""` = unnamed, dealt to the team's
+    ## distinct policies in join order; a named group goes to exactly the
+    ## policy whose policyName matches. A team's groups are all-named (object
+    ## config form) or all-unnamed (array form) — the parser enforces it.
+    pol*: string
+    perks*: PerkSet
+
+  PerkMods* = object
+    ## The perk magnitudes ("mods"), config-tunable as one block. Fractions
+    ## are integer permille (the handicaps rule) so every in-sim derivation
+    ## is integer or perk-gated; counts are plain hit points. Only read when
+    ## a seat actually carries the perk, so the values never touch a
+    ## perk-free game. Compared as ONE value against DefaultPerkMods for the
+    ## config echo, so adding a knob here cannot be silently dropped from
+    ## replay configs.
+    armorHp*: int        ## armor: extra max hit points.
+    scopeAim*: int       ## scope: fraction of aim-jitter sigma removed, permille.
+    grenadeRange*: int   ## grenade: extra max throw range, permille.
+    thrusterSpeed*: int  ## thruster: extra max speed, permille.
+    luckChance*: int     ## luck: chance a landed gun shot is lucky, permille.
+    luckDamage*: int     ## luck: hit points a lucky shot removes.
+
   CtfError* = object of ValueError
 
   GamePhase* = enum
@@ -1038,6 +1075,16 @@ type
                                   ## maxSpeedFor/missPermilleFor). Integer
                                   ## permille keeps every in-sim derivation
                                   ## integer-only, so native and wasm agree.
+    perks*: array[Team, seq[PerkGroup]]
+      ## Per-team perk GROUPS. Empty (the default) = no perks, byte-identical
+      ## to an engine without the field. One unnamed group = the whole team
+      ## shares it; several unnamed = CTF-Doubles: the Nth distinct POLICY to
+      ## seat on the team (join order, policyName collapse) gets group N,
+      ## clamped to the last. NAMED groups (object config form) pin a group
+      ## to its policy exactly; an unmatched policy gets nothing. See
+      ## docs/plans/2026-08-07-team-perks-design.md.
+    perkMods*: PerkMods        ## the perk magnitudes; DefaultPerkMods unless
+                               ## the config's perkMods block overrides.
     puddleDamagePct*: int         ## percent chance (0..100) that one full
                                   ## second of continuous paint-puddle
                                   ## occupancy deals 1 damage. Default 10.
@@ -1124,6 +1171,11 @@ type
     arcKillsThisFire*: int     ## kills scored by the current spray
                                ## activation; transient multi-kill
                                ## bookkeeping, excluded from gameHash.
+    perks*: PerkSet            ## this seat's perks, resolved ONCE at join
+                               ## from config.perks + the policy's rank among
+                               ## the team's distinct policies (roster.nim).
+                               ## Pure function of config + the replayed join
+                               ## stream, so excluded from gameHash.
     hasBarrier*: bool          ## carrying one folded cardboard barrier
                                ## (config-gated). Mutually exclusive with
                                ## hasGrenade — both place/throw on button C,
@@ -1594,3 +1646,88 @@ proc missPermilleFor*(config: GameConfig, team: Team): int =
   ## Fraction of a would-be gun hit dropped, in permille (0..500): 0 at no
   ## handicap, 500 (50%) at full. The caller draws RNG only when this is > 0.
   config.handicaps[team] div 2
+
+# Perk accessors. Like the handicap accessors above, every derivation returns
+# the EXACT base value when the perk is absent (no arithmetic, no drift, no
+# extra RNG), so a perk-free game — the default — is byte-identical to an
+# engine without perks. See docs/plans/2026-08-07-team-perks-design.md.
+
+const PerkNames*: array[Perk, string] = [
+  "armor", "scope", "grenade", "thruster", "luck"]
+  ## The authored/wire name of each perk (config JSON, broadcast roster `pk`,
+  ## marker labels, scorebug icon keys).
+
+const DefaultPerkMods* = PerkMods(
+  armorHp: 1,         # armor: +1 max hit point.
+  scopeAim: 500,      # scope: 50% less aim deviation.
+  grenadeRange: 250,  # grenade: +25% throw range.
+  thrusterSpeed: 100, # thruster: +10% max speed.
+  luckChance: 100,    # luck: 10% of landed shots are lucky.
+  luckDamage: 2       # luck: a lucky shot deals 2 hp.
+)
+
+proc perkText*(perk: Perk): string =
+  ## Returns one perk's authored/wire name.
+  PerkNames[perk]
+
+proc parsePerk*(text: string): Perk =
+  ## Parses one authored perk name; raises CtfError on an unknown name.
+  for perk in Perk:
+    if PerkNames[perk] == text:
+      return perk
+  raise newException(CtfError, "Unknown perk name: " & text)
+
+proc maxHpFor*(config: GameConfig, team: Team, perks: PerkSet): int =
+  ## One seat's max hit points: the team's (handicap-interpolated) hit points
+  ## plus the armor bonus when the seat carries the perk.
+  result = config.hitPointsFor(team)
+  if PerkArmor in perks:
+    result += config.perkMods.armorHp
+
+proc maxSpeedFor*(config: GameConfig, team: Team, perks: PerkSet): int =
+  ## One seat's max speed: the team's (handicap-interpolated) max speed,
+  ## boosted by the thruster perk when carried. Integer permille, so native
+  ## and wasm agree.
+  result = config.maxSpeedFor(team)
+  if PerkThruster in perks:
+    result = result * (1000 + config.perkMods.thrusterSpeed) div 1000
+
+proc grenadeRangeFor*(config: GameConfig, maxRange: int, perks: PerkSet): int =
+  ## One seat's max grenade throw distance, given the map's base
+  ## GrenadeMaxRange: boosted by the grenade perk when carried.
+  result = maxRange
+  if PerkGrenade in perks:
+    result = result * (1000 + config.perkMods.grenadeRange) div 1000
+
+proc perkGroupTexts*(config: GameConfig, team: Team): seq[string] =
+  ## Each of one team's perk groups as comma-joined perk names in Perk enum
+  ## order ("" for an empty group); the empty seq when the team has none.
+  ## The shared source for the marker label (labelPerks) and the broadcast
+  ## scorebug, so the two streams can never disagree.
+  for group in config.perks[team]:
+    var names = ""
+    for perk in Perk:
+      if perk in group.perks:
+        if names.len > 0:
+          names.add ","
+        names.add perkText(perk)
+    result.add names
+
+proc policyName*(address: string): string =
+  ## The policy identity behind one seat's connection name: the hosted runtime
+  ## appends a per-connection " (N)" suffix to the SAME policy's multiple seats
+  ## ("softmaxwell (2)", "softmaxwell (7)"…), so stripping it collapses every
+  ## seat of one policy to a single shared name. The join path converts spaces
+  ## to underscores (server.nim cleanPlayerName), so by the time the name is a
+  ## player address the separator reads "_(N)" — accept either. Names without
+  ## the suffix (local self-play "Player1"…) pass through unchanged.
+  result = address
+  if result.len >= 4 and result[^1] == ')':
+    var i = result.len - 2
+    while i >= 0 and result[i] in {'0' .. '9'}:
+      dec i
+    if i >= 1 and i < result.len - 2 and result[i] == '(' and
+        result[i - 1] in {' ', '_'}:
+      result = result[0 ..< i - 1]
+      while result.len > 0 and result[^1] in {' ', '_'}:
+        result.setLen(result.len - 1)

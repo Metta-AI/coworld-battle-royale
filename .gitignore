@@ -58,3 +58,4 @@ pool-preview/
 /arena/*.wasm
 data/replays/
 barrier-demo.bitreplay
+perks-2v2-demo.bitreplay
