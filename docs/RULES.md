@@ -609,7 +609,9 @@ What that means in practice:
   fairness difference in cover and sightlines, not a cosmetic one.
 - **Touch a shield to pick it up** — either team may take either endzone's
   shield. A shield is a **3 hp armor layer on top of your base hit points**:
-  damage depletes the shield layer first, and only then your base hp. A
+  damage depletes the shield layer first, and only then your base hp. The
+  layer draws as blue pips appended to the overhead hp bar (base hit points
+  stay green) and as the ` shield <s>` tail of the bar's label. A
   pickup refills the layer to 3 but **never heals base damage** (med kits
   do that) — so a worn carrier can take another shield to restore the
   layer, while a carrier whose layer is intact leaves the spawn untouched.
@@ -1045,9 +1047,21 @@ disagree, the manifest is right and this document is stale — that is exactly h
 the `heart`/`flag` claim above went wrong. The label vocabulary itself lives in
 `src/ctf/labels.nim`, shared by the engine and the reference policy.
 
+**The hp bar is true hit points:** every living player carries an overhead
+bar object labeled `hp <hp>/<maxHp>[ shield <s>]` — one green pip per
+remaining base hit point out of that seat's OWN maximum (the `hitPoints`
+config, handicap-interpolated, plus the armor perk: an armored seat reads
+`hp 4/4` and draws a longer bar), with one blue pip per remaining
+shield-layer hp appended while a shield holds. The denominator is per-seat
+data, not a constant — parse it from the label (the reference policy scans
+the `hp ` prefix) rather than restating a max of your own. The shield tail
+is spelled apart from base hp on purpose: the layer depletes first and its
+blue pips vanish with it, so `hp 3/3 shield 2` and `hp 3/3` are different
+survivability, not different spellings of "5".
+
 **Identity badges:** every living player carries a separate badge object
 labeled `identity <color> <name>` (`alpha`..`theta` — see Teams & spawns).
-Like the `hp <n>/3` bar, the badge is a distinct object centered on its
+Like the `hp <hp>/<maxHp>` bar, the badge is a distinct object centered on its
 player's body: attach it by proximity. It is fog-gated with its player and disappears on
 death.
 

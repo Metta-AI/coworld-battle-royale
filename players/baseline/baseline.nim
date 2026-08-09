@@ -128,8 +128,10 @@ const
   AimBrads = 256              # aim angle units per full turn
   AimRate = 5                 # brads/tick a held rotate button turns the aim
                               # (matches the server's aimTurnRate default)
-  MaxHp = 3                   # hitPoints per life (config default); pip labels
-                              # read "hp <n>/<MaxHp>"
+  MaxHp = 3                   # hitPoints per life (config default). Our OWN
+                              # hp baseline only — enemy bars carry their own
+                              # denominator ("hp <n>/<m>", armor-adjusted) and
+                              # are parsed, not rebuilt from this.
   HpPipRadius = 22.0          # a player's overhead hp bar sits within this
   HpFocusBonus = 60.0         # px of effective-distance credit per missing
                               # enemy hit point — a tiebreak between
@@ -615,18 +617,30 @@ proc actorsFor(client: ProtocolClient, color: string): seq[Actor] {.measure.} =
       color, if facingRight: LabelSideRight else: LabelSideLeft)
     for o in client.spriteObjectsWithLabel(label):
       result.add(Actor(pos: client.mapPos(o), facingRight: facingRight))
-  for hp in 1 .. MaxHp:
-    for o in client.spriteObjectsWithLabel(labelHp(hp)):
-      let p = client.mapPos(o)
-      var best = -1
-      var bestD = HpPipRadius
-      for i in 0 ..< result.len:
-        let d = dist(result[i].pos, p)
-        if d < bestD:
-          bestD = d
-          best = i
-      if best >= 0:
-        result[best].hp = hp
+  for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
+    # `hp <hp>/<max>[ shield <s>]` — TRUE hit points since the bar redesign:
+    # the numerator is the seat's remaining base hp against its OWN max (the
+    # armor perk raises it past our MaxHp), and a held shield layer appends
+    # its remaining absorb hp. Threat math cares about what is left to chew
+    # through, so attach base + shield, like the old bar's effective-hp fold.
+    let tail = label[LabelPrefixHp.len .. ^1]
+    let slash = tail.find('/')
+    if slash <= 0:
+      continue
+    var hp = parseInt(tail[0 ..< slash])
+    let shieldCut = tail.find(LabelHpShieldSep)
+    if shieldCut >= 0:
+      hp += parseInt(tail[shieldCut + LabelHpShieldSep.len .. ^1])
+    let p = client.mapPos(o)
+    var best = -1
+    var bestD = HpPipRadius
+    for i in 0 ..< result.len:
+      let d = dist(result[i].pos, p)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      result[best].hp = hp
 
 proc walkableAt(client: ProtocolClient, x, y: int): bool =
   if x < 0 or y < 0 or x >= client.walkabilityWidth or

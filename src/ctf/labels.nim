@@ -109,6 +109,9 @@ const
     ## Spectator-highlighted player, `selected player <color> <side>`. Emitted
     ## only on the board stream.
   LabelPrefixHp* = "hp "
+  LabelHpShieldSep* = " shield "
+    ## Separates the hp bar's `<hp>/<maxHp>` head from the shield tail —
+    ## shared so the parser (players/baseline) and labelHp cannot drift.
     ## Overhead health bar, `hp <lit>/<total>`. A distinct object centered on
     ## its player and fog-gated with them: attach it by proximity.
   LabelPrefixLives* = "lives "
@@ -271,30 +274,6 @@ const LabelEndzoneShapes* = [
   ## Consumers validate the third token against this set; the label-contract
   ## test normalizes exactly these tokens to `<shape>`.
 
-const LabelHpBarSegments* = 3
-  ## The overhead health bar's FIXED segment count — the denominator of every
-  ## `hp <lit>/<total>` label, and the single place that number is allowed to
-  ## live. Producer and consumer must agree on it exactly (an exact-match scan
-  ## for "hp 2/3" finds nothing in a world that emits "hp 2/4"), so neither
-  ## side gets to spell it itself: both go through `labelHp`.
-  ##
-  ## It is NOT the hit-point config, and the distinction is load-bearing rather
-  ## than pedantic. The bar always draws three thirds whatever `hitPoints` is
-  ## set to — a 99-hp game would otherwise paint a ~296px ribbon over a 16px
-  ## sprite — so the engine maps `hp + shieldHp` onto thirds (ceil, floor of
-  ## one lit segment for anyone alive) and the NUMERATOR is that lit-segment
-  ## count, not a hit-point count. Today `hitPoints` also defaults to 3, which
-  ## makes the two quantities numerically identical and makes it look like the
-  ## label reports hit points. It does not. A retune of `hitPoints` alone must
-  ## leave this constant — and every emitted hp label — untouched; only a
-  ## redesign of the BAR moves it.
-  ##
-  ## The reference policy currently builds its scan denominator from its own
-  ## `MaxHp = 3` (players/baseline/baseline.nim), i.e. from the hit-point
-  ## coincidence rather than from the bar. That is the exact drift this
-  ## constant closes, and it stays open until the bot calls `labelHp`;
-  ## tests/test_label_contract.nim asserts the two have not diverged yet.
-
 proc labelPlayer*(color, side: string): string =
   ## A living player's sprite label, `player <color> <side>`.
   LabelPrefixPlayer & color & " " & side
@@ -322,18 +301,24 @@ proc labelFlagPlanted*(color: string): string =
   ## is never fogged, so an absent own-planted flag means it has been stolen.
   color & " flag planted"
 
-proc labelHp*(lit: int): string =
-  ## An overhead health bar, `hp <lit>/<LabelHpBarSegments>`, where `lit` is the
-  ## number of LIT bar segments (see LabelHpBarSegments for why that is not a
-  ## hit-point count).
+proc labelHp*(hp, maxHp: int, shieldHp = 0): string =
+  ## One seat's overhead health bar, `hp <hp>/<maxHp>[ shield <s>]` — TRUE
+  ## hit points, not the old fixed thirds. The numerator is the seat's
+  ## remaining base hp and the denominator its OWN maximum (the hitPoints
+  ## config plus the armor perk where carried), so an armored seat at full
+  ## health reads `hp 4/4` while a bare one reads `hp 3/3`. While a shield
+  ## layer holds, ` shield <s>` carries its remaining absorb hp — the shield
+  ## is a separate layer (blue pips on the bar), never folded into the base
+  ## count.
   ##
-  ## Takes the numerator only, deliberately. The denominator was the live drift
-  ## risk in this vocabulary: the engine spelled it `HpBarSegments` and the
-  ## reference policy spelled it `MaxHp`, two independent constants that must be
-  ## equal for an exact-match scan to hit and that nothing compared. Accepting a
-  ## `total` parameter would preserve exactly that — two callers, two beliefs,
-  ## still no check — so the total is not a parameter at all.
-  LabelPrefixHp & $lit & "/" & $LabelHpBarSegments
+  ## The denominator is DATA now, not a contract constant: a consumer reads
+  ## a seat's maximum out of the label itself instead of restating a number
+  ## the engine also owns (the old `LabelHpBarSegments`/`MaxHp` twin-constant
+  ## drift this vocabulary once guarded against by fixing the total at 3).
+  ## Scan by LabelPrefixHp and parse, or exact-match a full spelling.
+  result = LabelPrefixHp & $hp & "/" & $maxHp
+  if shieldHp > 0:
+    result.add(LabelHpShieldSep & $shieldHp)
 
 proc labelGameParams*(teams, mapWidth, mapHeight: int): string =
   ## The episode-parameter marker label,
@@ -510,7 +495,7 @@ const PolicyScannedLabels* = [
   ## guard only covers labels somebody remembered to add. It catches the
   ## engine-side half of a rename (producer drops a label the policy still
   ## wants), not the consumer-side half (policy invents a label the producer
-  ## never had). Prefix-scanned families (`lives `, `identity `,
+  ## never had). Prefix-scanned families (`hp `, `lives `, `identity `,
   ## `<color> shout `) cannot appear here at all — their tails interpolate —
   ## and are covered instead by the vocabulary diff against the manifest.
   LabelFireIcon,
@@ -542,9 +527,6 @@ const PolicyScannedLabels* = [
   labelCorpse("red", LabelSideLeft),
   labelCorpse("blue", LabelSideRight),
   labelCorpse("blue", LabelSideLeft),
-  labelHp(1),
-  labelHp(2),
-  labelHp(3),
   labelWeapon(LabelWeaponGun),
   labelWeapon(LabelWeaponSpray)
 ]

@@ -79,6 +79,14 @@ proc fullFeatureGame(teams4 = false): SimServer =
   result.players[1].x = cx + 60
   result.players[1].y = cy
   result.players[1].hasShield = true
+  # A DIFFERENT seat holds a partly-spent ACTIVE layer, so the bar's
+  # ` shield <s>` label family and its blue pips are live in the sweep.
+  # Not the folded-carry seat — an active bubble suppresses the
+  # `shield carried` marker (the bubble speaks for itself), which would
+  # blind the PolicyScannedLabels emission guard — and not a Blue seat:
+  # one is the posed corpse and another dies to the posed kill, which
+  # zeroes its layer. Seat 2 (Red) survives the whole fixture.
+  result.players[2].shieldHp = 2
   # Teammates in the viewer's bubble carrying the grenade and the spray can,
   # so both carry markers and both `cog <weapon>` rig sprites render.
   result.players[2].x = cx - 90
@@ -223,18 +231,20 @@ proc normalizeLabel(label: string): string =
   # Numbers before words, so a color like "light blue" is not chopped up by a
   # stray digit substitution.
   #
-  # ONE exception, and it is the point of the hp check below: a "/<total>" tail
-  # keeps its literal number. The varying part of "hp 2/3" is the numerator (how
-  # much health is lit); the denominator is a FIXED contract value that two
-  # independent constants have to agree on (the engine's LabelHpBarSegments and
-  # the bot's own MaxHp). Normalizing it to <n> would erase exactly the drift
-  # this test exists to catch — "hp <n>/<n>" matches whether the total is 3 or
-  # 300, so the vocabulary diff would wave a retune straight through.
+  # ONE exception: a "/<total>" tail keeps its literal number — for the team
+  # score labels, whose denominator is a FIXED contract value (the win
+  # target) that a silent retune must surface as a manifest diff. The hp bar
+  # is exempt from the exception since the true-hit-point redesign: its
+  # denominator is per-seat DATA (the seat's own armor-adjusted max, 3 and 4
+  # coexist in one frame), so it normalizes to <n> like any other
+  # interpolated number — pinning it would make the manifest a snapshot of
+  # whichever hp configs the fixtures pose.
   var digitless = ""
   var i = 0
   while i < text.len:
     if text[i].isDigit:
-      let afterSlash = i > 0 and text[i - 1] == '/'
+      let afterSlash = i > 0 and text[i - 1] == '/' and
+        not text.startsWith(LabelPrefixHp)
       if afterSlash:
         while i < text.len and text[i].isDigit:
           digitless.add(text[i])
@@ -500,38 +510,56 @@ neither failure surfaces until a league round comes back wrong.
 """)
         fail()
 
-  test "the hp bar denominator has not drifted from the policy's MaxHp":
-    # `hp <lit>/<total>` is exact-match scanned, and its denominator lived in
-    # TWO independent constants: the engine's HpBarSegments (global.nim) and the
-    # reference policy's own MaxHp (baseline.nim). Nothing compared them; they
-    # matched only because both happened to be 3. Retune either and every bot's
-    # hp scan goes blind with no error anywhere.
-    #
-    # labels.nim now owns the number (LabelHpBarSegments) so the two CANNOT
-    # disagree once both sides call labelHp. Until the bot does, this is the
-    # check that keeps them honest:
-    #   - the engine side is verified structurally, by asserting the label the
-    #     engine actually emits equals the one labelHp builds;
-    #   - the policy side is a literal 3 in baseline.nim, restated here. It is a
-    #     test assertion rather than a static assert on purpose: baseline.nim is
-    #     a separate compilation unit that does not export MaxHp, so there is no
-    #     symbol to compile-time compare against. Changing LabelHpBarSegments
-    #     fails this line, which names the file to fix.
-    const PolicyMaxHp = 3   ## players/baseline/baseline.nim's MaxHp.
-    check LabelHpBarSegments == PolicyMaxHp
+  test "the hp bar carries true hit points, shield layer spelled apart":
+    # The bar is TRUE hit points since the redesign: `hp <hp>/<maxHp>` with
+    # the denominator the seat's OWN armor-adjusted max, and a held shield
+    # layer appended as ` shield <s>` — never folded into the base count.
+    # The reference policy parses these by prefix (actorsFor in
+    # players/baseline/baseline.nim), so what this guards is the SHAPE: every
+    # emitted hp label must be exactly a labelHp spelling, and the fixture's
+    # armor split must surface as coexisting denominators — an armored seat's
+    # `hp 4/4` next to a bare seat's `hp 3/3`. RAW labels on purpose: the
+    # normalized pattern collapses both to `hp <n>/<n>` and could not see an
+    # armor seat silently losing its wider bar.
     var game = fullFeatureGame()
-    let emitted = game.collectLabels()
-    # The emitted hp label must be the one labelHp builds, DENOMINATOR AND ALL.
-    # normalizeLabel keeps the "/<total>" digits (see the exception there), so
-    # this compares "hp <n>/3" against "hp <n>/3" — retune LabelHpBarSegments
-    # alone and the engine starts emitting "hp <n>/4" while this expects /3.
-    let wantHp = labelHp(1).normalizeLabel()
-    check wantHp in emitted
-    # ...and NO other denominator may appear: a second spelling of the hp label
-    # means one of the two producers was retuned without the other.
-    for label in emitted:
-      if label.startsWith(LabelPrefixHp):
-        check label == wantHp
+    # The fixture's posed kill leaves a Blue seat dead and a dead seat draws
+    # no bar; revive everyone but the deliberate ghost (seat 3, matching
+    # collectLabels' keepPlaying) so every bar spelling is in the one frame.
+    for i in 0 ..< game.players.len:
+      if i != 3:
+        game.players[i].alive = true
+        game.players[i].hp = max(1, game.config.maxHpFor(
+          game.players[i].team, game.players[i].perks))
+    var gstate = initGlobalViewerState()
+    var raw: HashSet[string]
+    for message in game.buildGlobalMessages(gstate):
+      if message.kind == spkSprite and
+          message.sprite.label.startsWith(LabelPrefixHp):
+        raw.incl(message.sprite.label)
+    # fullFeatureGame perks Red with armor (+1 max hp) and poses an active
+    # shield layer on one armored Red seat: armored seats read /4, bare
+    # ones /3, and the shielded seat appends its layer — denominators and
+    # the shield tail coexisting in ONE frame is the redesign's whole claim.
+    check labelHp(4, 4) in raw
+    check labelHp(3, 3) in raw
+    check labelHp(4, 4, 2) in raw
+    for label in raw:
+      # Every spelling must be a labelHp rebuild: `hp <hp>/<max>[ shield <s>]`
+      # with hp <= max and a positive shield tail — a hand-spelled variant
+      # (aggregated shield, a stray denominator) fails here by shape.
+      let tail = label[LabelPrefixHp.len .. ^1]
+      let slash = tail.find('/')
+      check slash > 0
+      let shieldCut = tail.find(LabelHpShieldSep)
+      let denomEnd = if shieldCut >= 0: shieldCut else: tail.len
+      let hp = parseInt(tail[0 ..< slash])
+      let maxHp = parseInt(tail[slash + 1 ..< denomEnd])
+      var shield = 0
+      if shieldCut >= 0:
+        shield = parseInt(tail[shieldCut + LabelHpShieldSep.len .. ^1])
+      check label == labelHp(hp, maxHp, shield)
+      check hp <= maxHp
+      check maxHp >= 1
 
   test "the endzone markers state each team's capture zone exactly":
     # The vocabulary diff proves the PATTERN is emitted; this pins the VALUES:
