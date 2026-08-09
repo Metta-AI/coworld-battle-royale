@@ -77,17 +77,24 @@ const
   InterstitialLayerId = 2
   InterstitialLayerType = 5    ## top-center: status text floats over the arena.
   OverheadYOffset = 4          ## px gap between a sprite top and overhead UI.
-  HpPipSpriteBase = 820        ## hp bar sprites: 820 + lit-segment count (0..3).
+  HpPipSpriteBase = 720        ## hp bar sprites: 720 + player index (the bar is
+                               ## per-seat now — width and pip split vary with
+                               ## the seat's max hp and shield, so seats no
+                               ## longer share lit-count sprites; the label is
+                               ## the content key addBoardSpriteChanged dedups
+                               ## on). Moved from 820: MaxPlayers ids no longer
+                               ## fit before SoundRingSpriteId at 830.
   HpPipObjectBase = 19000      ## hp bar object-id pool: one per player.
-  HpBarSegments = 3            ## health shown as 3 fixed thirds, NOT one pip per
-                               ## hit point (a 99-hp config would draw a ~296px
-                               ## neon ribbon over a 16px sprite — the bar length
-                               ## must not scale with the hit-point config).
-  HpBarSegW = 4                ## px width of one health segment.
-  HpBarSegGap = 1              ## px gap between segments.
+  HpPipW = 3                   ## px width of one hit-point pip.
+  HpPipGap = 1                 ## px gap between pips.
   HpBarH = 2                   ## px height of the health bar.
-  HpBarWidth = HpBarSegments * HpBarSegW +
-    (HpBarSegments - 1) * HpBarSegGap  ## 14px total — sized to the crew sprite.
+  HpBarAnchorWidth = 14        ## the FIXED span the overhead carry icons flank
+                               ## (the old 3-segment bar's width). The bar
+                               ## itself is now one pip per hit point — a
+                               ## 3-hp seat spans 11px, an armored+shielded
+                               ## one 27px — but the icons keep this anchor so
+                               ## they don't slide with every armor/shield
+                               ## state change.
   IdentityBadgeSpriteBase = 4200 ## Greek identity badges keyed
                                  ## (ord(team)*IdentityNames.len + identity) *
                                  ## SoldierRotations + aim step: 4200..4711
@@ -578,7 +585,7 @@ const
   TransportX = 2
   TransportY = 1
   ## Sprite/object id pools (sprites and objects are separate namespaces).
-  ## Sprites: team flags 700..703 (FlagSpriteBase), hp pips 820+, tracer
+  ## Sprites: team flags 700..703 (FlagSpriteBase), hp pips 720+, tracer
   ## dots 900..963 (color×fade-stage), muzzle blooms 964..967 (stage), tracer
   ## heads 968..1031 (color×stage), aim dots 780..795, identity badges
   ## 4200..4231 (team×identity), self markers 5100..5131, team score text
@@ -847,7 +854,7 @@ const
     ("flag auras", FlagAuraSpriteBase, 4),
     ("planted flags", PlantedFlagSpriteBase, 4),
     ("game-over icons", GameOverIconSpriteBase, 4),
-    ("hp pips", HpPipSpriteBase, 4),
+    ("hp pips", HpPipSpriteBase, MaxPlayers),
     ("sound ring", SoundRingSpriteId, 1),
     ("impact ring", ShotImpactSpriteId, 1),
     ("grenade statics", PaintBombPickupSpriteId, 4),
@@ -1865,22 +1872,35 @@ proc buildIndexedSpritePixels(
         fallback
     result.putRgbaPixel(i, color)
 
-proc buildHpBarSprite(litSegments: int): seq[uint8] {.measure.} =
-  ## Builds the overhead health bar as a fixed row of HpBarSegments thirds. The
-  ## bar length never scales with the hit-point config (a 99-hp game must not
-  ## paint a full-width ribbon over a 16px sprite); health reads as N-of-3 lit
-  ## chunks. A lit third is a calm sage green, a spent one a dim socket, so the
-  ## bar informs without shouting over the board.
-  result = newRgbaPixels(HpBarWidth, HpBarH)
-  for seg in 0 ..< HpBarSegments:
-    let x0 = seg * (HpBarSegW + HpBarSegGap)
+proc hpBarWidth(pips: int): int =
+  ## The bar's px width for one seat's pip count (base max hp + shield hp).
+  pips * HpPipW + (pips - 1) * HpPipGap
+
+proc buildHpBarSprite(hp, maxHp, shieldHp: int): seq[uint8] {.measure.} =
+  ## Builds the overhead health bar as TRUE hit points, one pip each: the
+  ## seat's remaining base hp as lit sage-green pips, its missing hp as dim
+  ## sockets (the green section is always maxHp wide, so an armored seat
+  ## reads as a LONGER bar even at full health), and one pale-blue pip per
+  ## remaining shield-layer hp appended after — the shield is a separate
+  ## layer over base health (it depletes first and its pips vanish with it,
+  ## echoing the bubble), never folded into the green count. The bar width
+  ## scales with the seat's maximum, which is exactly the point: hit-point
+  ## configs are single digits, and the label carries the same numbers for
+  ## anything reading instead of looking.
+  let pips = maxHp + shieldHp
+  let width = hpBarWidth(pips)
+  result = newRgbaPixels(width, HpBarH)
+  for pip in 0 ..< pips:
+    let x0 = pip * (HpPipW + HpPipGap)
     for py in 0 ..< HpBarH:
-      for px in 0 ..< HpBarSegW:
-        let i = py * HpBarWidth + x0 + px
-        if seg < litSegments:
+      for px in 0 ..< HpPipW:
+        let i = py * width + x0 + px
+        if pip < hp:
           result.putRawRgbaPixel(i, 122, 176, 96, 235)
-        else:
+        elif pip < maxHp:
           result.putRawRgbaPixel(i, 44, 40, 34, 170)
+        else:
+          result.putRawRgbaPixel(i, 108, 170, 220, 235)
 
 const IdentityGlyphs: array[8, array[IdentityGlyphH, uint8]] = [
   ## Uppercase Greek Α Β Γ Δ Ε Ζ Η Θ as 5×7 row bitmasks (bit 4 = leftmost
@@ -5108,7 +5128,7 @@ proc addPlasmaArcs(
     currentIds.add(objectId)
     packet.addBoardObject(
       objectId,
-      player.x + CollisionW div 2 + HpBarWidth div 2 -
+      player.x + CollisionW div 2 + HpBarAnchorWidth div 2 -
         PlasmaArcCarrySize div 2,
       player.overheadAnchorY() - OverheadYOffset - PlasmaArcCarrySize,
       30006,
@@ -5299,7 +5319,7 @@ proc addShields(
       currentIds.add(objectId)
       packet.addBoardObject(
         objectId,
-        player.x + CollisionW div 2 - HpBarWidth div 2 - ShieldCarrySize div 2,
+        player.x + CollisionW div 2 - HpBarAnchorWidth div 2 - ShieldCarrySize div 2,
         player.overheadAnchorY() - OverheadYOffset - ShieldCarrySize,
         30006, MapLayerId, ShieldCarrySpriteId
       )
@@ -5440,7 +5460,7 @@ proc addGrenades(
       currentIds.add(objectId)
       packet.addBoardObject(
         objectId,
-        player.x + CollisionW div 2 + HpBarWidth div 2 - PaintBombCarrySize div 2,
+        player.x + CollisionW div 2 + HpBarAnchorWidth div 2 - PaintBombCarrySize div 2,
         player.overheadAnchorY() - OverheadYOffset - PaintBombCarrySize,
         30006, MapLayerId, PaintBombCarrySpriteId
       )
@@ -5675,7 +5695,7 @@ proc addBarriers(
     currentIds.add(objectId)
     packet.addBoardObject(
       objectId,
-      player.x + CollisionW div 2 + HpBarWidth div 2 - BarrierCarrySize div 2,
+      player.x + CollisionW div 2 + HpBarAnchorWidth div 2 - BarrierCarrySize div 2,
       player.overheadAnchorY() - OverheadYOffset - BarrierCarrySize,
       30006, MapLayerId, BarrierCarrySpriteId
     )
@@ -5952,11 +5972,16 @@ proc addHpPips(
   packet: var seq[uint8],
   viewerIndex = -1
 ) {.measure.} =
-  ## Places a fixed 3-segment health bar above each living player's head. The
-  ## map view passes no viewer and shows every bar; a player view passes its
-  ## viewer index and only receives the bars of players it can see (a wounded
-  ## enemy's hp is readable intel). Object ids are a fixed pool keyed by player
-  ## index; stale bars fall to the delete sweep.
+  ## Places a true-hit-point health bar above each living player's head:
+  ## green pips for remaining base hp out of the seat's OWN max (the
+  ## hitPoints config, handicap-interpolated, plus the armor perk), blue
+  ## pips for a held shield layer's remaining hp. The map view passes no
+  ## viewer and shows every bar; a player view passes its viewer index and
+  ## only receives the bars of players it can see (a wounded enemy's hp is
+  ## readable intel). Sprite and object ids are fixed pools keyed by player
+  ## index — the bar's size and pip split are per-seat state, and the label
+  ## spells that state, so addBoardSpriteChanged re-uploads exactly when it
+  ## changes. Stale bars fall to the delete sweep.
   for i in 0 ..< sim.players.len:
     let player = sim.players[i]
     if not player.alive:
@@ -5964,29 +5989,24 @@ proc addHpPips(
     if viewerIndex >= 0 and i != viewerIndex and
         not sim.playerVisibleTo(viewerIndex, i):
       continue
-    # Map remaining hit points onto 3 thirds (ceil, so any living player keeps
-    # at least one lit segment). The bar's pixel size is constant regardless of
-    # the hit-point config, so a 99-hp game reads the same 14px 3-chunk bar.
-    # The denominator is the player's OWN team max, so a handicapped team's
-    # smaller bar still reads full when topped up.
     let maxHp = max(1, sim.config.maxHpFor(player.team, player.perks))
-    let effectiveHp = player.hp + player.shieldHp
-    let litSegments = min(HpBarSegments,
-      max(1, (effectiveHp * HpBarSegments + maxHp - 1) div maxHp))
-    let spriteId = HpPipSpriteBase + litSegments
+    let hp = clamp(player.hp, 0, maxHp)
+    let shieldHp = max(0, player.shieldHp)
+    let width = hpBarWidth(maxHp + shieldHp)
+    let spriteId = HpPipSpriteBase + i
     packet.addBoardSpriteChanged(
       spriteDefs,
       spriteId,
-      HpBarWidth,
+      width,
       HpBarH,
-      buildHpBarSprite(litSegments),
-      labelHp(litSegments)
+      buildHpBarSprite(hp, maxHp, shieldHp),
+      labelHp(hp, maxHp, shieldHp)
     )
     let objectId = HpPipObjectBase + i
     currentIds.add(objectId)
     packet.addBoardObject(
       objectId,
-      player.x + CollisionW div 2 - HpBarWidth div 2,
+      player.x + CollisionW div 2 - width div 2,
       player.overheadAnchorY() - OverheadYOffset - HpBarH,
       30001,
       MapLayerId,

@@ -229,6 +229,34 @@ proc spriteObjectsWithLabel*(
       height: sprite.height
     ))
 
+proc spriteObjectsWithLabelPrefix*(
+  client: ProtocolClient,
+  prefix: string
+): seq[tuple[info: SpriteObjectInfo, label: string]] =
+  ## Present sprite objects whose sprite label STARTS with `prefix`, paired
+  ## with the full label so the caller can parse the interpolated tail —
+  ## for label families that carry per-object data (`hp <n>/<m>`) and so
+  ## cannot be exact-match scanned.
+  if client.sprite.isNil:
+    return
+  for objectId, objectState in client.sprite.objects:
+    if not objectState.present:
+      continue
+    let sprite = client.sprite.spriteInfo(objectState.spriteId)
+    if sprite.isNil or not sprite.defined or
+        not sprite.label.startsWith(prefix):
+      continue
+    result.add((
+      info: SpriteObjectInfo(
+        objectId: objectId,
+        x: objectState.x,
+        y: objectState.y,
+        width: sprite.width,
+        height: sprite.height
+      ),
+      label: sprite.label
+    ))
+
 iterator spriteObjects*(
   client: ProtocolClient
 ): tuple[

@@ -39,7 +39,8 @@ grenade carried
 grenade sound
 handicap <color> <n> hp <n> lives <n> spd <n> miss <n>
 hit splat <color> stage <n>
-hp <n>/3
+hp <n>/<n>
+hp <n>/<n> shield <n>
 identity <color> <name> gun
 identity <color> <name> nade gun
 identity <color> <name> shield gun
