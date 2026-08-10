@@ -1738,6 +1738,107 @@ proc rectOnOpenFloor(
         return false
   true
 
+proc placePuddles(gameMap: var CtfMap, count: int, rng: var MapRng) =
+  ## Place the paint puddles. COUNT mode only, and AFTER the trench set is
+  ## final so acceptance sees every dug pit: sample random left-half spots
+  ## from the map rng and accept a spot when the blob AND its symmetry
+  ## image sit on open floor, clear of every trench, every accepted
+  ## puddle, and every team's base pocket. An odd request anchors its
+  ## extra puddle dead center (its own image under mirror AND rot180),
+  ## like the odd center pit. Best-effort like pits: when the attempts run
+  ## out the map ships with as many as fit. (4-team symmetries raise on an
+  ## explicit request in the generator and place nothing here.)
+  if count <= 0 or gameMap.symmetry in {symRot90, symQuadMirror}:
+    return
+  let
+    obstacles = buildArenaObstacles(gameMap)
+    margin = PuddleMaxRadiusPx + 8
+  var baseRooms: seq[MapRect]
+  for room in gameMap.defaultCtfRooms():
+    if room.name != "Center":
+      baseRooms.add MapRect(x: room.x, y: room.y, w: room.w, h: room.h)
+  ## Acceptance works on tight bounding boxes: conservative for the open
+  ## floor test (a bbox clipping a wall rejects even when the blob's ring
+  ## clears it), and cheap for the overlap tests.
+  proc addPuddlePair(
+    gameMap: CtfMap, splats: var seq[Puddle], splat: Puddle
+  ): bool =
+    ## Accepts one left-half splat plus its symmetry image when both sit
+    ## on open floor clear of everything above. A splat whose image is
+    ## blocked drops WITH it — fairness before density, as with trenches.
+    let image =
+      case gameMap.symmetry
+      of symMirror: splat.mirrorX(gameMap.width)
+      of symRot180: splat.rot180(gameMap.width, gameMap.height)
+      of symRot90, symQuadMirror:
+        raiseAssert "puddles never place on 4-team maps"
+    let
+      splatBox = puddleBounds(splat)
+      imageBox = puddleBounds(image)
+    if rectsIntersect(splatBox, imageBox):
+      return false
+    for candBox in [splatBox, imageBox]:
+      if not rectOnOpenFloor(gameMap, obstacles, candBox):
+        return false
+      for trench in gameMap.trenches:
+        if rectsIntersect(shapeAsRect(trench), candBox):
+          return false
+      for base in baseRooms:
+        if rectsIntersect(base, candBox):
+          return false
+    for accepted in splats:
+      let accBox = puddleBounds(accepted)
+      if rectsIntersect(accBox, splatBox) or
+          rectsIntersect(accBox, imageBox):
+        return false
+    splats.add splat
+    splats.add image
+    true
+  var splats: seq[Puddle]
+  if count mod 2 == 1:
+    ## The odd splat sits dead center, inside the always-open flag ring —
+    ## unless an odd PIT request already dug the center out (paint on a
+    ## trench floor would double-stack the two hazards' art and rules).
+    ## Its disc set is stitched self-symmetric (see centerPuddleSplat),
+    ## so it is its own image and joins the set alone.
+    let center = rng.centerPuddleSplat(gameMap)
+    var centerOpen = true
+    for trench in gameMap.trenches:
+      if rectsIntersect(shapeAsRect(trench), puddleBounds(center)):
+        centerOpen = false
+        break
+    if centerOpen:
+      splats.add center
+  ## Bounded rejection sampling: enough tries that a normal board fills
+  ## the request, deterministic from the map seed either way. Anchors cap
+  ## at PuddleMaxRadiusPx short of the center line, so a splat and its
+  ## mirror image can never touch.
+  var attempts = count * 40
+  while splats.len < count and attempts > 0:
+    dec attempts
+    let
+      cxHi = gameMap.center.x - PuddleMaxRadiusPx - 4
+      cx = rng.pickRange(margin, max(margin, cxHi))
+      cy = rng.pickRange(margin, max(margin, gameMap.height - margin))
+    discard gameMap.addPuddlePair(splats, rng.puddleSplatAt(cx, cy))
+  gameMap.puddles = splats
+
+proc placePuddles*(gameMap: var CtfMap, count: int, seed: int) =
+  ## Tool entry (mapkit): place `count` paint puddles on an ALREADY-BUILT
+  ## map — e.g. a pinned campaign cell spec — replacing any puddles it
+  ## carries, deterministically from `seed`. Same rules as generation:
+  ## 2-team maps only, best-effort fill against the final terrain.
+  if count > MaxPuddles:
+    raise newException(
+      CtfError, "Config field mapPuddles must be 0.." & $MaxPuddles & ".")
+  if count > 0 and gameMap.symmetry in {symRot90, symQuadMirror}:
+    raise newException(
+      CtfError, "Puddles are not supported on 4-team maps yet.")
+  gameMap.puddles = @[]
+  var rng = MapRng(state: uint64(seed))
+  placePuddles(gameMap, count, rng)
+  gameMap.validateMap()
+
 proc generateMapAttempt*(
   seed: int, overrides: MapGenOverrides, teams = 2
 ): CtfMap =  ## One UNVALIDATED draw. Every top-level parameter is drawn unconditionally
@@ -2439,91 +2540,10 @@ proc generateMapAttempt*(
     for d in digs:
       result.trenches.add rectShape(d)
 
-  ## Place the paint puddles. COUNT mode only, and AFTER the trench set is
-  ## final so acceptance sees every dug pit: sample random left-half spots
-  ## from the map rng and accept a spot when the blob AND its symmetry
-  ## image sit on open floor, clear of every trench, every accepted
-  ## puddle, and every team's base pocket. An odd request anchors its
-  ## extra puddle dead center (its own image under mirror AND rot180),
-  ## like the odd center pit. Best-effort like pits: when the attempts run
-  ## out the map ships with as many as fit. (4-team symmetries raise on an
-  ## explicit request above and place nothing here.)
-  block finalizePuddles:
-    if overrides.puddles <= 0 or
-        result.symmetry in {symRot90, symQuadMirror}:
-      break finalizePuddles
-    let
-      obstacles = buildArenaObstacles(result)
-      margin = PuddleMaxRadiusPx + 8
-    var baseRooms: seq[MapRect]
-    for room in result.defaultCtfRooms():
-      if room.name != "Center":
-        baseRooms.add MapRect(x: room.x, y: room.y, w: room.w, h: room.h)
-    ## Acceptance works on tight bounding boxes: conservative for the open
-    ## floor test (a bbox clipping a wall rejects even when the blob's ring
-    ## clears it), and cheap for the overlap tests.
-    proc addPuddlePair(
-      gameMap: CtfMap, splats: var seq[Puddle], splat: Puddle
-    ): bool =
-      ## Accepts one left-half splat plus its symmetry image when both sit
-      ## on open floor clear of everything above. A splat whose image is
-      ## blocked drops WITH it — fairness before density, as with trenches.
-      let image =
-        case gameMap.symmetry
-        of symMirror: splat.mirrorX(gameMap.width)
-        of symRot180: splat.rot180(gameMap.width, gameMap.height)
-        of symRot90, symQuadMirror:
-          raiseAssert "puddles never place on 4-team maps"
-      let
-        splatBox = puddleBounds(splat)
-        imageBox = puddleBounds(image)
-      if rectsIntersect(splatBox, imageBox):
-        return false
-      for candBox in [splatBox, imageBox]:
-        if not rectOnOpenFloor(gameMap, obstacles, candBox):
-          return false
-        for trench in gameMap.trenches:
-          if rectsIntersect(shapeAsRect(trench), candBox):
-            return false
-        for base in baseRooms:
-          if rectsIntersect(base, candBox):
-            return false
-      for accepted in splats:
-        let accBox = puddleBounds(accepted)
-        if rectsIntersect(accBox, splatBox) or
-            rectsIntersect(accBox, imageBox):
-          return false
-      splats.add splat
-      splats.add image
-      true
-    var splats: seq[Puddle]
-    if overrides.puddles mod 2 == 1:
-      ## The odd splat sits dead center, inside the always-open flag ring —
-      ## unless an odd PIT request already dug the center out (paint on a
-      ## trench floor would double-stack the two hazards' art and rules).
-      ## Its disc set is stitched self-symmetric (see centerPuddleSplat),
-      ## so it is its own image and joins the set alone.
-      let center = rng.centerPuddleSplat(result)
-      var centerOpen = true
-      for trench in result.trenches:
-        if rectsIntersect(shapeAsRect(trench), puddleBounds(center)):
-          centerOpen = false
-          break
-      if centerOpen:
-        splats.add center
-    ## Bounded rejection sampling: enough tries that a normal board fills
-    ## the request, deterministic from the map seed either way. Anchors cap
-    ## at PuddleMaxRadiusPx short of the center line, so a splat and its
-    ## mirror image can never touch.
-    var attempts = overrides.puddles * 40
-    while splats.len < overrides.puddles and attempts > 0:
-      dec attempts
-      let
-        cxHi = result.center.x - PuddleMaxRadiusPx - 4
-        cx = rng.pickRange(margin, max(margin, cxHi))
-        cy = rng.pickRange(margin, max(margin, result.height - margin))
-      discard result.addPuddlePair(splats, rng.puddleSplatAt(cx, cy))
-    result.puddles = splats
+  ## Paint puddles go last: nothing draws from the map rng after them, so a
+  ## puddle-free draw is bit-identical whether or not the proc exists (see
+  ## placePuddles for the placement rules).
+  placePuddles(result, overrides.puddles, rng)
   result.validateMap()
 
 type

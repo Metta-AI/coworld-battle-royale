@@ -195,6 +195,50 @@ suite "paint puddles":
     check echoed["mapPuddles"].getInt() == 2
     check echoed["puddleDamagePct"].getInt() == 25
 
+  test "placePuddles patches a pinned spec deterministically (mapkit entry)":
+    # The tool path mapkit's `puddles` subcommand drives: round-trip a
+    # puddle-free map through its pinned spec, then place against the
+    # spec's final terrain.
+    let game = puddleGame(puddles = 0)
+    var patched = mapFromSpecJson(mapSpecJson(game.gameMap))
+    check patched.puddles.len == 0
+    patched.placePuddles(6, seed = 77)
+    check patched.puddles.len > 0
+    check patched.puddles.len mod 2 == 0
+    # Every patched splat's symmetry image is in the set — the same
+    # team-fairness invariant generation guarantees.
+    for blob in patched.puddles:
+      let image =
+        case patched.symmetry
+        of symMirror: blob.mirrorX(patched.width)
+        of symRot180: blob.rot180(patched.width, patched.height)
+        else: blob
+      var found = false
+      for other in patched.puddles:
+        if other.spots == image.spots:
+          found = true
+          break
+      check found
+    # Deterministic from (spec, count, seed).
+    var again = mapFromSpecJson(mapSpecJson(game.gameMap))
+    again.placePuddles(6, seed = 77)
+    check mapSpecJson(again) == mapSpecJson(patched)
+    # Re-patching REPLACES the set (no accumulation); count 0 strips it.
+    patched.placePuddles(2, seed = 5)
+    check patched.puddles.len <= 2
+    patched.placePuddles(0, seed = 5)
+    check patched.puddles.len == 0
+
+  test "placePuddles refuses 4-team maps and over-cap requests":
+    var config = defaultGameConfig()
+    config.update("""{"mapPath": "gen", "mapSeed": 1, "teams": 4}""")
+    var quad = initCtfForTest(config).gameMap
+    expect CtfError:
+      quad.placePuddles(2, seed = 1)
+    var flat = puddleGame(puddles = 0).gameMap
+    expect CtfError:
+      flat.placePuddles(MaxPuddles + 1, seed = 1)
+
   test "config validation rejects out-of-range knobs":
     var config = defaultGameConfig()
     expect CtfError:
