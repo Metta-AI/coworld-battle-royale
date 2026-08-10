@@ -64,6 +64,43 @@ path — not a sibling checkout on an unrelated branch.
 - Dependencies come from nimby (`nimby --global sync nimby.lock`; the
   Dockerfile is the canonical build recipe).
 
+## Interaction radii must be derived from the art (learned 3x on the heart)
+
+An interactable's SIM radius and its DRAWN size are two numbers in two
+modules (`sim_types.nim` vs `global.nim`), and nothing structurally ties
+them. When they disagree the game lies to the player: the art says "you are
+on it", the sim says "you are not", and there is no feedback distinguishing
+"not close enough" from "this does not work".
+
+The planted heart took THREE fixes to get right, and the first two were
+render-only because the sim side was never questioned:
+
+1. #259 — the object's center sat 28px off the grab point. Unpickable at any
+   precision. Fixed by sinking the gem into the pedestal.
+2. #261 — restored the erect stance by padding the canvas, keeping #259's
+   center contract.
+3. #264 (GV42) — the radius itself was still 12px against a 60px-wide gem on
+   a 96px disc: a FIFTH of the art. Players stood plainly on the heart and
+   got nothing. This was present the whole time and survived both fixes.
+
+So: **when you touch an interactable's art or its radius, check the other
+one, and assert the relationship in a test** rather than leaving it as prose
+in a doc comment. GV42 exports `PlantedFlagW` from `global.nim` purely so
+`test_ctf_game.nim` can assert `FlagPickupRange >= PlantedFlagW div 2` —
+shrinking the art now fails a test instead of silently restoring the bug.
+Note `sim_types.nim` cannot import `global.nim` (the dependency runs one
+way), so the derivation lives as prose on the constant and the *assertion*
+lives in the test — that test is the enforcement, so do not delete it.
+
+Also, radius is keyed to the gem's WIDTH, not its height: since #261 the gem
+stands erect ABOVE the grab point, so the art is not vertically symmetric
+about it. What a player's feet are on is the 96px pedestal disc.
+
+The other five pickups (grenade, med kit, shield, spray can, barrier) still
+use 12px against 18-26px sprites — a milder version of the same mismatch (at
+worst ~2x, vs the heart's 5x), deliberately left alone by GV42's scope. Filed
+as https://github.com/Metta-AI/coworld-ctf/issues/266 with the measurements.
+
 ## Terrain
 
 - The **default league map is the hand-tuned arena** (`config.json`
@@ -187,6 +224,27 @@ bump (`tools/record_fixture.sh`; exact recipes in
 - After re-recording, re-pin the capture fixture's asserted winner/ending
   and verify the required beats (capture/steal/gameover) actually occur —
   scan a few seeds if needed.
+- **A RECIPE CAN GO STALE WITHOUT ANY RULE CHANGE**, because it inherits
+  `config.json`. A recipe only overrides the fields it names, so a later
+  edit to the repo config silently changes what the recording *is*. GV42
+  hit this: the barrage params landed in `config.json` after the GV41
+  fixtures were cut, and a barrage game has NO draw ceiling — so
+  `draw-nokill`, recorded to its documented recipe, ran 109530 ticks
+  against a 1500-tick limit and ended with a WINNER. Two draw-verdict
+  tests were asserting against a fixture that could not contain a draw.
+  If a fixture's re-recording comes out wildly larger/longer than the
+  version it replaces, suspect an inherited config field before you
+  suspect your own change; a fixture must pin every field its ending
+  depends on (`draw-nokill` now pins `barrageMaxPerSec: 0`).
+- **A SEED DOES NOT PIN THE OUTCOME.** The bots are separate processes, so
+  two recordings of one seed differ. Rare events (a grenade kill: ~5 of
+  ~105 kills) are present in one take and absent in the next — the first
+  GV42 take of seed 907 lost its grenade kill, and the second had it. On a
+  miss, RE-RECORD the same seed (`tools/scan_event_seeds.sh <seed>` reports
+  the mix and leaves its recording in `.scan/`) instead of moving the seed;
+  the comment history in `test_extract_events.nim` shows the seed walking
+  902 → 905 → 908 → 907, and some of that walking was probably this
+  nondeterminism, not the rule changes it was blamed on.
 
 ## Debugging prod league replays (don't drive the Observatory UI)
 
