@@ -36,6 +36,65 @@ against the *updated* code, never the base you happened to check out. When
 working in a worktree, also confirm you're editing files under that worktree's
 path — not a sibling checkout on an unrelated branch.
 
+### A GameVersion number is claimed across BRANCHES, not just against main
+
+Being current with `main` is **not** enough to make a version bump safe. Two
+long-lived branches can each be perfectly up to date and still pick the *same*
+next number, because neither can see the other's choice — nothing in the build
+enforces uniqueness, so the collision lands silently and only shows up as
+replays whose recorded version no longer identifies the rules that produced
+them.
+
+This has now happened twice on the same line. The mapgen branch authored a bump
+as "GV38", found main had independently spent 38-41, renumbered to GV42 — and
+then the heart-grab hotfix (#264) merged GV42 first, for an unrelated rule
+(grab radius), while the mapgen PR still carried GV42 for grenade/shout reach.
+
+So **before you claim a version, scan the open PRs, not just `main`**:
+
+```bash
+git fetch origin
+MAIN=$(git show origin/main:src/ctf/sim_types.nim |
+  grep -m1 'GameVersion\* =' | grep -o '"[0-9]*"' | tr -d '"')
+echo "main has spent: GV$MAIN"
+# Every branch CLAIMING >= what main spent — the part `main` cannot tell you.
+# Filtered to >= MAIN because ~150 stale branches sit on old versions and are
+# just noise; a claim BELOW main's is somebody else's problem, not a collision.
+git for-each-ref --format='%(refname:short) %(symref)' refs/remotes/origin |
+while read b sym; do
+  [ -n "$sym" ] && continue    # skip origin/HEAD, which is a symref not a branch
+  v=$(git show "$b:src/ctf/sim_types.nim" 2>/dev/null |
+    grep -m1 'GameVersion\* =' | grep -o '"[0-9]*"' | tr -d '"')
+  [ -n "$v" ] && [ "$v" -ge "$MAIN" ] && echo "  GV$v  $b"
+done | sort -u
+```
+
+Take the next number above **every** claim you find, and say in the PR body
+which number you took and what you saw claimed, so a reviewer can spot a race
+that opened after you looked. If you are the SECOND to merge, renumbering is
+yours to do: bump to the next free number and re-record fixtures against
+merged `main` — fixtures cut against your old number fail the version gate the
+moment the other change lands.
+
+**Nothing enforces this yet — the check is manual.** A CI guard for it is
+written and validated but UNMERGED: cubi tokens lack GitHub's `workflows`
+permission, so a bot cannot modify `.github/workflows/`. A human needs to land
+it (see issue #268). The guard's logic is worth knowing even so, because it is
+the same reasoning you should apply by hand: **the number alone cannot detect
+the collision** — the colliding branch and the base BOTH read "42". What
+distinguishes them is the RULE the number is attached to, so compare the
+headline on the changelog comment, not the digits.
+
+The changelog comment on `GameVersion` is the other half of this: it is a
+prepend-only history, so **say what the number means and what it obsoletes**.
+Keep the `GVnn (short rule name): HEADLINE` shape — that first line is what
+makes two claims on one number distinguishable at a glance, and it is what the
+pending guard diffs.
+That comment is what let this collision be diagnosed at all — the mapgen
+branch's own note records its first renumber ("authored as GV38 … renumbered at
+the T0 merge"), which is why the second one was recognisable as a pattern
+rather than a one-off.
+
 ## Layout
 
 - `src/ctf.nim` — server entrypoint (seed randomization happens HERE,
