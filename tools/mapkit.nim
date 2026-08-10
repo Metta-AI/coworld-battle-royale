@@ -509,6 +509,27 @@ proc cmdMetrics(a: Args) =
   if a.positionals.len == 0: fail("metrics needs a spec path")
   printMetrics(readSpec(a.positionals[0]))
 
+proc cmdPuddles(a: Args) =
+  ## Patch paint puddles into an existing pinned spec: place --count splats
+  ## against the spec's FINAL terrain (obstacles, trenches, base pockets all
+  ## already in the file), replacing any puddles the spec carries. --count 0
+  ## strips them. Placement is best-effort like the generator's: a crowded
+  ## board ships with as many as fit, and the line printed reports the real
+  ## number.
+  if a.positionals.len == 0: fail("puddles needs a spec path")
+  var gameMap = readSpec(a.positionals[0])
+  if "count" notin a.flags: fail("missing required --count")
+  let count = a.intFlag("count", 0)
+  ## Default seed re-derives from the map's own genSeed (salted so the
+  ## stream never replays the generator's), keeping the patch deterministic
+  ## with no extra bookkeeping.
+  let seed = a.intFlag("seed", gameMap.genSeed xor 0x5D1A_7E5)
+  placePuddles(gameMap, count, seed)
+  let outPath = a.flag("out", a.positionals[0])
+  writeFile(outPath, mapSpecJson(gameMap))
+  stderr.writeLine(
+    &"placed {gameMap.puddles.len}/{count} puddles seed={seed} -> {outPath}")
+
 proc cmdMirror(a: Args) =
   if a.positionals.len == 0: fail("mirror needs a spec path")
   let
@@ -528,6 +549,9 @@ mapkit — author interesting-but-fair CTF maps
                   (rot90/quadmirror imply --teams 4; quadmirror boards are
                   rectangular; --pits locks the trench count, --windows the
                   glass count)
+  mapkit puddles  spec.json --count N [--seed S] [-o out.json]
+                  # patch paint puddles into a pinned spec (2-team maps only;
+                  # replaces existing puddles, --count 0 strips them)
   mapkit render   spec.json [-o out.png] [--diagnostics] [--max N]
   mapkit validate spec.json      # metrics + PASS/FAIL, non-zero exit on FAIL
   mapkit metrics  spec.json      # cover / sightlines / reachability
@@ -543,6 +567,7 @@ when isMainModule:
   try:
     case argv[0]
     of "generate": cmdGenerate(a)
+    of "puddles": cmdPuddles(a)
     of "render": cmdRender(a)
     of "validate": cmdValidate(a)
     of "metrics": cmdMetrics(a)
