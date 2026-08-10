@@ -1447,11 +1447,6 @@ body[data-embed] #transport,
 body[data-embed] #lightpool,
 body[data-embed] #grain,
 body[data-embed] #status { display: none !important; }
-/* The embed box is a billboard — the frame carries pointer-events:none, so the
-   zoom bar + minimap can never be clicked. A control the viewer cannot operate
-   is pure leaked chrome (and the Lobby landing page currently masks it with a
-   box, its own visual bug), so hide the whole cluster here. */
-body[data-embed] #viewpanel { display: none !important; }
 body[data-embed] #board { top: 0; height: 100%; }
 </style>
 </head>
