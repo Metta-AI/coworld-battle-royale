@@ -78,17 +78,37 @@ yours to do: bump to the next free number and re-record fixtures against
 merged `main` — fixtures cut against your old number fail the version gate the
 moment the other change lands.
 
-**Nothing enforces this yet — the check is manual.** A CI guard for it is
-written and validated but UNMERGED: cubi tokens lack GitHub's `workflows`
-permission, so a bot cannot modify `.github/workflows/`. A human needs to land
-it (https://github.com/Metta-AI/coworld-ctf/issues/268 — cite full URLs here,
-not a bare `#N`: softmax runs both GitHub and Forgejo with independently
-numbered issues, so a bare number resolves against whichever host the reader
-happens to be on). The guard's logic is worth knowing even so, because it is
-the same reasoning you should apply by hand: **the number alone cannot detect
-the collision** — the colliding branch and the base BOTH read "42". What
-distinguishes them is the RULE the number is attached to, so compare the
-headline on the changelog comment, not the digits.
+**Check it with one command**, locally or in CI:
+
+```bash
+tools/ci/check_gameversion.sh origin/main          # checks your working HEAD
+tools/ci/check_gameversion.sh origin/main <branch> # checks another branch
+```
+
+It exits non-zero when your version reuses the base's number **for a different
+rule**, and stays quiet when `GameVersion` is untouched (every PR that does not
+change the gameplay rules). Note what it compares: **the number alone cannot
+detect the collision**, because the colliding branch and the base BOTH read
+"42". What distinguishes them is the RULE the number is attached to, so the
+script diffs the headline on the changelog comment, not the digits.
+
+It is **not yet wired into CI** — that needs a human, because cubi tokens lack
+GitHub's `workflows` permission and a bot cannot modify `.github/workflows/`.
+To wire it up, add this to the `build` job in
+`.github/workflows/build.yml` (details:
+https://github.com/Metta-AI/coworld-ctf/issues/268 — cite full URLs here, not a
+bare `#N`: softmax runs both GitHub and Forgejo with independently numbered
+issues, so a bare number resolves against whichever host the reader is on):
+
+```yaml
+      - name: GameVersion is not a number the base already spent
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin '${{ github.base_ref }}'
+          tools/ci/check_gameversion.sh FETCH_HEAD
+```
+
+Until that lands, run the script by hand before you claim a version.
 
 The changelog comment on `GameVersion` is the other half of this: it is a
 prepend-only history, so **say what the number means and what it obsoletes**.
