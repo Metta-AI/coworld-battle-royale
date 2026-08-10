@@ -1448,6 +1448,15 @@ body[data-embed] #lightpool,
 body[data-embed] #grain,
 body[data-embed] #status { display: none !important; }
 body[data-embed] #board { top: 0; height: 100%; }
+
+/* Opt-OUT of the #viewpanel overlay (zoom bar + minimap) by param only:
+   ?viewpanel=0 sets body[data-noviewpanel]. Defaults are unchanged everywhere
+   — the League Replayer shell loads the board with ?embed=1 and KEEPS zoom +
+   minimap (that's why #271 blanket-hiding the panel in all embeds was reverted
+   in #272). Only surfaces that explicitly ask — billboards (Lobby hero) and
+   thumbnail capture — append &viewpanel=0 to drop the panel. Independent of
+   embed: the two params don't touch each other. */
+body[data-noviewpanel] #viewpanel { display: none !important; }
 </style>
 </head>
 <body>
@@ -1863,6 +1872,16 @@ body[data-embed] #board { top: 0; height: 100%; }
   var EMBED = false;
   try { EMBED = new URLSearchParams(location.search).get('embed') === '1'; } catch (e) {}
   if (EMBED) document.body.setAttribute('data-embed', '1');
+
+  // ?viewpanel=0 hides the #viewpanel overlay (zoom bar + minimap). This is an
+  // explicit opt-OUT only — the default (param absent) is unchanged for every
+  // existing embed, so the League Replayer still shows zoom + minimap. See the
+  // #271/#272 lesson: hiding the panel for ALL embeds broke the Replayer shell.
+  // Billboards (Lobby hero) and thumbnail capture append &viewpanel=0.
+  try {
+    if (new URLSearchParams(location.search).get('viewpanel') === '0')
+      document.body.setAttribute('data-noviewpanel', '1');
+  } catch (e) {}
 
   // Tick deep-link (?t=<tick>): seek there on load, paused, via the same s:
   // command the scrubber uses (the sim clamps out-of-range ticks). One-shot,
