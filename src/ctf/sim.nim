@@ -2006,6 +2006,10 @@ proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
   ## touch. A player's own flag cannot be interacted with by their own team.
   ## Ties (two pedestals in touch range at once — impossible on real maps)
   ## resolve in enum order, deterministically.
+  ##
+  ## GV42: `FlagPickupRange` covers the DRAWN heart, so standing on the
+  ## pedestal is the whole interaction — there is no pinpoint to find and no
+  ## grab button. See the constant for the art-derived derivation.
   if not sim.players[playerIndex].alive or sim.players[playerIndex].carryingFlag:
     return
   let

@@ -12,7 +12,15 @@ const
   #   wipe-lives1:    record_fixture.sh <out> 3 10000 \
   #                     '{"lives":1,"hitPoints":1,"carrierSpeedPct":1}'
   #   draw-nokill:    record_fixture.sh <out> 7 1500 \
-  #                     '{"hitPoints":1000,"carrierSpeedPct":1}'
+  #                     '{"hitPoints":1000,"carrierSpeedPct":1,
+  #                       "barrageMaxPerSec":0}'
+  # (barrageMaxPerSec 0 is REQUIRED and is not optional tuning: config.json
+  # ships the barrage on since 2026-08-07, and a barrage game has NO draw
+  # ceiling by GV41's own rule — past the deadline the shelling grinds on
+  # until one team stands. Recorded with the repo config the "draw" fixture
+  # ran 109530 ticks against a 1500-tick limit and ended with a winner, so
+  # the two draw-verdict tests below failed on a fixture that could not
+  # contain a draw. The recipe predates the barrage and silently went stale.)
   # (carrierSpeedPct 1 pins the flag so the wipe/draw endings cannot be
   # preempted by a capture; record on an otherwise idle machine — a
   # CPU-starved server at speed 16 drops its bots and ends degenerate.)

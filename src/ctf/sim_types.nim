@@ -18,7 +18,19 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "41"  ## GV41 (clock rule): NO MORE OVERTIME. The GV23
+  GameVersion* = "42"  ## GV42 (heart rule): STAND ON THE PEDESTAL, TAKE THE
+    ## HEART. `FlagPickupRange` goes 12 -> 34, keyed to the drawn art instead
+    ## of a bare point: the planted heart is 60px across on a 96px pedestal,
+    ## so the old radius demanded the pinpoint CENTER of a target five times
+    ## its size. Players and policies stood visibly on the heart and did not
+    ## pick it up. GV42 makes the visual promise the mechanical one — heart
+    ## pixels under your feet means the steal fires. This is the second half
+    ## of the 2026-08-08 fix, which corrected a 28px sprite-center OFFSET but
+    ## left the precision demand in place. Steals now happen earlier (and at
+    ## all, in cases that used to fail), so no GV41 replay re-simulates:
+    ## fixtures re-recorded.
+    ##
+    ## Previously GV41 (clock rule): NO MORE OVERTIME. The GV23
     ## action floor (kills/heart steals guaranteeing 500 ticks of clock,
     ## banked as overtimeTicks) is removed outright: the clock only ever
     ## counts down, and `maxTicks` is the exact scheduled draw ceiling.
@@ -439,7 +451,35 @@ const
                               ## (GameVersion 21): stalling out the clock is
                               ## never better than losing, for either side.
 
-  FlagPickupRange* = 12       ## touch radius to steal the enemy flag.
+  FlagPickupRange* = 34       ## touch radius to steal the enemy flag: STAND ON
+                              ## THE PEDESTAL AND THE HEART IS YOURS (GV42).
+                              ## The grab radius is deliberately keyed to the
+                              ## art a player aims at, not to a bare point.
+                              ## The planted heart is drawn 60px across
+                              ## (PlantedFlagW) on a 96px pedestal disc
+                              ## (PedestalCoverSize), so 30px is the drawn
+                              ## heart's own half-extent: anywhere a player
+                              ## can see heart pixels under their feet now
+                              ## grabs. The old 12px was a quarter of the
+                              ## pedestal and a fifth of the heart — it asked
+                              ## for the exact pinpoint center of a big
+                              ## target, so humans and policies alike stood
+                              ## visibly ON the heart and did not pick it up
+                              ## (the 2026-08-08 sprite-center fix removed a
+                              ## 28px OFFSET; this removes the remaining
+                              ## precision demand). The +4 past the heart's
+                              ## half-extent covers the body half-extent
+                              ## (PlayerHalf = 6) partway, so a footprint
+                              ## overlapping the art counts as a touch. The
+                              ## radius stays well inside the pedestal's own
+                              ## protected spawn pocket on EVERY size class —
+                              ## the tightest is "small", whose 0.85 factor
+                              ## puts the pocket half-width at 60px (70 on
+                              ## standard) — so a grab never reaches through
+                              ## a wall, and an attacker still has to enter
+                              ## the pocket to steal. Unlike the field, the
+                              ## heart and pedestal art never scale, so the
+                              ## art-derived radius must not either.
   CaptureZoneWidth* = 40      ## width of each home-edge capture zone.
   PedestalCoverSize* = 96     ## px footprint the flag-home pedestal art covers.
 

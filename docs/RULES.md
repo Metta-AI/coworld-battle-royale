@@ -20,6 +20,14 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
   **right edge**.
 - **Two team hearts**, one on each team's **home pedestal** inside its spawn
   pocket (classic two-object CTF, with hearts for flags).
+- **GameVersion 42 makes standing on the pedestal enough to take the heart.**
+  The steal radius was 12px around the heart's exact center — a fifth of the
+  60px sprite drawn on a 96px pedestal — so the visible target overstated the
+  real one fivefold, and players and policies alike stood plainly on the heart
+  without picking it up. The radius is now **34px**, derived from the drawn
+  heart's own half-extent, so anywhere the art is under your feet is a grab.
+  It still stops well inside the pedestal's spawn pocket, so no steal reaches
+  through a wall.
 - The arena is filled with **staggered cover** (a slalom of offset wall
   stubs, diamonds, discs, and diagonal chevron walls, mirrored symmetrically so
   neither team has a positional advantage): **no straight shot crosses the
@@ -678,9 +686,12 @@ What that means in practice:
 ## The hearts
 
 - Each team's heart sits on its **home pedestal** inside the team's spawn pocket.
-- **Touch the ENEMY heart to steal it** off its pedestal. Your own heart cannot be
-  interacted with by your own team. While carrying you move **slower** but can
-  **still shoot**.
+- **Stand on the ENEMY pedestal to steal its heart** (GV42). The steal fires the
+  moment you are on the heart — there is no grab button and no pinpoint to find.
+  The touch radius (`FlagPickupRange` = 34px) covers the **drawn heart**, which is
+  60px across on a 96px pedestal disc, so any spot where heart pixels are under
+  your feet takes it. Your own heart cannot be interacted with by your own team.
+  While carrying you move **slower** but can **still shoot**.
 - If the carrier is killed (or disconnects), the heart **returns instantly to its
   own pedestal**. A heart is never left loose on the ground: it is either carried
   or sitting on its pedestal.
@@ -969,14 +980,28 @@ the fiction stayed heart. This document claimed `red heart` / `blue heart` until
 generated `tests/label_manifest.txt` is the ground truth if this text and the
 engine ever disagree again.
 
-**The planted heart sprite's CENTER is the grab point.** Walk your body center
-to within the 12px touch radius of the `<color> flag planted` sprite object's
-center and the steal happens on its own — there is no grab button. (Before
-2026-08-08 the big planted banner was bottom-anchored, which put its visual
-center ~28px above the grab point: policies that walked onto the heart they saw
-stood just outside the radius and could never pick it up.) The DRAWN gem sits
-in the top half of a double-height canvas, standing on the pedestal with its
-tip at the grab point — read the object's center, never where the paint is.
+**Walking onto the planted heart grabs it.** The `<color> flag planted` sprite
+object's center is the grab point, and the touch radius is **34px**
+(`FlagPickupRange`, GV42) — sized to the 60px-wide gem. So a body center
+anywhere on the pedestal's heart footprint takes it: navigate to the object
+center and you do not need to arrive exactly on it. There is no grab button.
+The DRAWN gem sits in the top half of a double-height canvas, standing on the
+pedestal with its tip at the grab point — read the object's **center**, never
+where the paint is.
+
+This took three fixes, and the failure modes are worth knowing, because they are
+the classic way a "visible objective" becomes unpickable:
+- Before 2026-08-08 the big planted banner was bottom-anchored, putting its
+  visual center ~28px above the grab point — outside the then-12px radius
+  entirely. Policies that walked onto the heart they saw could *never* pick it
+  up, at any precision.
+- That fix sank the gem halfway into the pedestal to hold the contract; the
+  stance was restored on 2026-08-08 by padding the canvas instead, which keeps
+  the object centered on the grab point while the gem stands erect.
+- The 12px radius itself survived both and remained a hidden precision demand:
+  a fifth of the gem's width, so the visible target overstated the real one 5x.
+  Agents and humans stood plainly on the heart and did not get it. GV42 keys
+  the radius to the art, which is what the player aims at.
 
 Grenades add the labels documented in the Grenades section, and the throw
 button is input mask bit 128.

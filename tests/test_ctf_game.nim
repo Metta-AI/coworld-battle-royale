@@ -42,13 +42,16 @@ suite "ctf game":
     check sim.flags[Red].y == redHome.y
 
   test "the planted heart sprite is centered on the grab point":
-    # tryPickupFlags grabs within FlagPickupRange (12px) of flag.x/flag.y,
-    # and a sprite object's CENTER is the only position a label-scanning
-    # policy can read (mapPos in players/baseline). The old bottom-anchored
-    # placement of the 60px planted banner put that perceived center 28px
-    # above the grab point — outside the grab radius — so policies walked
-    # to the heart they saw, stood on it, and could never pick it up. Both
-    # streams must place the banner's center on the exact grab point.
+    # tryPickupFlags grabs within FlagPickupRange of flag.x/flag.y, and a
+    # sprite object's CENTER is the only position a label-scanning policy can
+    # read (mapPos in players/baseline). The old bottom-anchored placement of
+    # the 60px planted banner put that perceived center 28px above the grab
+    # point — outside the then-12px grab radius — so policies walked to the
+    # heart they saw, stood on it, and could never pick it up. Both streams
+    # must place the banner's center on the exact grab point. GV42 widened
+    # the radius to cover the drawn sprite, but centering is still required:
+    # the radius is derived FROM the sprite's half-extent, so an off-center
+    # banner would spend that whole allowance on the anchor error.
     var sim = twoTeamGame()
     var
       gstate = initGlobalViewerState()
@@ -110,6 +113,59 @@ suite "ctf game":
           check bottomAlpha == 0
           check topAlpha > 0
       check found
+
+  test "standing anywhere on the drawn heart steals it":
+    # GV42, the actual complaint this fixed: the grab used to demand the
+    # pinpoint CENTER of a 60px-wide gem (12px radius, a fifth of the drawn
+    # width), so a player standing plainly ON the heart got nothing. The
+    # radius now covers the gem's own WIDTH half-extent, so every spot on the
+    # pedestal under the heart is a grab — including the diagonals, the worst
+    # case for a circular radius over a square footprint.
+    #
+    # The gem stands ERECT above the grab point (its tip is on it, the paint
+    # is in the canvas's top half), so the drawn art is NOT symmetric about
+    # the grab point vertically. That is why the radius is keyed to the gem's
+    # width, not its height: what a player's feet are actually on is the 96px
+    # pedestal disc, and the width is the honest footprint figure.
+    let half = PlantedFlagW div 2   # 30px: the gem's width half-extent.
+    check FlagPickupRange >= half   # the gem's footprint is inside the radius.
+    for (dx, dy) in [
+      (0, 0),                       # dead center: always worked.
+      (half, 0), (-half, 0),        # left/right of the gem's footprint.
+      (0, half), (0, -half),        # ahead of and behind it on the disc.
+      (half - 8, half - 8),         # inside the diagonal, near a corner.
+      (-(half - 8), half - 8)
+    ]:
+      var sim = twoTeamGame()
+      let blueHome = sim.gameMap.flagHome(Blue)
+      sim.players[0].x = blueHome.x + dx
+      sim.players[0].y = blueHome.y + dy
+      sim.tryPickupFlags(0)
+      check sim.flags[Blue].carrier == 0
+      check sim.players[0].carryingFlag
+
+  test "the heart grab does not reach past its own pedestal":
+    # The radius is not a licence to vacuum: it must stay inside the
+    # pedestal's protected spawn pocket, so a grab never reaches through a
+    # wall and an attacker still has to enter the pocket to steal.
+    var sim = twoTeamGame()
+    let
+      blueHome = sim.gameMap.flagHome(Blue)
+      pocket = sim.gameMap.spawnPocketHalf(Blue)
+    check FlagPickupRange < pocket.w
+    check FlagPickupRange < pocket.h
+    # Just outside the radius on each axis: still no steal.
+    for (dx, dy) in [
+      (FlagPickupRange + 1, 0), (-(FlagPickupRange + 1), 0),
+      (0, FlagPickupRange + 1), (0, -(FlagPickupRange + 1))
+    ]:
+      sim.flags[Blue].carrier = -1
+      sim.players[0].carryingFlag = false
+      sim.players[0].x = blueHome.x + dx
+      sim.players[0].y = blueHome.y + dy
+      sim.tryPickupFlags(0)
+      check sim.flags[Blue].carrier == -1
+      check not sim.players[0].carryingFlag
 
   test "a dead player cannot steal a flag":
     var sim = twoTeamGame()
