@@ -36,6 +36,65 @@ against the *updated* code, never the base you happened to check out. When
 working in a worktree, also confirm you're editing files under that worktree's
 path — not a sibling checkout on an unrelated branch.
 
+### A GameVersion number is claimed across BRANCHES, not just against main
+
+Being current with `main` is **not** enough to make a version bump safe. Two
+long-lived branches can each be perfectly up to date and still pick the *same*
+next number, because neither can see the other's choice — nothing in the build
+enforces uniqueness, so the collision lands silently and only shows up as
+replays whose recorded version no longer identifies the rules that produced
+them.
+
+This has now happened twice on the same line. The mapgen branch authored a bump
+as "GV38", found main had independently spent 38-41, renumbered to GV42 — and
+then the heart-grab hotfix (#264) merged GV42 first, for an unrelated rule
+(grab radius), while the mapgen PR still carried GV42 for grenade/shout reach.
+
+So **before you claim a version, scan the open PRs, not just `main`**:
+
+```bash
+git fetch origin
+MAIN=$(git show origin/main:src/ctf/sim_types.nim |
+  grep -m1 'GameVersion\* =' | grep -o '"[0-9]*"' | tr -d '"')
+echo "main has spent: GV$MAIN"
+# Every branch CLAIMING >= what main spent — the part `main` cannot tell you.
+# Filtered to >= MAIN because ~150 stale branches sit on old versions and are
+# just noise; a claim BELOW main's is somebody else's problem, not a collision.
+git for-each-ref --format='%(refname:short) %(symref)' refs/remotes/origin |
+while read b sym; do
+  [ -n "$sym" ] && continue    # skip origin/HEAD, which is a symref not a branch
+  v=$(git show "$b:src/ctf/sim_types.nim" 2>/dev/null |
+    grep -m1 'GameVersion\* =' | grep -o '"[0-9]*"' | tr -d '"')
+  [ -n "$v" ] && [ "$v" -ge "$MAIN" ] && echo "  GV$v  $b"
+done | sort -u
+```
+
+Take the next number above **every** claim you find, and say in the PR body
+which number you took and what you saw claimed, so a reviewer can spot a race
+that opened after you looked. If you are the SECOND to merge, renumbering is
+yours to do: bump to the next free number and re-record fixtures against
+merged `main` — fixtures cut against your old number fail the version gate the
+moment the other change lands.
+
+**Nothing enforces this yet — the check is manual.** A CI guard for it is
+written and validated but UNMERGED: cubi tokens lack GitHub's `workflows`
+permission, so a bot cannot modify `.github/workflows/`. A human needs to land
+it (see issue #268). The guard's logic is worth knowing even so, because it is
+the same reasoning you should apply by hand: **the number alone cannot detect
+the collision** — the colliding branch and the base BOTH read "42". What
+distinguishes them is the RULE the number is attached to, so compare the
+headline on the changelog comment, not the digits.
+
+The changelog comment on `GameVersion` is the other half of this: it is a
+prepend-only history, so **say what the number means and what it obsoletes**.
+Keep the `GVnn (short rule name): HEADLINE` shape — that first line is what
+makes two claims on one number distinguishable at a glance, and it is what the
+pending guard diffs.
+That comment is what let this collision be diagnosed at all — the mapgen
+branch's own note records its first renumber ("authored as GV38 … renumbered at
+the T0 merge"), which is why the second one was recognisable as a pattern
+rather than a one-off.
+
 ## Layout
 
 - `src/ctf.nim` — server entrypoint (seed randomization happens HERE,
@@ -63,6 +122,43 @@ path — not a sibling checkout on an unrelated branch.
   are 10-50x slower through the per-pixel map code.
 - Dependencies come from nimby (`nimby --global sync nimby.lock`; the
   Dockerfile is the canonical build recipe).
+
+## Interaction radii must be derived from the art (learned 3x on the heart)
+
+An interactable's SIM radius and its DRAWN size are two numbers in two
+modules (`sim_types.nim` vs `global.nim`), and nothing structurally ties
+them. When they disagree the game lies to the player: the art says "you are
+on it", the sim says "you are not", and there is no feedback distinguishing
+"not close enough" from "this does not work".
+
+The planted heart took THREE fixes to get right, and the first two were
+render-only because the sim side was never questioned:
+
+1. #259 — the object's center sat 28px off the grab point. Unpickable at any
+   precision. Fixed by sinking the gem into the pedestal.
+2. #261 — restored the erect stance by padding the canvas, keeping #259's
+   center contract.
+3. #264 (GV42) — the radius itself was still 12px against a 60px-wide gem on
+   a 96px disc: a FIFTH of the art. Players stood plainly on the heart and
+   got nothing. This was present the whole time and survived both fixes.
+
+So: **when you touch an interactable's art or its radius, check the other
+one, and assert the relationship in a test** rather than leaving it as prose
+in a doc comment. GV42 exports `PlantedFlagW` from `global.nim` purely so
+`test_ctf_game.nim` can assert `FlagPickupRange >= PlantedFlagW div 2` —
+shrinking the art now fails a test instead of silently restoring the bug.
+Note `sim_types.nim` cannot import `global.nim` (the dependency runs one
+way), so the derivation lives as prose on the constant and the *assertion*
+lives in the test — that test is the enforcement, so do not delete it.
+
+Also, radius is keyed to the gem's WIDTH, not its height: since #261 the gem
+stands erect ABOVE the grab point, so the art is not vertically symmetric
+about it. What a player's feet are on is the 96px pedestal disc.
+
+The other five pickups (grenade, med kit, shield, spray can, barrier) still
+use 12px against 18-26px sprites — a milder version of the same mismatch (at
+worst ~2x, vs the heart's 5x), deliberately left alone by GV42's scope. Filed
+as https://github.com/Metta-AI/coworld-ctf/issues/266 with the measurements.
 
 ## Terrain
 
@@ -187,6 +283,27 @@ bump (`tools/record_fixture.sh`; exact recipes in
 - After re-recording, re-pin the capture fixture's asserted winner/ending
   and verify the required beats (capture/steal/gameover) actually occur —
   scan a few seeds if needed.
+- **A RECIPE CAN GO STALE WITHOUT ANY RULE CHANGE**, because it inherits
+  `config.json`. A recipe only overrides the fields it names, so a later
+  edit to the repo config silently changes what the recording *is*. GV42
+  hit this: the barrage params landed in `config.json` after the GV41
+  fixtures were cut, and a barrage game has NO draw ceiling — so
+  `draw-nokill`, recorded to its documented recipe, ran 109530 ticks
+  against a 1500-tick limit and ended with a WINNER. Two draw-verdict
+  tests were asserting against a fixture that could not contain a draw.
+  If a fixture's re-recording comes out wildly larger/longer than the
+  version it replaces, suspect an inherited config field before you
+  suspect your own change; a fixture must pin every field its ending
+  depends on (`draw-nokill` now pins `barrageMaxPerSec: 0`).
+- **A SEED DOES NOT PIN THE OUTCOME.** The bots are separate processes, so
+  two recordings of one seed differ. Rare events (a grenade kill: ~5 of
+  ~105 kills) are present in one take and absent in the next — the first
+  GV42 take of seed 907 lost its grenade kill, and the second had it. On a
+  miss, RE-RECORD the same seed (`tools/scan_event_seeds.sh <seed>` reports
+  the mix and leaves its recording in `.scan/`) instead of moving the seed;
+  the comment history in `test_extract_events.nim` shows the seed walking
+  902 → 905 → 908 → 907, and some of that walking was probably this
+  nondeterminism, not the rule changes it was blamed on.
 
 ## Debugging prod league replays (don't drive the Observatory UI)
 
