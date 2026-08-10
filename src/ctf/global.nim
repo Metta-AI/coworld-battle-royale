@@ -130,8 +130,15 @@ const
   FlagBannerH = 20             ## px height of the carried heart-gem sprite (square).
   PlantedFlagScale = 3         ## the HOME heart is drawn this many x bigger so it
                                ## reads as a real objective on the 96px pedestal.
-  PlantedFlagW = FlagBannerW * PlantedFlagScale
-  PlantedFlagH = FlagBannerH * PlantedFlagScale
+  PlantedFlagW* = FlagBannerW * PlantedFlagScale
+  PlantedFlagH* = FlagBannerH * PlantedFlagScale
+    ## Exported because the sim's `FlagPickupRange` is DERIVED from the drawn
+    ## heart's half-extent (GV42: stand on it and it is yours). sim_types
+    ## cannot import this render layer — global imports sim, so the
+    ## dependency only runs one way — which leaves that derivation as prose
+    ## in the constant's doc comment. Exporting the width lets a test assert
+    ## the two actually agree, so shrinking the art can never silently
+    ## reintroduce the pinpoint-precision bug.
   PlantedFlagCanvasH = PlantedFlagH * 2
                                ## The planted banner's canvas is double the gem's
                                ## height, gem painted in the TOP half, transparent
@@ -143,6 +150,13 @@ const
                                ## center: the gem stands erect on the pedestal with
                                ## its point on the grab spot, instead of lying sunk
                                ## in the disc.
+                               ##
+                               ## GV42 note: because the gem stands ABOVE the grab
+                               ## point rather than centered on it, the grab radius
+                               ## is derived from the gem's WIDTH half-extent
+                               ## (PlantedFlagW div 2), which is the honest
+                               ## "pixels under your feet" figure — the pedestal
+                               ## disc, not the gem, is what a player stands on.
   PlantedFlagSpriteBase = 708  ## scaled home-heart sprites: 708..711 by team.
   GameOverIconSpriteBase = 712 ## compact roster-chip soldiers: 712..715 by team.
   GameOverIconSize = 14        ## roster chip footprint (fits the game-over row).

@@ -6,8 +6,15 @@ import
 
 const
   # The event-substrate fixture: a full 16-bot match recorded against the
-  # CURRENT gameplay rules (GameVersion 41, seed 907, lives 9:
+  # CURRENT gameplay rules (GameVersion 42, seed 907, lives 9:
   #   record_fixture.sh tests/replays/ctf.bitreplay 907 10000 '{"lives":9}')
+  # Seed 907 survives the GV42 heart rule, but the SEED ALONE DOES NOT PIN
+  # THE KILL MIX: the bots are separate processes, so two recordings of one
+  # seed differ, and the grenade kill in particular is rare (5 of 105 kills
+  # here). The first GV42 take of this very seed came back gun+spray only.
+  # Re-record until `tools/scan_event_seeds.sh 907` prints ALL THREE — it
+  # reports the mix per run and leaves its recording in .scan/, which is
+  # cheaper than guessing, and do NOT move the seed on the first miss.
   # — kills across ALL THREE weapons, steals and heals, ending at the time
   # limit (a scoreless draw exercises the draw verdict path too; seed 908's
   # GV40 recording lost its spray kill under the GV41 no-overtime clock, so
