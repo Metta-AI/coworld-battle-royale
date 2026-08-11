@@ -567,7 +567,7 @@ What that means in practice:
   bullets, or vision, and never slows anything — its only rule is damage
   over time.
 - **Every full second (24 ticks) your body center spends CONTINUOUSLY
-  inside a puddle rolls a `puddleDamagePct` (default 10%) chance of 1
+  inside a puddle rolls a `puddleDamagePct` (default 20%) chance of 1
   damage.** The roll's damage goes through the shield layer first, like
   every weapon's. Stepping out — even for one tick — restarts the second;
   dying resets it too.
@@ -821,7 +821,7 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Pit density (`mapPitDensity`) | 100 | Generated maps: percent multiplier on per-class dig chances; used when `mapPits` is unset |
 | Puddle size (`PuddleSize`) | 64px | Nominal diameter of a paint-puddle splat (disc union; spill reaches at most 45px from its anchor) |
 | Puddle count (`mapPuddles`) | 0 (none) | Generated maps: exact total puddles (0..64); odd counts anchor one at map center |
-| Puddle damage chance (`puddleDamagePct`) | 10% | Chance of 1 damage per full second of continuous puddle occupancy (rolled at each completed second; shield soaks first) |
+| Puddle damage chance (`puddleDamagePct`) | 20% | Chance of 1 damage per full second of continuous puddle occupancy (rolled at each completed second; shield soaks first) |
 | Barrier pickups (`barrierPickups`) | 0 (none) | Folded cardboard barriers per team (0..2), staged between base and center; carrying one excludes carrying a grenade |
 | Barrier strength (`BarrierHp`) | 10 hits | Gun shots a standing half-hex soaks before shredding; any cog driving into it flattens it instantly |
 | Barrier radius (`BarrierRadius`) | 24px | Center-to-vertex of the placed half-hex; the flat side stands one apothem (~21px) down the placer's aim |
@@ -943,7 +943,7 @@ map's puddle list, with exactly the trench marker's tail contract (split the
 tail on spaces, each corner on the comma). Puddles are organic disc-union
 splats, so the box is slightly LOOSE (conservative) geometry — treat the
 whole box as hazardous rather than trying to trace the spill's exact edge. A puddle is a pure floor hazard:
-standing inside rolls a `puddleDamagePct` (default 10%) chance of 1 damage
+standing inside rolls a `puddleDamagePct` (default 20%) chance of 1 damage
 per full second of continuous occupancy, and it never slows movement or
 fire, never blocks shots or vision. Like the trench floor, a puddle reads
 identically to open floor on the binary `walkability map` sprite — this

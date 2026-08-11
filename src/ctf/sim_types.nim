@@ -18,7 +18,20 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "42"  ## GV42 (heart rule): STAND ON THE PEDESTAL, TAKE THE
+  GameVersion* = "43"  ## GV43 (puddle rule): PUDDLES BITE TWICE AS HARD.
+    ## `DefaultPuddleDamagePct` goes 10 -> 20: a full second of continuous
+    ## paint-puddle occupancy now rolls a 20% chance of 1 damage instead of
+    ## 10%. The default matters because spec-pinned puddles (the campaign's
+    ## per-cell maps) ride `mapSpec` with no `puddleDamagePct` in the config,
+    ## so their replays echo NO pct key and re-simulate on whatever the
+    ## binary's default is — the roll's RNG draw happens on every completed
+    ## second regardless of outcome, so the stream is unchanged up to the
+    ## first draw in [10,20), where the outcome flips and the sims diverge.
+    ## (mapPuddles-knob replays are safe: the echo pins their pct
+    ## explicitly.) GV42 spec-pinned puddle replays therefore re-simulate
+    ## differently: fixtures re-recorded.
+    ##
+    ## Previously GV42 (heart rule): STAND ON THE PEDESTAL, TAKE THE
     ## HEART. `FlagPickupRange` goes 12 -> 34, keyed to the drawn art instead
     ## of a bare point: the planted heart is 60px across on a 96px pedestal,
     ## so the old radius demanded the pinpoint CENTER of a target five times
@@ -636,8 +649,9 @@ const
                               ## scale with the map's size class.
   PuddleRollTicks* = TargetFps  ## one damage roll per full SECOND of
                               ## continuous puddle occupancy (24 ticks).
-  DefaultPuddleDamagePct* = 10  ## default percent chance the per-second
+  DefaultPuddleDamagePct* = 20  ## default percent chance the per-second
                               ## occupancy roll deals 1 damage.
+                              ## (GameVersion 43: 10 -> 20, 2x.)
   MaxPuddles* = 64            ## hard cap on mapPuddles requests, matching
                               ## the trench cap (and sizing the stated-marker
                               ## sprite/object pool).
@@ -1127,11 +1141,12 @@ type
                                ## the config's perkMods block overrides.
     puddleDamagePct*: int         ## percent chance (0..100) that one full
                                   ## second of continuous paint-puddle
-                                  ## occupancy deals 1 damage. Default 10.
-                                  ## Inert on maps without puddles (the roll
-                                  ## — and its RNG draw — only happens while
-                                  ## a cog stands in one, so the default
-                                  ## path stays byte-identical: no GV bump).
+                                  ## occupancy deals 1 damage. Default 20
+                                  ## (GV43; was 10). Inert on maps without
+                                  ## puddles (the roll — and its RNG draw —
+                                  ## only happens while a cog stands in one,
+                                  ## so the puddle-free path stays
+                                  ## byte-identical across builds).
     barrierPickups*: int          ## cardboard barrier pickups PER TEAM
                                   ## (0..MaxBarrierPickupsPerTeam), staged on
                                   ## the line from each team's anchor toward

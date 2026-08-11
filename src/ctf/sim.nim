@@ -2610,8 +2610,9 @@ proc updatePuddles*(sim: var SimServer) =
   ## ticks) a cog's center spends CONTINUOUSLY inside a puddle rolls a
   ## puddleDamagePct chance of 1 damage — through the shield layer first,
   ## like every weapon. Dipping out (or dying) restarts the second. The RNG
-  ## draws ONLY on a completed second of occupancy, so a puddle-free map
-  ## plays byte-identical to a build without this mechanic (no GV bump).
+  ## draws ONLY on a completed second of occupancy, so the puddle-free path
+  ## stays byte-identical across builds (changing the DEFAULT pct still
+  ## bumps GV — spec-pinned puddle replays echo no pct key; see GV43).
   if ArenaPuddles.len == 0 or sim.phase != Playing:
     return
   for i in 0 ..< sim.players.len:

@@ -226,7 +226,7 @@ const
     ## Puddles are ORGANIC disc-union splats (see puddleSplatAt), so the box
     ## is slightly loose (conservative) geometry, exactly like a non-rect
     ## trench's marker.
-    ## Standing inside rolls a puddleDamagePct (default 10%) chance of 1
+    ## Standing inside rolls a puddleDamagePct (default 20%) chance of 1
     ## damage per full second of continuous occupancy; the puddle never slows
     ## movement or fire and never blocks shots or vision. Absent entirely on
     ## 4-team maps and on any map without puddles (the default) — zero
