@@ -59,11 +59,23 @@ proc teamOrbitPoints(gameMap: CtfMap, red: MapPoint): seq[tuple[x, y: int]] =
     let point = gameMap.teamImagePoint(red, team)
     result.add((point.x, point.y))
 
+proc explicitOrOrbit(
+  gameMap: CtfMap, explicit: seq[MapPoint], red: MapPoint
+): seq[tuple[x, y: int]] =
+  ## symNone maps carry EXPLICIT per-team points (no orbit exists); every other
+  ## symmetry derives each team's point from RED's via teamImagePoint. The
+  ## loader has already validated the explicit set is present + well-formed for
+  ## symNone, so here we trust it.
+  if gameMap.symmetry == symNone:
+    for p in explicit: result.add((p.x, p.y))
+  else:
+    result = gameMap.teamOrbitPoints(red)
+
 proc shieldSpawnPoints*(gameMap: CtfMap): seq[tuple[x, y: int]] =
   ## One shield point per team, deep in that team's endzone. RED's spot is
   ## the only one chosen; every other team's is its image under the map's own
   ## symmetry (`teamImagePoint`), so no team's shield sits in terrain the
-  ## others' don't get.
+  ## others' don't get. Under symNone the points are authored explicitly.
   let
     inset = ArenaBorder + GrenadeSpawnInset
     red =
@@ -87,7 +99,7 @@ proc shieldSpawnPoints*(gameMap: CtfMap): seq[tuple[x, y: int]] =
           ## the integer `center` instead lands it a pixel off the orbit,
           ## since the rot90 axis is at (side - 1)/2.
           MapPoint(x: inset, y: gameMap.center.y + gameMap.plusArmHalf() div 2)
-  gameMap.teamOrbitPoints(red)
+  gameMap.explicitOrOrbit(gameMap.teamPickups.shields, red)
 
 proc plasmaArcSpawnPoints*(gameMap: CtfMap): seq[tuple[x, y: int]] =
   ## One spray can point per team, built exactly like the shields: RED's spot
@@ -112,7 +124,7 @@ proc plasmaArcSpawnPoints*(gameMap: CtfMap): seq[tuple[x, y: int]] =
           MapPoint(x: gameMap.teamAnchor(Red).x, y: inset)
         of layoutPlus:
           MapPoint(x: inset, y: gameMap.center.y - gameMap.plusArmHalf() div 2)
-  gameMap.teamOrbitPoints(red)
+  gameMap.explicitOrOrbit(gameMap.teamPickups.cans, red)
 
 proc barrierSpawnPoints*(gameMap: CtfMap, perTeam: int): seq[tuple[x, y: int]] =
   ## `perTeam` cardboard barrier pickup points per team (config-gated; empty
@@ -122,6 +134,20 @@ proc barrierSpawnPoints*(gameMap: CtfMap, perTeam: int): seq[tuple[x, y: int]] =
   ## (`teamImagePoint` via teamOrbitPoints), so no team's pickup sits in
   ## terrain the others' don't get. One spot lands at the midpoint; two
   ## split the line in thirds.
+  if gameMap.symmetry == symNone:
+    ## Explicit, team-major (perTeam per team). The LOADER only checked the
+    ## count is a multiple of the team count and that each point is walkable —
+    ## it does NOT know the config's `perTeam`. So verify HERE, where perTeam is
+    ## known, that the spec carries EXACTLY perTeam * activeTeams points; a
+    ## mismatch would otherwise silently give teams the wrong barrier count.
+    let expected = perTeam * gameMap.layout.teamCount()
+    if gameMap.teamPickups.barriers.len != expected:
+      raise newException(CtfError,
+        "symNone barrier pickups: config asks perTeam=" & $perTeam & " (" &
+        $expected & " total for " & $gameMap.layout.teamCount() & " teams) but " &
+        "the spec authored " & $gameMap.teamPickups.barriers.len & " points.")
+    for p in gameMap.teamPickups.barriers: result.add((p.x, p.y))
+    return
   let
     anchor = gameMap.teamAnchor(Red)
     center = gameMap.center
