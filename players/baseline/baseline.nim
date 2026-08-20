@@ -1692,12 +1692,14 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
+  var rayClear = false
   if targetIndex >= 0:
     let target = actors[targetIndex]
     desiredAim = bradsOf(target.pos - me)
-    wantFire = (engage or fireWhileHurt) and targetDist < 520.0 and
-      client.pixelRayClear(me, target.pos) and
-      abs(bradsErr(desiredAim, bot.estAim)) <= CombatDeadband
+    if (engage or fireWhileHurt) and targetDist < 520.0:
+      rayClear = client.pixelRayClear(me, target.pos)
+      wantFire = rayClear and
+        abs(bradsErr(desiredAim, bot.estAim)) <= CombatDeadband
   let steer = bot.navSteer(client, me, moveTarget)
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
   if dist(me, bot.lastPos) < 0.8:
@@ -1705,13 +1707,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   else:
     bot.stuckTicks = 0
   bot.lastPos = me
-  if getEnv("CTF_BOT_TRACE").len > 0 and traceInMatch and
-      traceTick mod 24 == 0:
-    echo "TRACE slot=", bot.slot, " tick=", traceTick,
-      " x=", me.x, " y=", me.y,
-      " contactTicks=", bot.contactTicks,
-      " sightingEpisodes=", bot.sightingEpisodes,
-      " visible=", (if visibleOpponent: 1 else: 0)
   if bot.stuckTicks > 20:
     bot.stuckTicks = 0
     bot.navGoal = -1
@@ -1724,7 +1719,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   elif err < -CombatDeadband:
     rotBits = ButtonSelect
   var mask = moveMask or rotBits
-  if wantFire and not bot.firedLast:
+  let triggerPressed = wantFire and not bot.firedLast
+  if triggerPressed:
     mask = moveMask or ButtonA
   bot.firedLast = (mask and ButtonA) != 0
   bot.rotSign =
@@ -1734,6 +1730,56 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   if targetIndex >= 0 and bot.tick - bot.lastShoutTick >= 24:
     bot.shoutWant = "seen"
     bot.lastShoutTick = bot.tick
+  if getEnv("CTF_BOT_TRACE").len > 0 and traceInMatch:
+    var duplicatePairs = 0
+    var selfLikeActors = 0
+    for i, actor in actors:
+      if dist(me, actor.pos) <= 1.0:
+        inc selfLikeActors
+      for j in 0 ..< i:
+        if dist(actor.pos, actors[j].pos) <= 1.0:
+          inc duplicatePairs
+    var fireReason = "no-target"
+    var gateFailed = "none"
+    if targetIndex >= 0:
+      if targetDist >= 520.0:
+        fireReason = "out-of-range"
+      elif not (engage or fireWhileHurt):
+        fireReason = "engage-gate-false"
+        var failed: seq[string]
+        if not healthy:
+          failed.add("healthy")
+        if not targetCritical:
+          failed.add("targetCritical")
+        if not localAdvantage:
+          failed.add("localAdvantage")
+        gateFailed = failed.join(",")
+      elif not rayClear:
+        fireReason = "los-blocked"
+      elif abs(bradsErr(desiredAim, bot.estAim)) > CombatDeadband:
+        fireReason = "aim-outside-deadband"
+      else:
+        fireReason = "fired"
+    echo "FFA_TRACE slot=", bot.slot, " tick=", traceTick,
+      " x=", me.x, " y=", me.y,
+      " objective=", objective, " action=", action,
+      " target=", (if targetIndex >= 0: 1 else: 0),
+      " visibleActors=", actors.len,
+      " contactTicks=", bot.contactTicks,
+      " sightingEpisodes=", bot.sightingEpisodes,
+      " targetDist=", (if targetIndex >= 0: targetDist else: -1.0),
+      " aimError=", (if targetIndex >= 0:
+        abs(bradsErr(desiredAim, bot.estAim)) else: -1),
+      " rayClear=", (if rayClear: 1 else: 0),
+      " wantFire=", (if wantFire: 1 else: 0),
+      " trigger=", (if triggerPressed: 1 else: 0),
+      " reason=", fireReason, " gateFailed=",
+      (if gateFailed.len > 0: gateFailed else: "none"),
+      " healthy=", (if healthy: 1 else: 0),
+      " targetCritical=", (if targetCritical: 1 else: 0),
+      " localAdvantage=", (if localAdvantage: 1 else: 0),
+      " duplicatePairs=", duplicatePairs,
+      " selfLikeActors=", selfLikeActors
   artFrame(FrameSnap(tick: bot.tick, alive: true,
     x: int(me.x), y: int(me.y), hp: hp, aim: bot.estAim,
     objective: objective, action: action,

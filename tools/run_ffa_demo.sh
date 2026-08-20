@@ -190,6 +190,7 @@ median_survival_sec = median(survival_ticks) / 24 if survival_ticks else 0
 min_survival_sec = min(survival_ticks, default=0) / 24
 trace = []
 contact = {}
+fire_decisions = []
 for line in open(bots_path, errors="replace"):
     m = re.search(r"TRACE slot=(\d+) tick=(\d+) x=([0-9.]+) y=([0-9.]+)", line)
     if m:
@@ -203,9 +204,82 @@ for line in open(bots_path, errors="replace"):
             "contactTicks": int(m.group(2)),
             "sightingEpisodes": int(m.group(3)),
         }
+    m = re.search(
+        r"FFA_TRACE slot=(\d+) tick=(\d+) x=([0-9.]+) y=([0-9.]+) "
+        r"objective=(\S+) action=(\S+) target=(\d+) visibleActors=(\d+) "
+        r"contactTicks=(\d+) sightingEpisodes=(\d+) "
+        r"targetDist=(-?[0-9.]+) aimError=(-?\d+) rayClear=(\d+) "
+        r"wantFire=(\d+) trigger=(\d+) reason=(\S+) gateFailed=(\S+) "
+        r"healthy=(\d+) targetCritical=(\d+) localAdvantage=(\d+) "
+        r"duplicatePairs=(\d+) selfLikeActors=(\d+)", line)
+    if m:
+        fire_decisions.append({
+            "slot": int(m.group(1)),
+            "tick": int(m.group(2)),
+            "x": float(m.group(3)),
+            "y": float(m.group(4)),
+            "objective": m.group(5),
+            "action": m.group(6),
+            "target": int(m.group(7)),
+            "visibleActors": int(m.group(8)),
+            "contactTicks": int(m.group(9)),
+            "sightingEpisodes": int(m.group(10)),
+            "targetDist": float(m.group(11)),
+            "aimError": int(m.group(12)),
+            "rayClear": int(m.group(13)),
+            "wantFire": int(m.group(14)),
+            "trigger": int(m.group(15)),
+            "reason": m.group(16),
+            "gateFailed": m.group(17),
+            "healthy": int(m.group(18)),
+            "targetCritical": int(m.group(19)),
+            "localAdvantage": int(m.group(20)),
+            "duplicatePairs": int(m.group(21)),
+            "selfLikeActors": int(m.group(22)),
+        })
 xs = [p[2] for p in trace]
 ys = [p[3] for p in trace]
 last_trace_tick = max((p[1] for p in trace), default=-1)
+visible_decisions = [d for d in fire_decisions if d["visibleActors"] > 0]
+reason_counts = {}
+gate_failed_counts = {}
+for decision in visible_decisions:
+    reason = decision["reason"]
+    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    if reason == "engage-gate-false":
+        for failed in decision["gateFailed"].split(","):
+            if failed:
+                gate_failed_counts[failed] = gate_failed_counts.get(failed, 0) + 1
+aim_errors = [
+    d["aimError"] for d in visible_decisions
+    if d["reason"] == "aim-outside-deadband"
+]
+reason_total = len(visible_decisions)
+reason_pct = {
+    reason: 100.0 * count / reason_total
+    for reason, count in reason_counts.items()
+} if reason_total else {}
+mean_visible_actors = (
+    sum(d["visibleActors"] for d in fire_decisions) / len(fire_decisions)
+    if fire_decisions else 0.0
+)
+target_decisions = [d for d in fire_decisions if d["target"]]
+mean_nearest_target_distance = (
+    sum(d["targetDist"] for d in target_decisions) / len(target_decisions)
+    if target_decisions else 0.0
+)
+mean_visible_actors_when_target = (
+    sum(d["visibleActors"] for d in target_decisions) / len(target_decisions)
+    if target_decisions else 0.0
+)
+duplicate_pair_samples = sum(d["duplicatePairs"] for d in fire_decisions)
+self_like_actor_samples = sum(d["selfLikeActors"] for d in fire_decisions)
+duplicate_pair_ticks = sum(
+    d["duplicatePairs"] > 0 for d in fire_decisions)
+self_like_actor_ticks = sum(
+    d["selfLikeActors"] > 0 for d in fire_decisions)
+trigger_presses = sum(d["trigger"] for d in visible_decisions)
+want_fire_ticks = sum(d["wantFire"] for d in visible_decisions)
 map_dimensions = {
     "small": (1050, 560),
     "standard": (1235, 659),
@@ -242,6 +316,30 @@ metrics = {
         if contact and sum(survival_ticks) > 0 else 0.0
     ),
     "contactDenominatorTicks": sum(survival_ticks),
+    "fireDecisionTicks": len(fire_decisions),
+    "fireVisibleDecisionTicks": reason_total,
+    "fireReasonCounts": reason_counts,
+    "fireReasonPct": reason_pct,
+    "fireGateFailedCounts": gate_failed_counts,
+    "aimErrorMagnitudes": {
+        "count": len(aim_errors),
+        "mean": sum(aim_errors) / len(aim_errors) if aim_errors else 0.0,
+        "max": max(aim_errors, default=0),
+        "p50": median(aim_errors) if aim_errors else 0.0,
+        "p95": (
+            sorted(aim_errors)[int(0.95 * (len(aim_errors) - 1))]
+            if aim_errors else 0.0
+        ),
+    },
+    "meanVisibleActors": mean_visible_actors,
+    "meanVisibleActorsWhenTarget": mean_visible_actors_when_target,
+    "meanNearestTargetDistance": mean_nearest_target_distance,
+    "duplicatePairSamples": duplicate_pair_samples,
+    "duplicatePairTicks": duplicate_pair_ticks,
+    "selfLikeActorSamples": self_like_actor_samples,
+    "selfLikeActorTicks": self_like_actor_ticks,
+    "visibleWantFireTicks": want_fire_ticks,
+    "visibleTriggerPresses": trigger_presses,
     "meanSightingEpisodes": (
         sum(v["sightingEpisodes"] for v in contact.values()) /
         len(contact) if contact else 0.0
@@ -287,6 +385,11 @@ print(f"mean contact ticks: {metrics['meanContactPct']:.2f}% of live survival ti
       f"kills/sighting episode: {metrics['killsPerSightingEpisode']:.4f}")
 print(f"trace last tick: {last_trace_tick}; "
       f"trace coverage: {metrics['traceCoveragePct']:.1f}%")
+print(f"fire decisions: {len(fire_decisions)}; visible-target decisions: "
+      f"{reason_total}; reason distribution: {reason_pct}")
+print(f"visible actors mean: {mean_visible_actors:.2f}; "
+      f"nearest target distance mean: {mean_nearest_target_distance:.1f}; "
+      f"wantFire ticks: {want_fire_ticks}; trigger presses: {trigger_presses}")
 print(f"map use: {utilization_text}")
 print("placement  slot  survival_s  kills  damage  score  name")
 for rank, row in enumerate(rows, 1):
