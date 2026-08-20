@@ -42,6 +42,12 @@ suite "ffa config":
     check config.ringShrinkSec == FfaRingShrinkSec
     check config.ringFloorAreaPct == FfaRingFloorAreaPct
     check config.ringRecoveryTicks == FfaRingRecoveryTicks
+    check config.ffaGunDamage == FfaGunDamage
+    check config.ffaSprayDamage == FfaSprayDamage
+    check config.ffaGrenadeDamage == FfaGrenadeDamage
+    check config.ffaGrenadeTrenchSplashDamage ==
+      FfaGrenadeTrenchSplashDamage
+    check config.ffaMedKitSpawns == FfaMedKitSpawns
 
   test "ctf is the default and echoes no ffa key":
     let config = defaultGameConfig()
@@ -49,13 +55,20 @@ suite "ffa config":
     check not config.isFfa()
     let echoed = parseJson(config.configJson())
     for key in ["mode", "numPlayers", "survivalPointsPerSec", "killPoints",
-        "assistPoints", "assistWindowTicks", "podiumPoints"]:
+        "assistPoints", "assistWindowTicks", "podiumPoints", "ffaGunDamage",
+        "ffaSprayDamage", "ffaGrenadeDamage",
+        "ffaGrenadeTrenchSplashDamage", "ffaMedKitSpawns"]:
       check not echoed.hasKey(key)
 
   test "an ffa config round-trips through its replay echo":
     var config = defaultFfaConfig(9)
     config.killPoints = 12
     config.podiumPoints = @[50, 20]
+    config.ffaGunDamage = 4
+    config.ffaSprayDamage = 3
+    config.ffaGrenadeDamage = 2
+    config.ffaGrenadeTrenchSplashDamage = 1
+    config.ffaMedKitSpawns = 1
     var reloaded = defaultGameConfig()
     reloaded.update(config.configJson())
     check reloaded.mode == FfaMode
@@ -64,6 +77,21 @@ suite "ffa config":
     check reloaded.hitPoints == FfaHitPoints
     check reloaded.killPoints == 12
     check reloaded.podiumPoints == @[50, 20]
+    check reloaded.ffaGunDamage == 4
+    check reloaded.ffaSprayDamage == 3
+    check reloaded.ffaGrenadeDamage == 2
+    check reloaded.ffaGrenadeTrenchSplashDamage == 1
+    check reloaded.ffaMedKitSpawns == 1
+
+  test "ctf retains the original combat economy defaults":
+    let config = defaultGameConfig()
+    check not config.isFfa()
+    check config.ffaGunDamage == FfaGunDamage
+    check config.ffaSprayDamage == FfaSprayDamage
+    check config.ffaGrenadeDamage == FfaGrenadeDamage
+    check config.ffaGrenadeTrenchSplashDamage ==
+      FfaGrenadeTrenchSplashDamage
+    check config.ffaMedKitSpawns == FfaMedKitSpawns
 
   test "numPlayers is validated, and only in ffa":
     expect CtfError:
@@ -78,6 +106,15 @@ suite "ffa config":
     expect CtfError:
       var config = defaultGameConfig()
       config.update("""{"mode": "deathmatch"}""")
+    expect CtfError:
+      var config = defaultGameConfig()
+      config.update("""{"mode": "ffa", "ffaGunDamage": 0}""")
+    expect CtfError:
+      var config = defaultGameConfig()
+      config.update("""{"mode": "ffa", "ffaMedKitSpawns": 3}""")
+    expect CtfError:
+      var config = defaultGameConfig()
+      config.update("""{"ffaGunDamage": 4}""")
 
 suite "ffa spawn ring":
   test "spawn pads derive from N alone, for N in 2, 5 and 16":
@@ -176,6 +213,24 @@ suite "ffa elimination":
     game.tryFire(0)
     check game.players[1].hp == FfaHitPoints - FfaGunDamage
     check game.players[0].damageDealt == FfaGunDamage
+
+  test "ffa combat economy overrides damage and med-kit count":
+    var config = defaultFfaConfig(2)
+    config.ffaGunDamage = 4
+    config.ffaMedKitSpawns = 1
+    var game = initCtfForTest(config)
+    for i in 0 ..< 2:
+      discard game.addPlayer("economy" & $i)
+    game.startGame()
+    check game.medKitSpawns.len == 1
+    let midY = MapHeight div 2
+    game.players[0].placeAtCenter(300, midY)
+    game.players[1].placeAtCenter(340, midY)
+    game.players[0].aimBrads = 0
+    game.armToFire(0)
+    game.tryFire(0)
+    check game.players[1].hp == FfaHitPoints - 4
+    check game.players[0].damageDealt == 4
 
 suite "ffa placement":
   test "placement is a total order down to the slot":

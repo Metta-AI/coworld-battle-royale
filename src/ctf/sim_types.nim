@@ -491,6 +491,9 @@ const
                               ## amplified same-trench hit collapses to
                               ## FfaGrenadeDamage, so no ffa hit ever
                               ## leaves the 1..4 band.
+  FfaMedKitSpawns* = 2       ## ffa active med-kit points by default; the
+                              ## config can reduce this to one for a leaner
+                              ## healing economy.
   FfaSpawnRingPermille* = 800 ## ffa spawn pads sit on a ring this far out
                               ## (permille) of the largest circle the map
                               ## border allows: maximum pairwise spacing
@@ -1280,6 +1283,13 @@ type
     ringDamageTicks*: int         ## ffa: ticks outside the ring per point of
                                   ## damage (FfaRingDamageTicks).
     ringRecoveryTicks*: int       ## ffa: exposure ticks drained while inside.
+    ffaGunDamage*: int            ## ffa: direct gun damage per hit.
+    ffaSprayDamage*: int          ## ffa: direct plasma-arc damage.
+    ffaGrenadeDamage*: int        ## ffa: direct grenade damage.
+    ffaGrenadeTrenchSplashDamage*: int
+                                  ## ffa: grenade splash damage in another
+                                  ## trench.
+    ffaMedKitSpawns*: int         ## ffa: active center med-kit count.
 
   Player* = object
     x*, y*: int

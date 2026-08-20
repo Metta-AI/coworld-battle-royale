@@ -193,7 +193,12 @@ proc resetMedKits*(sim: var SimServer) =
   ## thirds), nudged to the nearest walkable floor, and refills them.
   var targets: seq[tuple[x, y: int]]
   if sim.gameMap.medKitSpawns.len >= 2:
-    for point in sim.gameMap.medKitSpawns:
+    let count =
+      if sim.config.isFfa(): min(sim.config.ffaMedKitSpawns,
+        sim.gameMap.medKitSpawns.len)
+      else: sim.gameMap.medKitSpawns.len
+    for i in 0 ..< count:
+      let point = sim.gameMap.medKitSpawns[i]
       targets.add((point.x, point.y))
   else:
     targets = @[
@@ -1054,7 +1059,8 @@ proc resolveActiveArcCones*(sim: var SimServer) =
           let (sxw, syw) = sim.seatInWall(rx, ry, ux, uy)
           sim.addPaintStain(sxw, syw, teamColor(attacker.team), onWall = true)
           break sprayStain
-    let sprayDamage = sim.weaponDamage(PlasmaArcDamage, FfaSprayDamage)
+    let sprayDamage = sim.weaponDamage(
+      PlasmaArcDamage, sim.config.ffaSprayDamage)
     for victimIndex in arcFire.victims:
       if victimIndex < 0 or victimIndex >= sim.players.len:
         continue
@@ -1401,7 +1407,7 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
     # A lucky shot (luck perk) deals perkMods.luckDamage instead of 1. Rolled once
     # per LANDED hit, only when the shooter carries the perk, so a perk-free
     # game draws no extra RNG and re-simulates byte-for-byte.
-    var damage = sim.weaponDamage(1, FfaGunDamage)
+    var damage = sim.weaponDamage(1, sim.config.ffaGunDamage)
     if PerkLuck in shooter.perks and
         sim.rng.rand(999) < sim.config.perkMods.luckChance:
       damage = sim.config.perkMods.luckDamage
@@ -1771,14 +1777,15 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
       victimTrench = trenchIndexAt(px, py)
       dmg =
         if victimTrench < 0:
-          sim.weaponDamage(GrenadeDamage, FfaGrenadeDamage)
+          sim.weaponDamage(GrenadeDamage, sim.config.ffaGrenadeDamage)
         elif victimTrench == landingTrench:
           # ffa keeps every hit inside the 1..4 band, so the trench's
           # amplified blast collapses to the band's ceiling.
-          sim.weaponDamage(GrenadeTrenchDamage, FfaGrenadeDamage)
+          sim.weaponDamage(GrenadeTrenchDamage, sim.config.ffaGrenadeDamage)
         else:
           sim.weaponDamage(
-            GrenadeTrenchSplashDamage, FfaGrenadeTrenchSplashDamage)
+            GrenadeTrenchSplashDamage,
+            sim.config.ffaGrenadeTrenchSplashDamage)
       # Read the bubble BEFORE absorbDamage drains shieldHp: a bubble that eats
       # the blast keeps the body clean, exactly as with a paintball (see the
       # gun's damage site).

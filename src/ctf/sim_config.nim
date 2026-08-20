@@ -64,7 +64,12 @@ proc defaultGameConfig*(): GameConfig =
     ringShrinkSec: FfaRingShrinkSec,
     ringFloorAreaPct: FfaRingFloorAreaPct,
     ringDamageTicks: FfaRingDamageTicks,
-    ringRecoveryTicks: 0
+    ringRecoveryTicks: 0,
+    ffaGunDamage: FfaGunDamage,
+    ffaSprayDamage: FfaSprayDamage,
+    ffaGrenadeDamage: FfaGrenadeDamage,
+    ffaGrenadeTrenchSplashDamage: FfaGrenadeTrenchSplashDamage,
+    ffaMedKitSpawns: FfaMedKitSpawns
   )
 
 proc defaultFfaConfig*(numPlayers: int): GameConfig =
@@ -652,6 +657,21 @@ proc validate(config: GameConfig) =
     if config.ringRecoveryTicks < 0:
       raise newException(
         CtfError, "Config field ringRecoveryTicks must be non-negative.")
+    if config.ffaGunDamage notin 1 .. 4:
+      raise newException(
+        CtfError, "Config field ffaGunDamage must be 1..4.")
+    if config.ffaSprayDamage notin 1 .. 4:
+      raise newException(
+        CtfError, "Config field ffaSprayDamage must be 1..4.")
+    if config.ffaGrenadeDamage notin 1 .. 4:
+      raise newException(
+        CtfError, "Config field ffaGrenadeDamage must be 1..4.")
+    if config.ffaGrenadeTrenchSplashDamage notin 1 .. 4:
+      raise newException(
+        CtfError, "Config field ffaGrenadeTrenchSplashDamage must be 1..4.")
+    if config.ffaMedKitSpawns notin 1 .. 2:
+      raise newException(
+        CtfError, "Config field ffaMedKitSpawns must be 1..2.")
   elif config.numPlayers != 0:
     raise newException(
       CtfError,
@@ -661,6 +681,15 @@ proc validate(config: GameConfig) =
     raise newException(
       CtfError,
       "Config field ringEnabled only applies to mode " & FfaMode & "."
+    )
+  elif config.ffaGunDamage != FfaGunDamage or
+      config.ffaSprayDamage != FfaSprayDamage or
+      config.ffaGrenadeDamage != FfaGrenadeDamage or
+      config.ffaGrenadeTrenchSplashDamage != FfaGrenadeTrenchSplashDamage or
+      config.ffaMedKitSpawns != FfaMedKitSpawns:
+    raise newException(
+      CtfError,
+      "FFA combat economy fields only apply to mode " & FfaMode & "."
     )
   if config.slots.len > MaxPlayers:
     raise newException(CtfError, "Config field slots cannot have more than 8 entries.")
@@ -766,6 +795,12 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("ringFloorAreaPct", config.ringFloorAreaPct)
   node.readConfigInt("ringDamageTicks", config.ringDamageTicks)
   node.readConfigInt("ringRecoveryTicks", config.ringRecoveryTicks)
+  node.readConfigInt("ffaGunDamage", config.ffaGunDamage)
+  node.readConfigInt("ffaSprayDamage", config.ffaSprayDamage)
+  node.readConfigInt("ffaGrenadeDamage", config.ffaGrenadeDamage)
+  node.readConfigInt("ffaGrenadeTrenchSplashDamage",
+    config.ffaGrenadeTrenchSplashDamage)
+  node.readConfigInt("ffaMedKitSpawns", config.ffaMedKitSpawns)
   # ffa's own baseline, derived from the mode and from N: single life (the
   # game is elimination, so respawn never rearms) and the deep spawn pool,
   # and a lobby that waits for exactly the seats the match is sized for.
@@ -996,6 +1031,12 @@ proc configJson*(config: GameConfig): string =
     node["ringFloorAreaPct"] = %config.ringFloorAreaPct
     node["ringDamageTicks"] = %config.ringDamageTicks
     node["ringRecoveryTicks"] = %config.ringRecoveryTicks
+    node["ffaGunDamage"] = %config.ffaGunDamage
+    node["ffaSprayDamage"] = %config.ffaSprayDamage
+    node["ffaGrenadeDamage"] = %config.ffaGrenadeDamage
+    node["ffaGrenadeTrenchSplashDamage"] =
+      %config.ffaGrenadeTrenchSplashDamage
+    node["ffaMedKitSpawns"] = %config.ffaMedKitSpawns
   if config.mapSpec.len > 0:
     node["mapSpec"] = fromJson(config.mapSpec)
   $node

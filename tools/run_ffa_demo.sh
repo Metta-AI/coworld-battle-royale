@@ -1,7 +1,8 @@
 #!/bin/bash
 # Run one headless baseline-bot FFA and save its replay and reports.
 # Usage: tools/run_ffa_demo.sh [numPlayers] [seed] [arm]
-# Arms: A/B/C are the prior matrix; D1=huge, D2=large, D3=small, D4=small.
+# Arms: A/B/C are the prior matrix; D1=huge, D2=large, D3=small, D4=small;
+# E1=control, E2=damage, E3=persistent hurt fire, E4=combined economy.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -57,8 +58,17 @@ elif arm in ("D3", "D4"):
     cfg["ringShrinkSec"] = 150
     cfg["ringFloorAreaPct"] = 35
     cfg["ringRecoveryTicks"] = 2
+elif arm in ("E1", "E2", "E3", "E4"):
+    cfg["mapSize"] = "huge"
+    cfg["ringShrinkSec"] = 150
+    cfg["ringFloorAreaPct"] = 35
+    cfg["ringRecoveryTicks"] = 2
 else:
-    raise SystemExit("arm must be A, B, C, D1, D2, D3, or D4")
+    raise SystemExit("arm must be A, B, C, D1, D2, D3, D4, E1, E2, E3, or E4")
+if arm in ("E2", "E4"):
+    cfg["ffaGunDamage"] = 4
+if arm == "E4":
+    cfg["ffaMedKitSpawns"] = 1
 json.dump(cfg, open(path, "w"))
 PY
 
@@ -114,6 +124,10 @@ PY
 
 for slot in $(seq 0 $((N - 1))); do
   CTF_BOT_FAST_READY=1 CTF_BOT_SHOUT=1 CTF_BOT_TRACE=1 \
+  CTF_BOT_TRACE_TICK_SCALE=16 \
+  CTF_BOT_TRACE_MAX_TICKS=8640 \
+  CTF_BOT_FFA_RETREAT_HP="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 6 || echo 12)" \
+  CTF_BOT_FFA_FIRE_WHILE_HURT="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 1 || echo "")" \
     COWORLD_PLAYER_WS_URL="ws://127.0.0.1:$PORT/player?slot=$slot&token=0xBADA55_$slot" \
     "$PWD/players/baseline/baseline.out" >>"$BOT_LOG" 2>&1 &
   BOT_PIDS+=("$!")
@@ -173,6 +187,7 @@ alive_at_cap = sum(t >= max_ticks for t in survival_ticks)
 match_ticks = max(survival_ticks, default=0)
 end_condition = "cap" if alive_at_cap > 0 else "wipe"
 median_survival_sec = median(survival_ticks) / 24 if survival_ticks else 0
+min_survival_sec = min(survival_ticks, default=0) / 24
 trace = []
 contact = {}
 for line in open(bots_path, errors="replace"):
@@ -190,6 +205,7 @@ for line in open(bots_path, errors="replace"):
         }
 xs = [p[2] for p in trace]
 ys = [p[3] for p in trace]
+last_trace_tick = max((p[1] for p in trace), default=-1)
 map_dimensions = {
     "small": (1050, 560),
     "standard": (1235, 659),
@@ -215,11 +231,17 @@ metrics = {
     "mapArea": area,
     "areaPerAgent": area / int(cfg["numPlayers"]),
     "contactTicksByAgent": contact,
+    "traceLastTick": last_trace_tick,
+    "traceCoveragePct": (
+        100.0 * last_trace_tick / match_ticks
+        if last_trace_tick >= 0 and match_ticks else 0.0
+    ),
     "meanContactPct": (
         100.0 * sum(v["contactTicks"] for v in contact.values()) /
-        (int(cfg["numPlayers"]) * match_ticks)
-        if contact and match_ticks else 0.0
+        sum(survival_ticks)
+        if contact and sum(survival_ticks) > 0 else 0.0
     ),
+    "contactDenominatorTicks": sum(survival_ticks),
     "meanSightingEpisodes": (
         sum(v["sightingEpisodes"] for v in contact.values()) /
         len(contact) if contact else 0.0
@@ -235,13 +257,17 @@ metrics = {
     "deaths": deaths,
     "ringDeaths": ring_deaths,
     "firstKillTick": first_kill_tick,
+    "lastKillTick": max((e["tick"] for e in events if e.get("kind") == "kill"),
+                        default=-1),
     "playersAliveAtCap": alive_at_cap,
     "endCondition": end_condition,
     "matchTicks": match_ticks,
     "medianSurvivalSec": median_survival_sec,
+    "minSurvivalSec": min_survival_sec,
     "shoutEvents": shouts,
     "ticks": events[-1].get("ticks", None) if events else None,
     "replay": replay_path,
+    "flagged": end_condition == "wipe" or alive_at_cap <= 2,
 }
 json.dump(metrics, open(metrics_path, "w"), indent=2)
 print(f"arm: {arm}; seed: {cfg['seed']}; map: {cfg.get('mapSize', '?')} "
@@ -252,11 +278,15 @@ print(f"ticks: {events[-1].get('ticks', '?') if events else '?'}")
 print(f"shots: {shots}; damage events: {damage_events}; hits: {hits}")
 print(f"kills: {kills}; deaths: {deaths}; ring deaths: {ring_deaths}")
 print(f"first kill tick: {first_kill_tick}; players alive at cap: {alive_at_cap}")
+print(f"last kill tick: {metrics['lastKillTick']}; "
+      f"minimum survival seconds: {min_survival_sec:.1f}")
 print(f"ending: {end_condition}")
 print(f"median survival seconds: {median_survival_sec:.1f}; shout events: {shouts}")
-print(f"mean contact ticks: {metrics['meanContactPct']:.2f}% of cap; "
+print(f"mean contact ticks: {metrics['meanContactPct']:.2f}% of live survival ticks; "
       f"mean sighting episodes: {metrics['meanSightingEpisodes']:.2f}; "
       f"kills/sighting episode: {metrics['killsPerSightingEpisode']:.4f}")
+print(f"trace last tick: {last_trace_tick}; "
+      f"trace coverage: {metrics['traceCoveragePct']:.1f}%")
 print(f"map use: {utilization_text}")
 print("placement  slot  survival_s  kills  damage  score  name")
 for rank, row in enumerate(rows, 1):

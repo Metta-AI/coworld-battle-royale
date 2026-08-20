@@ -442,6 +442,19 @@ var
   FfaRingFloorRadius = 0
   FfaRingShrinkSec = 0
   FfaRingDamageTicks = 0
+  FfaRetreatHp = 12
+  FfaFireWhileHurt = false
+  FfaTraceTickScale = 1
+  FfaTraceMaxTick = 0
+
+proc parseEnvInt(name: string, fallback: int): int =
+  let value = getEnv(name)
+  if value.len == 0:
+    return fallback
+  try:
+    parseInt(value)
+  except ValueError:
+    fallback
 
 proc multiFrameOn(): bool {.inline.} =
   ## Whether the geometry procs run on the multi-team endzone frame.
@@ -1621,11 +1634,14 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     ringRadius = ffaRingRadiusAt(max(0, bot.tick - bot.gameStart))
     ringDist = dist(me, center)
   let visibleOpponent = actors.len > 0
-  if visibleOpponent:
-    bot.contactTicks += max(1, client.frameAdvance)
-    if not bot.hadVisibleOpponent:
-      inc bot.sightingEpisodes
-  bot.hadVisibleOpponent = visibleOpponent
+  let traceTick = bot.tick * FfaTraceTickScale
+  let traceInMatch = FfaTraceMaxTick <= 0 or traceTick <= FfaTraceMaxTick
+  if traceInMatch:
+    if visibleOpponent:
+      bot.contactTicks += max(1, client.frameAdvance) * FfaTraceTickScale
+      if not bot.hadVisibleOpponent:
+        inc bot.sightingEpisodes
+    bot.hadVisibleOpponent = visibleOpponent
   var
     targetIndex = -1
     targetDist = 1e18
@@ -1641,8 +1657,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     targetCritical = targetIndex >= 0 and actors[targetIndex].hp > 0 and
       actors[targetIndex].hp <= 4
     localAdvantage = nearby >= 2
-    healthy = hp >= 12
+    healthy = hp >= FfaRetreatHp
     engage = targetIndex >= 0 and (healthy or targetCritical or localAdvantage) and
+      targetDist < 520.0
+    fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
       targetDist < 520.0
   var moveTarget = center
   var objective = "ring"
@@ -1651,7 +1669,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     moveTarget = center
     objective = "safe_zone"
     action = "retreat_ring"
-  elif hp < 12:
+  elif hp < FfaRetreatHp:
     objective = "heal"
     action = "disengage"
     var bestKit = 1e18
@@ -1677,7 +1695,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   if targetIndex >= 0:
     let target = actors[targetIndex]
     desiredAim = bradsOf(target.pos - me)
-    wantFire = engage and targetDist < 520.0 and
+    wantFire = (engage or fireWhileHurt) and targetDist < 520.0 and
       client.pixelRayClear(me, target.pos) and
       abs(bradsErr(desiredAim, bot.estAim)) <= CombatDeadband
   let steer = bot.navSteer(client, me, moveTarget)
@@ -1687,8 +1705,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   else:
     bot.stuckTicks = 0
   bot.lastPos = me
-  if getEnv("CTF_BOT_TRACE").len > 0 and bot.tick mod 24 == 0:
-    echo "TRACE slot=", bot.slot, " tick=", bot.tick, " x=", me.x, " y=", me.y,
+  if getEnv("CTF_BOT_TRACE").len > 0 and traceInMatch and
+      traceTick mod 24 == 0:
+    echo "TRACE slot=", bot.slot, " tick=", traceTick,
+      " x=", me.x, " y=", me.y,
       " contactTicks=", bot.contactTicks,
       " sightingEpisodes=", bot.sightingEpisodes,
       " visible=", (if visibleOpponent: 1 else: 0)
@@ -3371,6 +3391,10 @@ proc runBot(url: string) =
     slot = slotFromUrl(url)
     endpoint = ensureWsPath(url, WebSocketPath)
   var component = initBaselineComponent(slot)
+  FfaRetreatHp = max(1, parseEnvInt("CTF_BOT_FFA_RETREAT_HP", 12))
+  FfaFireWhileHurt = getEnv("CTF_BOT_FFA_FIRE_WHILE_HURT").len > 0
+  FfaTraceTickScale = max(1, parseEnvInt("CTF_BOT_TRACE_TICK_SCALE", 1))
+  FfaTraceMaxTick = max(0, parseEnvInt("CTF_BOT_TRACE_MAX_TICKS", 0))
   let
     bot = component.bot
     client = component.client

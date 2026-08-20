@@ -107,6 +107,11 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `ringFloorAreaPct` | int / `35` (`FfaRingFloorAreaPct`) | `ringFloorAreaPct` | `1..100` (ffa only) | Safe-zone floor as a percentage of the arena area. |
 | `ringDamageTicks` | int / `48` (`FfaRingDamageTicks`) | `ringDamageTicks` | `>=1` (ffa only) | Cadence for one HP of outside-ring damage. |
 | `ringRecoveryTicks` | int / `2` (`FfaRingRecoveryTicks`) | `ringRecoveryTicks` | `>=0` (ffa only) | Exposure ticks drained per tick spent inside the safe zone; zero reproduces reset-on-entry behavior for measurement arm A. |
+| `ffaGunDamage` | int / `2` (`FfaGunDamage`) | `ffaGunDamage` | `1..4` (ffa only) | Direct gun damage per hit against the FFA hit-point pool. |
+| `ffaSprayDamage` | int / `4` (`FfaSprayDamage`) | `ffaSprayDamage` | `1..4` (ffa only) | Direct plasma-arc damage in FFA. |
+| `ffaGrenadeDamage` | int / `4` (`FfaGrenadeDamage`) | `ffaGrenadeDamage` | `1..4` (ffa only) | Direct grenade damage in FFA. |
+| `ffaGrenadeTrenchSplashDamage` | int / `1` (`FfaGrenadeTrenchSplashDamage`) | `ffaGrenadeTrenchSplashDamage` | `1..4` (ffa only) | FFA grenade damage when the victim is in another trench. |
+| `ffaMedKitSpawns` | int / `2` (`FfaMedKitSpawns`) | `ffaMedKitSpawns` | `1..2` (ffa only) | Number of active center med-kit points in FFA. |
 
 **Per-team handicap** ([sim_types.nim `handicaps`](../src/ctf/sim_types.nim), accessors
 `hitPointsFor`/`livesFor`/`maxSpeedFor`/`missPermilleFor`): a single `0.0..1.0`
@@ -198,6 +203,7 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 
 ffa consts: `FfaHitPoints`=20 (spawn pool), weapon band `FfaGunDamage`=2 /
 `FfaSprayDamage`=4 / `FfaGrenadeDamage`=4 / `FfaGrenadeTrenchSplashDamage`=1,
+`FfaMedKitSpawns`=2,
 `FfaSpawnRingPermille`=800 (spawn-ring radius as permille of the inscribed
 circle), `FfaMinPlayers`=2, `FfaMaxPlayers`=16. ffa win logic: the game ends
 when at most one player is alive or the clock runs out, and the total
