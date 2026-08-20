@@ -34,12 +34,12 @@ orphan_rows = [
     row("ctf", "0.7.128", canonical=False),  # the orphan (newest-first)
     row("ctf", "0.7.127", canonical=True),
     row("ctf", "0.7.126", canonical=False),
-    row("paintbot", "0.7.138", canonical=True),
+    row("battleroyale", "0.7.138", canonical=True),
 ]
 assert compute_next(orphan_rows, "ctf") == "0.7.129"
 
 # Clean registry: max row IS the canonical -> plain patch bump.
-assert compute_next(orphan_rows, "paintbot") == "0.7.139"
+assert compute_next(orphan_rows, "battleroyale") == "0.7.139"
 
 # Numeric (not lexicographic) ordering: 0.7.9 < 0.7.10 < 0.7.100.
 numeric_rows = [

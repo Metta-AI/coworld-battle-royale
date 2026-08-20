@@ -3,14 +3,14 @@ x-coworld-role-contexts:
 
 services:
   game:
-    image: coworld-ctf-game:latest
+    image: coworld-battle-royale:latest
     platform: linux/amd64
     build:
       context: *game_context
       dockerfile: Dockerfile
       network: host
   player:
-    image: coworld-ctf-baseline:latest
+    image: coworld-battle-royale-baseline:latest
     platform: linux/amd64
     build:
       context: *game_context
