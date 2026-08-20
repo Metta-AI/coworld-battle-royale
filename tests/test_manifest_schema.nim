@@ -201,6 +201,10 @@ suite "league manifest config_schema vs GameConfig":
       let description = schema["properties"][key]["description"].getStr
       check "platform" in description
 
+  test "ffa seat schema documents seed-rotated spawn-pad ownership":
+    let description = schema["properties"]["numPlayers"]["description"].getStr
+    check "rotation" in description
+
   test "schema defaults match the engine defaults":
     let defaults = defaultGameConfig()
     check schema["properties"]["aimTurnRate"]["default"].getInt ==

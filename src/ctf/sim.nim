@@ -9,8 +9,8 @@ import
   bitworld/server,
   pixie
 
-import sim_types, rig_art, arena, map_art, sim_config, sim_state, roster
-export sim_types, rig_art, arena, map_art, sim_config, sim_state, roster
+import sim_types, labels, rig_art, arena, map_art, sim_config, sim_state, roster
+export sim_types, labels, rig_art, arena, map_art, sim_config, sim_state, roster
 
 proc grenadeSpawnPoints*(gameMap: CtfMap): array[4, tuple[x, y: int]] =
   ## The four grenade spawn points. Sides maps keep the classic corners;
@@ -206,7 +206,7 @@ proc ffaLootPoints(
       max(1, radius - PlayerHalf)
     )
     rawSeed = sim.ffaLootSeed()
-    phase = ((rawSeed + phaseOffset mod 1024) mod 256 + 256) mod 256
+    phase = ((rawSeed + (phaseOffset mod 1024)) mod 256 + 256) mod 256
     spacing = 2 * MedKitPickupRange
   for i in 0 ..< count:
     let
@@ -1199,7 +1199,7 @@ proc canFire*(sim: SimServer, shooterIndex: int): bool =
 
 proc weaponDamageForTier*(sim: SimServer, tier: int): int =
   if not sim.config.isFfa():
-    return sim.config.ffaGunDamage
+    return sim.weaponDamage(1, sim.config.ffaGunDamage)
   case tier
   of FfaWeaponLow: FfaLowGunDamage
   of FfaWeaponHeavy: FfaHeavyGunDamage
@@ -1225,10 +1225,10 @@ proc weaponRangeForTier*(sim: SimServer, tier: int): int =
 
 proc weaponToken*(tier: int): string =
   case tier
-  of FfaWeaponLow: "low gun"
-  of FfaWeaponHeavy: "heavy gun"
-  of FfaWeaponMid: "mid gun"
-  else: "fist"
+  of FfaWeaponLow: LabelWeaponLowGun
+  of FfaWeaponHeavy: LabelWeaponHeavyGun
+  of FfaWeaponMid: LabelWeaponMidGun
+  else: LabelWeaponFist
 
 proc weaponEventToken(sim: SimServer, tier: int): string =
   if sim.config.isFfa(): weaponToken(tier) else: "gun"

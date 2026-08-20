@@ -18,25 +18,27 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "44"  ## GV44 (FFA weapon ladder): FFA starts with fists and upgrades through low, mid, and heavy weapons.
-  ## FFA adds a serialized weapon tier and deterministic low/mid/heavy
-  ## pickups, so old replays cannot re-simulate under the new Player wire
-  ## shape or combat rules: fixtures re-recorded. The shipped ladder floor is
-  ## 2/2/3/5 damage for fist/low/mid/heavy, with 200%/150%/100%/60%
-  ## cooldowns; CTF remains on its armed mid-tier behavior.
-  ##
-  ## Previously GV43 (puddle rule): PUDDLES BITE TWICE AS HARD.
-  ## `DefaultPuddleDamagePct` goes 10 -> 20: a full second of continuous
-  ## paint-puddle occupancy now rolls a 20% chance of 1 damage instead of
-  ## 10%. The default matters because spec-pinned puddles (the campaign's
-  ## per-cell maps) ride `mapSpec` with no `puddleDamagePct` in the config,
-  ## so their replays echo NO pct key and re-simulate on whatever the
-  ## binary's default is — the roll's RNG draw happens on every completed
-  ## second regardless of outcome, so the stream is unchanged up to the
-  ## first draw in [10,20), where the outcome flips and the sims diverge.
-  ## (mapPuddles-knob replays are safe: the echo pins their pct
-  ## explicitly.) GV42 spec-pinned puddle replays therefore re-simulate
-  ## differently: fixtures re-recorded.
+  GameVersion* = "44"  ## GV44 (FFA ladder + rotated pads): FFA starts with fists,
+    ## upgrades through low, mid, and heavy weapons, and rotates deterministic
+    ## seed-derived ownership of the fixed spawn-pad ring each episode.
+    ## FFA adds a serialized weapon tier and deterministic low/mid/heavy
+    ## pickups, so old replays cannot re-simulate under the new Player wire
+    ## shape or combat rules: fixtures re-recorded. The shipped ladder floor is
+    ## 2/2/3/5 damage for fist/low/mid/heavy, with 200%/150%/100%/60%
+    ## cooldowns; CTF remains on its armed mid-tier behavior.
+    ##
+    ## Previously GV43 (puddle rule): PUDDLES BITE TWICE AS HARD.
+    ## `DefaultPuddleDamagePct` goes 10 -> 20: a full second of continuous
+    ## paint-puddle occupancy now rolls a 20% chance of 1 damage instead of
+    ## 10%. The default matters because spec-pinned puddles (the campaign's
+    ## per-cell maps) ride `mapSpec` with no `puddleDamagePct` in the config,
+    ## so their replays echo NO pct key and re-simulate on whatever the
+    ## binary's default is — the roll's RNG draw happens on every completed
+    ## second regardless of outcome, so the stream is unchanged up to the
+    ## first draw in [10,20), where the outcome flips and the sims diverge.
+    ## (mapPuddles-knob replays are safe: the echo pins their pct
+    ## explicitly.) GV42 spec-pinned puddle replays therefore re-simulate
+    ## differently: fixtures re-recorded.
     ##
     ## Previously GV42 (heart rule): STAND ON THE PEDESTAL, TAKE THE
     ## HEART. `FlagPickupRange` goes 12 -> 34, keyed to the drawn art instead
@@ -492,6 +494,8 @@ const
   FfaWeaponMid* = 2
   FfaWeaponHeavy* = 3
   FfaFistDamage* = 2          ## Ten contact punches deplete the 20 HP pool.
+                              ## Against 20 HP, the fist/low/mid/heavy ladder
+                              ## spans 2/2/3/5 damage per contact or shot.
   FfaLowGunDamage* = 2        ## Low tier matches the old gun's damage.
   FfaMidGunDamage* = 3        ## Mid tier rewards the intermediate loot route.
   FfaHeavyGunDamage* = 5      ## Heavy tier rewards the center risk.
@@ -506,19 +510,13 @@ const
   FfaFistAimHalfBrads* = 48   ## Unarmed FFA melee aim-cone half-width.
   FfaFistCooldownTicks* = 2 * FireCooldownTicks
                               ## Fists recover at twice the gun cooldown.
-                              ## Against the 20 HP pool, the fist/low/mid/heavy
-                              ## ladder spans 2/2/3/5 damage per contact or shot.
-                              ## Spray and direct grenade hits use 4 damage,
-                              ## while a cross-trench grenade splash uses 1
-                              ## and paint puddles retain their classic 1.
-  FfaSprayDamage* = 4
-  FfaGrenadeDamage* = 4
+  FfaSprayDamage* = 4        ## Spray hits use 4 damage in FFA.
+  FfaGrenadeDamage* = 4       ## Direct grenade hits use 4 damage in FFA.
   FfaGrenadeTrenchSplashDamage* = 1
-                              ## ffa blast on a victim caught in some OTHER
-                              ## trench: the pit still shields. The
-                              ## amplified same-trench hit collapses to
-                              ## FfaGrenadeDamage, so no ffa hit ever
-                              ## leaves the 1..4 band.
+                              ## Cross-trench grenade splash uses 1 damage;
+                              ## paint puddles retain their classic 1.
+                              ## An ffa blast on a victim caught in some
+                              ## OTHER trench still uses the splash value.
   FfaMedKitSpawns* = 2       ## ffa active med-kit points by default; the
                               ## config can reduce this to one for a leaner
                               ## healing economy.

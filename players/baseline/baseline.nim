@@ -452,6 +452,7 @@ var
   FfaFireWhileHurt = true
   FfaTraceTickScale = 1
   FfaTraceMaxTick = 0
+  FfaLateClose = false
 
 proc parseEnvInt(name: string, fallback: int): int =
   let value = getEnv(name)
@@ -702,6 +703,19 @@ proc ffaActorsFor(client: ProtocolClient): seq[Actor] {.measure.} =
         best = i
     if best >= 0:
       result[best].hp = hp
+
+proc ffaLivingCount(client: ProtocolClient): int =
+  ## Reads the authoritative FFA alive count from the scoreboard header.
+  for o in client.spriteObjects():
+    if not o.label.startsWith("ALIVE "):
+      continue
+    let fields = o.label.splitWhitespace()
+    if fields.len >= 2:
+      try:
+        return parseInt(fields[1])
+      except ValueError:
+        discard
+  0
 
 proc actorsFor(client: ProtocolClient, color: string): seq[Actor] {.measure.} =
   ## Visible players of one color in map coordinates plus horizontal facing
@@ -1672,6 +1686,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   bot.hp = hp
   let
     actors = client.ffaActorsFor()
+    livingCount = client.ffaLivingCount()
     ringRadius = ffaRingRadiusAt(max(0, bot.tick - bot.gameStart))
     ringDist = dist(me, center)
   updateTracks(bot, bot.ffaAimTracks, actors)
@@ -1711,6 +1726,11 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     moveTarget = center
     objective = "safe_zone"
     action = "retreat_ring"
+  elif FfaLateClose and livingCount > 0 and livingCount <= 3 and
+      targetIndex >= 0:
+    moveTarget = actors[targetIndex].pos
+    objective = "late_close"
+    action = "close_last_three"
   elif unarmed:
     var bestGun = 1e18
     for label in [LabelWeaponLowGun, LabelWeaponMidGun, LabelWeaponHeavyGun,
@@ -3522,6 +3542,7 @@ proc runBot(url: string) =
   var component = initBaselineComponent(slot)
   FfaRetreatHp = max(1, parseEnvInt("CTF_BOT_FFA_RETREAT_HP", 6))
   FfaFireWhileHurt = parseEnvBool("CTF_BOT_FFA_FIRE_WHILE_HURT", true)
+  FfaLateClose = parseEnvBool("CTF_BOT_FFA_LATE_CLOSE", false)
   FfaTraceTickScale = max(1, parseEnvInt("CTF_BOT_TRACE_TICK_SCALE", 1))
   FfaTraceMaxTick = max(0, parseEnvInt("CTF_BOT_TRACE_MAX_TICKS", 0))
   let

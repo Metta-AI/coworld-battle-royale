@@ -373,6 +373,13 @@ What that means in practice:
 
 ### Battle Royale weapons
 
+FFA players spawn on an evenly spaced ring, but pad ownership is not tied to
+the platform seat: a deterministic offset derived from the match seed rotates
+which seat receives each existing pad on every episode. The ring radius,
+spacing, geometry, and nearest-walkable snapping are unchanged, and the
+assignment remains a one-to-one mapping. CTF keeps its original team spawn
+positions.
+
 Battle Royale starts every player unarmed. The fallback attack is a fist:
 it reaches 70 px, deals 2 damage, and has twice the normal fire cooldown. A
 punch has no windup, tracer, or stain; it hits the nearest living player in

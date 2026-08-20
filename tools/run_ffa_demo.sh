@@ -77,8 +77,13 @@ elif arm == "R20-100":
     cfg["ringShrinkSec"] = 100
     cfg["ringFloorAreaPct"] = 20
     cfg["ringRecoveryTicks"] = 2
+elif arm in ("H", "I"):
+    cfg["mapSize"] = "huge"
+    cfg["ringShrinkSec"] = 150
+    cfg["ringFloorAreaPct"] = 3
+    cfg["ringRecoveryTicks"] = 2
 else:
-    raise SystemExit("arm must be A, B, C, D1, D2, D3, D4, E1, E2, E3, E4, R35-150, R20-100, or DEFAULT")
+    raise SystemExit("arm must be A, B, C, D1, D2, D3, D4, E1, E2, E3, E4, H, I, R35-150, R20-100, or DEFAULT")
 if arm in ("E2", "E4"):
     cfg["ffaGunDamage"] = 4
 if arm == "E4":
@@ -154,6 +159,9 @@ case "$ARM" in
     ;;
   E3|E4)
     BOT_ENV+=(CTF_BOT_FFA_RETREAT_HP=6 CTF_BOT_FFA_FIRE_WHILE_HURT=1)
+    ;;
+  I)
+    BOT_ENV+=(CTF_BOT_FFA_LATE_CLOSE=1)
     ;;
 esac
 

@@ -19,6 +19,14 @@ proc ffaGame(seats: int, maxTicks = 0): SimServer =
     discard result.addPlayer("ffa" & $i)
   result.startGame()
 
+proc seededFfaGame(seats, seed: int): SimServer =
+  var config = defaultFfaConfig(seats)
+  config.seed = seed
+  result = initCtfForTest(config)
+  for i in 0 ..< seats:
+    discard result.addPlayer("seeded" & $i)
+  result.startGame()
+
 proc stepNone(sim: var SimServer, ticks: int) =
   let input = sim.none()
   for _ in 0 ..< ticks:
@@ -303,6 +311,35 @@ suite "ffa spawn ring":
           check centers[i] != centers[j]
           check distSq(centers[i].x, centers[i].y, centers[j].x, centers[j].y) >
             (2 * CollisionW) * (2 * CollisionW)
+
+  test "ffa spawn pad ownership rotates deterministically without changing pads":
+    let
+      first = seededFfaGame(12, 907)
+      second = seededFfaGame(12, 907)
+    check ffaSpawnPadOffset(907, 12) != ffaSpawnPadOffset(908, 12)
+    var expected: seq[tuple[x, y: int]] = @[]
+    var actual: seq[tuple[x, y: int]] = @[]
+    for pad in 0 ..< 12:
+      expected.add first.ffaSpawnPadPosition(pad, 12)
+    for player in first.players:
+      actual.add((player.homeX, player.homeY))
+    check expected.len == actual.len
+    for point in expected:
+      check point in actual
+    for i in 0 ..< first.players.len:
+      check (first.players[i].homeX, first.players[i].homeY) ==
+        (second.players[i].homeX, second.players[i].homeY)
+      for j in 0 ..< i:
+        check (first.players[i].homeX, first.players[i].homeY) !=
+          (first.players[j].homeX, first.players[j].homeY)
+    var ctf = initCtfForTest(defaultGameConfig())
+    discard ctf.addPlayer("ctf-seated-0")
+    discard ctf.addPlayer("ctf-seated-1")
+    ctf.startGame()
+    for player in ctf.players:
+      let expectedSpawn = ctf.spawnPosition(player.team, 0)
+      check (player.homeX, player.homeY) ==
+        (expectedSpawn.x, expectedSpawn.y)
 
   test "seat colors are per player, not per team":
     for seats in 2 .. PlayerColors.len:

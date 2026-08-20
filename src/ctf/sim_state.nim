@@ -306,27 +306,54 @@ proc spawnPosition*(sim: SimServer, team: Team, order: int): tuple[x, y: int] =
     targetY = if vertical: anchor.y + stepMajor else: anchor.y + stepMinor
   sim.nearestWalkable(targetX, targetY)
 
+proc ffaSpawnPadOffset*(seed, seats: int): int =
+  ## Returns the deterministic per-episode rotation of FFA spawn pads.
+  let count = max(1, seats)
+  if count <= 1:
+    return 0
+  var hash = 14695981039346656037'u64
+  hash.mixHashInt(seed)
+  hash.mixHashInt(count)
+  hash = hash xor (hash shr 30)
+  hash *= 13787848793156543929'u64
+  hash = hash xor (hash shr 27)
+  hash *= 1099511628211'u64
+  hash = hash xor (hash shr 31)
+  int(hash mod uint64(count))
+
+proc ffaSpawnPadPosition*(
+  sim: SimServer,
+  pad, seats: int
+): tuple[x, y: int] =
+  ## Returns one unrotated ffa spawn pad on the N-derived ring.
+  let
+    count = max(1, seats)
+    normalizedPad = ((pad mod count) + count) mod count
+    cx = MapWidth div 2
+    cy = MapHeight div 2
+    inset = ArenaBorder + PlayerHalf + 1
+    radius = max(0, min(cx, cy) - inset) * FfaSpawnRingPermille div 1000
+    brads = normalizedPad * 256 div count
+    # Screen y runs down, so the ring turns the way aimVector does.
+    targetX = cx + radius * ringCos(brads) div 1024
+    targetY = cy - radius * ringSin(brads) div 1024
+  sim.nearestWalkable(targetX, targetY)
+
 proc ffaSpawnPosition*(sim: SimServer, slot, seats: int): tuple[x, y: int] =
   ## Returns one ffa spawn pad: seat `slot` of `seats`, on a ring centered on
   ## the map. The pads are the seats' equal share of one turn, so they are
   ## equidistant from the center and as far from each other as N allows, and
   ## the ring itself is FfaSpawnRingPermille of the largest circle the border
-  ## admits. Derived from N alone — no table, no per-count special case — and
-  ## integer-only (the brad table, not trig), so every target agrees on where
-  ## a match starts. The pad snaps to the nearest reachable floor, which is
-  ## what makes it safe on generated terrain.
+  ## admits. A seed-derived offset rotates pad ownership per episode without
+  ## changing the pad set. The calculation is integer-only (the brad table,
+  ## not trig), so every target agrees on where a match starts. The pad snaps
+  ## to the nearest reachable floor, which is what makes it safe on generated
+  ## terrain.
   let
     count = max(1, seats)
     seat = ((slot mod count) + count) mod count
-    cx = MapWidth div 2
-    cy = MapHeight div 2
-    inset = ArenaBorder + PlayerHalf + 1
-    radius = max(0, min(cx, cy) - inset) * FfaSpawnRingPermille div 1000
-    brads = seat * 256 div count
-    # Screen y runs down, so the ring turns the way aimVector does.
-    targetX = cx + radius * ringCos(brads) div 1024
-    targetY = cy - radius * ringSin(brads) div 1024
-  sim.nearestWalkable(targetX, targetY)
+    pad = (seat + ffaSpawnPadOffset(sim.config.seed, count)) mod count
+  sim.ffaSpawnPadPosition(pad, count)
 
 proc ffaRingCenter*(): tuple[x, y: int] =
   ## The safe zone's center: the middle of the board, fixed for the match so
