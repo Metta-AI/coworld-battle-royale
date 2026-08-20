@@ -270,11 +270,58 @@ suite "ffa spawn ring":
             (2 * CollisionW) * (2 * CollisionW)
 
   test "seat colors are per player, not per team":
-    var game = ffaGame(16)
-    var seen: seq[uint8] = @[]
-    for player in game.players:
-      check player.color notin seen
-      seen.add player.color
+    for seats in 2 .. PlayerColors.len:
+      var game = ffaGame(seats)
+      var seen: seq[uint8] = @[]
+      for player in game.players:
+        check player.color notin seen
+        seen.add player.color
+
+  test "rig sprite keys use identity in ffa and team in ctf":
+    check rigHeadSpriteId(0, DefaultSkin, 0) !=
+      rigHeadSpriteId(1, DefaultSkin, 0)
+    check rigGunSpriteId(0, 0) != rigGunSpriteId(1, 0)
+    check rigArmSpriteId(0, rsArmL, 0, 0) !=
+      rigArmSpriteId(1, rsArmL, 0, 0)
+    check rigLegSpriteId(0, rsLegFL, 0, 0, 0) !=
+      rigLegSpriteId(1, rsLegFL, 0, 0, 0)
+    check rigWheelSpriteId(0, rsWheelL, 0, 0) !=
+      rigWheelSpriteId(1, rsWheelL, 0, 0)
+    check rigHeadSpriteId(Red, DefaultSkin, 0) !=
+      rigHeadSpriteId(Blue, DefaultSkin, 0)
+    check rigGunSpriteId(Red, 0) != rigGunSpriteId(Blue, 0)
+
+  test "ffa player-view art and identity badges use distinct color pools":
+    check soldierPlayerSpriteId(0, DefaultSkin, 0) !=
+      soldierPlayerSpriteId(1, DefaultSkin, 0)
+    check selectedSoldierPlayerSpriteId(0, DefaultSkin, 0) !=
+      selectedSoldierPlayerSpriteId(1, DefaultSkin, 0)
+    check identityBadgeSpriteId(0, 0, 0) !=
+      identityBadgeSpriteId(1, 0, 0)
+    let
+      game = ffaGame(2)
+      redBubble = game.buildShoutBubbleForColor(0, "hello")
+      orangeBubble = game.buildShoutBubbleForColor(1, "hello")
+      redSoldier = soldierRotPixelsForColor(0, DefaultSkin, 0)
+      orangeSoldier = soldierRotPixelsForColor(1, DefaultSkin, 0)
+    check redBubble.pixels != orangeBubble.pixels
+    check redSoldier != orangeSoldier
+
+  test "ffa spectator header is alive count and timer, not team lives":
+    var game = ffaGame(4)
+    game.players[3].alive = false
+    let header = game.ffaScoreboardHeaderText()
+    check header.startsWith("ALIVE 3")
+    check "TIME " in header
+    check "LIVES" notin header
+    check "RED" notin header
+
+  test "ffa game over title names the winning identity color":
+    var game = ffaGame(3)
+    game.killPlayer(0, 1)
+    game.killPlayer(2, 1)
+    game.stepNone(1)
+    check game.ffaGameOverTitle() == "ORANGE WINS"
 
   test "ffa spawns no hearts and no capture path is reachable":
     var game = ffaGame(4)
@@ -296,6 +343,7 @@ suite "ffa spawn ring":
       if message.kind == spkSprite:
         labels.add(message.sprite.label)
     check not labels.anyIt(it.startsWith("endzone "))
+    check not labels.anyIt(it.startsWith("game teams "))
     check "Room Red" notin labels
     check "Room Blue" notin labels
 

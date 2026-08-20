@@ -11,6 +11,7 @@
 import
   std/[math, os, strutils],
   bitworld/aseprite,
+  bitworld/spriteprotocol,
   pixie,
   sim_types
 
@@ -653,6 +654,77 @@ proc soldierIconPixels*(team: Team, sizePx: int): seq[uint8] =
     result[i * 4 + 1] = c.g
     result[i * 4 + 2] = c.b
     result[i * 4 + 3] = c.a
+
+proc tintIdentityPixels(pixels: seq[uint8], colorIndex: int): seq[uint8] =
+  ## Recolors the warm-red team paint in a rig/icon sprite while preserving
+  ## the neutral metal, visor, and shadow pixels. FFA identity art uses the
+  ## same authored silhouette for every seat; only its paint hue varies.
+  let
+    target = Palette[PlayerColors[
+      ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod
+        PlayerColors.len
+    ] and 0x0f]
+  result = pixels
+  for i in 0 ..< result.len div 4:
+    let
+      offset = i * 4
+      r = pixels[offset]
+      g = pixels[offset + 1]
+      b = pixels[offset + 2]
+    if pixels[offset + 3] == 0 or int(r) <= int(g) + 18 or
+        int(r) <= int(b) + 18:
+      continue
+    let brightness = float(r) / 255.0
+    result[offset] = uint8(clamp(int(round(float(target.r) * brightness)), 0, 255))
+    result[offset + 1] =
+      uint8(clamp(int(round(float(target.g) * brightness)), 0, 255))
+    result[offset + 2] =
+      uint8(clamp(int(round(float(target.b) * brightness)), 0, 255))
+
+proc soldierRotPixelsForColor*(
+  colorIndex: int,
+  skin: Skin,
+  rot: int,
+  renderScale = 1
+): seq[uint8] =
+  ## FFA player-view soldier art tinted to the seat identity color.
+  tintIdentityPixels(
+    soldierRotPixels(Red, skin, rot, renderScale),
+    colorIndex
+  )
+
+proc rigSegPixelsForColor*(
+  colorIndex: int,
+  seg: RigSeg,
+  baseStep, artStep: int,
+  shortenStep = 0,
+  renderScale = 1,
+  skin = DefaultSkin
+): seq[uint8] =
+  ## FFA rig art: the red authored rig is tinted to the seat identity color.
+  tintIdentityPixels(
+    rigSegPixels(Red, seg, baseStep, artStep, shortenStep, renderScale, skin),
+    colorIndex
+  )
+
+proc soldierIconPixelsForColor*(colorIndex, sizePx: int): seq[uint8] =
+  ## FFA game-over roster icon in the seat identity color.
+  tintIdentityPixels(soldierIconPixels(Red, sizePx), colorIndex)
+
+proc rigGunPixelsForColor*(
+  colorIndex, aimStep: int,
+  renderScale = 1
+): seq[uint8] =
+  ## FFA held-gun art has its own identity-keyed definition even though the
+  ## weapon silhouette is neutral.
+  rigGunPixels(Red, aimStep, renderScale)
+
+proc rigSprayCanPixelsForColor*(
+  colorIndex, aimStep: int,
+  renderScale = 1
+): seq[uint8] =
+  ## FFA held-spray art has its own identity-keyed definition.
+  rigSprayCanPixels(Red, aimStep, renderScale)
 
 
 ## --- Cog driving physics: how the segmented trike steers/turns (broadcast-only) ---

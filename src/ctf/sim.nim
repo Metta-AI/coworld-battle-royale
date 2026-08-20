@@ -1234,7 +1234,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
       y: attacker.y + CollisionH div 2,
       aimBrads: attacker.arcAimBrads,   ## the locked fire direction, not live aim
       tick: sim.tickCount,
-      color: teamColor(attacker.team),
+      color: if sim.config.isFfa(): attacker.color else: teamColor(attacker.team),
       attacker: arcFire.attacker
     )
     # A can sprayed at the terrain coats it. March the cone's center ray to the
@@ -1252,7 +1252,12 @@ proc resolveActiveArcCones*(sim: var SimServer) =
           ry = ay + int(round(uy * float(step)))
         if sim.isWall(rx, ry):
           let (sxw, syw) = sim.seatInWall(rx, ry, ux, uy)
-          sim.addPaintStain(sxw, syw, teamColor(attacker.team), onWall = true)
+          sim.addPaintStain(
+            sxw,
+            syw,
+            (if sim.config.isFfa(): attacker.color else: teamColor(attacker.team)),
+            onWall = true
+          )
           break sprayStain
     let sprayDamage = sim.weaponDamage(
       PlasmaArcDamage, sim.config.ffaSprayDamage)
@@ -1905,9 +1910,8 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
   ## damage, not the radius: GrenadeTrenchDamage for a victim sharing the
   ## landing trench, GrenadeTrenchSplashDamage for a victim in any other
   ## trench, GrenadeDamage for anyone in the open.
-  # Color the splat by the thrower's TEAM (not their individual slot color), so
-  # a landing reads as that team's paint-bomb — and the sprite id stays within
-  # the two team-color slots, never colliding with the tracer pool.
+  # In FFA the splat belongs to the thrower, while CTF retains its historical
+  # team-colored blast pool.
   let
     legacyThrowerIndex = sim.legacyGrenadeThrowerIndex(grenade)
     throwerSlot = sim.grenadeThrowerSlot(grenade)
@@ -1919,6 +1923,8 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
     throwerColor =
       if throwerSlot < 0:
         teamColor(Team(grenade.launchTick mod sim.gameMap.teamCount()))
+      elif sim.config.isFfa() and throwerIndex >= 0:
+        sim.players[throwerIndex].color
       else:
         teamColor(sim.teamForSlot(throwerSlot))
     landingTrench = trenchIndexAt(grenade.tx, grenade.ty)
