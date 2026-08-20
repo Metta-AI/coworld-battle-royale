@@ -2032,7 +2032,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     ingestCapHearts(s);
     recordMomentum(s);
 
-    if (s.ph === 'gameover') { renderEndcard(s); if (s.over) setVerdict(s.over); }
+    if (s.ph === 'gameover') { renderEndcard(s); if (s.over) setVerdict(s.over, s); }
     else { $('endcard').classList.remove('on'); }
 
     lastTick = s.t;
@@ -2169,23 +2169,40 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       var plate = document.createElement('div');
       plate.className = 'plate ' + team + ' ' + (i % 2 === 0 ? 'side-l' : 'side-r');
       plate.setAttribute('data-team', team);
-      plate.innerHTML =
-        '<div class="flagicon" id="flag-' + team + '"></div>' +
-        '<div class="team-id">' +
-        '<div class="lives-line">' +
-        '<span class="team-name" id="name-' + team + '">' + team.toUpperCase() + '</span>' +
-        '<span class="hcap" id="hcap-' + team + '" style="display:none"></span>' +
-        '<span class="lives-label">Lives</span>' +
-        '<span class="lives-num" id="lives-' + team + '">—</span>' +
-        '</div>' +
-        '<div class="squad" id="squad-' + team + '"></div>' +
-        '</div>';
+      if (team === 'ffa') {
+        plate.innerHTML =
+          '<div class="team-id">' +
+          '<div class="lives-line">' +
+          '<span class="lives-num" id="lives-' + team + '">—</span>' +
+          '<span class="team-name" id="name-' + team + '">ALIVE</span>' +
+          '</div>' +
+          '</div>';
+      } else {
+        plate.innerHTML =
+          '<div class="flagicon" id="flag-' + team + '"></div>' +
+          '<div class="team-id">' +
+          '<div class="lives-line">' +
+          '<span class="team-name" id="name-' + team + '">' + team.toUpperCase() + '</span>' +
+          '<span class="hcap" id="hcap-' + team + '" style="display:none"></span>' +
+          '<span class="lives-label">Lives</span>' +
+          '<span class="lives-num" id="lives-' + team + '">—</span>' +
+          '</div>' +
+          '<div class="squad" id="squad-' + team + '"></div>' +
+          '</div>';
+      }
       sides[i % 2].appendChild(plate);
-      buildFlag($('flag-' + team), teamCol(team) || AMBER);
+      if (team !== 'ffa') buildFlag($('flag-' + team), teamCol(team) || AMBER);
     });
   }
 
   function renderScorebug(s) {
+    if (s.ffa) {
+      ensureScorebug(['ffa']);
+      var alive = (s.roster || []).filter(function (p) { return !!p.alive; }).length;
+      setName('name-ffa', 'ALIVE');
+      $('lives-ffa').textContent = alive;
+      return;
+    }
     var teams = activeTeams(s);
     ensureScorebug(teams);
     var tr = s.teams || {};
@@ -3658,11 +3675,62 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     });
   }
 
+  function renderFfaEndcard(s, o, card) {
+    ensureEndcardTeams(['ffa']);
+    var roster = (s.roster || []).slice().sort(endcardOrder);
+    var winnerSlot = o.winnerSlot != null ? o.winnerSlot : -1;
+    var winner = roster.filter(function (p) { return p.s === winnerSlot; })[0];
+    var winnerName = winner ? shortName(rosterName(s, winner.s)) : 'the last player standing';
+    var winnerColor = o.winnerColor ? o.winnerColor.toUpperCase() : 'UNKNOWN';
+    var key = [s.mx, o.winnerSlot, o.winnerColor, o.draw, o.timeLimit,
+      (s.roster || []).length].join('|');
+    if (card._key === key) return;
+    card._key = key;
+
+    $('ec-replay').innerHTML = s.lp && s.hold > 0
+      ? 'Replaying in <b>' + s.hold + '</b>' : '';
+    $('ec-wincond').textContent = o.draw ? 'DRAW' : 'ELIMINATION';
+    $('ec-tname-ffa').textContent = 'FREE-FOR-ALL';
+    $('ec-ffa').textContent = (s.roster || []).filter(function (p) { return !!p.alive; }).length;
+    $('ec-team-ffa').classList.toggle('win', !o.draw);
+
+    var rows = roster.map(function (p) {
+      var mvp = !o.draw && p.s === winnerSlot;
+      var marks = endcardBadge('bs', p.tk, 'Backstab');
+      var cluster = (p.mk2 || 0) + (p.mk3 || 0);
+      return '<div class="ec-row' + (mvp ? ' mvp' : '') + '">' +
+        '<span class="pcell"><span class="pname">' +
+        esc(shortName(rosterName(s, p.s))) + '</span>' + marks + '</span>' +
+        '<span class="n">' + (p.k || 0) + '</span>' +
+        '<span class="n">' + (p.d || 0) + '</span>' +
+        '<span class="n clstr">' + (cluster > 0 ? cluster : '') + '</span>' +
+        '<span class="n cap"></span></div>';
+    }).join('');
+    $('ec-rows-ffa').innerHTML = rows;
+
+    var head = $('ec-headline'), how = $('ec-how');
+    if (o.draw) {
+      head.className = 'headline draw';
+      head.textContent = 'DRAW — NO WINNER';
+      how.textContent = o.timeLimit
+        ? 'Time expired before one player eliminated every opponent.'
+        : 'The match ended without a surviving player.';
+    } else {
+      head.className = 'headline ffa-winner';
+      head.textContent = winnerColor + ' WINS';
+      how.textContent = winnerName + ' was the last player standing.';
+    }
+  }
+
   function renderEndcard(s) {
     var card = $('endcard');
     if (!s.over) return;
     card.classList.add('on'); // own the frame at GameOver (§8) — before either verdict branch
     var o = s.over;
+    if (s.ffa) {
+      renderFfaEndcard(s, o, card);
+      return;
+    }
     var teams = activeTeams(s);
     ensureEndcardTeams(teams);
 

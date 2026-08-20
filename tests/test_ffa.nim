@@ -342,6 +342,27 @@ suite "ffa spawn ring":
     check "LIVES" notin header
     check "RED" notin header
 
+  test "ffa replay chrome state is alive-count and player-verdict keyed":
+    var game = ffaGame(3)
+    game.players[2].alive = false
+    let playing = parseJson(game.buildStateJson(
+      newJArray(), false, 1, game.effectiveMaxTicks(), false, true, -1, -1,
+      @[@[0, 3], @[10, 2]]
+    ))
+    check playing["ffa"].getBool
+    check playing["lead"]["kind"].getStr == "alive"
+    check playing["lead"]["pts"][0].len == 2
+    check playing["lead"]["pts"][1][1].getInt == 2
+    game.killPlayer(0, 1)
+    game.killPlayer(2, 1)
+    game.stepNone(1)
+    let over = parseJson(game.buildStateJson(
+      newJArray(), false, 1, game.effectiveMaxTicks(), false, true, -1, -1
+    ))
+    check over["ffa"].getBool
+    check over["over"]["winnerSlot"].getInt == game.ffaWinnerSlot
+    check over["over"]["winnerColor"].getStr == "orange"
+
   test "ffa game over title names the winning identity color":
     var game = ffaGame(3)
     game.killPlayer(0, 1)

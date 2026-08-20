@@ -829,7 +829,7 @@
     ingestLullSpans(s);
     ingestBeats(s);
     recordMomentum(s);
-    if (s.ph==='gameover' && s.over) setVerdict(s.over);
+    if (s.ph==='gameover' && s.over) setVerdict(s.over, s);
 
     lastTick = s.t;
     hideStatus();

@@ -45,6 +45,13 @@ window.ChromeCommon = function (ctx) {
   // ---- palette (mirrors board tints so chrome matches the arena) ----
   var RED = '#e0523a', BLUE = '#3f7cc4', AMBER = '#e8a33d', PAPER = '#f2e8d8';
   var GREEN = '#45a85e', YELLOW = '#ddc531';
+  var IDENTITY_COLOR = {
+    red: RED, orange: '#f08a32', yellow: YELLOW, 'light blue': '#6eb6e8',
+    pink: '#e885b8', lime: '#8bc34a', blue: BLUE, 'pale blue': '#a5d6e8',
+    gray: '#8b8b8b', white: PAPER, 'dark brown': '#6e4a32',
+    brown: '#9b6a43', 'dark teal': '#267b76', green: GREEN,
+    'dark navy': '#30476f', black: '#24201c'
+  };
 
   // ---- teams (2-4, data-driven) --------------------------------------------
   // The chrome renders whatever teams the state frame carries, in this
@@ -449,6 +456,8 @@ window.ChromeCommon = function (ctx) {
   // ---- transport -----------------------------------------------------------
   function renderTransport(s) {
     $('transport').classList.toggle('disabled', !s.en);
+    var modeLabel = document.querySelector('.momentum-label');
+    if (modeLabel) modeLabel.textContent = s.ffa ? 'ALIVE COUNT' : 'LIVES LEAD';
     $('btn-play').textContent = s.pl ? '❘❘' : '▶';
     $('btn-loop').classList.toggle('on', !!s.lp);
     $('btn-skip').classList.toggle('on', !!s.sk);
@@ -583,7 +592,7 @@ window.ChromeCommon = function (ctx) {
       var b = beatTimeline[i];
       if (b.k === 'steal' || b.k === 'return') markBeat(b.t, b.k, b.flag);
       else if (b.k === 'capture') markBeat(b.t, 'capture', captureTeam(s, b));
-      else if (b.k === 'gameover') setVerdict(b);
+      else if (b.k === 'gameover') setVerdict(b, s);
     }
   }
 
@@ -594,17 +603,22 @@ window.ChromeCommon = function (ctx) {
   // playhead reaches the game-over beat (or the phase itself goes gameover,
   // which also covers verdicts that arrive without a tick).
   var verdict = null;        // {cls, label, tick|null} once known
-  function setVerdict(v) {
-    var cls = v.draw ? 'draw' : (v.winner || '');
+  function setVerdict(v, s) {
+    var ffa = !!((s && s.ffa) || v.winnerColor || v.winnerSlot != null);
+    var cls = v.draw ? 'draw' : (ffa ? 'ffa-winner' : (v.winner || ''));
     if (!cls) return;
     if (!verdict) {
+      var winnerColor = ffa ? (v.winnerColor || '') : '';
       verdict = {
         cls: cls,
-        label: v.draw ? 'DRAW' : v.winner.toUpperCase() + ' WINS',
+        label: v.draw ? 'DRAW' :
+          (ffa ? (winnerColor || 'UNKNOWN').toUpperCase() + ' WINS' :
+            v.winner.toUpperCase() + ' WINS'),
+        color: winnerColor ? (IDENTITY_COLOR[winnerColor] || PAPER) : '',
         tick: v.t != null ? v.t : null
       };
     }
-    applyVerdict(ctx.getState());
+    applyVerdict(s || ctx.getState());
   }
   function applyVerdict(s) {
     if (!verdict) return;
@@ -612,10 +626,12 @@ window.ChromeCommon = function (ctx) {
       (s && (s.ph === 'gameover' || (verdict.tick != null && s.t >= verdict.tick)));
     var cap = $('scrub-win');
     cap.className = 'scrub-win ' + (show ? 'show ' : '') + verdict.cls;
+    if (verdict.color) cap.style.setProperty('--tc', verdict.color);
     cap.title = verdict.label;
     var chip = $('win-chip');
     chip.textContent = verdict.label;
     chip.className = 'win-chip ' + (show ? 'show ' : '') + verdict.cls;
+    if (verdict.color) chip.style.setProperty('--tc', verdict.color);
   }
 
   // ---- momentum graph (lives-lead over the WHOLE timeline) ----------------
@@ -646,6 +662,15 @@ window.ChromeCommon = function (ctx) {
         isDiff: true,
         pts: s.lead.map(function (p) { return { t: p[0], vals: [p[1]] }; })
       };
+    } else if (s.ffa && s.lead.kind === 'alive') {
+      fullLeadSeries = {
+        teams: [],
+        isDiff: false,
+        isAlive: true,
+        pts: (s.lead.pts || []).map(function (p) {
+          return { t: p[0], vals: [p[1]] };
+        })
+      };
     } else {
       // Team-keyed shape: {teams: [name…], pts: [[tick, lives…], …]}.
       fullLeadSeries = {
@@ -663,6 +688,17 @@ window.ChromeCommon = function (ctx) {
     if (s.ph !== 'playing' && s.ph !== 'gameover') return;
     if (momentumSeen[s.t]) return;  // deterministic replay: a tick's lives are fixed
     momentumSeen[s.t] = true;
+    if (s.ffa) {
+      momentumTeams = [];
+      momentumSamples.push({
+        t: s.t,
+        vals: [Object.keys(s.roster || {}).reduce(function (n, k) {
+          return n + (s.roster[k].alive ? 1 : 0);
+        }, 0)]
+      });
+      momentumDirty = true;
+      return;
+    }
     var teams = activeTeams(s);
     var tr = s.teams || {};
     momentumTeams = teams;
@@ -679,7 +715,8 @@ window.ChromeCommon = function (ctx) {
     // Prefer the full precomputed series (spans the WHOLE timeline from frame 1);
     // fall back to accumulate-as-you-play only if the server didn't ship it.
     var norm = fullLeadSeries ||
-      { teams: momentumTeams || ['red', 'blue'], isDiff: false, pts: momentumSamples };
+      { teams: momentumTeams || ['red', 'blue'], isDiff: false,
+        isAlive: !!(lastState && lastState.ffa), pts: momentumSamples };
     var samples = norm.pts;
     var lastState = ctx.getState();
     if (!lastState || !samples.length) { if (!samples.length) el.innerHTML = ''; return; }
@@ -741,7 +778,25 @@ window.ChromeCommon = function (ctx) {
       layer.appendChild(p);
     }
 
-    if (norm.teams.length === 2) {
+    var label = document.querySelector('.momentum-label');
+    if (label) label.textContent = norm.isAlive ? 'ALIVE COUNT' : 'LIVES LEAD';
+
+    if (norm.isAlive) {
+      var peakAlive = 1;
+      pts.forEach(function (m) {
+        if (m.vals[0] > peakAlive) peakAlive = m.vals[0];
+      });
+      var aliveBase = document.createElementNS(MOM_SVGNS, 'line');
+      aliveBase.setAttribute('x1', 0); aliveBase.setAttribute('y1', VBH - 2);
+      aliveBase.setAttribute('x2', VBW); aliveBase.setAttribute('y2', VBH - 2);
+      aliveBase.setAttribute('stroke', 'rgba(242,232,216,0.22)');
+      aliveBase.setAttribute('stroke-width', '0.8');
+      layer.appendChild(aliveBase);
+      var aliveLine = stepPath(function (m) {
+        return (VBH - 2) - ((m.vals[0] || 0) / peakAlive) * (VBH - 4);
+      });
+      addPath(aliveLine, AMBER, '1.8', '0.95');
+    } else if (norm.teams.length === 2) {
       // TWO teams: the classic lead diff — a single step line around an
       // even-lives midline, shaded in the leading team's color above/below.
       var colTop = teamCol(norm.teams[0]) || RED;

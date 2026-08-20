@@ -156,6 +156,7 @@ suite "broadcast state channel":
         newJArray(), false, 1, replay.replayMaxTick(), false, true, -1, -1
       ))
       check state["ph"].getStr == "gameover"
+      check not state.hasKey("ffa")
       check state.hasKey("over")
       # A capture win is not a draw and not a time-limit tiebreak. The winner
       # is pinned to the current recording of the fixture (GameVersion 41,

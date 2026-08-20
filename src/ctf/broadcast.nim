@@ -137,6 +137,11 @@ proc stepEvents*(
       # byte-identical.
       if sim.config.isFfa():
         over["slot"] = %sim.ffaWinnerSlot
+        for player in sim.players:
+          if player.joinOrder == sim.ffaWinnerSlot:
+            over["winnerColor"] =
+              %playerColorName(playerColorIndex(player.color))
+            break
       events.add(over)
 
   # Kills and respawns, diffed per player like expand_replay.
@@ -764,16 +769,21 @@ proc buildStateJson*(
   # the tick followed by one lives count per team, in `teams` order. Absent on
   # every later frame — the client caches it.
   if livesSeries.len > 0:
-    var teamNames = newJArray()
-    for team in sim.teams():
-      teamNames.add(%teamText(team))
     var pts = newJArray()
     for point in livesSeries:
       var row = newJArray()
       for value in point:
         row.add(%value)
       pts.add(row)
-    state["lead"] = %*{"teams": teamNames, "pts": pts}
+    if sim.config.isFfa():
+      state["lead"] = %*{"kind": "alive", "pts": pts}
+    else:
+      var teamNames = newJArray()
+      for team in sim.teams():
+        teamNames.add(%teamText(team))
+      state["lead"] = %*{"teams": teamNames, "pts": pts}
+  if sim.config.isFfa():
+    state["ffa"] = %true
 
   # Static minimap wall silhouette for the EYES tactical inset, sent ONCE per
   # viewer (like the lead series). Absent on every later frame — the client
@@ -821,6 +831,13 @@ proc buildStateJson*(
       "redProg": sim.teamFlagProgress(Red),
       "blueProg": sim.teamFlagProgress(Blue)
     }
+    if sim.config.isFfa():
+      state["over"]["winnerSlot"] = %sim.ffaWinnerSlot
+      for player in sim.players:
+        if player.joinOrder == sim.ffaWinnerSlot:
+          state["over"]["winnerColor"] =
+            %playerColorName(playerColorIndex(player.color))
+          break
     # End-segment hold countdown: whole seconds until a looping replay
     # restarts. Present only during the hold, so the end-card can show a
     # "replaying in N" line without ever inventing a countdown after a seek.
