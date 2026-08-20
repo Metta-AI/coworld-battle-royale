@@ -78,6 +78,7 @@ import
   std/[algorithm, heapqueue, math, net, os, random, strutils],
   bitworld/profile, bitworld/spriteprotocol,
   ctf/labels,
+  ctf/sim_types as SimTypes,
   whisky,
   baseline/protocols,
   baseline/artlog
@@ -198,9 +199,11 @@ const
   CombatDeadband = 2          # stop the traverse within this error (brads);
                               # AimRate 5 cannot settle tighter than +-2
   CruiseDeadband = 8          # sloppier deadband for non-combat aim
-  FireSlackPx = 11.0          # fire when the aim error's perpendicular miss
-                              # at the target's range is inside this (the
-                              # corridor half-width is ~14px; keep margin)
+  FireSlackPx = 11.0          # CTF's perpendicular-miss margin
+  FireMaxToleranceBrads = AimBrads div 8
+                              # cap the close-range body-width tolerance at
+                              # 32 brads; long-range tolerance bottoms out at
+                              # the normal combat deadband.
   ArcReach = 130.0            # spray cone: sim reach 136px, small margin
   ArcConeBrads = 9            # cone half-width ~14deg at max reach
   CenterScanHalf = 280.0      # |x - CenterX| under this counts as the corridor
@@ -372,6 +375,7 @@ type
     firedLast: bool           # A was set on the previous sent mask
     estAim: int               # dead-reckoned own aim angle in brads
     rotSign: int              # rotation of the last sent mask: +1 B, -1 Select
+    ffaAimTracks: seq[Track]  # visible FFA actors with CTF-style velocity leads
     wasDead: bool             # respawn resets the aim to the spawn heading
     scanHigh: bool            # scan sweep currently heading to the high end
     lastPos: Vec
@@ -442,8 +446,8 @@ var
   FfaRingFloorRadius = 0
   FfaRingShrinkSec = 0
   FfaRingDamageTicks = 0
-  FfaRetreatHp = 12
-  FfaFireWhileHurt = false
+  FfaRetreatHp = 6
+  FfaFireWhileHurt = true
   FfaTraceTickScale = 1
   FfaTraceMaxTick = 0
 
@@ -455,6 +459,12 @@ proc parseEnvInt(name: string, fallback: int): int =
     parseInt(value)
   except ValueError:
     fallback
+
+proc parseEnvBool(name: string, fallback: bool): bool =
+  let value = getEnv(name).toLowerAscii()
+  if value.len == 0:
+    return fallback
+  value in ["1", "true", "yes", "on"]
 
 proc multiFrameOn(): bool {.inline.} =
   ## Whether the geometry procs run on the multi-team endzone frame.
@@ -576,6 +586,24 @@ proc bradsErr(desired, current: int): int =
   ## positive means rotate counter-clockwise (hold B).
   (desired - current + AimBrads + AimBrads div 2) mod AimBrads -
     AimBrads div 2
+
+proc fireToleranceBrads(distance: float): int =
+  ## Convert the sim's bullet corridor plus solid body footprint into the
+  ## target's angular half-width at this range. Keep the long-range floor at
+  ## the normal combat deadband and cap only the close-range extreme.
+  let
+    d = max(1.0, distance)
+    halfWidth = float(SimTypes.PlayerHalf) + SimTypes.BulletHalfWidth
+    radians = arctan(halfWidth / d)
+    brads = int(round(radians * float(AimBrads div 2) / PI))
+  clamp(brads, CombatDeadband, FireMaxToleranceBrads)
+
+proc aimRotateBits(desiredAim, currentAim, deadband: int): uint8 =
+  ## Shared shortest-arc turret controller used by CTF and FFA.
+  let err = bradsErr(desiredAim, currentAim)
+  if err > deadband: ButtonB
+  elif err < -deadband: ButtonSelect
+  else: 0'u8
 
 proc spawnAim(team: Team): int =
   ## The spawn/respawn aim angle: toward the enemy side (on a multi-team
@@ -1488,6 +1516,7 @@ proc resetTransient(bot: Bot) =
   bot.firedLast = false
   bot.estAim = spawnAim(bot.team)
   bot.rotSign = 0
+  bot.ffaAimTracks.setLen(0)
   bot.wasDead = false
   bot.scanHigh = false
   bot.stuckTicks = 0
@@ -1633,6 +1662,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     actors = client.ffaActorsFor()
     ringRadius = ffaRingRadiusAt(max(0, bot.tick - bot.gameStart))
     ringDist = dist(me, center)
+  updateTracks(bot, bot.ffaAimTracks, actors)
   let visibleOpponent = actors.len > 0
   let traceTick = bot.tick * FfaTraceTickScale
   let traceInMatch = FfaTraceMaxTick <= 0 or traceTick <= FfaTraceMaxTick
@@ -1695,11 +1725,19 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   var rayClear = false
   if targetIndex >= 0:
     let target = actors[targetIndex]
-    desiredAim = bradsOf(target.pos - me)
+    var aimTarget = target.pos
+    var bestTrackD = TrackMatchDist
+    for track in bot.ffaAimTracks:
+      let d = dist(track.pos, target.pos)
+      if d < bestTrackD:
+        bestTrackD = d
+        aimTarget = track.pos + track.vel * LeadTicks
+    desiredAim = bradsOf(aimTarget - me)
     if (engage or fireWhileHurt) and targetDist < 520.0:
       rayClear = client.pixelRayClear(me, target.pos)
       wantFire = rayClear and
-        abs(bradsErr(desiredAim, bot.estAim)) <= CombatDeadband
+        abs(bradsErr(desiredAim, bot.estAim)) <=
+          fireToleranceBrads(targetDist)
   let steer = bot.navSteer(client, me, moveTarget)
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
   if dist(me, bot.lastPos) < 0.8:
@@ -1712,12 +1750,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.navGoal = -1
     moveMask = octantBits(center - me)
 
-  var rotBits: uint8 = 0
-  let err = bradsErr(desiredAim, bot.estAim)
-  if err > CombatDeadband:
-    rotBits = ButtonB
-  elif err < -CombatDeadband:
-    rotBits = ButtonSelect
+  let rotBits = aimRotateBits(desiredAim, bot.estAim, CombatDeadband)
   var mask = moveMask or rotBits
   let triggerPressed = wantFire and not bot.firedLast
   if triggerPressed:
@@ -1756,7 +1789,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         gateFailed = failed.join(",")
       elif not rayClear:
         fireReason = "los-blocked"
-      elif abs(bradsErr(desiredAim, bot.estAim)) > CombatDeadband:
+      elif abs(bradsErr(desiredAim, bot.estAim)) >
+          fireToleranceBrads(targetDist):
         fireReason = "aim-outside-deadband"
       else:
         fireReason = "fired"
@@ -3339,13 +3373,11 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
 
   # Rotate toward the desired aim by the shortest arc; inside the deadband
   # (AimRate cannot settle tighter than +-AimRate/2) hold the turret still.
-  var rotBits: uint8 = 0
-  if desiredAim >= 0:
-    let err = bradsErr(desiredAim, bot.estAim)
-    if err > deadband:
-      rotBits = ButtonB
-    elif err < -deadband:
-      rotBits = ButtonSelect
+  let rotBits =
+    if desiredAim >= 0:
+      aimRotateBits(desiredAim, bot.estAim, deadband)
+    else:
+      0'u8
 
   # Only a FRESH A press fires, and the pull locks the aim angle on the same
   # tick — never rotate on the pull tick so the lock takes the settled aim.
@@ -3437,8 +3469,8 @@ proc runBot(url: string) =
     slot = slotFromUrl(url)
     endpoint = ensureWsPath(url, WebSocketPath)
   var component = initBaselineComponent(slot)
-  FfaRetreatHp = max(1, parseEnvInt("CTF_BOT_FFA_RETREAT_HP", 12))
-  FfaFireWhileHurt = getEnv("CTF_BOT_FFA_FIRE_WHILE_HURT").len > 0
+  FfaRetreatHp = max(1, parseEnvInt("CTF_BOT_FFA_RETREAT_HP", 6))
+  FfaFireWhileHurt = parseEnvBool("CTF_BOT_FFA_FIRE_WHILE_HURT", true)
   FfaTraceTickScale = max(1, parseEnvInt("CTF_BOT_TRACE_TICK_SCALE", 1))
   FfaTraceMaxTick = max(0, parseEnvInt("CTF_BOT_TRACE_MAX_TICKS", 0))
   let

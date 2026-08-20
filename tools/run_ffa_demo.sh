@@ -127,7 +127,7 @@ for slot in $(seq 0 $((N - 1))); do
   CTF_BOT_TRACE_TICK_SCALE=16 \
   CTF_BOT_TRACE_MAX_TICKS=8640 \
   CTF_BOT_FFA_RETREAT_HP="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 6 || echo 12)" \
-  CTF_BOT_FFA_FIRE_WHILE_HURT="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 1 || echo "")" \
+  CTF_BOT_FFA_FIRE_WHILE_HURT="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 1 || echo 0)" \
     COWORLD_PLAYER_WS_URL="ws://127.0.0.1:$PORT/player?slot=$slot&token=0xBADA55_$slot" \
     "$PWD/players/baseline/baseline.out" >>"$BOT_LOG" 2>&1 &
   BOT_PIDS+=("$!")

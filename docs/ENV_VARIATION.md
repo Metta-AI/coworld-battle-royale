@@ -231,7 +231,8 @@ first capture.
 | `carrierSpeedPct` | int / `70` | `1..100` | Flag/heart carrier movement speed %. |
 
 Non-config envelope consts (change in code): `BulletHalfWidth`=8.0,
-`AimJitterCentralZ`=1.2815516, `CarrierFireSlowdown`=3.
+`AimJitterCentralZ`=1.2815516, `CarrierFireSlowdown`=3,
+`FireMaxToleranceBrads`=32 (FFA baseline close-range aim gate cap).
 
 ---
 
