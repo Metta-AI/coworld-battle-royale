@@ -4228,9 +4228,17 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     // what you are already looking at — the focus point stays put.
     core.setZoom(next);
   });
-  // The slider owns the keyboard while focused (arrows step the zoom, not the
-  // pan) — otherwise a focused slider and the board would both answer.
-  zoomSlider.addEventListener('keydown', function (ev) { ev.stopPropagation(); });
+  // The slider owns the keys it actually USES while focused (arrows/home/end
+  // step the zoom, not the pan) — otherwise a focused slider and the board
+  // would both answer. Everything else still reaches the board, so clicking
+  // the slider does not silently kill the camera and transport shortcuts.
+  var SLIDER_KEYS = {
+    ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1,
+    Home: 1, End: 1, PageUp: 1, PageDown: 1
+  };
+  zoomSlider.addEventListener('keydown', function (ev) {
+    if (SLIDER_KEYS[ev.key]) ev.stopPropagation();
+  });
 
   // Click or drag the minimap to send the view there: with a colossal board the
   // fastest way across it is to point at the destination, not to pan to it.
