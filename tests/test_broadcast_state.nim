@@ -182,6 +182,7 @@ suite "broadcast state channel":
       for seat in state["roster"]:
         check seat.hasKey("pol")
         check seat["pol"].getStr == policyName(seat["name"].getStr)
+        check not seat.hasKey("colorName")
     finally:
       setCurrentDir(previousDir)
 

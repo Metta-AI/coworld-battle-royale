@@ -52,6 +52,27 @@ window.ChromeCommon = function (ctx) {
     brown: '#9b6a43', 'dark teal': '#267b76', green: GREEN,
     'dark navy': '#30476f', black: '#24201c'
   };
+  function identityColor(name) {
+    return IDENTITY_COLOR[name] || PAPER;
+  }
+  function identityTextColor(name) {
+    var base = identityColor(name);
+    var hex = base.slice(1);
+    if (hex.length !== 6) return base;
+    var r = parseInt(hex.slice(0, 2), 16);
+    var g = parseInt(hex.slice(2, 4), 16);
+    var b = parseInt(hex.slice(4, 6), 16);
+    var luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    var target = 0.55;
+    if (luminance >= target) return base;
+    var mix = Math.min(0.72, (target - luminance) / (1 - luminance));
+    function lift(channel) {
+      return Math.round(channel + (255 - channel) * mix);
+    }
+    return '#' + [lift(r), lift(g), lift(b)].map(function (channel) {
+      return channel.toString(16).padStart(2, '0');
+    }).join('');
+  }
 
   // ---- teams (2-4, data-driven) --------------------------------------------
   // The chrome renders whatever teams the state frame carries, in this
@@ -614,7 +635,7 @@ window.ChromeCommon = function (ctx) {
         label: v.draw ? 'DRAW' :
           (ffa ? (winnerColor || 'UNKNOWN').toUpperCase() + ' WINS' :
             v.winner.toUpperCase() + ' WINS'),
-        color: winnerColor ? (IDENTITY_COLOR[winnerColor] || PAPER) : '',
+        color: winnerColor ? identityColor(winnerColor) : '',
         tick: v.t != null ? v.t : null
       };
     }
@@ -877,6 +898,7 @@ window.ChromeCommon = function (ctx) {
     teamCol: teamCol, activeTeams: activeTeams, teamOf: teamOf, otherTeam: otherTeam,
     stripSeatSuffix: stripSeatSuffix, teamPolicies: teamPolicies, teamName: teamName,
     teamHeadline: teamHeadline, rosterName: rosterName, setName: setName,
+    identityColor: identityColor, identityTextColor: identityTextColor,
     handicapInfo: handicapInfo, setHandicap: setHandicap,
     perkIconsHtml: perkIconsHtml, teamPerkGroups: teamPerkGroups,
     renderTeamMeters: renderTeamMeters,

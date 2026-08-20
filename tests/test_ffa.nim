@@ -353,6 +353,7 @@ suite "ffa spawn ring":
     check playing["lead"]["kind"].getStr == "alive"
     check playing["lead"]["pts"][0].len == 2
     check playing["lead"]["pts"][1][1].getInt == 2
+    check playing["roster"][0]["colorName"].getStr == "red"
     game.killPlayer(0, 1)
     game.killPlayer(2, 1)
     game.stepNone(1)
@@ -363,6 +364,7 @@ suite "ffa spawn ring":
     check over["over"]["winnerSlot"].getInt == game.ffaWinnerSlot
     check over["over"]["winnerColor"].getStr == "orange"
     check over["roster"][0]["cap"].getInt == 0
+    check over["roster"][0]["colorName"].getStr == "red"
 
   test "ffa game over title names the winning identity color":
     var game = ffaGame(3)

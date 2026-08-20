@@ -1634,6 +1634,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   var otherTeam = C.otherTeam, stripSeatSuffix = C.stripSeatSuffix;
   var teamPolicies = C.teamPolicies, teamName = C.teamName, teamHeadline = C.teamHeadline;
   var rosterName = C.rosterName, setName = C.setName, esc = C.esc, fmt = C.fmt;
+  var identityTextColor = C.identityTextColor;
   var setHandicap = C.setHandicap;
   var teamPerkGroups = C.teamPerkGroups, perkIconsHtml = C.perkIconsHtml;
   var togglePov = C.togglePov, renderClock = C.renderClock, renderTransport = C.renderTransport;
@@ -3693,13 +3694,6 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     });
   }
 
-  var FFA_ROW_COLORS = {
-    0: '#24201c', 1: '#8b8b8b', 2: '#f2e8d8', 3: '#e0523a',
-    4: '#e885b8', 5: '#6e4a32', 6: '#9b6a43', 7: '#f08a32',
-    8: '#ddc531', 9: '#267b76', 10: '#45a85e', 11: '#8bc34a',
-    12: '#30476f', 13: '#3f7cc4', 14: '#6eb6e8', 15: '#a5d6e8'
-  };
-
   function renderFfaEndcard(s, o, card) {
     ensureEndcardTeams(['ffa']);
     var roster = (s.roster || []).slice().sort(endcardOrder);
@@ -3724,7 +3718,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     var rows = roster.map(function (p) {
       var mvp = !o.draw && p.s === winnerSlot;
       var marks = endcardBadge('bs', p.tk, 'Backstab');
-      var rowColor = FFA_ROW_COLORS[p.col];
+      var rowColor = identityTextColor(p.colorName);
       return '<div class="ec-row ffa-player' + (mvp ? ' mvp' : '') +
         '" style="--row-color:' + (rowColor || 'var(--paper)') + '">' +
         '<span class="pcell"><span class="pname">' +

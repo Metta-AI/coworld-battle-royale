@@ -290,6 +290,8 @@ proc rosterJson(sim: SimServer): JsonNode =
       "mk3": p.multiKills3,
       "tk": p.teamKills
     }
+    if sim.config.isFfa():
+      item["colorName"] = %playerColorName(playerColorIndex(p.color))
     # This seat's perks, wire-named (PerkNames), present only when it has any
     # — so a perk-free game's roster is byte-identical and the scorebug can
     # group a team's perk badges by policy (every seat of one policy shares
