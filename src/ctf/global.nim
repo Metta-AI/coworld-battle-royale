@@ -585,7 +585,11 @@ const
   ## Object pools sit clear of the tracer-dot pool (24000..35327) and the
   ## damage/kill pops (38000..38031); rig objects live at 38100+ (32 players
   ## each). Moved off 32000+: the widened tracer-dot pool swallowed that range.
-  RigHeadObjectBase = 38100    ## 1 head object per player: 38100..38131.
+  RigHeadObjectBase* = 38100   ## 1 head object per player: 38100..38131.
+                               ## Exported: it is the client's per-player
+                               ## position feed (the spectator follow camera
+                               ## reads seat positions off this pool), shipped
+                               ## to the browser via WireConstantsJs.
   RigArmObjectBase = 38140     ## 2 arm objects per player: 38140..38203.
   RigLegObjectBase = 38220     ## 3 leg objects per player: 38220..38315.
   RigWheelObjectBase = 38340   ## 3 wheel objects per player: 38340..38435.

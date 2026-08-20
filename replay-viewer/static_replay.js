@@ -231,6 +231,21 @@
       resetView: function () {
         if (worker) worker.postMessage({ type: 'view', action: 'reset' });
       },
+      // Follow camera. Which seat the shot is on comes back through the
+      // transform (followEnabled/followSlot), so the HUD reads follow state
+      // the same way it reads zoom.
+      setFollow: function (on) {
+        if (worker) worker.postMessage({ type: 'view', action: 'follow', on: !!on });
+      },
+      toggleFollow: function () {
+        if (worker) worker.postMessage({ type: 'view', action: 'followToggle' });
+      },
+      followPlayer: function (slot) {
+        if (worker) worker.postMessage({ type: 'view', action: 'followSlot', slot: slot });
+      },
+      followCycle: function (delta) {
+        if (worker) worker.postMessage({ type: 'view', action: 'followCycle', delta: delta });
+      },
       // The board pixels the minimap shrinks live in the Worker, so the Worker
       // has to draw it: hand over control of the page's minimap canvas exactly
       // once and let the core keep it in sync from there.
