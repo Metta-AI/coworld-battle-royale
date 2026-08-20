@@ -1349,6 +1349,10 @@ proc runServerLoop*(
     liveSpeedIndex = config.liveSpeedIndex()
     gamesPlayed = 0
     serverMetrics = ServerMetrics()
+    ffaStartupBarrier =
+      not replayLoaded and config.mode == FfaMode and
+      getEnv("COGAME_FFA_STARTUP_BARRIER").len > 0
+    ffaBarrierFramesSent: seq[WebSocket] = @[]
     lastLobbyLeaverSlot = -1  ## last configured slot that left during Lobby;
                               ## blamed if the mid-form drop dissolves the match.
     broadcastTracker =
@@ -1574,7 +1578,15 @@ proc runServerLoop*(
           downInputs = newSeq[InputState](sim.players.len)
           downInputMasks = newSeq[uint8](sim.players.len)
           pressedInputMasks = newSeq[uint8](sim.players.len)
-        for websocket, playerIndex in appState.playerIndices.pairs:
+        var playerSocketOrder: seq[WebSocket] = @[]
+        for websocket in appState.playerIndices.keys:
+          if websocket.isPlayerWebSocket():
+            playerSocketOrder.add(websocket)
+        if ffaStartupBarrier:
+          playerSocketOrder.sort(proc(a, b: WebSocket): int =
+            cmp(appState.playerIndices[a], appState.playerIndices[b]))
+        for websocket in playerSocketOrder:
+          let playerIndex = appState.playerIndices[websocket]
           if not websocket.isPlayerWebSocket():
             continue
           sockets.add(websocket)
@@ -1751,6 +1763,11 @@ proc runServerLoop*(
         lastTick, false, sockets, playerIndices, sim.players.len)
       continue
 
+    let holdFfaStartup =
+      ffaStartupBarrier and
+      (sim.players.len < sim.config.minPlayers or
+       (sim.phase == Playing and
+        not sockets.allPlayersReady(playerIndices, sim.players.len)))
     var frameEvents = newJArray()
     if replayLoaded:
       frameEvents = replayPlayer.advanceReplayFrame(
@@ -1759,7 +1776,7 @@ proc runServerLoop*(
         replaySeekTicks,
         replayCommands
       )
-    else:
+    elif not holdFfaStartup:
       for command in replayCommands:
         liveSpeedIndex.applySpeedCommand(command)
       var
@@ -1798,6 +1815,8 @@ proc runServerLoop*(
         if sim.needsReregister:
           break
       prevInputs = lastStepInputs
+    else:
+      prevInputs = inputs
 
     let rewardPacket = sim.buildRewardPacket()
 
@@ -1812,7 +1831,7 @@ proc runServerLoop*(
           for websocket in appState.playerViewers.keys:
             appState.playerViewers[websocket] = initPlayerViewerState()
 
-    if not replayLoaded and config.fastMode:
+    if not replayLoaded and config.fastMode and not holdFfaStartup:
       sockets.resetPlayerReady(playerIndices, sim.players.len)
 
     var spritesOffFlags = newSeq[bool](sockets.len)
@@ -1822,6 +1841,14 @@ proc runServerLoop*(
           spritesOffFlags[i] =
             appState.spritesOff.getOrDefault(sockets[i], false)
     for i in 0 ..< sockets.len:
+      let suppressStartupFrames =
+        ffaStartupBarrier and
+        (sim.phase == Lobby or holdFfaStartup)
+      let sendFrame =
+        not suppressStartupFrames or
+        (sim.phase == Playing and sockets[i] notin ffaBarrierFramesSent)
+      if not sendFrame:
+        continue
       var nextState: PlayerViewerState
       let framePacket = sim.buildSpriteProtocolPlayerUpdates(
         playerIndices[i],
@@ -1847,6 +1874,8 @@ proc runServerLoop*(
           sockets[i].send("", BinaryMessage)
         for chunk in global.chunkSpritePacket(wirePacket, MaxWsFrameBytes):
           sockets[i].send(blobFromBytes(chunk), BinaryMessage)
+        if holdFfaStartup:
+          ffaBarrierFramesSent.add(sockets[i])
       except:
         {.gcsafe.}:
           withLock appState.lock:
@@ -1996,7 +2025,7 @@ proc runServerLoop*(
 
     let frameAdvance = runFrameLimiter(
       lastTick,
-      not replayLoaded and config.fastMode,
+      not replayLoaded and config.fastMode and not holdFfaStartup,
       sockets,
       playerIndices,
       sim.players.len

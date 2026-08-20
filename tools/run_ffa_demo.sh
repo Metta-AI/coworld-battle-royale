@@ -2,7 +2,8 @@
 # Run one headless baseline-bot FFA and save its replay and reports.
 # Usage: tools/run_ffa_demo.sh [numPlayers] [seed] [arm]
 # Arms: A/B/C are the prior matrix; D1=huge, D2=large, D3=small, D4=small;
-# E1=control, E2=damage, E3=persistent hurt fire, E4=combined economy.
+# E1=control, E2=damage, E3=persistent hurt fire, E4=combined economy;
+# R35-150=ring control, R20-100=committed ring; DEFAULT uses committed config.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -63,8 +64,21 @@ elif arm in ("E1", "E2", "E3", "E4"):
     cfg["ringShrinkSec"] = 150
     cfg["ringFloorAreaPct"] = 35
     cfg["ringRecoveryTicks"] = 2
+elif arm == "DEFAULT":
+    cfg["mapSize"] = "huge"
+    cfg["ringRecoveryTicks"] = 2
+elif arm == "R35-150":
+    cfg["mapSize"] = "huge"
+    cfg["ringShrinkSec"] = 150
+    cfg["ringFloorAreaPct"] = 35
+    cfg["ringRecoveryTicks"] = 2
+elif arm == "R20-100":
+    cfg["mapSize"] = "huge"
+    cfg["ringShrinkSec"] = 100
+    cfg["ringFloorAreaPct"] = 20
+    cfg["ringRecoveryTicks"] = 2
 else:
-    raise SystemExit("arm must be A, B, C, D1, D2, D3, D4, E1, E2, E3, or E4")
+    raise SystemExit("arm must be A, B, C, D1, D2, D3, D4, E1, E2, E3, E4, R35-150, R20-100, or DEFAULT")
 if arm in ("E2", "E4"):
     cfg["ffaGunDamage"] = 4
 if arm == "E4":
@@ -79,6 +93,7 @@ if [[ "${DEMO_BUILD:-1}" != "0" ]]; then
 fi
 
 COGAME_HOST=127.0.0.1 COGAME_PORT="$PORT" \
+COGAME_FFA_STARTUP_BARRIER=1 \
 COGAME_CONFIG_URI="file://$CFG" \
 COGAME_SAVE_REPLAY_URI="file://$REPLAY" \
 COGAME_RESULTS_URI="file://$RESULTS" \
@@ -128,7 +143,7 @@ for slot in $(seq 0 $((N - 1))); do
   CTF_BOT_TRACE_MAX_TICKS=8640 \
   CTF_BOT_FFA_RETREAT_HP="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 6 || echo 12)" \
   CTF_BOT_FFA_FIRE_WHILE_HURT="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 1 || echo 0)" \
-    COWORLD_PLAYER_WS_URL="ws://127.0.0.1:$PORT/player?slot=$slot&token=0xBADA55_$slot" \
+    COWORLD_PLAYER_WS_URL="ws://127.0.0.1:$PORT/player?name=Bot_$slot&slot=$slot&token=0xBADA55_$slot" \
     "$PWD/players/baseline/baseline.out" >>"$BOT_LOG" 2>&1 &
   BOT_PIDS+=("$!")
 done
