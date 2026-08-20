@@ -170,6 +170,148 @@ proc puddleArtColorAt(base: ColorRGBA, x, y: int): ColorRGBA =
     return color
   base
 
+## --- FFA floor variety (battle-royale presentation only) ---
+## The CTF board earns its large-scale color from the team endzones and
+## pedestals; the FFA board drops all of that (withCtfPresentation = false)
+## and was left as one flat grey field — walls, pits, and floor all within a
+## narrow band of the same tone. These tints re-introduce large-scale,
+## DETERMINISTIC variation for the battle-royale board only: low-frequency
+## seed-derived ground zones (a cool slate drift against a warm earth drift),
+## a paved plaza marking the center loot cluster, and a soft vignette toward
+## the arena edge so the middle of the board reads brighter than the death
+## ring's eventual home. Everything is a pure function of (genSeed, x, y) —
+## no RNG state — so a seed bakes the same board every run and replays match
+## the live render. Alphas stay low so the concrete texture shows through and
+## the 16 player identity colors remain the most saturated thing on screen.
+## Cosmetic only: collision/walk masks and gameplay geometry are untouched.
+const
+  FfaZoneCellPx = 148                        ## px between ground-zone knots.
+  FfaZoneCoolTint = rgba(58, 76, 104, 255)   ## slate drift hue.
+  FfaZoneWarmTint = rgba(134, 108, 66, 255)  ## dry-earth drift hue.
+  FfaZoneHueAlpha = 52.0                     ## max hue-drift strength.
+  FfaZoneMossTint = rgba(96, 116, 66, 255)   ## overgrown patches.
+  FfaZoneMossAlpha = 40.0                    ## max overgrowth strength.
+  FfaZoneLightTint = rgba(214, 208, 190, 255) ## pale worn patches.
+  FfaZoneDarkTint = rgba(14, 16, 22, 255)    ## scorched/damp patches.
+  FfaZoneShadeAlpha = 34.0                   ## max value-drift strength.
+  FfaPlazaTint = rgba(196, 172, 108, 255)    ## center loot plaza wash.
+  FfaPlazaAlpha = 30                         ## plaza wash strength.
+  FfaPlazaRingAlpha = 110                    ## painted plaza boundary ring.
+  FfaPlazaRingW = 4.0                        ## px width of that ring.
+  FfaVignettePx = 90                         ## how far the edge shade reaches.
+  FfaVignetteTint = rgba(6, 8, 14, 255)      ## edge shade color.
+  FfaVignetteAlpha = 90.0                    ## edge shade strength at the wall.
+
+proc ffaZoneHash(seed, gx, gy, salt: int): float =
+  ## Deterministic 2D lattice noise in [-1, 1]: the same uint64 prime mix as
+  ## trenchEdgeNoise (wasm32-safe), keyed by ground-zone knot coordinates.
+  let mixed = cast[uint64](seed) * 2654435761'u64 xor
+    cast[uint64](gx) * 73856093'u64 xor
+    cast[uint64](gy) * 19349663'u64 xor
+    cast[uint64](salt) * 83492791'u64
+  var h = uint32(mixed and 0x7FFFFFFF'u64)
+  h = h xor (h shr 13)
+  h = h * 0x85EBCA6B'u32
+  h = h xor (h shr 16)
+  float(h and 0xFFFF) / 32767.5 - 1.0
+
+proc ffaZoneNoise(seed, x, y, salt: int): float =
+  ## Cosine-interpolated value noise over the FfaZoneCellPx lattice — smooth
+  ## board-scale drifts, not per-pixel speckle.
+  let
+    gx = floorDiv(x, FfaZoneCellPx)
+    gy = floorDiv(y, FfaZoneCellPx)
+    ux = float(x - gx * FfaZoneCellPx) / FfaZoneCellPx
+    uy = float(y - gy * FfaZoneCellPx) / FfaZoneCellPx
+    sx = (1 - cos(ux * PI)) / 2
+    sy = (1 - cos(uy * PI)) / 2
+    n00 = ffaZoneHash(seed, gx, gy, salt)
+    n10 = ffaZoneHash(seed, gx + 1, gy, salt)
+    n01 = ffaZoneHash(seed, gx, gy + 1, salt)
+    n11 = ffaZoneHash(seed, gx + 1, gy + 1, salt)
+  (n00 + (n10 - n00) * sx) +
+    ((n01 + (n11 - n01) * sx) - (n00 + (n10 - n00) * sx)) * sy
+
+proc tintOver(acc, tint: ColorRGBA): ColorRGBA =
+  ## Composites a translucent tint over an accumulated translucent tint, so a
+  ## stack of washes collapses to ONE rgba whose overTint over any base equals
+  ## applying the stack in order (straight-alpha src-over).
+  let
+    a1 = acc.a.int
+    a2 = tint.a.int
+    outA = a2 + a1 * (255 - a2) div 255
+  if outA == 0:
+    return rgba(0, 0, 0, 0)
+  rgba(
+    uint8((tint.r.int * a2 * 255 + acc.r.int * a1 * (255 - a2)) div (outA * 255)),
+    uint8((tint.g.int * a2 * 255 + acc.g.int * a1 * (255 - a2)) div (outA * 255)),
+    uint8((tint.b.int * a2 * 255 + acc.b.int * a1 * (255 - a2)) div (outA * 255)),
+    uint8(outA))
+
+proc ffaFloorTint(gameMap: CtfMap, x, y: int): ColorRGBA =
+  ## The combined FFA floor wash for one LOGICAL pixel: ground-zone hue drift,
+  ## worn/scorched value drift, the center loot plaza, and the edge vignette,
+  ## pre-composited into a single rgba (see tintOver). Applying it is one
+  ## overTint per pixel in the bake loops.
+  let seed = gameMap.genSeed
+  result = rgba(0, 0, 0, 0)
+  # Hue drift: negative → cool slate, positive → warm earth.
+  let hue = clamp(ffaZoneNoise(seed, x, y, 11), -1.0, 1.0)
+  if hue < 0:
+    result = tintOver(result, rgba(FfaZoneCoolTint.r, FfaZoneCoolTint.g,
+      FfaZoneCoolTint.b, uint8(-hue * FfaZoneHueAlpha)))
+  else:
+    result = tintOver(result, rgba(FfaZoneWarmTint.r, FfaZoneWarmTint.g,
+      FfaZoneWarmTint.b, uint8(hue * FfaZoneHueAlpha)))
+  # Overgrown moss patches: a third, sparser channel — only the top of its
+  # noise range grows anything, so moss reads as distinct islands, not a wash.
+  let moss = ffaZoneNoise(seed, x + FfaZoneCellPx div 3,
+    y - FfaZoneCellPx div 3, 37)
+  if moss > 0.35:
+    result = tintOver(result, rgba(FfaZoneMossTint.r, FfaZoneMossTint.g,
+      FfaZoneMossTint.b, uint8(clamp((moss - 0.35) / 0.65, 0.0, 1.0) *
+      FfaZoneMossAlpha)))
+  # Value drift on an offset lattice so light/dark patches do not track the
+  # hue zones one-for-one.
+  let shade = clamp(ffaZoneNoise(seed, x + FfaZoneCellPx div 2,
+    y + FfaZoneCellPx div 2, 23), -1.0, 1.0)
+  if shade < 0:
+    result = tintOver(result, rgba(FfaZoneDarkTint.r, FfaZoneDarkTint.g,
+      FfaZoneDarkTint.b, uint8(-shade * FfaZoneShadeAlpha)))
+  else:
+    result = tintOver(result, rgba(FfaZoneLightTint.r, FfaZoneLightTint.g,
+      FfaZoneLightTint.b, uint8(shade * FfaZoneShadeAlpha)))
+  # The center loot plaza: a warm paved wash bounded by a painted ring at the
+  # loot-cluster radius, so the hot zone reads at a glance.
+  let
+    dx = float(x - gameMap.center.x)
+    dy = float(y - gameMap.center.y)
+    d = sqrt(dx * dx + dy * dy)
+  if d <= float(FfaLootRadius):
+    if d >= float(FfaLootRadius) - FfaPlazaRingW:
+      result = tintOver(result, rgba(FfaPlazaTint.r, FfaPlazaTint.g,
+        FfaPlazaTint.b, FfaPlazaRingAlpha))
+    else:
+      result = tintOver(result, rgba(FfaPlazaTint.r, FfaPlazaTint.g,
+        FfaPlazaTint.b, FfaPlazaAlpha))
+  # Edge vignette: eases in over FfaVignettePx toward the perimeter wall.
+  let edge = min(
+    min(x - ArenaBorder, gameMap.width - 1 - ArenaBorder - x),
+    min(y - ArenaBorder, gameMap.height - 1 - ArenaBorder - y))
+  if edge < FfaVignettePx:
+    let t = 1.0 - clamp(float(edge) / FfaVignettePx, 0.0, 1.0)
+    result = tintOver(result, rgba(FfaVignetteTint.r, FfaVignetteTint.g,
+      FfaVignetteTint.b, uint8(t * t * FfaVignetteAlpha)))
+
+proc ffaFloorTintMap(gameMap: CtfMap): seq[ColorRGBA] =
+  ## The FFA floor wash baked once at LOGICAL resolution; the scale× renderer
+  ## indexes it per logical pixel (the wash is low-frequency by construction,
+  ## so logical granularity is invisible at board scale).
+  result = newSeq[ColorRGBA](gameMap.width * gameMap.height)
+  for y in 0 ..< gameMap.height:
+    for x in 0 ..< gameMap.width:
+      result[y * gameMap.width + x] = ffaFloorTint(gameMap, x, y)
+
 proc tileSample(tex: Image, x, y: int): ColorRGBA =
   ## Samples a seamless texture tiled across the arena (opaque source).
   tex.unsafe[x mod tex.width, y mod tex.height].rgba
@@ -684,6 +826,7 @@ proc renderArenaRgbaPair*(
         tileSampleF(floorTex, (float(x) + 0.5) / float(scale), fy)
   let
     tints = if withCtfPresentation: endzoneTints(gameMap) else: @[]
+    ffaTints = if withCtfPresentation: @[] else: ffaFloorTintMap(gameMap)
     playLo = ArenaBorder
     playHi = w - 1 - ArenaBorder
     playLoY = ArenaBorder
@@ -718,6 +861,12 @@ proc renderArenaRgbaPair*(
         coldColor = hotColor
       else:
         coldColor = tileBlock[tileRow + x mod tileW]
+        # The FFA floor wash (ground zones, loot plaza, edge vignette) tints
+        # the concrete before any pit/puddle art lands on it.
+        if not withCtfPresentation:
+          let wash = ffaTints[ly * w + lx]
+          if wash.a > 0:
+            coldColor = overTint(coldColor, wash)
         hotColor =
           if withCtfPresentation:
             endzoneColorAt(
@@ -870,6 +1019,7 @@ proc loadMapLayers*(
   ## painted into the FLOOR below so a carrier can read where to run.
   let
     tints = if withCtfPresentation: endzoneTints(gameMap) else: @[]
+    ffaTints = if withCtfPresentation: @[] else: ffaFloorTintMap(gameMap)
     playLo = ArenaBorder                     # inner playfield edges: the glow
     playHi = w - 1 - ArenaBorder             # anchors home, fades to the line.
     playLoY = ArenaBorder
@@ -894,6 +1044,11 @@ proc loadMapLayers*(
         elif withEndzoneGlow and withCtfPresentation: endzoneColorAt(tints,
           tileSample(floorTex, x, y), x, y, playLo, playHi, playLoY, playHiY)
         else: tileSample(floorTex, x, y)
+      if not artWall and not windowPixel and not withCtfPresentation:
+        # The FFA floor wash tints the concrete before pit/puddle art.
+        let wash = ffaTints[y * w + x]
+        if wash.a > 0:
+          color = overTint(color, wash)
       if not wall and trenchNear[y * w + x]:
         # The trench pit (config-gated trenches) paints over the finished floor; it never
         # overlaps a wall (it sits inside the open center ring).
