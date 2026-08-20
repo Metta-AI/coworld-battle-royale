@@ -362,6 +362,7 @@ suite "ffa spawn ring":
     check over["ffa"].getBool
     check over["over"]["winnerSlot"].getInt == game.ffaWinnerSlot
     check over["over"]["winnerColor"].getStr == "orange"
+    check over["roster"][0]["cap"].getInt == 0
 
   test "ffa game over title names the winning identity color":
     var game = ffaGame(3)

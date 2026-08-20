@@ -1185,6 +1185,12 @@ html, body {
   color: var(--paper-dim);
 }
 #endcard .ec-row.mvp .pname { color: var(--amber); }
+#endcard .ec-row.ffa-player .pname,
+#endcard .ec-row.ffa-player .n { color: var(--row-color, var(--paper)); }
+#endcard .ec-team-ffa .ec-thead,
+#endcard .ec-team-ffa .ec-row {
+  grid-template-columns: 1fr calc(22 * var(--u)) calc(22 * var(--u));
+}
 /* name cell: name ellipsizes (but keeps a readable floor), the capture mark
    + honor badges ride after it; a pathological pileup clips inside the cell
    rather than bleeding into the K column */
@@ -3663,17 +3669,36 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       var el = document.createElement('div');
       el.className = 'ec-team';
       el.id = 'ec-team-' + team;
-      el.innerHTML =
-        '<div class="ec-tname ' + team + '" id="ec-tname-' + team + '">' + team.toUpperCase() + '</div>' +
-        '<div class="ec-lives">' +
-        '<span class="fl-num ' + team + '" id="ec-' + team + '">0</span>' +
-        '<span class="fl-cap">Lives left</span>' +
-        '</div>' +
-        '<div class="ec-thead"><span>Player</span><span>K</span><span>D</span><span>Clstr</span><span>Cap</span></div>' +
-        '<div id="ec-rows-' + team + '"></div>';
+      if (team === 'ffa') {
+        el.className += ' ec-team-ffa';
+        el.innerHTML =
+          '<div class="ec-tname ' + team + '" id="ec-tname-' + team + '">' + team.toUpperCase() + '</div>' +
+          '<div class="ec-lives">' +
+          '<span class="fl-num ' + team + '" id="ec-' + team + '">0</span>' +
+          '<span class="fl-cap" id="ec-ffa-label">Survivors</span>' +
+          '</div>' +
+          '<div class="ec-thead"><span>Player</span><span>K</span><span>D</span></div>' +
+          '<div id="ec-rows-' + team + '"></div>';
+      } else {
+        el.innerHTML =
+          '<div class="ec-tname ' + team + '" id="ec-tname-' + team + '">' + team.toUpperCase() + '</div>' +
+          '<div class="ec-lives">' +
+          '<span class="fl-num ' + team + '" id="ec-' + team + '">0</span>' +
+          '<span class="fl-cap">Lives left</span>' +
+          '</div>' +
+          '<div class="ec-thead"><span>Player</span><span>K</span><span>D</span><span>Clstr</span><span>Cap</span></div>' +
+          '<div id="ec-rows-' + team + '"></div>';
+      }
       wrap.appendChild(el);
     });
   }
+
+  var FFA_ROW_COLORS = {
+    0: '#24201c', 1: '#8b8b8b', 2: '#f2e8d8', 3: '#e0523a',
+    4: '#e885b8', 5: '#6e4a32', 6: '#9b6a43', 7: '#f08a32',
+    8: '#ddc531', 9: '#267b76', 10: '#45a85e', 11: '#8bc34a',
+    12: '#30476f', 13: '#3f7cc4', 14: '#6eb6e8', 15: '#a5d6e8'
+  };
 
   function renderFfaEndcard(s, o, card) {
     ensureEndcardTeams(['ffa']);
@@ -3691,20 +3716,21 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       ? 'Replaying in <b>' + s.hold + '</b>' : '';
     $('ec-wincond').textContent = o.draw ? 'DRAW' : 'ELIMINATION';
     $('ec-tname-ffa').textContent = 'FREE-FOR-ALL';
-    $('ec-ffa').textContent = (s.roster || []).filter(function (p) { return !!p.alive; }).length;
+    var survivorCount = (s.roster || []).filter(function (p) { return !!p.alive; }).length;
+    $('ec-ffa').textContent = survivorCount;
+    $('ec-ffa-label').textContent = survivorCount === 1 ? 'Survivor' : 'Survivors';
     $('ec-team-ffa').classList.toggle('win', !o.draw);
 
     var rows = roster.map(function (p) {
       var mvp = !o.draw && p.s === winnerSlot;
       var marks = endcardBadge('bs', p.tk, 'Backstab');
-      var cluster = (p.mk2 || 0) + (p.mk3 || 0);
-      return '<div class="ec-row' + (mvp ? ' mvp' : '') + '">' +
+      var rowColor = FFA_ROW_COLORS[p.col];
+      return '<div class="ec-row ffa-player' + (mvp ? ' mvp' : '') +
+        '" style="--row-color:' + (rowColor || 'var(--paper)') + '">' +
         '<span class="pcell"><span class="pname">' +
         esc(shortName(rosterName(s, p.s))) + '</span>' + marks + '</span>' +
         '<span class="n">' + (p.k || 0) + '</span>' +
-        '<span class="n">' + (p.d || 0) + '</span>' +
-        '<span class="n clstr">' + (cluster > 0 ? cluster : '') + '</span>' +
-        '<span class="n cap"></span></div>';
+        '<span class="n">' + (p.d || 0) + '</span></div>';
     }).join('');
     $('ec-rows-ffa').innerHTML = rows;
 
