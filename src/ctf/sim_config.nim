@@ -52,8 +52,26 @@ proc defaultGameConfig*(): GameConfig =
     barrageMaxPerSec: 0,
     barrageStartPerSec: BarrageStartPerSec,
     barrageStartSec: BarrageStartSec,
-    barrageSaturateSec: BarrageSaturateSec
+    barrageSaturateSec: BarrageSaturateSec,
+    mode: CtfMode,
+    numPlayers: 0,
+    survivalPointsPerSec: FfaSurvivalPointsPerSec,
+    killPoints: FfaKillPoints,
+    assistPoints: FfaAssistPoints,
+    assistWindowTicks: FfaAssistWindowTicks,
+    podiumPoints: @FfaPodiumPoints
   )
+
+proc defaultFfaConfig*(numPlayers: int): GameConfig =
+  ## Returns the battle-royale baseline at N seats: ffa rules, single life,
+  ## the deep spawn pool, and a lobby sized to N. Everything else stays the
+  ## ctf default, so a br config only has to say what it changes.
+  result = defaultGameConfig()
+  result.mode = FfaMode
+  result.numPlayers = numPlayers
+  result.minPlayers = numPlayers
+  result.lives = 1
+  result.hitPoints = FfaHitPoints
 
 proc readConfigInt(node: JsonNode, name: string, value: var int) =
   ## Reads one optional integer config field.
@@ -584,6 +602,42 @@ proc validate(config: GameConfig) =
     if config.barrageSaturateSec < 1:
       raise newException(
         CtfError, "Config field barrageSaturateSec must be at least 1.")
+  if config.mode notin [CtfMode, FfaMode]:
+    raise newException(
+      CtfError,
+      "Config field mode must be " & CtfMode & " or " & FfaMode & "; got " &
+        config.mode & "."
+    )
+  if config.isFfa():
+    if config.numPlayers < FfaMinPlayers or config.numPlayers > FfaMaxPlayers:
+      raise newException(
+        CtfError,
+        "Config field numPlayers must be " & $FfaMinPlayers & ".." &
+          $FfaMaxPlayers & " in mode " & FfaMode & "."
+      )
+    if config.survivalPointsPerSec < 0:
+      raise newException(
+        CtfError, "Config field survivalPointsPerSec must not be negative.")
+    if config.killPoints < 0:
+      raise newException(
+        CtfError, "Config field killPoints must not be negative.")
+    if config.assistPoints < 0:
+      raise newException(
+        CtfError, "Config field assistPoints must not be negative.")
+    if config.assistWindowTicks < 0:
+      raise newException(
+        CtfError, "Config field assistWindowTicks must not be negative.")
+    for place, points in config.podiumPoints:
+      if points < 0:
+        raise newException(
+          CtfError,
+          "Config field podiumPoints[" & $place & "] must not be negative."
+        )
+  elif config.numPlayers != 0:
+    raise newException(
+      CtfError,
+      "Config field numPlayers only applies to mode " & FfaMode & "."
+    )
   if config.slots.len > MaxPlayers:
     raise newException(CtfError, "Config field slots cannot have more than 8 entries.")
   if config.closedRoster and config.slots.len < config.minPlayers:
@@ -617,6 +671,22 @@ proc validate(config: GameConfig) =
           CtfError,
           "Config field slots has duplicate token."
         )
+
+proc readConfigPodiumPoints(node: JsonNode, config: var GameConfig) =
+  ## Reads the optional ffa podium table: rewards by placement, best first.
+  if not node.hasKey("podiumPoints"):
+    return
+  let item = node["podiumPoints"]
+  if item.kind != JArray:
+    raise newException(
+      CtfError, "Config field podiumPoints must be an array of integers.")
+  var points: seq[int]
+  for entry in item:
+    if entry.kind != JInt:
+      raise newException(
+        CtfError, "Config field podiumPoints must be an array of integers.")
+    points.add entry.getInt()
+  config.podiumPoints = points
 
 proc update*(config: var GameConfig, jsonText: string) =
   ## Updates a gameplay config from a JSON object.
@@ -660,6 +730,24 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("barrageStartPerSec", config.barrageStartPerSec)
   node.readConfigInt("barrageStartSec", config.barrageStartSec)
   node.readConfigInt("barrageSaturateSec", config.barrageSaturateSec)
+  node.readConfigString("mode", config.mode)
+  node.readConfigInt("numPlayers", config.numPlayers)
+  node.readConfigInt("survivalPointsPerSec", config.survivalPointsPerSec)
+  node.readConfigInt("killPoints", config.killPoints)
+  node.readConfigInt("assistPoints", config.assistPoints)
+  node.readConfigInt("assistWindowTicks", config.assistWindowTicks)
+  node.readConfigPodiumPoints(config)
+  # ffa's own baseline, derived from the mode and from N: single life (the
+  # game is elimination, so respawn never rearms) and the deep spawn pool,
+  # and a lobby that waits for exactly the seats the match is sized for.
+  # Both stay overridable by an explicit key, so tuning a br config never
+  # has to fight the default.
+  if config.isFfa():
+    config.lives = 1
+    if not node.hasKey("hitPoints"):
+      config.hitPoints = FfaHitPoints
+    if not node.hasKey("minPlayers"):
+      config.minPlayers = config.numPlayers
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
   node.readConfigBool("fastMode", config.fastMode)
   node.readConfigInt("teams", config.teams)
@@ -860,6 +948,16 @@ proc configJson*(config: GameConfig): string =
     node["barrageStartPerSec"] = %config.barrageStartPerSec
     node["barrageStartSec"] = %config.barrageStartSec
     node["barrageSaturateSec"] = %config.barrageSaturateSec
+  # Echo the ffa keys only when the mode departs from ctf, so a ctf game's
+  # replay config stays byte-identical to the pre-ffa echo.
+  if config.isFfa():
+    node["mode"] = %config.mode
+    node["numPlayers"] = %config.numPlayers
+    node["survivalPointsPerSec"] = %config.survivalPointsPerSec
+    node["killPoints"] = %config.killPoints
+    node["assistPoints"] = %config.assistPoints
+    node["assistWindowTicks"] = %config.assistWindowTicks
+    node["podiumPoints"] = %config.podiumPoints
   if config.mapSpec.len > 0:
     node["mapSpec"] = fromJson(config.mapSpec)
   $node

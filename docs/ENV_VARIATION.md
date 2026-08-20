@@ -100,6 +100,8 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `perkMods` | `PerkMods` struct / `DefaultPerkMods` | `armorHp` `0..100`, `luckDamage` `1..100`, fractions authored `0.0..1.0` (permille-stored) | Perk magnitudes: `armorHp` (1) extra hp, `scopeAim` (0.5) aim-sigma cut, `grenadeRange` (0.25) extra throw range, `thrusterSpeed` (0.1) extra speed, `luckChance` (0.1) lucky-shot odds, `luckDamage` (2) lucky-shot hp. |
 | `puddleDamagePct` | int / `20` | `0..100` | Percent chance of 1 damage per full second of continuous paint-puddle occupancy; inert on maps without puddles (`mapPuddles`). |
 | `barrierPickups` | int / `0` | `0..2` ([sim_config.nim](../src/ctf/sim_config.nim) validate, cap `MaxBarrierPickupsPerTeam`) | Cardboard-barrier pickups PER TEAM, staged between base anchor and map center ([sim.nim `barrierSpawnPoints`](../src/ctf/sim.nim)); 0 = none (the default — echo omitted, no GV bump). |
+| `mode` | string / `"ctf"` | `mode` | `"ctf"` or `"ffa"` | Match rules. `"ctf"` is the classic team game and every ffa branch is gated off it (a ctf game draws no new RNG and hashes exactly as before); `"ffa"` is battle royale: single life, no hearts, N-derived spawn ring, last player standing. Echoed into the replay config only in ffa. |
+| `numPlayers` | int / `0` | `numPlayers` | `2..16` in ffa; must be `0` in ctf | ffa seat count N. Everything ffa derives from it — the spawn ring ([sim_state.nim `ffaSpawnPosition`](../src/ctf/sim_state.nim)), the lobby's `minPlayers` default, every per-player container. |
 
 **Per-team handicap** ([sim_types.nim `handicaps`](../src/ctf/sim_types.nim), accessors
 `hitPointsFor`/`livesFor`/`maxSpeedFor`/`missPermilleFor`): a single `0.0..1.0`
@@ -183,6 +185,19 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 | `barrageStartPerSec` | int / `4` | | `1..barrageMaxPerSec` | Launch rate at the latch, targeting a 40px band inside every edge. |
 | `barrageStartSec` | int / `30` | | `>=1` | Clock seconds remaining that latch the barrage (4:30 elapsed on the default 5:00 clock). |
 | `barrageSaturateSec` | int / `30` | | `>=1` | Seconds from latch to full saturation (whole board at `barrageMaxPerSec`); defaults land it exactly at the scheduled end. |
+| `survivalPointsPerSec` | int / `1` (`FfaSurvivalPointsPerSec`) | `survivalPointsPerSec` | `>=0` (ffa only) | ffa reward per whole second alive, accrued live once every `TargetFps` ticks of play. |
+| `killPoints` | int / `10` (`FfaKillPoints`) | `killPoints` | `>=0` (ffa only) | ffa reward to the LAST damager of a kill. Environmental deaths (puddle, barrage) credit nobody. |
+| `assistPoints` | int / `4` (`FfaAssistPoints`) | `assistPoints` | `>=0` (ffa only) | ffa assist pot for a kill, split evenly among the victim's other recent damagers (integer split, remainder dropped). |
+| `assistWindowTicks` | int / `240` (`FfaAssistWindowTicks`) | `assistWindowTicks` | `>=0` (ffa only) | How far back a damager still counts as an assister; also bounds the in-sim damage log. |
+| `podiumPoints` | `seq[int]` / `@[100, 40, 15]` (`FfaPodiumPoints`) | `podiumPoints` | each `>=0` (ffa only) | ffa reward by final placement, best first; places past the list pay nothing. |
+
+ffa consts: `FfaHitPoints`=20 (spawn pool), weapon band `FfaGunDamage`=2 /
+`FfaSprayDamage`=4 / `FfaGrenadeDamage`=4 / `FfaGrenadeTrenchSplashDamage`=1,
+`FfaSpawnRingPermille`=800 (spawn-ring radius as permille of the inscribed
+circle), `FfaMinPlayers`=2, `FfaMaxPlayers`=16. ffa win logic: the game ends
+when at most one player is alive or the clock runs out, and the total
+placement order (alive > later death tick > kills > damage dealt > lower slot)
+always names a single winner — an ffa match is never a draw.
 
 Reward consts: `WinReward`=+1, `LossReward`=−1, `TimeoutReward`=−1 (draw penalty).
 GV41 removed the action-floor overtime: the clock never extends, and a game with

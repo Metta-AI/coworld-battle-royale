@@ -464,6 +464,47 @@ const
                               ## (GameVersion 21): stalling out the clock is
                               ## never better than losing, for either side.
 
+  CtfMode* = "ctf"            ## config.mode: the classic team game. The
+                              ## default, and byte-identical to a pre-ffa
+                              ## build — every ffa rule below is gated on
+                              ## the mode, so ctf draws no new RNG and
+                              ## hashes exactly what it always did.
+  FfaMode* = "ffa"            ## config.mode: battle royale. Every player
+                              ## fights for itself; teams stay as the
+                              ## seat-assignment plumbing they always were,
+                              ## and no ffa rule reads them for damage,
+                              ## vision, scoring, or the win.
+  FfaMinPlayers* = 2          ## ffa seat-count bounds (config numPlayers).
+  FfaMaxPlayers* = 16         ## Everything ffa derives — the spawn ring,
+                              ## the win check, the placement order — is
+                              ## sized by N, never by a fixed-width array.
+  FfaHitPoints* = 20          ## ffa spawn pool: deep enough that losing a
+                              ## fight's opening is information, not death.
+  FfaGunDamage* = 2           ## The ffa weapon band against that pool is
+  FfaSprayDamage* = 4         ## 1..4: the spray and a direct grenade hit
+  FfaGrenadeDamage* = 4       ## pay for their reach, the paintball is the
+                              ## cheap poke, and a paint puddle still bites
+                              ## for its classic 1.
+  FfaGrenadeTrenchSplashDamage* = 1
+                              ## ffa blast on a victim caught in some OTHER
+                              ## trench: the pit still shields. The
+                              ## amplified same-trench hit collapses to
+                              ## FfaGrenadeDamage, so no ffa hit ever
+                              ## leaves the 1..4 band.
+  FfaSpawnRingPermille* = 800 ## ffa spawn pads sit on a ring this far out
+                              ## (permille) of the largest circle the map
+                              ## border allows: maximum pairwise spacing
+                              ## with every pad still well inside the board.
+  FfaSurvivalPointsPerSec* = 1    ## Default ffa scoring, all config-settable:
+  FfaKillPoints* = 10             ## survival pays per whole second alive, a
+  FfaAssistPoints* = 4            ## kill pays the last damager, and the
+  FfaAssistWindowTicks* = 240     ## victim's OTHER damagers inside the
+                                  ## window split the assist pot (integer
+                                  ## split, remainder dropped).
+  FfaPodiumPoints* = [100, 40, 15]
+                              ## End-of-match podium by placement, so
+                              ## outlasting the field dominates the meter.
+
   FlagPickupRange* = 34       ## touch radius to steal the enemy flag: STAND ON
                               ## THE PEDESTAL AND THE HEART IS YOURS (GV42).
                               ## The grab radius is deliberately keyed to the
@@ -1191,6 +1232,28 @@ type
                                   ## default, byte-identical to the
                                   ## pre-barrier game (no spawns, no carries,
                                   ## no placements, no new RNG draws).
+    mode*: string                 ## match rules: CtfMode (the default) or
+                                  ## FfaMode. Every ffa branch in the sim
+                                  ## reads exactly this field, so a ctf game
+                                  ## runs the pre-ffa code path unchanged.
+    numPlayers*: int              ## ffa seat count N (FfaMinPlayers..
+                                  ## FfaMaxPlayers); 0 in ctf, where the
+                                  ## field has no meaning. The spawn ring,
+                                  ## the lobby's minPlayers, and every
+                                  ## per-player container derive from it.
+    survivalPointsPerSec*: int    ## ffa scoring: reward per whole second
+                                  ## alive (FfaSurvivalPointsPerSec).
+    killPoints*: int              ## ffa scoring: reward to the last damager
+                                  ## of a kill (FfaKillPoints).
+    assistPoints*: int            ## ffa scoring: the pot the victim's other
+                                  ## recent damagers split (FfaAssistPoints).
+    assistWindowTicks*: int       ## ffa scoring: how far back a damager
+                                  ## still counts as an assist
+                                  ## (FfaAssistWindowTicks).
+    podiumPoints*: seq[int]       ## ffa scoring: reward by placement, best
+                                  ## first (FfaPodiumPoints). Sized by the
+                                  ## config, not by the seat count: places
+                                  ## past its length pay nothing.
 
   Player* = object
     x*, y*: int
@@ -1278,6 +1341,24 @@ type
                                ## pre-barrier replay's hash chain (keyframe
                                ## scrub still restores it exactly via the
                                ## flatty sim snapshot — the puddleTicks rule).
+
+    damageDealt*: int          ## ffa: total damage this player has dealt,
+                               ## the placement tiebreak under kills. Counted
+                               ## only in ffa (ctf never calls the recorder),
+                               ## and excluded from gameHash like puddleTicks.
+    deathTick*: int            ## tick of this player's latest death, -1 =
+                               ## never died. The ffa placement order reads
+                               ## it (later death outranks earlier);
+                               ## excluded from gameHash.
+
+  FfaDamageHit* = object
+    ## One ffa damage event, kept just long enough to resolve assists
+    ## (assistWindowTicks). Attacker and victim are stable join SLOTS, not
+    ## live indices, so a roster change cannot re-point old credit.
+    tick*: int
+    attacker*: int
+    victim*: int
+    amount*: int
 
   PlayerFov* = object
     ## One player's cached fog-of-war visibility grid (FovGridW x FovGridH
@@ -1617,6 +1698,16 @@ type
                                ## kept OUT of gameHash like puddleTicks so
                                ## barrier-free games hash identically to
                                ## pre-barrier builds.
+    ffaWinnerSlot*: int        ## ffa: the join slot the match was won on,
+                               ## -1 while it is unresolved. An ffa game
+                               ## always ends on a named survivor (the
+                               ## placement order breaks every tie), so this
+                               ## is only -1 before game over or on an empty
+                               ## roster.
+    ffaDamageLog*: seq[FfaDamageHit]  ## ffa: recent damage credit, pruned to
+                               ## assistWindowTicks. Empty in ctf. Appended
+                               ## at the END of the type, and out of
+                               ## gameHash, for the placedBarriers reasons.
 
 
 # Team endzone display colors (shared by the map bake and the paint FX).
@@ -1631,6 +1722,46 @@ const
     ## like the vivid cerulean the soldier art (116,168,255) and the endzone
     ## floor actually show. Any NEW team-colored art should tint from these four
     ## so it matches what a viewer sees on the board.
+
+# ffa mode helpers. The whole battle-royale slice hangs off this one test, so
+# a ctf game reaches exactly the code it always did.
+proc isFfa*(config: GameConfig): bool {.inline.} =
+  ## Whether this config runs the battle-royale (free-for-all) rules.
+  config.mode == FfaMode
+
+const FfaSinTable = [
+    0, 25, 50, 75, 100, 125, 150, 175,
+    200, 224, 249, 273, 297, 321, 345, 369,
+    392, 415, 438, 460, 483, 505, 526, 548,
+    569, 590, 610, 630, 650, 669, 688, 706,
+    724, 742, 759, 775, 792, 807, 822, 837,
+    851, 865, 878, 891, 903, 915, 926, 936,
+    946, 955, 964, 972, 980, 987, 993, 999,
+    1004, 1009, 1013, 1016, 1019, 1021, 1023, 1024,
+    1024
+  ]
+  ## sin over one QUARTER turn in 1024ths: entry k is round(1024 * sin(k
+  ## brads)), k = 0..64. Hand-tabulated on purpose — the spawn ring is sim
+  ## state, and integer math is the only kind that is bit-identical on every
+  ## target (aimVector's floats are fine for a shot's own tracer, not for
+  ## where a match starts).
+
+proc ringSin*(brads: int): int =
+  ## sin of an aim angle in 1024ths, integer-only. Quarter-turn symmetry
+  ## folds the table: brads are 256 to the turn, counter-clockwise from east.
+  let
+    angle = ((brads mod 256) + 256) mod 256
+    quadrant = angle div 64
+    step = angle mod 64
+  case quadrant
+  of 0: FfaSinTable[step]
+  of 1: FfaSinTable[64 - step]
+  of 2: -FfaSinTable[step]
+  else: -FfaSinTable[64 - step]
+
+proc ringCos*(brads: int): int =
+  ## cos of an aim angle in 1024ths, integer-only (sin a quarter turn on).
+  ringSin(brads + 64)
 
 # Pure aim-angle math (needed on both sides of the art/gameplay split).
 proc distSq*(ax, ay, bx, by: int): int =

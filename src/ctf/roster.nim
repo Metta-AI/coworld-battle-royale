@@ -493,6 +493,10 @@ proc addPlayer*(
     color =
       if slot.hasColor:
         slot.color
+      elif sim.config.isFfa():
+        # ffa identity is per PLAYER, never per team: each seat takes its own
+        # hue off the wheel so the board reads as N individuals.
+        PlayerColors[order mod PlayerColors.len]
       else:
         teamColor(team)
     accountIndex = sim.ensureRewardAccount(address)

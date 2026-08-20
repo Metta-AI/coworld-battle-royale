@@ -115,13 +115,19 @@ proc stepEvents*(
   if sim.phase != tracker.prevPhase:
     events.add(%*{"t": tick, "k": "phase", "phase": ($sim.phase).toLowerAscii})
     if sim.phase == GameOver:
-      events.add(%*{
+      var over = %*{
         "t": tick,
         "k": "gameover",
         "winner": teamText(sim.winner),
         "draw": sim.isDraw,
         "tl": sim.timeLimitReached
-      })
+      }
+      # ffa is decided per PLAYER, so the verdict names the winning slot. The
+      # key is written only in ffa, leaving a ctf replay's event stream
+      # byte-identical.
+      if sim.config.isFfa():
+        over["slot"] = %sim.ffaWinnerSlot
+      events.add(over)
 
   # Kills and respawns, diffed per player like expand_replay.
   let killer = sim.killerThisStep(tracker)

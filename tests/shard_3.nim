@@ -7,6 +7,7 @@ import
   test_debug_overlay,
   test_endzone_shapes,
   test_fast_mode,
+  test_ffa,
   test_first_person_pip,
   test_lull_spans,
   test_mapgen,

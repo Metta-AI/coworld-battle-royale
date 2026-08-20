@@ -269,7 +269,11 @@ proc startGame*(sim: var SimServer) =
     sim.players[i].multiKills3 = 0
     sim.players[i].teamKills = 0
     sim.players[i].arcKillsThisFire = 0
+    sim.players[i].damageDealt = 0
+    sim.players[i].deathTick = -1
     sim.recordGameTeamAssigned(i)
+  sim.ffaWinnerSlot = -1
+  sim.ffaDamageLog = @[]
   sim.resetFlags()
   sim.resetGrenades()
   sim.resetShields()
@@ -731,6 +735,82 @@ proc barrageRatePermille*(sim: SimServer): int =
     (sim.config.barrageMaxPerSec - sim.config.barrageStartPerSec) *
       sim.barrageProgressPermille()
 
+proc weaponDamage*(sim: SimServer, ctfAmount, ffaAmount: int): int {.inline.} =
+  ## Picks a weapon's damage for the mode in play. ffa fights over a 20 hp
+  ## pool with hits banded 1..4; ctf keeps every number it always had.
+  if sim.config.isFfa(): ffaAmount else: ctfAmount
+
+proc recordFfaDamage*(sim: var SimServer, attackerIndex, victimIndex,
+    amount: int) =
+  ## Books one ffa hit: the attacker's running damageDealt (the placement
+  ## tiebreak under kills) and a windowed credit entry (the assist split).
+  ## Self-damage and environmental damage credit nobody. ctf never calls
+  ## this, so nothing here can move a ctf game's hash.
+  if not sim.config.isFfa() or amount <= 0:
+    return
+  if attackerIndex < 0 or attackerIndex >= sim.players.len:
+    return
+  if victimIndex < 0 or victimIndex >= sim.players.len:
+    return
+  if attackerIndex == victimIndex:
+    return
+  inc sim.players[attackerIndex].damageDealt, amount
+  # Drop credit that aged out of the assist window before appending, so the
+  # log stays bounded by the window rather than by the match length.
+  let cutoff = sim.tickCount - max(0, sim.config.assistWindowTicks)
+  var fresh = 0
+  while fresh < sim.ffaDamageLog.len and sim.ffaDamageLog[fresh].tick < cutoff:
+    inc fresh
+  if fresh >= sim.ffaDamageLog.len:
+    sim.ffaDamageLog = @[]
+  elif fresh > 0:
+    sim.ffaDamageLog = sim.ffaDamageLog[fresh .. ^1]
+  sim.ffaDamageLog.add FfaDamageHit(
+    tick: sim.tickCount,
+    attacker: sim.players[attackerIndex].joinOrder,
+    victim: sim.players[victimIndex].joinOrder,
+    amount: amount
+  )
+
+proc awardFfaKill(sim: var SimServer, victimIndex, killerIndex: int) =
+  ## Pays out one ffa death: killPoints to the last damager, and assistPoints
+  ## split evenly among the victim's OTHER damagers inside assistWindowTicks
+  ## (integer split, remainder dropped — no fractional reward, no float).
+  ## A death nobody dealt (the hazard, the barrage) credits nobody at all.
+  if not sim.config.isFfa():
+    return
+  if victimIndex < 0 or victimIndex >= sim.players.len:
+    return
+  if killerIndex < 0 or killerIndex >= sim.players.len or
+      killerIndex == victimIndex:
+    # Nobody landed the blow: the hazard took them, so there is no kill to
+    # pay and no assist to share either.
+    return
+  let
+    victimSlot = sim.players[victimIndex].joinOrder
+    killerSlot = sim.players[killerIndex].joinOrder
+  sim.addReward(killerIndex, sim.config.killPoints)
+  # Assist credit is by damage SLOT in first-hit order, so the payout is the
+  # same on every replay of the same match.
+  let cutoff = sim.tickCount - max(0, sim.config.assistWindowTicks)
+  var assisterSlots: seq[int]
+  for hit in sim.ffaDamageLog:
+    if hit.tick < cutoff or hit.victim != victimSlot:
+      continue
+    if hit.attacker == victimSlot or hit.attacker == killerSlot:
+      continue
+    if hit.attacker notin assisterSlots:
+      assisterSlots.add hit.attacker
+  if assisterSlots.len == 0:
+    return
+  let share = sim.config.assistPoints div assisterSlots.len
+  if share <= 0:
+    return
+  for slot in assisterSlots:
+    let index = sim.playerIndexForSlot(slot)
+    if index >= 0:
+      sim.addReward(index, share)
+
 proc killPlayer*(
   sim: var SimServer,
   targetIndex,
@@ -799,6 +879,11 @@ proc killPlayer*(
     color: sim.players[targetIndex].color,
     kill: true
   )
+  # The death tick is the ffa placement's first tiebreak (later death
+  # outranks earlier). Recorded in every mode — it costs one unhashed int,
+  # and a respawning ctf player just overwrites it — but only ffa reads it.
+  sim.players[targetIndex].deathTick = sim.tickCount
+  sim.awardFfaKill(targetIndex, killerIndex)
   sim.players[targetIndex].alive = false
   sim.players[targetIndex].velX = 0
   sim.players[targetIndex].velY = 0
@@ -965,6 +1050,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
           let (sxw, syw) = sim.seatInWall(rx, ry, ux, uy)
           sim.addPaintStain(sxw, syw, teamColor(attacker.team), onWall = true)
           break sprayStain
+    let sprayDamage = sim.weaponDamage(PlasmaArcDamage, FfaSprayDamage)
     for victimIndex in arcFire.victims:
       if victimIndex < 0 or victimIndex >= sim.players.len:
         continue
@@ -980,7 +1066,8 @@ proc resolveActiveArcCones*(sim: var SimServer) =
       # paintball (see the gun's damage site).
       let bubbleUp = sim.players[victimIndex].hasShield and
         sim.players[victimIndex].shieldHp > 0
-      let blocked = sim.absorbDamage(victimIndex, PlasmaArcDamage)
+      let blocked = sim.absorbDamage(victimIndex, sprayDamage)
+      sim.recordFfaDamage(arcFire.attacker, victimIndex, sprayDamage)
       if bubbleUp:
         # Blink the bubble toward the sprayer, as the gun's damage site does —
         # otherwise a fully-absorbed burst shows no feedback anywhere.
@@ -1001,14 +1088,14 @@ proc resolveActiveArcCones*(sim: var SimServer) =
         vy = float(sim.players[victimIndex].y + CollisionH div 2)
       sim.emitEvent(
         Damage, source = arcFire.attacker, target = victimIndex,
-        weapon = "spray", amount = PlasmaArcDamage,
+        weapon = "spray", amount = sprayDamage,
         hp = max(0, sim.players[victimIndex].hp),
         blocked = blocked, x = vx, y = vy
       )
       if sim.collectEvents:
         damages.add sim.eventDamage(
           victimIndex,
-          PlasmaArcDamage,
+          sprayDamage,
           max(0, sim.players[victimIndex].hp),
           blocked
         )
@@ -1017,7 +1104,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
         x: sim.players[victimIndex].x + CollisionW div 2,
         y: sim.players[victimIndex].y + CollisionH div 2,
         tick: sim.tickCount,
-        amount: PlasmaArcDamage, color: sim.players[victimIndex].color
+        amount: sprayDamage, color: sim.players[victimIndex].color
       )
       if sim.players[victimIndex].hp <= 0:
         sim.killPlayer(victimIndex, arcFire.attacker)
@@ -1026,7 +1113,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
           sim.recordTeamKill(arcFire.attacker, victimIndex)
           sim.emitEvent(
             Kill, source = arcFire.attacker, target = victimIndex,
-            weapon = "spray", amount = PlasmaArcDamage, x = vx, y = vy
+            weapon = "spray", amount = sprayDamage, x = vx, y = vy
           )
           # Multi-kill accounting per ACTIVATION (not per tick): the second
           # kill of one firing mints a double, the third upgrades it to a
@@ -1310,11 +1397,12 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
     # A lucky shot (luck perk) deals perkMods.luckDamage instead of 1. Rolled once
     # per LANDED hit, only when the shooter carries the perk, so a perk-free
     # game draws no extra RNG and re-simulates byte-for-byte.
-    var damage = 1
+    var damage = sim.weaponDamage(1, FfaGunDamage)
     if PerkLuck in shooter.perks and
         sim.rng.rand(999) < sim.config.perkMods.luckChance:
       damage = sim.config.perkMods.luckDamage
     let blocked = sim.absorbDamage(targetIndex, damage)
+    sim.recordFfaDamage(shooterIndex, targetIndex, damage)
     # Paintball paint marks the body only when the shield bubble ISN'T eating it
     # (a bubble dent draws no body paint). Stamp so the EYES-PiP visor splat
     # fires for THIS paint hit — and only for a PAINT hit (gun/grenade). The
@@ -1678,14 +1766,21 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
     let
       victimTrench = trenchIndexAt(px, py)
       dmg =
-        if victimTrench < 0: GrenadeDamage
-        elif victimTrench == landingTrench: GrenadeTrenchDamage
-        else: GrenadeTrenchSplashDamage
+        if victimTrench < 0:
+          sim.weaponDamage(GrenadeDamage, FfaGrenadeDamage)
+        elif victimTrench == landingTrench:
+          # ffa keeps every hit inside the 1..4 band, so the trench's
+          # amplified blast collapses to the band's ceiling.
+          sim.weaponDamage(GrenadeTrenchDamage, FfaGrenadeDamage)
+        else:
+          sim.weaponDamage(
+            GrenadeTrenchSplashDamage, FfaGrenadeTrenchSplashDamage)
       # Read the bubble BEFORE absorbDamage drains shieldHp: a bubble that eats
       # the blast keeps the body clean, exactly as with a paintball (see the
       # gun's damage site).
       bubbleUp = sim.players[i].hasShield and sim.players[i].shieldHp > 0
       blocked = sim.absorbDamage(i, dmg)
+    sim.recordFfaDamage(throwerIndex, i, dmg)
     if bubbleUp:
       # The bubble itself blinks and dents toward the burst, so an absorbed
       # blast reads as absorbed instead of leaving no feedback at all.
@@ -2036,6 +2131,10 @@ proc tryPickupFlags*(sim: var SimServer, playerIndex: int) =
   ## GV42: `FlagPickupRange` covers the DRAWN heart, so standing on the
   ## pedestal is the whole interaction — there is no pinpoint to find and no
   ## grab button. See the constant for the art-derived derivation.
+  # ffa spawns no hearts at all (resetFlags retires every slot out of play),
+  # so there is nothing to steal and no carry/capture path to reach.
+  if sim.config.isFfa():
+    return
   if not sim.players[playerIndex].alive or sim.players[playerIndex].carryingFlag:
     return
   let
@@ -2760,9 +2859,88 @@ proc updateBarrage*(sim: var SimServer) =
     if sim.airborneGrenades.len < MaxPlayers:
       sim.launchBarrageShell()
 
+proc ffaPlacements*(sim: SimServer): seq[int] =
+  ## The ffa finishing order, best first, as player indices. A TOTAL order by
+  ## construction — still alive beats dead, a later death beats an earlier
+  ## one, then more kills, then more damage dealt, then the lower join slot —
+  ## so there are no draws to break and rank 0 is always a single player.
+  ## Nothing here reads `team`.
+  result = @[]
+  for i in 0 ..< sim.players.len:
+    result.add i
+  result.sort(proc (a, b: int): int =
+    let
+      first = sim.players[a]
+      second = sim.players[b]
+    if first.alive != second.alive:
+      return if first.alive: -1 else: 1
+    if first.deathTick != second.deathTick:
+      return if first.deathTick > second.deathTick: -1 else: 1
+    if first.kills != second.kills:
+      return if first.kills > second.kills: -1 else: 1
+    if first.damageDealt != second.damageDealt:
+      return if first.damageDealt > second.damageDealt: -1 else: 1
+    cmp(first.joinOrder, second.joinOrder)
+  )
+
+proc updateFfaSurvival(sim: var SimServer) =
+  ## Pays survival credit live: survivalPointsPerSec to everyone still
+  ## standing, once per whole second of play. Accruing it as the match runs
+  ## (instead of at the end) is what makes a mid-match reward meter read as
+  ## "who is still in this".
+  if not sim.config.isFfa() or sim.phase != Playing:
+    return
+  let elapsed = sim.gameTicksElapsed()
+  if elapsed <= 0 or elapsed mod TargetFps != 0:
+    return
+  for i in 0 ..< sim.players.len:
+    if sim.players[i].alive:
+      sim.addReward(i, sim.config.survivalPointsPerSec)
+
+proc finishFfaGame(sim: var SimServer, timeLimitReached = false) =
+  ## Ends an ffa match on the placement order: rank 0 IS the winner and the
+  ## podium pays by place. ffa has no draw — the order is total, so any match
+  ## somebody joined names a survivor.
+  if sim.phase == GameOver:
+    return
+  let places = sim.ffaPlacements()
+  if places.len == 0:
+    return
+  let winnerIndex = places[0]
+  sim.ffaWinnerSlot = sim.players[winnerIndex].joinOrder
+  sim.logGameEvent(sim.playerText(winnerIndex) & " wins")
+  sim.emitPhaseChange(GameOver)
+  sim.phase = GameOver
+  # The Team on the winner is seat plumbing the ffa rules never read; the
+  # match is decided, reported and paid out by SLOT (ffaWinnerSlot).
+  sim.winner = sim.players[winnerIndex].team
+  sim.isDraw = false
+  sim.gameOverTimer = sim.config.gameOverTicks
+  sim.timeLimitReached = timeLimitReached
+  for place, index in places:
+    if place >= sim.config.podiumPoints.len:
+      break
+    sim.addReward(index, sim.config.podiumPoints[place])
+  sim.recordGameWin(winnerIndex)
+
+proc checkFfaWinCondition(sim: var SimServer) =
+  ## ffa ends the moment at most one player is still standing. Teams are not
+  ## consulted: the count is over PLAYERS.
+  var aliveCount = 0
+  for player in sim.players:
+    if player.alive:
+      inc aliveCount
+  if aliveCount <= 1:
+    sim.finishFfaGame()
+
 proc checkWinCondition*(sim: var SimServer) {.measure.} =
   ## Resolves capture and wipe win conditions.
   if sim.phase != Playing or sim.players.len == 0:
+    return
+  if sim.config.isFfa():
+    # ffa has no hearts and no teams to wipe: last player standing, and
+    # none of the flag bookkeeping below is reachable.
+    sim.checkFfaWinCondition()
     return
   # Capture: a living carrier bringing an enemy flag into their own home
   # capture zone (deliberately no own-flag-must-be-home precondition).
@@ -2830,6 +3008,11 @@ proc checkMaxTicks(sim: var SimServer) =
   ## A game that hits the time limit before a capture or a wipe is a
   ## scoreless draw for both sides: no tiebreak, no rewards.
   if not sim.maxTicksReached():
+    return
+  if sim.config.isFfa():
+    # The clock is the EXPECTED ffa ending, not a failure to decide: the
+    # placement order names the survivor, so a timed-out ffa is never a draw.
+    sim.finishFfaGame(timeLimitReached = true)
     return
   sim.finishGame(Red, isDraw = true, timeLimitReached = true)
 
@@ -3226,6 +3409,8 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.lobbyWaitTimer = 0
   result.barrageStartTick = -1
   result.barrageAccum = 0
+  result.ffaWinnerSlot = -1
+  result.ffaDamageLog = @[]
   result.gameEventLoggingEnabled = true
   result.resetFlags()
   result.resetGrenades()
@@ -3243,6 +3428,8 @@ proc resetToLobby*(sim: var SimServer) =
   sim.phase = Lobby
   sim.players = @[]
   sim.fovCaches = @[]
+  sim.ffaWinnerSlot = -1
+  sim.ffaDamageLog = @[]
   ## Rewind the spin BEFORE anything snaps to walkable floor. The pickup
   ## resets below all nudge their spawns through nearestWalkable, which reads
   ## the live walk mask — if the diamonds were still stamped at the frame the
@@ -3432,6 +3619,7 @@ proc step*(
   sim.updatePuddles()
   sim.updateBarrage()
 
+  sim.updateFfaSurvival()
   sim.checkWinCondition()
   sim.checkMaxTicks()
 
