@@ -9,7 +9,7 @@
 import helpers, std/[json, os, strutils, unittest], ctf/sim
 
 const
-  ManifestName = "coworld_manifest_paintbot.json"
+  ManifestName = "coworld_manifest_battleroyale.json"
   PlatformOnlyKeys = ["num_agents"]
   ## Schema keys the game deliberately never reads: documented as consumed by
   ## the platform (ladder seating) in the schema description itself, which
@@ -31,9 +31,29 @@ proc findConfigSchema(node: JsonNode): JsonNode =
         return found
   nil
 
+proc findResultsSchema(node: JsonNode): JsonNode =
+  ## Depth-first search for the "results_schema" object in a manifest.
+  if node.kind == JObject:
+    if node.hasKey("results_schema"):
+      return node["results_schema"]
+    for _, value in node:
+      let found = findResultsSchema(value)
+      if found != nil:
+        return found
+  elif node.kind == JArray:
+    for value in node:
+      let found = findResultsSchema(value)
+      if found != nil:
+        return found
+  nil
+
 proc manifestSchema(name: string): JsonNode =
   result = findConfigSchema(parseFile(GameDir / name))
   doAssert result != nil, name & " has no config_schema"
+
+proc manifestResultsSchema(name: string): JsonNode =
+  result = findResultsSchema(parseFile(GameDir / name))
+  doAssert result != nil, name & " has no results_schema"
 
 proc manifestVariant(variantId: string): JsonNode =
   let manifest = parseFile(GameDir / ManifestName)
@@ -85,6 +105,32 @@ const SampleJson = """{
   "teams": {"teams": 4, "mapPath": "gen"},
   "tokens": {"tokens": ["tokA"]},
   "visionBubble": {"visionBubble": 50},
+  "mode": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4},
+  "numPlayers": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4},
+  "ringEnabled": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                  "ringEnabled": true},
+  "ringShrinkSec": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                    "ringShrinkSec": 100},
+  "ringFloorAreaPct": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                       "ringFloorAreaPct": 40},
+  "ringDamageTicks": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                      "ringDamageTicks": 48},
+  "ringRecoveryTicks": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                        "ringRecoveryTicks": 2},
+  "ffaLootCount": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                   "ffaLootCount": 8},
+  "ffaLootRadius": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                    "ffaLootRadius": 400},
+  "ffaLootRespawnTicks": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                          "ffaLootRespawnTicks": 480},
+  "mapSymmetry": {"mapSymmetry": "mirror", "mapPath": "gen"},
+  "mapColumns": {"mapColumns": 18, "mapPath": "gen"},
+  "mapWindows": {"mapWindows": 4, "mapPath": "gen"},
+  "mapPits": {"mapPits": 18, "mapPath": "gen"},
+  "mapCenterFeature": {"mapCenterFeature": "ring", "mapPath": "gen"},
+  "mapEndzone": {"mapEndzone": "disc", "mapPath": "gen"},
+  "mapEndzoneRadius": {"mapEndzoneRadius": 100, "mapEndzone": "disc",
+                       "mapPath": "gen"},
   "visionConeDeg": {"visionConeDeg": 45}
 }"""
 
@@ -111,6 +157,7 @@ suite "league manifest config_schema vs GameConfig":
       let payload = samples[key]
       check payload.hasKey(key)  # the payload must exercise its own key
       var config = defaultGameConfig()
+      config.minPlayers = 1
       config.update($payload)
       # A consumed key must change SOMETHING relative to the defaults.
       check config != defaultGameConfig()
@@ -146,136 +193,64 @@ suite "league manifest config_schema vs GameConfig":
       let description = schema["properties"][key]["description"].getStr
       check "platform" in description
 
+  test "schema defaults match the engine defaults":
+    let defaults = defaultGameConfig()
+    check schema["properties"]["aimTurnRate"]["default"].getInt ==
+      defaults.aimTurnRate
+    check schema["properties"]["hitPoints"]["default"].getInt ==
+      defaults.hitPoints
+    check schema["properties"]["ringShrinkSec"]["default"].getInt ==
+      FfaRingShrinkSec
+    check schema["properties"]["ringFloorAreaPct"]["default"].getInt ==
+      FfaRingFloorAreaPct
+    check schema["properties"]["ringDamageTicks"]["default"].getInt ==
+      FfaRingDamageTicks
+    check schema["properties"]["ringRecoveryTicks"]["default"].getInt ==
+      FfaRingRecoveryTicks
+    check schema["properties"]["ffaLootCount"]["default"].getInt ==
+      FfaLootCount
+    check schema["properties"]["ffaLootRadius"]["default"].getInt ==
+      FfaLootRadius
+    check schema["properties"]["ffaLootRespawnTicks"]["default"].getInt ==
+      FfaLootRespawnTicks
+
   test "the repo's local config.json loads and validates":
     # update() runs the full field validation internally and raises on any
     # rejected value, so a clean call IS the validation.
     var config = defaultGameConfig()
     config.update(readFile(GameDir / "config.json"))
 
-  test "published variants use the engine's aim rate":
-    let expected = defaultGameConfig().aimTurnRate
-    check schema["properties"]["aimTurnRate"]["default"].getInt == expected
-    for variant in parseFile(GameDir / ManifestName)["variants"]:
-      check variant["game_config"]["aimTurnRate"].getInt == expected
+  test "emitted ffa results keys are closed by the manifest":
+    let resultsSchema = manifestResultsSchema(ManifestName)
+    var config = defaultFfaConfig(3)
+    config.startWaitTicks = 0
+    var game = initCtfForTest(config)
+    for i in 0 ..< 3:
+      discard game.addPlayer("Player" & $(i + 1))
+    game.startGame()
+    game.killPlayer(0, 1)
+    game.killPlayer(2, 1)
+    let input = game.none()
+    game.step(input, input)
+    check game.phase == GameOver
+    let results = parseJson(game.playerResultsJson())
+    for key, _ in results:
+      check resultsSchema["properties"].hasKey(key)
 
-  test "one manifest preserves Paintbot ids and namespaces CTF ids":
+  test "published variants are the battle-royale identities":
     var variantIds: seq[string]
     for variant in parseFile(GameDir / ManifestName)["variants"]:
       variantIds.add variant["id"].getStr()
-    check variantIds == @["2v2", "4ffa", "4ffa8", "default", "1v1",
-      "ctf-default", "ctf-1v1"]
-
-  test "ctf publishes namespaced default and two-seat custom-lobby variants":
-    let
-      variant = manifestVariant("ctf-1v1")
-      defaultVariant = manifestVariant("ctf-default")
-    block:
+    check variantIds == @["br-12", "br-16"]
+    for variant in parseFile(GameDir / ManifestName)["variants"]:
       let gameConfig = variant["game_config"]
-      check schema["properties"]["tokens"]["minItems"].getInt() == 2
-      check schema["properties"]["players"]["minItems"].getInt() == 2
-      check gameConfig["players"].len == 2
-      check gameConfig["slots"].len == 2
-      check gameConfig["slots"][0]["team"].getStr() == "red"
-      check gameConfig["slots"][1]["team"].getStr() == "blue"
-      check gameConfig["num_agents"].getInt() == 2
-      check gameConfig["minPlayers"].getInt() == 2
-      check gameConfig["teams"].getInt() == 2
-      check gameConfig["mapPath"].getStr() == "arena"
-      for key, value in defaultVariant["game_config"]:
-        case key
-        of "players", "slots", "num_agents", "minPlayers":
-          discard
-        else:
-          check gameConfig.hasKey(key)
-          check gameConfig[key] == value
-
-      var config = defaultGameConfig()
-      config.update($gameConfig)
-      check config.minPlayers == 2
-      check config.slots.len == 2
-      check config.slots[0].team == Red
-      check config.slots[1].team == Blue
-
-      var sim = initCtfForTest(config)
-      let
-        red = sim.addPlayer("Player1")
-        blue = sim.addPlayer("Player2")
-      check sim.players[red].team == Red
-      check sim.players[blue].team == Blue
-      for _ in 0 ..< config.startWaitTicks:
-        sim.step(@[], @[])
-      check sim.phase == Playing
-      check sim.players[red].alive
-      check sim.players[blue].alive
-
-      sim.players[blue].alive = false
-      sim.players[blue].lives = 0
-      sim.checkWinCondition()
-      check sim.phase == GameOver
-      check sim.winner == Red
-
-  test "paintbot publishes a full-teams 1v1 variant without changing league defaults":
-    let
-      manifest = parseFile(GameDir / ManifestName)
-      variant = manifestVariant("1v1")
-      leagueVariant = manifestVariant("2v2")
-    check manifest["variants"][0]["id"].getStr() == "2v2"
-    check manifest["certification"]["players"].len == 16
-    check manifest["certification"]["game_config"]["players"].len == 16
-    check manifest["certification"]["game_config"]["minPlayers"].getInt() == 16
-    block:
-      let gameConfig = variant["game_config"]
-      check schema["properties"]["tokens"]["minItems"].getInt() == 2
-      check schema["properties"]["players"]["minItems"].getInt() == 2
-      check schema["properties"]["tokens"]["maxItems"].getInt() == 32
-      check schema["properties"]["players"]["maxItems"].getInt() == 32
-      # 1v1 means one policy per team at full muster: 16 seats, 8 per team,
-      # alternating so entrant = slot mod 2 fields a whole team.
-      check gameConfig["players"].len == 16
-      check gameConfig["slots"].len == 16
-      for i in 0 ..< 16:
-        check gameConfig["slots"][i]["team"].getStr() ==
-          (if i mod 2 == 0: "red" else: "blue")
-      check gameConfig["num_agents"].getInt() == 16
-      check gameConfig["minPlayers"].getInt() == 16
-      check gameConfig["teams"].getInt() == 2
+      check gameConfig["mode"].getStr() == "ffa"
+      check gameConfig["numPlayers"].getInt() in [12, 16]
+      check gameConfig["num_agents"].getInt() == gameConfig["numPlayers"].getInt()
+      check gameConfig["minPlayers"].getInt() == gameConfig["numPlayers"].getInt()
       check gameConfig["mapPath"].getStr() == "gen"
-      check gameConfig["scoring"].getStr() == "pot"
-      for key, value in leagueVariant["game_config"]:
-        case key
-        of "players", "slots", "num_agents", "minPlayers":
-          discard
-        else:
-          check gameConfig.hasKey(key)
-          check gameConfig[key] == value
-
       var config = defaultGameConfig()
       config.update($gameConfig)
-      check config.minPlayers == 16
-      check config.slots.len == 16
-      for i in 0 ..< 16:
-        check config.slots[i].team == (if i mod 2 == 0: Red else: Blue)
-      check config.mapPath == "gen"
-      check config.scoring == PotScoring
-
-      var sim = initCtfForTest(config)
-      var seats: seq[int]
-      for i in 0 ..< 16:
-        seats.add sim.addPlayer("Player" & $(i + 1))
-      for i, seat in seats:
-        check sim.players[seat].team == (if i mod 2 == 0: Red else: Blue)
-      for _ in 0 ..< config.startWaitTicks:
-        sim.step(@[], @[])
-      check sim.phase == Playing
-      for seat in seats:
-        check sim.players[seat].alive
-
-      for i, seat in seats:
-        if i mod 2 == 1:
-          sim.players[seat].alive = false
-          sim.players[seat].lives = 0
-      sim.checkWinCondition()
-      check sim.phase == GameOver
-      check sim.winner == Red
-      for i, seat in seats:
-        check sim.players[seat].reward == (if i mod 2 == 0: 2 else: -2)
+      check config.mode == FfaMode
+      check config.numPlayers == gameConfig["numPlayers"].getInt()
+      check config.minPlayers == config.numPlayers

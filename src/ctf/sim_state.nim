@@ -294,6 +294,68 @@ proc spawnPosition*(sim: SimServer, team: Team, order: int): tuple[x, y: int] =
     targetY = if vertical: anchor.y + stepMajor else: anchor.y + stepMinor
   sim.nearestWalkable(targetX, targetY)
 
+proc ffaSpawnPosition*(sim: SimServer, slot, seats: int): tuple[x, y: int] =
+  ## Returns one ffa spawn pad: seat `slot` of `seats`, on a ring centered on
+  ## the map. The pads are the seats' equal share of one turn, so they are
+  ## equidistant from the center and as far from each other as N allows, and
+  ## the ring itself is FfaSpawnRingPermille of the largest circle the border
+  ## admits. Derived from N alone — no table, no per-count special case — and
+  ## integer-only (the brad table, not trig), so every target agrees on where
+  ## a match starts. The pad snaps to the nearest reachable floor, which is
+  ## what makes it safe on generated terrain.
+  let
+    count = max(1, seats)
+    seat = ((slot mod count) + count) mod count
+    cx = MapWidth div 2
+    cy = MapHeight div 2
+    inset = ArenaBorder + PlayerHalf + 1
+    radius = max(0, min(cx, cy) - inset) * FfaSpawnRingPermille div 1000
+    brads = seat * 256 div count
+    # Screen y runs down, so the ring turns the way aimVector does.
+    targetX = cx + radius * ringCos(brads) div 1024
+    targetY = cy - radius * ringSin(brads) div 1024
+  sim.nearestWalkable(targetX, targetY)
+
+proc ffaRingCenter*(): tuple[x, y: int] =
+  ## The safe zone's center: the middle of the board, fixed for the match so
+  ## a policy can plan against it from tick 0.
+  (MapWidth div 2, MapHeight div 2)
+
+proc ffaRingStartRadius*(): int =
+  ## The opening radius: the half-diagonal, so the zone covers the whole
+  ## arena and nobody starts in the fire.
+  let (cx, cy) = ffaRingCenter()
+  intSqrt(cx * cx + cy * cy) + 1
+
+proc ffaRingFloorRadius*(config: GameConfig): int =
+  ## The radius the ring stops at: the circle whose area is
+  ## ringFloorAreaPct of the arena. pi is 3142/1000 here — integer-only, and
+  ## the same number on every target.
+  let
+    pct = max(1, min(100, config.ringFloorAreaPct))
+    area = MapWidth * MapHeight * pct div 100
+  min(intSqrt(area * 1000 div 3142), ffaRingStartRadius())
+
+proc ffaRingRadiusAt*(config: GameConfig, elapsed: int): int =
+  ## The safe radius `elapsed` ticks into the match: LINEAR from the start
+  ## radius down to the floor over ringShrinkSec seconds, then constant. All
+  ## integer division, so the schedule is a step function every target walks
+  ## identically.
+  let
+    start = ffaRingStartRadius()
+    floorRadius = ffaRingFloorRadius(config)
+    total = max(1, config.ringShrinkSec * TargetFps)
+    step = max(0, min(total, elapsed))
+  start - (start - floorRadius) * step div total
+
+proc ffaOutsideRing*(config: GameConfig, elapsed, x, y: int): bool =
+  ## Whether a map point is outside the safe zone, compared as SQUARED
+  ## distances so no root is ever taken on a gameplay path.
+  let
+    (cx, cy) = ffaRingCenter()
+    radius = ffaRingRadiusAt(config, elapsed)
+  distSq(x, y, cx, cy) > radius * radius
+
 proc captureZone*(sim: SimServer, team: Team): CaptureZone =
   ## Returns one team's home capture zone on the installed map.
   sim.gameMap.captureZone(team)
@@ -345,7 +407,18 @@ proc resetPlayerToHome*(sim: var SimServer, playerIndex: int) =
     sim.players[playerIndex].homeX, sim.players[playerIndex].homeY)
 
 proc arrangeHomePositions*(sim: var SimServer) =
-  ## Saves and applies team home spawn positions for all players.
+  ## Saves and applies home spawn positions for all players: team home edges
+  ## in ctf, the N-derived ffa ring otherwise. An ffa pad belongs to the
+  ## SLOT, not to the current roster length, so a seat's pad is the same
+  ## whether or not everyone has joined yet.
+  if sim.config.isFfa():
+    let seats = max(sim.config.numPlayers, sim.players.len)
+    for i in 0 ..< sim.players.len:
+      let spawn = sim.ffaSpawnPosition(sim.players[i].joinOrder, seats)
+      sim.players[i].homeX = spawn.x
+      sim.players[i].homeY = spawn.y
+      sim.resetPlayerToHome(i)
+    return
   var teamOrder: array[Team, int]
   for i in 0 ..< sim.players.len:
     let team = sim.players[i].team
@@ -501,9 +574,15 @@ proc resetFlags*(sim: var SimServer) =
   ## Returns every active team's flag to its home pedestal. Inactive slots
   ## hold an explicit no-carrier state so nothing can misread the array's
   ## zero value (carrier 0 would mean "player 0 carries it").
+  ## ffa has no hearts at all: every slot retires out of play, so nothing can
+  ## be stolen, carried, or captured, and the pedestal geometry stays as
+  ## terrain.
+  if sim.config.isFfa():
+    for team in Team:
+      sim.flags[team] = FlagState(x: 0, y: 0, carrier: -1, captured: true)
+    return
   for team in Team:
     if team in sim.teams():
       sim.resetFlag(team)
     else:
       sim.flags[team] = FlagState(x: 0, y: 0, carrier: -1)
-

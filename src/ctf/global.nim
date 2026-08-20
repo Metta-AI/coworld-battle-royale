@@ -63,6 +63,8 @@ const
   ScoreboardWidth = 84
   ScoreboardHeight = 116
   ScoreboardY = 2
+  FfaScoreboardRowsY = ScoreboardY + 8
+  FfaScoreboardHeaderRow = MaxPlayers
   ScoreboardRowHeight = 7
   ScoreboardPipX = 2
   ScoreboardPipY = 2
@@ -104,6 +106,9 @@ const
                                  ## One id per AIM STEP because the glyph is
                                  ## baked turned to the aim — it is painted ON
                                  ## the cog, not floating upright over it.
+  FfaIdentityBadgeSpriteBase = 26000 ## FFA identity-colored badges.
+  FfaSoldierSpriteBase = 28080       ## FFA identity-colored player sprites.
+  FfaSelectedSoldierSpriteBase = 28620 ## FFA selected player sprites.
   IdentityBadgeObjectBase = 19040  ## identity badge object pool: one per
                                    ## player, 19040..19071 (clear of the hp
                                    ## pips at 19000 and impact rings at 19120).
@@ -159,6 +164,7 @@ const
                                ## disc, not the gem, is what a player stands on.
   PlantedFlagSpriteBase = 708  ## scaled home-heart sprites: 708..711 by team.
   GameOverIconSpriteBase = 712 ## compact roster-chip soldiers: 712..715 by team.
+  FfaGameOverIconSpriteBase = 33000 ## FFA identity-colored roster chips.
   GameOverIconSize = 14        ## roster chip footprint (fits the game-over row).
   CarryHeartSpriteBase = 600   ## carried-heart sprites, baked per team×aim so the
                                ## held heart rotates WITH the cog: team×16 aim →
@@ -237,20 +243,22 @@ const
                                  ## (EndzoneRampBandsPerFrame).
   GlowFadeStages* = 8          ## crossfade steps; 0 = full glow, 7 = fully cold.
   ## Grenades (0.7.0): a paint-bomb orb PNG shared by three placements plus a
-  ## drawn charge ring and blast flash. Sprite ids 840..845 sit above the sound
-  ## ring (830) and below the tracer dots (900). Object pools live at 19300+.
+  ## drawn charge ring and blast flash. The static grenade sprites occupy the
+  ## historical 840..843 ids; CTF keeps its historical team-specific blast
+  ## ids, while FFA identity-keyed blast families live in their own full-width
+  ## pools below the dynamic wire window. Object pools live at 19300+.
   PaintBombPickupSpriteId = 840  ## corner pickup orb (native size).
   PaintBombAirSpriteId = 841     ## in-flight orb (slightly smaller).
   PaintBombCarrySpriteId = 842   ## the "grenade carried" marker over a carrier.
   ThrowTargetSpriteId = 843      ## the charge-time landing ring.
-  BlastSpriteBase = 844          ## landing paint-splat sprites, keyed
-                                 ## colorIndex*BlastStages+stage. Team colors
-                                 ## (Red idx0, Blue idx6) → ids 844..847 and
-                                 ## 868..871, clear of tracers at 900.
-  TrenchBlastSpriteBase = 848    ## the trench-truncated variant of the same
-                                 ## landing splat, same colorIndex*BlastStages+
-                                 ## stage keying → ids 848..851 and 872..875:
-                                 ## still clear of tracers at 900.
+  CtfBlastSpriteBase = 844        ## historical CTF red/blue landing splats.
+  CtfTrenchBlastSpriteBase = 848  ## historical CTF red/blue trench splats.
+  BlastSpriteBase* = 35440        ## FFA landing paint-splat sprites, keyed
+                                 ## colorIndex*BlastStages+stage for all 16
+                                 ## identity colors: 35440..35503.
+  TrenchBlastSpriteBase* = 35504  ## the trench-truncated variant of the same
+                                 ## all-color landing-splat pool:
+                                 ## 35504..35567.
   PaintBombPickupSize = 22       ## px footprint of a corner pickup orb.
   PaintBombAirSize = 16          ## px footprint of the airborne orb.
   PaintBombCarrySize = 10        ## px footprint of the carried marker.
@@ -266,11 +274,9 @@ const
     ## pit's own square (56px) instead of the open-field BlastSize (108px),
     ## so the flash reads as trapped in the pit rather than spilling over
     ## its rim.
-  BlastStages = 4                ## landing-splat fade stages across BlastFxTicks.
+  BlastStages* = 4                ## landing-splat fade stages across BlastFxTicks.
   PaintBombPickupObjectBase = 19300  ## corner pickups: 19300..19303 (four corners).
-  MedKitSpriteId = 1400          ## center med kit pickup (native size);
-                                 ## 845 collided with red blast stage 1
-                                 ## (BlastSpriteBase 844..847).
+  MedKitSpriteId = 1400          ## center med kit pickup (native size).
   MedKitSize = 26                ## px footprint of a med kit pickup.
   MedKitObjectBase = 19600       ## med kits: 19600..19603 (2 on sides maps,
                                  ## 4 on 4-team maps).
@@ -868,12 +874,27 @@ const
     ("flag auras", FlagAuraSpriteBase, 4),
     ("planted flags", PlantedFlagSpriteBase, 4),
     ("game-over icons", GameOverIconSpriteBase, 4),
+    ("FFA game-over icons", FfaGameOverIconSpriteBase, PlayerColors.len),
+    ("FFA identity badges", FfaIdentityBadgeSpriteBase,
+      PlayerColors.len * IdentityNames.len * SoldierRotations),
+    ("FFA soldiers", FfaSoldierSpriteBase,
+      PlayerColors.len * 2 * SoldierRotations),
+    ("FFA selected soldiers", FfaSelectedSoldierSpriteBase,
+      PlayerColors.len * 2 * SoldierRotations),
     ("hp pips", HpPipSpriteBase, MaxPlayers),
     ("sound ring", SoundRingSpriteId, 1),
     ("impact ring", ShotImpactSpriteId, 1),
     ("grenade statics", PaintBombPickupSpriteId, 4),
-    ("blast flashes", BlastSpriteBase, 4),
-    ("trench blasts", TrenchBlastSpriteBase, 4),
+    ("CTF red blast flashes", CtfBlastSpriteBase, BlastStages),
+    ("CTF red trench blasts", CtfTrenchBlastSpriteBase, BlastStages),
+    ("CTF blue blast flashes", CtfBlastSpriteBase + 6 * BlastStages,
+      BlastStages),
+    ("CTF blue trench blasts", CtfTrenchBlastSpriteBase + 6 * BlastStages,
+      BlastStages),
+    ("FFA blast flashes", BlastSpriteBase,
+      PlayerColors.len * BlastStages),
+    ("FFA trench blasts", TrenchBlastSpriteBase,
+      PlayerColors.len * BlastStages),
     ("tracer dots", TracerDotSpriteBase, 384),
     ("muzzle blooms", MuzzleBloomSpriteBase, 4),
     ("hit flashes", HitFlashSpriteBase, 4),
@@ -949,6 +970,7 @@ type
     ## (ShoutDwellFrames). Board-only; bots never see this. See addBoardShouts.
     active*: bool
     team*: Team
+    colorIndex*: int
     name*: string              ## shouter's anonymous slot letter, resolved
                                ## while the shout was live (the author can
                                ## depart mid-display).
@@ -1177,6 +1199,7 @@ var
 var
   boardMapCache: seq[uint8]
   boardColdMapCache: seq[uint8]
+  boardMapCacheFfa = false
     ## Process-wide caches of the boardScale× arena renders (hot + cold). The
     ## arena is fixed per process, so one native bake serves every connection —
     ## same pattern as EndzoneStripCache.
@@ -1186,10 +1209,16 @@ proc ensureBoardMaps(sim: SimServer) =
   ## mask and floor pass — see renderArenaRgbaPair). boardScale > 1 only.
   let expected =
     sim.gameMap.width * boardScale * sim.gameMap.height * boardScale * 4
-  if boardMapCache.len != expected or boardColdMapCache.len != expected:
-    let pair = renderArenaRgbaPair(sim.gameMap, boardScale)
+  if boardMapCache.len != expected or boardColdMapCache.len != expected or
+      boardMapCacheFfa != sim.config.isFfa():
+    let pair = renderArenaRgbaPair(
+      sim.gameMap,
+      boardScale,
+      withCtfPresentation = not sim.config.isFfa()
+    )
     boardMapCache = pair.hot
     boardColdMapCache = pair.cold
+    boardMapCacheFfa = sim.config.isFfa()
 
 proc boardScaledMapPixels(sim: SimServer): seq[uint8] =
   ## The NATIVE boardScale× hot arena RGBA (float wall geometry, bilinear
@@ -1501,18 +1530,25 @@ proc transportSheet(): Sprite =
     TransportSheet = readRequiredSprite(clientDataDir() / "transport.png")
   TransportSheet
 
-proc playerColorIndex(color: uint8): int =
+proc playerColorIndex*(color: uint8): int =
   ## Returns the player color slot for a palette color.
   for i in 0 ..< PlayerColors.len:
     if PlayerColors[i] == color:
       return i
   0
 
-proc playerColorName(index: int): string =
+proc playerColorName*(index: int): string =
   ## Returns the display name for one player color slot.
   if index >= 0 and index < PlayerColorNames.len:
     return PlayerColorNames[index]
   "unknown"
+
+proc shoutColorIndex(sim: SimServer, shout: Shout): int =
+  ## Resolves a shout to its owner's identity color in FFA.
+  for player in sim.players:
+    if player.address == shout.address:
+      return playerColorIndex(player.color)
+  0
 
 const SoldierSkinSpriteStride = 4 * SoldierRotations
   ## One rotation set per Team enum member (4), per skin — red/blue default-
@@ -1525,10 +1561,25 @@ proc soldierPlayerSpriteId(team: Team, skin: Skin, rot: int): int =
   PlayerSpriteBase + ord(skin) * SoldierSkinSpriteStride +
     ord(team) * SoldierRotations + rot
 
+proc soldierPlayerSpriteId*(colorIndex: int, skin: Skin, rot: int): int =
+  ## FFA player-view sprite keyed by identity color rather than team.
+  FfaSoldierSpriteBase + ord(skin) * PlayerColors.len * SoldierRotations +
+    colorIndex * SoldierRotations + rot
+
 proc selectedSoldierPlayerSpriteId(team: Team, skin: Skin, rot: int): int =
   ## Selected (outlined) soldier sprite id at aim rotation `rot`.
   SelectedPlayerSpriteBase + ord(skin) * SoldierSkinSpriteStride +
     ord(team) * SoldierRotations + rot
+
+proc selectedSoldierPlayerSpriteId*(
+  colorIndex: int,
+  skin: Skin,
+  rot: int
+): int =
+  ## FFA selected player sprite keyed by identity color.
+  FfaSelectedSoldierSpriteBase +
+    ord(skin) * PlayerColors.len * SoldierRotations +
+    colorIndex * SoldierRotations + rot
 
 # --- Articulated turret-rig sprite ids ---
 # Each family packs its dimensions into a dense LOGICAL key range; the key
@@ -1536,24 +1587,78 @@ proc selectedSoldierPlayerSpriteId(team: Team, skin: Skin, rot: int): int =
 # id — never the raw key. Signed articulation steps (leg swing, wheel caster)
 # are offset to a non-negative index. ord(seg) within a family: arms armL/armR
 # = 0/1; legs FL/FR/Rear = 0/1/2; wheels L/R/Rear = 0/1/2.
-proc rigHeadSpriteId(team: Team, skin: Skin, aimStep: int): int =
+const
+  RigFfaSpriteKeyNamespace* = 100_000
+    ## FFA identity variants live above the historical CTF rig keys.
+  RigFfaSpriteKeyStride* = 40_000
+    ## The complete historical rig range is ~36.7k keys; this stride leaves
+    ## room for every segment family without cross-color collisions.
+  RigFfaSpriteKeySpan* = RigSpraySpriteBase + 4 * RigSteps -
+    RigHeadSpriteBase
+
+static:
+  doAssert RigFfaSpriteKeySpan < RigFfaSpriteKeyStride
+  doAssert RigFfaSpriteKeyNamespace +
+      (PlayerColors.len - 1) * RigFfaSpriteKeyStride +
+      RigFfaSpriteKeySpan < DebugSpriteKeyNamespace,
+    "FFA rig key namespace overlaps debug sprite keys"
+
+proc rigFfaKey(localKey, colorIndex: int): int =
+  RigFfaSpriteKeyNamespace +
+    ((((colorIndex mod PlayerColors.len) + PlayerColors.len) mod
+      PlayerColors.len) * RigFfaSpriteKeyStride) + localKey
+
+proc rigHeadSpriteId*(team: Team, skin: Skin, aimStep: int): int =
   wireSpriteId(RigHeadSpriteBase +
     ord(skin) * 2 * RigSteps +
     ord(team) * RigSteps +
     aimStep)
 
-proc rigGunSpriteId(team: Team, aimStep: int): int =
+proc rigGunSpriteId*(team: Team, aimStep: int): int =
   wireSpriteId(RigGunSpriteBase + ord(team) * RigSteps + aimStep)
 
-proc rigSpraySpriteId(team: Team, aimStep: int): int =
+proc rigSpraySpriteId*(team: Team, aimStep: int): int =
   wireSpriteId(RigSpraySpriteBase + ord(team) * RigSteps + aimStep)
 
-proc rigArmSpriteId(team: Team, seg: RigSeg, aimStep, reach: int): int =
+proc rigHeadSpriteId*(
+  colorIndex: int,
+  skin: Skin,
+  aimStep: int
+): int =
+  wireSpriteId(rigFfaKey(
+    RigHeadSpriteBase + ord(skin) * 2 * RigSteps +
+      colorIndex * RigSteps + aimStep,
+    colorIndex
+  ))
+
+proc rigGunSpriteId*(colorIndex, aimStep: int): int =
+  ## FFA held-gun art is neutral, so every identity shares one definition per
+  ## aim pose instead of baking 16 byte-identical color variants.
+  wireSpriteId(rigFfaKey(RigGunSpriteBase + aimStep, 0))
+
+proc rigSpraySpriteId*(colorIndex, aimStep: int): int =
+  ## FFA held-spray art is neutral, so every identity shares one definition per
+  ## aim pose instead of baking 16 byte-identical color variants.
+  wireSpriteId(rigFfaKey(RigSpraySpriteBase + aimStep, 0))
+
+proc rigArmSpriteId*(team: Team, seg: RigSeg, aimStep, reach: int): int =
   ## reach 0 = tucked (idle), 1 = reaching forward (carrying).
   let armIdx = if seg == rsArmL: 0 else: 1
   wireSpriteId(
     RigArmSpriteBase + (((ord(team) * 2 + armIdx) * RigSteps + aimStep) * 2) +
       reach)
+
+proc rigArmSpriteId*(
+  colorIndex: int,
+  seg: RigSeg,
+  aimStep, reach: int
+): int =
+  let armIdx = if seg == rsArmL: 0 else: 1
+  wireSpriteId(rigFfaKey(
+    RigArmSpriteBase +
+      (((colorIndex * 2 + armIdx) * RigSteps + aimStep) * 2) + reach,
+    colorIndex
+  ))
 
 proc rigLegIdx(seg: RigSeg): int =
   case seg
@@ -1562,7 +1667,7 @@ proc rigLegIdx(seg: RigSeg): int =
   of rsLegRear: 2
   else: 0
 
-proc rigLegSpriteId(team: Team, seg: RigSeg,
+proc rigLegSpriteId*(team: Team, seg: RigSeg,
     headStep, swingStep, shortenStep: int): int =
   ## headStep 0..15; swingStep signed → 0..2·RigLegSwingSteps; shortenStep 0..RigShortenSteps.
   let
@@ -1573,6 +1678,22 @@ proc rigLegSpriteId(team: Team, seg: RigSeg,
   wireSpriteId(
     RigLegSpriteBase + (ord(team) * 3 * RigSteps * swings * shorts) + idx)
 
+proc rigLegSpriteId*(
+  colorIndex: int,
+  seg: RigSeg,
+  headStep, swingStep, shortenStep: int
+): int =
+  let
+    swings = 2 * RigLegSwingSteps + 1
+    shorts = RigShortenSteps + 1
+    sw = swingStep + RigLegSwingSteps
+    idx = ((rigLegIdx(seg) * RigSteps + headStep) * swings + sw) * shorts +
+      shortenStep
+  wireSpriteId(rigFfaKey(
+    RigLegSpriteBase + (colorIndex * 3 * RigSteps * swings * shorts) + idx,
+    colorIndex
+  ))
+
 proc rigWheelIdx(seg: RigSeg): int =
   case seg
   of rsWheelL: 0
@@ -1580,7 +1701,7 @@ proc rigWheelIdx(seg: RigSeg): int =
   of rsWheelRear: 2
   else: 0
 
-proc rigWheelSpriteId(team: Team, seg: RigSeg, headStep, casterStep: int): int =
+proc rigWheelSpriteId*(team: Team, seg: RigSeg, headStep, casterStep: int): int =
   ## headStep 0..15; casterStep signed → 0..2·RigCasterSteps.
   let
     casters = 2 * RigCasterSteps + 1
@@ -1588,6 +1709,39 @@ proc rigWheelSpriteId(team: Team, seg: RigSeg, headStep, casterStep: int): int =
     idx = (rigWheelIdx(seg) * RigSteps + headStep) * casters + cs
   wireSpriteId(
     RigWheelSpriteBase + (ord(team) * 3 * RigSteps * casters) + idx)
+
+proc rigWheelSpriteId*(
+  colorIndex: int,
+  seg: RigSeg,
+  headStep, casterStep: int
+): int =
+  let
+    casters = 2 * RigCasterSteps + 1
+    cs = casterStep + RigCasterSteps
+    idx = (rigWheelIdx(seg) * RigSteps + headStep) * casters + cs
+  wireSpriteId(rigFfaKey(
+    RigWheelSpriteBase + (colorIndex * 3 * RigSteps * casters) + idx,
+    colorIndex
+  ))
+
+proc dynamicRigPoseCount*(): int =
+  ## Returns the number of distinct rig logical keys baked in this process.
+  ## This excludes debug overlays so a full replay can report actual pose
+  ## headroom against the dynamic wire window.
+  for key in dynamicWireSpriteIds.keys:
+    if (key >= RigHeadSpriteBase and key < RigSpraySpriteBase + 4 * RigSteps) or
+        (key >= RigFfaSpriteKeyNamespace and
+         key < RigFfaSpriteKeyNamespace +
+           PlayerColors.len * RigFfaSpriteKeyStride):
+      inc result
+
+proc blastSpriteId*(colorIndex, stage: int): int =
+  ## Returns the all-identity-color open-field grenade blast sprite id.
+  BlastSpriteBase + colorIndex * BlastStages + stage
+
+proc trenchBlastSpriteId*(colorIndex, stage: int): int =
+  ## Returns the all-identity-color trench grenade blast sprite id.
+  TrenchBlastSpriteBase + colorIndex * BlastStages + stage
 
 proc corpseSoldierSpriteId(team: Team, skin: Skin, rot: int): int =
   ## Sprite id for a dead soldier (grey corpse) at rotation `rot` (the
@@ -1936,8 +2090,14 @@ proc identityBadgeSpriteId(team: Team, identityIndex, rot: int): int =
     (ord(team) * IdentityNames.len + identityIndex) * SoldierRotations +
     ((rot mod SoldierRotations) + SoldierRotations) mod SoldierRotations
 
-proc buildIdentityBadgeSprite(
-  team: Team,
+proc identityBadgeSpriteId*(colorIndex, identityIndex, rot: int): int =
+  ## FFA identity badge keyed by player color and identity glyph.
+  FfaIdentityBadgeSpriteBase +
+    (colorIndex * IdentityNames.len + identityIndex) * SoldierRotations +
+    ((rot mod SoldierRotations) + SoldierRotations) mod SoldierRotations
+
+proc buildIdentityBadgeSpriteWithColor(
+  body: uint8,
   identityIndex, rot: int,
   scale = 1
 ): seq[uint8] {.measure.} =
@@ -1951,7 +2111,7 @@ proc buildIdentityBadgeSprite(
   ## floating upright over a body that rotated out from under it.
   let
     size = IdentityBadgeSize * scale
-    base = Palette[teamColor(team) and 0x0f]
+    base = Palette[body and 0x0f]
     c = float(size - 1) / 2
   result = newRgbaPixels(size, size)
   for y in 0 ..< size:
@@ -2032,6 +2192,23 @@ proc buildIdentityBadgeSprite(
         result[i + ch] = uint8(clamp(
           (srcRgb[ch] + dstPm * keep div 255) * 255 div outA, 0, 255))
       result[i + 3] = uint8(outA)
+
+proc buildIdentityBadgeSprite(
+  team: Team,
+  identityIndex, rot: int,
+  scale = 1
+): seq[uint8] {.measure.} =
+  buildIdentityBadgeSpriteWithColor(
+    teamColor(team), identityIndex, rot, scale)
+
+proc buildIdentityBadgeSprite(
+  colorIndex, identityIndex, rot: int,
+  scale = 1
+): seq[uint8] {.measure.} =
+  let normalized = ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod
+    PlayerColors.len
+  buildIdentityBadgeSpriteWithColor(
+    PlayerColors[normalized], identityIndex, rot, scale)
 
 proc buildSoundRingSprite(): seq[uint8] {.measure.} =
   ## Builds the semi-transparent white "sound" ring: a faint filled circle
@@ -3158,9 +3335,14 @@ proc chunkSpritePacket*(packet: seq[uint8], maxBytes: int): seq[seq[uint8]] =
     inc offset
     case messageType
     of 0x01:  # sprite: id,w,h (6) + clen (4) + pixels + llen (2) + label
-      let clen = packet.readU32(offset + 6)
+      # Avoid readU32 here: its openArray overload copies the entire packet to
+      # a string on every call, turning large FFA init packets into O(n²) work.
+      let clen = packet[offset + 6].int or
+        (packet[offset + 7].int shl 8) or
+        (packet[offset + 8].int shl 16) or
+        (packet[offset + 9].int shl 24)
       offset += 10 + clen
-      let llen = packet.readU16(offset)
+      let llen = packet[offset].int or (packet[offset + 1].int shl 8)
       offset += 2 + llen
     of 0x02: offset += 11   # object
     of 0x03: offset += 2    # delete object
@@ -3431,6 +3613,8 @@ proc addMapMarkers(
   ## emitted for every team on the same absence-means-old-engine rule.
   var index = 0
   for room in sim.rooms:
+    if sim.config.isFfa() and room.name != "Center":
+      continue
     packet.addMapMarker(
       spriteDefs,
       index,
@@ -3441,88 +3625,108 @@ proc addMapMarkers(
       "Room " & room.name
     )
     inc index
-  packet.addMapMarker(
-    spriteDefs,
-    index,
-    0,
-    0,
-    1,
-    1,
-    labelGameParams(
-      sim.gameMap.teamCount(),
-      sim.gameMap.width,
-      sim.gameMap.height
-    )
-  )
-  inc index
-  for team in sim.gameMap.teams():
-    let zone = sim.gameMap.captureZone(team)
-    if zone.diag:
-      ## The `corner` contract promises the threshold diagonal joins the two
-      ## box corners adjacent to the map corner — true exactly when the L1
-      ## limit was not clamped by the far map edges. HomeDepth's bounds keep
-      ## anchors well inside the clamp on every map class; hold that here so
-      ## a retune cannot silently bend the stated geometry.
-      doAssert zone.diagLimit == zone.xHi - zone.xLo and
-          zone.diagLimit == zone.yHi - zone.yLo,
-        "clamped diagonal capture zone breaks the corner-marker contract"
+  if not sim.config.isFfa():
     packet.addMapMarker(
       spriteDefs,
       index,
-      zone.xLo,
-      zone.yLo,
+      0,
+      0,
       1,
       1,
-      labelEndzone(
-        teamText(team),
-        sim.gameMap.endzoneShapeToken(zone),
+      labelGameParams(
+        sim.gameMap.teamCount(),
+        sim.gameMap.width,
+        sim.gameMap.height
+      )
+    )
+    inc index
+  if sim.config.isFfa():
+    let
+      (cx, cy) = ffaRingCenter()
+      startRadius = ffaRingStartRadius()
+      floorRadius = ffaRingFloorRadius(sim.config)
+    packet.addMapMarker(
+      spriteDefs,
+      index,
+      0,
+      0,
+      1,
+      1,
+      labelRing(
+        cx,
+        cy,
+        startRadius,
+        floorRadius,
+        sim.config.ringShrinkSec,
+        sim.config.ringDamageTicks
+      )
+    )
+    inc index
+  if not sim.config.isFfa():
+    for team in sim.gameMap.teams():
+      let zone = sim.gameMap.captureZone(team)
+      if zone.diag:
+        doAssert zone.diagLimit == zone.xHi - zone.xLo and
+            zone.diagLimit == zone.yHi - zone.yLo,
+          "clamped diagonal capture zone breaks the corner-marker contract"
+      packet.addMapMarker(
+        spriteDefs,
+        index,
         zone.xLo,
         zone.yLo,
-        zone.xHi,
-        zone.yHi
+        1,
+        1,
+        labelEndzone(
+          teamText(team),
+          sim.gameMap.endzoneShapeToken(zone),
+          zone.xLo,
+          zone.yLo,
+          zone.xHi,
+          zone.yHi
+        )
       )
-    )
-    inc index
-  for team in sim.gameMap.teams():
-    # The deltas are resolved HERE, mirroring broadcast.nim's teamStateJson —
-    # the label states what the sim actually plays, never a re-derivation.
-    packet.addMapMarker(
-      spriteDefs,
-      index,
-      0,
-      0,
-      1,
-      1,
-      labelHandicap(
-        teamText(team),
-        sim.config.handicaps[team],
-        sim.config.hitPointsFor(team),
-        sim.config.livesFor(team),
-        sim.config.maxSpeedFor(team) * 100 div max(1, sim.config.maxSpeed),
-        sim.config.missPermilleFor(team) div 10
+      inc index
+  if not sim.config.isFfa():
+    for team in sim.gameMap.teams():
+      # The deltas are resolved HERE, mirroring broadcast.nim's teamStateJson —
+      # the label states what the sim actually plays, never a re-derivation.
+      packet.addMapMarker(
+        spriteDefs,
+        index,
+        0,
+        0,
+        1,
+        1,
+        labelHandicap(
+          teamText(team),
+          sim.config.handicaps[team],
+          sim.config.hitPointsFor(team),
+          sim.config.livesFor(team),
+          sim.config.maxSpeedFor(team) * 100 div max(1, sim.config.maxSpeed),
+          sim.config.missPermilleFor(team) div 10
+        )
       )
-    )
-    inc index
-  for team in sim.gameMap.teams():
-    packet.addMapMarker(
-      spriteDefs,
-      index,
-      0,
-      0,
-      1,
-      1,
-      labelPerks(
-        teamText(team),
-        sim.config.perkGroupTexts(team),
-        sim.config.perkMods.armorHp,
-        sim.config.perkMods.scopeAim,
-        sim.config.perkMods.grenadeRange,
-        sim.config.perkMods.thrusterSpeed,
-        sim.config.perkMods.luckChance,
-        sim.config.perkMods.luckDamage
+      inc index
+    for team in sim.gameMap.teams():
+      packet.addMapMarker(
+        spriteDefs,
+        index,
+        0,
+        0,
+        1,
+        1,
+        labelPerks(
+          teamText(team),
+          sim.config.perkGroupTexts(team),
+          sim.config.perkMods.armorHp,
+          sim.config.perkMods.scopeAim,
+          sim.config.perkMods.grenadeRange,
+          sim.config.perkMods.thrusterSpeed,
+          sim.config.perkMods.luckChance,
+          sim.config.perkMods.luckDamage
+        )
       )
-    )
-    inc index
+      inc index
   ## One stated bounding-box marker per trench (see LabelPrefixTrench):
   ## empty on the hand-authored default arena and on every 4-team map
   ## (trenches are a 2-team generated-map feature — arena.nim never fills
@@ -3739,9 +3943,9 @@ proc textLabel(lines: openArray[string]): string =
       result.add("\n")
     result.add(line)
 
-proc buildSmoothShoutBubble(
+proc buildSmoothShoutBubbleWithColor(
   game: SimServer,
-  team: Team,
+  body: uint8,
   text: string,
   k: int,
   native: int
@@ -3755,7 +3959,7 @@ proc buildSmoothShoutBubble(
   ## Baked once per (team, text, scales): the board rebuilds every live
   ## bubble each rendered frame, and a zoomed canvas is k² the 1× area —
   ## same rationale (and same churn cap) as smoothTextCache.
-  let cacheKey = $ord(team) & "," & $k & "," & $native & "\x1f" & text
+  let cacheKey = $body & "," & $k & "," & $native & "\x1f" & text
   if smoothShoutBubbleCache.hasKey(cacheKey):
     return smoothShoutBubbleCache[cacheKey]
   let
@@ -3774,7 +3978,7 @@ proc buildSmoothShoutBubble(
     logicalH = max(1, (outH + native - 1) div native)
     canvasW = logicalW * native
     canvasH = logicalH * native
-    edge = Palette[teamColor(team) and 0x0f]
+    edge = Palette[body and 0x0f]
     edgeColor = color(
       float32(edge.r) / 255, float32(edge.g) / 255, float32(edge.b) / 255, 1)
     paperColor = color(1, 241 / 255, 232 / 255, 240 / 255)
@@ -3813,9 +4017,17 @@ proc buildSmoothShoutBubble(
     smoothShoutBubbleCache.clear()
   smoothShoutBubbleCache[cacheKey] = result
 
-proc buildShoutBubble*(
+proc buildSmoothShoutBubble(
   game: SimServer,
   team: Team,
+  text: string,
+  k, native: int
+): tuple[width, height: int, pixels: seq[uint8]] =
+  buildSmoothShoutBubbleWithColor(game, teamColor(team), text, k, native)
+
+proc buildShoutBubbleWithColor(
+  game: SimServer,
+  body: uint8,
   text: string,
   zoom = 1
 ): tuple[width, height: int, pixels: seq[uint8]] {.measure.} =
@@ -3829,7 +4041,8 @@ proc buildShoutBubble*(
   ## oversize-board readability affordance — see shoutBubbleZoomFor); any
   ## zoomed bubble uses the vector variant so the enlargement stays crisp.
   if boardScale > 1 or zoom > 1:
-    return game.buildSmoothShoutBubble(team, text, boardScale * zoom, boardScale)
+    return game.buildSmoothShoutBubbleWithColor(
+      body, text, boardScale * zoom, boardScale)
   let
     font = game.shoutFont
     # Bold widens each glyph's advance by 1 and overdraws 1px past the last
@@ -3840,7 +4053,7 @@ proc buildShoutBubble*(
     pillH = font.height + 2 * ShoutPadY
     width = pillW
     height = pillH + ShoutTailH
-    edge = Palette[teamColor(team) and 0x0f]  # team-colored outline
+    edge = Palette[body and 0x0f]  # owner-colored outline
     tailCx = pillW div 2                       # tail centered under the pill
   result.width = width
   result.height = height
@@ -3906,7 +4119,7 @@ proc addTeamScoreboard(
   ## Adds the team kills/deaths scoreboard above the field: red on the left,
   ## blue on the right, each in its team color. Playing only — interstitial
   ## screens put their own title in the same top-center spot.
-  if sim.phase != Playing:
+  if sim.phase != Playing or sim.config.isFfa():
     return
   var kills, deaths: array[Team, int]
   for p in sim.players:
@@ -3978,6 +4191,32 @@ proc teamTitle(team: Team): string =
   ## Returns the scoreboard/game-over title for a team.
   teamText(team).toUpperAscii() & " WINS"
 
+proc ffaTitle(sim: SimServer): string =
+  ## Returns the identity title for the authoritative FFA winner slot.
+  for player in sim.players:
+    if player.joinOrder == sim.ffaWinnerSlot:
+      return playerColorName(playerColorIndex(player.color)).toUpperAscii() &
+        " WINS"
+  "UNKNOWN WINS"
+
+proc ffaGameOverTitle*(sim: SimServer): string =
+  ## Testable FFA game-over title; CTF continues to use teamTitle.
+  sim.ffaTitle()
+
+proc ffaScoreboardHeaderText*(sim: SimServer): string =
+  ## Testable honest FFA spectator header: no team lives/pips.
+  var alive = 0
+  for player in sim.players:
+    if player.alive:
+      inc alive
+  let
+    remaining = max(0, sim.effectiveMaxTicks() - sim.gameTicksElapsed())
+    seconds = remaining div TargetFps
+    minutes = seconds div 60
+    secs = seconds mod 60
+    timeText = $minutes & ":" & (if secs < 10: "0" else: "") & $secs
+  "ALIVE " & $alive & "  TIME " & timeText
+
 proc interstitialTextItems(
   sim: SimServer,
   playerIndex: int
@@ -4013,6 +4252,8 @@ proc interstitialTextItems(
     let title =
       if sim.isDraw:
         "DRAW"
+      elif sim.config.isFfa():
+        sim.ffaTitle()
       else:
         teamTitle(sim.winner)
     let
@@ -4032,7 +4273,11 @@ proc interstitialTextItems(
         baseX = min(col, 1) * colW
         textX = baseX + textOffsetX
         textY = startY + row * rowH + (rowH - 6) div 2
-        tag = teamText(p.team).toUpperAscii()
+        tag =
+          if sim.config.isFfa():
+            playerColorName(playerColorIndex(p.color)).toUpperAscii()
+          else:
+            teamText(p.team).toUpperAscii()
       result.addTextItem(textX, textY, [tag], struck = (p.lives <= 0 and not p.alive))
 
 proc addProtocolTextSprites(
@@ -4074,6 +4319,10 @@ proc gameOverIconSpriteId(team: Team): int =
   ## Compact roster-chip soldier sprite id for the game-over list.
   GameOverIconSpriteBase + ord(team)
 
+proc gameOverIconSpriteId(colorIndex: int): int =
+  ## FFA game-over roster chip keyed by player identity color.
+  FfaGameOverIconSpriteBase + colorIndex
+
 proc addProtocolGameOverActorSprites(
   sim: SimServer,
   spriteDefs: var seq[SpriteDefinition],
@@ -4084,15 +4333,26 @@ proc addProtocolGameOverActorSprites(
   ## Adds separate player sprites for the game over interstitial.
   if sim.phase != GameOver:
     return
-  for team in sim.teams():
-    packet.addSpriteChanged(
-      spriteDefs,
-      gameOverIconSpriteId(team),
-      GameOverIconSize,
-      GameOverIconSize,
-      soldierIconPixels(team, GameOverIconSize),
-      "roster " & teamText(team)
-    )
+  if sim.config.isFfa():
+    for colorIndex in 0 ..< PlayerColors.len:
+      packet.addSpriteChanged(
+        spriteDefs,
+        gameOverIconSpriteId(colorIndex),
+        GameOverIconSize,
+        GameOverIconSize,
+        soldierIconPixelsForColor(colorIndex, GameOverIconSize),
+        "roster " & playerColorName(colorIndex)
+      )
+  else:
+    for team in sim.teams():
+      packet.addSpriteChanged(
+        spriteDefs,
+        gameOverIconSpriteId(team),
+        GameOverIconSize,
+        GameOverIconSize,
+        soldierIconPixels(team, GameOverIconSize),
+        "roster " & teamText(team)
+      )
   let
     rowH = 14
     rowsPerCol = 8
@@ -4116,7 +4376,10 @@ proc addProtocolGameOverActorSprites(
       iconY - 1,
       30000,
       layer,
-      gameOverIconSpriteId(player.team)
+      (if sim.config.isFfa():
+         gameOverIconSpriteId(playerColorIndex(player.color))
+       else:
+         gameOverIconSpriteId(player.team))
     )
 
 proc addProtocolInterstitialActorSprites(
@@ -4251,6 +4514,8 @@ proc addFlagSprites(
   ## Adds every active team's banner sprites (carried + big planted) plus
   ## carrier halos. The builders raster at the emission scale, so pass
   ## native = boardScale.
+  if sim.config.isFfa():
+    return
   for team in sim.teams():
     packet.addBoardSpriteChanged(
       spriteDefs,
@@ -4341,6 +4606,44 @@ proc soldierCorpse(pixels: seq[uint8]): seq[uint8] =
     result[i * 4 + 2] = grey
     result[i * 4 + 3] = uint8(a.int * 140 div 255)
 
+proc emitPlayerActorSprite(
+  spriteDefs: var seq[SpriteDefinition],
+  packet: var seq[uint8],
+  selected: bool,
+  color: string,
+  spriteId, corpseId, selectedId: int,
+  pixels: seq[uint8],
+  side: string
+) =
+  packet.addBoardSpriteChanged(
+    spriteDefs,
+    spriteId,
+    SoldierCanvas,
+    SoldierCanvas,
+    pixels,
+    labelPlayer(color, side),
+    native = boardScale
+  )
+  packet.addBoardSpriteChanged(
+    spriteDefs,
+    corpseId,
+    SoldierCanvas,
+    SoldierCanvas,
+    soldierCorpse(pixels),
+    labelCorpse(color, side),
+    native = boardScale
+  )
+  if selected:
+    packet.addBoardSpriteChanged(
+      spriteDefs,
+      selectedId,
+      SoldierCanvas,
+      SoldierCanvas,
+      soldierOutlined(pixels, 8'u8, boardScale),
+      labelSelectedPlayer(color, side),
+      native = boardScale
+    )
+
 proc addPlayerActorSprites(
   sim: SimServer,
   spriteDefs: var seq[SpriteDefinition],
@@ -4353,46 +4656,41 @@ proc addPlayerActorSprites(
   for skin in Skin:
     if skin notin usedSkins:
       continue
-    for team in sim.teams():
-      let color = teamText(team)
-      for rot in 0 ..< SoldierRotations:
-        let
-          # Raster natively at the emission scale: the ~120px painted masters
-          # carry real detail the 1× 34px body footprint throws away.
-          pixels = soldierRotPixels(team, skin, rot, boardScale)
-          side = if soldierFacingRight(rot): LabelSideRight else: LabelSideLeft
-        # The HD sprite keeps its full 16-step rotation for the VISUAL; the label
-        # stays the documented `player <color> <side>` (RULES.md) so exact-match
-        # label readers keep working. Distinct sprite ids may share a side label
-        # — the client keys sprites by id, not label, so that is harmless.
-        packet.addBoardSpriteChanged(
-          spriteDefs,
-          soldierPlayerSpriteId(team, skin, rot),
-          SoldierCanvas,
-          SoldierCanvas,
-          pixels,
-          labelPlayer(color, side),
-          native = boardScale
-        )
-        # Corpse and selection variants derive from the same rendered pixels.
-        packet.addBoardSpriteChanged(
-          spriteDefs,
-          corpseSoldierSpriteId(team, skin, rot),
-          SoldierCanvas,
-          SoldierCanvas,
-          soldierCorpse(pixels),
-          labelCorpse(color, side),
-          native = boardScale
-        )
-        if selected:
-          packet.addBoardSpriteChanged(
+    if sim.config.isFfa():
+      for colorIndex in 0 ..< PlayerColors.len:
+        let color = playerColorName(colorIndex)
+        for rot in 0 ..< SoldierRotations:
+          let
+            pixels = soldierRotPixelsForColor(colorIndex, skin, rot, boardScale)
+            side = if soldierFacingRight(rot): LabelSideRight else: LabelSideLeft
+          emitPlayerActorSprite(
             spriteDefs,
+            packet,
+            selected,
+            color,
+            soldierPlayerSpriteId(colorIndex, skin, rot),
+            corpseSoldierSpriteId(Red, skin, rot),
+            selectedSoldierPlayerSpriteId(colorIndex, skin, rot),
+            pixels,
+            side
+          )
+    else:
+      for team in sim.teams():
+        let color = teamText(team)
+        for rot in 0 ..< SoldierRotations:
+          let
+            pixels = soldierRotPixels(team, skin, rot, boardScale)
+            side = if soldierFacingRight(rot): LabelSideRight else: LabelSideLeft
+          emitPlayerActorSprite(
+            spriteDefs,
+            packet,
+            selected,
+            color,
+            soldierPlayerSpriteId(team, skin, rot),
+            corpseSoldierSpriteId(team, skin, rot),
             selectedSoldierPlayerSpriteId(team, skin, rot),
-            SoldierCanvas,
-            SoldierCanvas,
-            soldierOutlined(pixels, 8'u8, boardScale),
-            labelSelectedPlayer(color, side),
-            native = boardScale
+            pixels,
+            side
           )
 
 proc buildSpriteProtocolInit(
@@ -4545,13 +4843,14 @@ proc scoreboardJoinOrderAt(
   ## Returns the join order for a clicked scoreboard name.
   if layer != TopLeftLayerId:
     return -1
-  let row = (mouseY - ScoreboardY) div ScoreboardRowHeight
+  let rowsY = if sim.config.isFfa(): FfaScoreboardRowsY else: ScoreboardY
+  let row = (mouseY - rowsY) div ScoreboardRowHeight
   if row < 0 or row >= sim.players.len:
     return -1
   let
     player = sim.players[row]
     name = player.scoreboardName()
-    rowY = ScoreboardY + row * ScoreboardRowHeight
+    rowY = rowsY + row * ScoreboardRowHeight
     nameWidth = sim.asciiSprites.textWidth(name)
   if mouseY < rowY or mouseY >= rowY + TextLineHeight:
     return -1
@@ -4579,9 +4878,32 @@ proc addScoreboard(
   packet: var seq[uint8],
   selectedJoinOrder: int
 ) {.measure.} =
-  ## Adds the top-left player score picker (per-team lives).
+  ## Adds the top-left player roster and mode-appropriate match header.
   packet.addLayer(TopLeftLayerId, TopLeftLayerType, UiLayerFlag)
   packet.addViewport(TopLeftLayerId, ScoreboardWidth, ScoreboardHeight)
+  if sim.config.isFfa():
+    let
+      header = sim.ffaScoreboardHeaderText()
+      text = sim.buildSpriteProtocolTextSprite([header], ScoreboardTextColor)
+      spriteId = scoreboardTextSpriteId(FfaScoreboardHeaderRow)
+      objectId = scoreboardTextObjectId(FfaScoreboardHeaderRow)
+    currentIds.add(objectId)
+    packet.addSpriteChanged(
+      spriteDefs,
+      spriteId,
+      text.width,
+      text.height,
+      text.pixels,
+      "ffa header " & header
+    )
+    packet.addBoardObject(
+      objectId,
+      ScoreboardTextX,
+      ScoreboardY,
+      0,
+      TopLeftLayerId,
+      spriteId
+    )
   for i in 0 ..< sim.players.len:
     let
       player = sim.players[i]
@@ -4590,7 +4912,8 @@ proc addScoreboard(
       pipObjectId = scoreboardPipObjectId(i)
       textSpriteId = scoreboardTextSpriteId(i)
       textObjectId = scoreboardTextObjectId(i)
-      rowY = ScoreboardY + i * ScoreboardRowHeight
+      rowY = (if sim.config.isFfa(): FfaScoreboardRowsY else: ScoreboardY) +
+        i * ScoreboardRowHeight
       color =
         if player.joinOrder == selectedJoinOrder:
           ScoreboardSelectedTextColor
@@ -4613,7 +4936,9 @@ proc addScoreboard(
     packet.addBoardObject(
       pipObjectId,
       ScoreboardPipX,
-      ScoreboardPipY + i * ScoreboardRowHeight,
+      (if sim.config.isFfa(): FfaScoreboardRowsY else: ScoreboardPipY) +
+        (if sim.config.isFfa(): ScoreboardPipY - ScoreboardY else: 0) +
+        i * ScoreboardRowHeight,
       0,
       TopLeftLayerId,
       pipSpriteId
@@ -4663,13 +4988,11 @@ const
 proc blitNameFlag(
   target: var seq[uint8],
   targetWidth, targetHeight, baseX, baseY: int,
-  team: Team
+  body: uint8
 ) =
-  ## Blits the compact team-colored flag marker (pole + cloth + 1px dark
-  ## outline) into a name sprite at (baseX, baseY). The outline lets it read on
-  ## any floor, matching the board banner.
+  ## Blits the compact identity-colored marker (pole + cloth + 1px dark
+  ## outline) into a name sprite at (baseX, baseY).
   let
-    body = teamColor(team)
     h = TextLineHeight
   var kind = newSeq[uint8](NameFlagW * h)  # 0 empty, 1 pole, 2 cloth
   proc put(x, y: int, k: uint8) =
@@ -4692,6 +5015,14 @@ proc blitNameFlag(
       else:
         if solid(x - 1, y) or solid(x + 1, y) or solid(x, y - 1) or solid(x, y + 1):
           target.putTextSpritePixel(targetWidth, targetHeight, px, py, OutlineColor)
+
+proc blitNameFlag(
+  target: var seq[uint8],
+  targetWidth, targetHeight, baseX, baseY: int,
+  team: Team
+) =
+  ## CTF compatibility wrapper: the marker remains team-colored.
+  target.blitNameFlag(targetWidth, targetHeight, baseX, baseY, teamColor(team))
 
 proc buildCarrierNameSprite(
   sim: SimServer,
@@ -4718,7 +5049,13 @@ proc buildCarrierNameSprite(
     result.pixels.blitRgbaBuffer(result.width * k, result.height * k,
       nameSpr.pixels, nameSpr.width * k, nameSpr.height * k, 0, 0)
     var chip = newRgbaPixels(NameFlagW, TextLineHeight)
-    chip.blitNameFlag(NameFlagW, TextLineHeight, 0, 0, Team(flagTeamOrd))
+    chip.blitNameFlag(
+      NameFlagW,
+      TextLineHeight,
+      0,
+      0,
+      (if sim.config.isFfa(): player.color else: teamColor(Team(flagTeamOrd)))
+    )
     result.pixels.blitRgbaBuffer(result.width * k, result.height * k,
       scaleSpritePixels(chip, NameFlagW, TextLineHeight, k),
       NameFlagW * k, TextLineHeight * k, (nameSpr.width + gap) * k, 0)
@@ -4729,8 +5066,13 @@ proc buildCarrierNameSprite(
   result.pixels = newRgbaPixels(result.width, result.height)
   sim.blitSmallText(result.pixels, result.width, result.height, name, 0, 0,
     PlayerNameColor)
-  result.pixels.blitNameFlag(result.width, result.height, nameW + gap, 0,
-    Team(flagTeamOrd))
+  result.pixels.blitNameFlag(
+    result.width,
+    result.height,
+    nameW + gap,
+    0,
+    (if sim.config.isFfa(): player.color else: teamColor(Team(flagTeamOrd)))
+  )
 
 proc spritePlayerX(player: Player): int =
   ## Returns the global viewer x position for a player sprite: the soldier
@@ -5514,9 +5856,15 @@ proc addGrenades(
         stage = clamp(age * BlastStages div BlastFxTicks, 0, BlastStages - 1)
         colorIndex = playerColorIndex(blast.color)
         size = if blast.trenchLanding: TrenchBlastSize else: BlastSize
-        spriteBase =
-          if blast.trenchLanding: TrenchBlastSpriteBase else: BlastSpriteBase
-        spriteId = spriteBase + colorIndex * BlastStages + stage
+        spriteId =
+          if sim.config.isFfa():
+            if blast.trenchLanding:
+              trenchBlastSpriteId(colorIndex, stage)
+            else:
+              blastSpriteId(colorIndex, stage)
+          else:
+            (if blast.trenchLanding: CtfTrenchBlastSpriteBase
+             else: CtfBlastSpriteBase) + colorIndex * BlastStages + stage
       if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
         packet.addBoardSpriteChanged(
           spriteDefs, spriteId, size, size,
@@ -5757,6 +6105,26 @@ proc shoutOffset(shout: Shout): (int, int) =
   (int(h mod span) - SoundRingJitter,
     int((h shr 16) mod span) - SoundRingJitter)
 
+proc buildShoutBubble*(
+  game: SimServer,
+  team: Team,
+  text: string,
+  zoom = 1
+): tuple[width, height: int, pixels: seq[uint8]] {.measure.} =
+  game.buildShoutBubbleWithColor(teamColor(team), text, zoom)
+
+proc buildShoutBubbleForColor*(
+  game: SimServer,
+  colorIndex: int,
+  text: string,
+  zoom = 1
+): tuple[width, height: int, pixels: seq[uint8]] {.measure.} =
+  game.buildShoutBubbleWithColor(
+    PlayerColors[((colorIndex mod PlayerColors.len) + PlayerColors.len) mod
+      PlayerColors.len],
+    text,
+    zoom)
+
 proc addShouts(
   sim: SimServer,
   spriteDefs: var seq[SpriteDefinition],
@@ -5822,7 +6190,12 @@ proc addShouts(
       # overflow shout, like the old first-ShoutMaxCount cap did.
       continue
     let
-      bubble = sim.buildShoutBubble(shout.team, shout.text)
+      colorIndex = sim.shoutColorIndex(shout)
+      bubble =
+        if sim.config.isFfa():
+          sim.buildShoutBubbleForColor(colorIndex, shout.text)
+        else:
+          sim.buildShoutBubble(shout.team, shout.text)
       spriteId = ShoutSpriteBase + slot
       objectId = ShoutObjectBase + slot
     packet.addBoardSpriteChanged(
@@ -5832,7 +6205,9 @@ proc addShouts(
       bubble.height,
       bubble.pixels,
       labelShout(
-        teamText(shout.team), sim.shoutIdentityName(shout), shout.text),
+        (if sim.config.isFfa(): playerColorName(colorIndex)
+         else: teamText(shout.team)),
+        sim.shoutIdentityName(shout), shout.text),
       native = boardScale
     )
     currentIds.add(objectId)
@@ -5921,6 +6296,7 @@ proc addBoardShouts(
       state.shoutLinger[slot] = ShoutLinger(
         active: true,
         team: shout.team,
+        colorIndex: sim.shoutColorIndex(shout),
         name: sim.shoutIdentityName(shout),
         text: shout.text,
         frames: 0,
@@ -5932,6 +6308,7 @@ proc addBoardShouts(
     elif state.shoutLinger[slot].text != shout.text and
         state.shoutLinger[slot].frames >= ShoutDwellFrames:
       state.shoutLinger[slot].team = shout.team
+      state.shoutLinger[slot].colorIndex = sim.shoutColorIndex(shout)
       state.shoutLinger[slot].name = sim.shoutIdentityName(shout)
       state.shoutLinger[slot].text = shout.text
       state.shoutLinger[slot].frames = 0
@@ -5955,7 +6332,11 @@ proc addBoardShouts(
         break
     let
       linger = state.shoutLinger[slot]
-      bubble = sim.buildShoutBubble(linger.team, linger.text, zoom)
+      bubble =
+        if sim.config.isFfa():
+          sim.buildShoutBubbleForColor(linger.colorIndex, linger.text, zoom)
+        else:
+          sim.buildShoutBubble(linger.team, linger.text, zoom)
       spriteId = ShoutSpriteBase + slot
       objectId = ShoutObjectBase + slot
     packet.addBoardSpriteChanged(
@@ -5964,7 +6345,11 @@ proc addBoardShouts(
       bubble.width,
       bubble.height,
       bubble.pixels,
-      labelShout(teamText(linger.team), linger.name, linger.text),
+      labelShout(
+        (if sim.config.isFfa(): playerColorName(linger.colorIndex)
+         else: teamText(linger.team)),
+        linger.name,
+        linger.text),
       native = boardScale
     )
     currentIds.add(objectId)
@@ -6068,12 +6453,19 @@ proc addIdentityBadges(
       rot =
         if onBoard: soldierRotIndex(player.aimBrads)
         else: SoldierRotations * 3 div 4
-      spriteId = identityBadgeSpriteId(player.team, identityIndex, rot)
+      spriteId =
+        if sim.config.isFfa():
+          identityBadgeSpriteId(playerColorIndex(player.color), identityIndex, rot)
+        else:
+          identityBadgeSpriteId(player.team, identityIndex, rot)
     # labelIdentity owns the ordering invariant (flags in fixed order, weapon
     # token always LAST and always present, so observers never infer a weapon
     # from absence).
     let label = labelIdentity(
-      teamText(player.team),
+      (if sim.config.isFfa():
+         playerColorName(playerColorIndex(player.color))
+       else:
+         teamText(player.team)),
       IdentityNames[identityIndex],
       shield = player.hasShield,
       nade = player.hasGrenade,
@@ -6089,7 +6481,12 @@ proc addIdentityBadges(
         spriteId,
         IdentityBadgeSize,
         IdentityBadgeSize,
-        buildIdentityBadgeSprite(player.team, identityIndex, rot, boardScale),
+        (if sim.config.isFfa():
+           buildIdentityBadgeSprite(
+             playerColorIndex(player.color), identityIndex, rot, boardScale)
+         else:
+           buildIdentityBadgeSprite(
+             player.team, identityIndex, rot, boardScale)),
         label,
         native = boardScale
       )
@@ -6469,7 +6866,12 @@ proc buildSpriteProtocolPlayerUpdates*(
       # teammate, corpse — renders with FUZZED aim (fuzzedAimBrads): exact
       # aim is never readable off another bot. The self marker is exact.
       let fuzzedRot = soldierRotIndex(sim.fuzzedAimBrads(i))
-      var spriteId = soldierPlayerSpriteId(other.team, other.skin, fuzzedRot)
+      let otherColorIndex = playerColorIndex(other.color)
+      var spriteId =
+        if sim.config.isFfa():
+          soldierPlayerSpriteId(otherColorIndex, other.skin, fuzzedRot)
+        else:
+          soldierPlayerSpriteId(other.team, other.skin, fuzzedRot)
       if not other.alive:
         # A body (ghost view only): grey corpse sprite + `corpse <color> <side>`
         # so it never reads as a live soldier to a label-scanning policy.
@@ -6489,11 +6891,19 @@ proc buildSpriteProtocolPlayerUpdates*(
           spriteId,
           SoldierCanvas,
           SoldierCanvas,
-          soldierOutlined(soldierRotPixels(other.team, other.skin, rot), 2'u8),
+          soldierOutlined(
+            (if sim.config.isFfa():
+               soldierRotPixelsForColor(otherColorIndex, other.skin, rot)
+             else:
+               soldierRotPixels(other.team, other.skin, rot)),
+            2'u8),
           # Documented self marker (RULES.md): `self <color> <side>`, only drawn
           # while alive. Side follows the aim exactly as the sim's flipH does.
           labelSelf(
-            teamText(other.team),
+            (if sim.config.isFfa():
+               playerColorName(otherColorIndex)
+             else:
+               teamText(other.team)),
             if soldierFacingRight(rot): LabelSideRight else: LabelSideLeft)
         )
       let objectId = other.spriteObjectId()
@@ -7018,6 +7428,8 @@ proc addEndzonePrewarm(
   ## a later steal/return ramp costs band-object placements (a few bytes
   ## each) instead of sprite pixel sends right at the dramatic moment. Bands the fade ramp already
   ## shipped on demand are skipped by the per-viewer sprite-def check.
+  if sim.config.isFfa():
+    return
   if state.endzonePrewarmFrames mod EndzonePrewarmEveryFrames == 0:
     # Map the step counter onto its (team, stage, band) slot in the fixed
     # drip order: team-major, stages 1.. (stage 0 never draws), bands within
@@ -7052,6 +7464,8 @@ proc addEndzoneGlowFade(
   ## bands (at most EndzoneRampBandsPerFrame per frame), so a steal that
   ## outruns the prewarm slows the fade a little instead of stalling the
   ## frame or tearing the overlay into mixed-stage seams.
+  if sim.config.isFfa():
+    return
   for team in sim.teams():
     # GV32: a captured heart never comes home — an eliminated team's endzone
     # glow stays down for the rest of the game.
@@ -7125,7 +7539,10 @@ proc addCogRigObjects(
   ## Z (painter depth ~ map Y): rear wheel/leg < front wheels < front legs < head
   ## < arms (arms cradle the forward heart on top).
   let
-    color = teamText(player.team)
+    ffaColorIndex = playerColorIndex(player.color)
+    color =
+      if sim.config.isFfa(): playerColorName(ffaColorIndex)
+      else: teamText(player.team)
     aimStep = soldierRotIndex(player.aimBrads)
     # TRUE TANK: the leg base points exactly where the cog MOVES (fully decoupled
     # from the head/aim — it can face 180° opposite the head when reversing). No
@@ -7139,39 +7556,77 @@ proc addCogRigObjects(
 
   # Precompute the movement-driven leg/wheel steps.
   proc legSprite(seg: RigSeg): int =
-    rigLegSpriteId(player.team, seg, headStep,
-      rigLegSwingStep(seg, drive.turnAmt), rigLegShortenStep(seg, drive.turnAmt))
+    let
+      swing = rigLegSwingStep(seg, drive.turnAmt)
+      shorten = rigLegShortenStep(seg, drive.turnAmt)
+    if sim.config.isFfa():
+      rigLegSpriteId(ffaColorIndex, seg, headStep, swing, shorten)
+    else:
+      rigLegSpriteId(player.team, seg, headStep, swing, shorten)
   proc wheelSprite(seg: RigSeg, caster: int): int =
-    rigWheelSpriteId(player.team, seg, headStep,
-      rigCasterStep(caster, baseHeading))
+    let step = rigCasterStep(caster, baseHeading)
+    if sim.config.isFfa():
+      rigWheelSpriteId(ffaColorIndex, seg, headStep, step)
+    else:
+      rigWheelSpriteId(player.team, seg, headStep, step)
 
   # Baked-art selector for each segment (so define-on-demand rebakes the exact pose).
   proc bakePixels(seg: RigSeg): seq[uint8] =
     case seg
     of rsHead:
-      rigSegPixels(
-        player.team,
-        rsHead,
-        aimStep,
-        0,
-        0,
-        renderScale = boardScale,
-        skin = player.skin
-      )
-    of rsArmL, rsArmR: rigSegPixels(player.team, seg, aimStep, 0, 0, boardScale)
+      if sim.config.isFfa():
+        rigSegPixelsForColor(
+          ffaColorIndex,
+          rsHead,
+          aimStep,
+          0,
+          0,
+          renderScale = boardScale,
+          skin = player.skin
+        )
+      else:
+        rigSegPixels(
+          player.team,
+          rsHead,
+          aimStep,
+          0,
+          0,
+          renderScale = boardScale,
+          skin = player.skin
+        )
+    of rsArmL, rsArmR:
+      if sim.config.isFfa():
+        rigSegPixelsForColor(ffaColorIndex, seg, aimStep, 0, 0, boardScale)
+      else:
+        rigSegPixels(player.team, seg, aimStep, 0, 0, boardScale)
     of rsLegFL, rsLegFR, rsLegRear:
-      rigSegPixels(player.team, seg, headStep,
-        rigLegSwingStep(seg, drive.turnAmt),
-        rigLegShortenStep(seg, drive.turnAmt), boardScale)
+      let
+        swing = rigLegSwingStep(seg, drive.turnAmt)
+        shorten = rigLegShortenStep(seg, drive.turnAmt)
+      if sim.config.isFfa():
+        rigSegPixelsForColor(
+          ffaColorIndex, seg, headStep, swing, shorten, boardScale)
+      else:
+        rigSegPixels(player.team, seg, headStep, swing, shorten, boardScale)
     of rsWheelL:
-      rigSegPixels(player.team, rsWheelL, headStep,
-        rigCasterStep(drive.casterFL, baseHeading), 0, boardScale)
+      let step = rigCasterStep(drive.casterFL, baseHeading)
+      if sim.config.isFfa():
+        rigSegPixelsForColor(ffaColorIndex, rsWheelL, headStep, step, 0, boardScale)
+      else:
+        rigSegPixels(player.team, rsWheelL, headStep, step, 0, boardScale)
     of rsWheelR:
-      rigSegPixels(player.team, rsWheelR, headStep,
-        rigCasterStep(drive.casterFR, baseHeading), 0, boardScale)
+      let step = rigCasterStep(drive.casterFR, baseHeading)
+      if sim.config.isFfa():
+        rigSegPixelsForColor(ffaColorIndex, rsWheelR, headStep, step, 0, boardScale)
+      else:
+        rigSegPixels(player.team, rsWheelR, headStep, step, 0, boardScale)
     of rsWheelRear:
-      rigSegPixels(player.team, rsWheelRear, headStep,
-        rigCasterStep(drive.casterRear, baseHeading), 0, boardScale)
+      let step = rigCasterStep(drive.casterRear, baseHeading)
+      if sim.config.isFfa():
+        rigSegPixelsForColor(
+          ffaColorIndex, rsWheelRear, headStep, step, 0, boardScale)
+      else:
+        rigSegPixels(player.team, rsWheelRear, headStep, step, 0, boardScale)
 
   var segs: seq[tuple[seg: RigSeg, objectId, spriteId, z: int]] = @[
     (rsWheelRear, RigWheelObjectBase + base*3 + 2,
@@ -7184,7 +7639,10 @@ proc addCogRigObjects(
     (rsLegFL, RigLegObjectBase + base*3 + 0, legSprite(rsLegFL), player.y - 1),
     (rsLegFR, RigLegObjectBase + base*3 + 1, legSprite(rsLegFR), player.y - 1),
     (rsHead, RigHeadObjectBase + base,
-      rigHeadSpriteId(player.team, player.skin, aimStep),
+      (if sim.config.isFfa():
+         rigHeadSpriteId(ffaColorIndex, player.skin, aimStep)
+       else:
+         rigHeadSpriteId(player.team, player.skin, aimStep)),
       player.y)]
   # Arms = the cog's SHOULDER pads. They're part of the cog's fixed silhouette:
   # always drawn, always in their natural tucked pose, rotating with the HEAD/aim
@@ -7196,17 +7654,31 @@ proc addCogRigObjects(
   # the face.
   let armZ = if carrying: player.y - 2 else: player.y - 1
   segs.add((rsArmL, RigArmObjectBase + base*2 + 0,
-    rigArmSpriteId(player.team, rsArmL, aimStep, 0), armZ))
+    (if sim.config.isFfa():
+       rigArmSpriteId(ffaColorIndex, rsArmL, aimStep, 0)
+     else:
+       rigArmSpriteId(player.team, rsArmL, aimStep, 0)), armZ))
   segs.add((rsArmR, RigArmObjectBase + base*2 + 1,
-    rigArmSpriteId(player.team, rsArmR, aimStep, 0), armZ))
+    (if sim.config.isFfa():
+       rigArmSpriteId(ffaColorIndex, rsArmR, aimStep, 0)
+     else:
+       rigArmSpriteId(player.team, rsArmR, aimStep, 0)), armZ))
 
   # Canonical (art-step-0) pose for a leg/wheel at this heading: the fallback
   # drawn when the frame's new-pose budget is spent. Bounded pool (segs ×
   # RigSteps × teams), so it is exempt from the budget — the fallback must
   # always be drawable, including on a viewer's very first frame.
   proc canonicalSprite(seg: RigSeg): int =
-    if rigSegIsLeg(seg): rigLegSpriteId(player.team, seg, headStep, 0, 0)
-    else: rigWheelSpriteId(player.team, seg, headStep, 0)
+    if rigSegIsLeg(seg):
+      if sim.config.isFfa():
+        rigLegSpriteId(ffaColorIndex, seg, headStep, 0, 0)
+      else:
+        rigLegSpriteId(player.team, seg, headStep, 0, 0)
+    else:
+      if sim.config.isFfa():
+        rigWheelSpriteId(ffaColorIndex, seg, headStep, 0)
+      else:
+        rigWheelSpriteId(player.team, seg, headStep, 0)
 
   for s in segs:
     var spriteId = s.spriteId
@@ -7218,7 +7690,11 @@ proc addCogRigObjects(
         if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
           packet.addBoardSpriteChanged(
             spriteDefs, spriteId, RigCanvas, RigCanvas,
-            rigSegPixels(player.team, s.seg, headStep, 0, 0, boardScale),
+            (if sim.config.isFfa():
+               rigSegPixelsForColor(
+                 ffaColorIndex, s.seg, headStep, 0, 0, boardScale)
+             else:
+               rigSegPixels(player.team, s.seg, headStep, 0, 0, boardScale)),
             rigSegLabel(s.seg, color), native = boardScale)
       else:
         if articulated and spriteId != canonicalSprite(s.seg):
@@ -7237,13 +7713,29 @@ proc addCogRigObjects(
   let
     holdsSpray = player.hasPlasmaArc
     weaponSpriteId =
-      if holdsSpray: rigSpraySpriteId(player.team, aimStep)
-      else: rigGunSpriteId(player.team, aimStep)
+      if holdsSpray:
+        (if sim.config.isFfa():
+           rigSpraySpriteId(ffaColorIndex, aimStep)
+         else:
+           rigSpraySpriteId(player.team, aimStep))
+      else:
+        (if sim.config.isFfa():
+           rigGunSpriteId(ffaColorIndex, aimStep)
+         else:
+           rigGunSpriteId(player.team, aimStep))
   if spriteDefs.spriteDefinitionIndex(weaponSpriteId) < 0:
     packet.addBoardSpriteChanged(
       spriteDefs, weaponSpriteId, RigCanvas, RigCanvas,
-      (if holdsSpray: rigSprayCanPixels(player.team, aimStep, boardScale)
-       else: rigGunPixels(player.team, aimStep, boardScale)),
+      (if holdsSpray:
+         (if sim.config.isFfa():
+            rigSprayCanPixelsForColor(ffaColorIndex, aimStep, boardScale)
+          else:
+            rigSprayCanPixels(player.team, aimStep, boardScale))
+       else:
+         (if sim.config.isFfa():
+            rigGunPixelsForColor(ffaColorIndex, aimStep, boardScale)
+          else:
+            rigGunPixels(player.team, aimStep, boardScale))),
       labelCogWeapon(color, spray = holdsSpray),
       native = boardScale)
   let weaponObjectId = RigGunObjectBase + base
@@ -7549,6 +8041,8 @@ proc buildSpriteProtocolUpdates*(
   # as the brightest figure on the board. A retired heart (GV32 capture or
   # GV33 dead team) is out of play and never drawn.
   for team in sim.teams():
+    if sim.config.isFfa():
+      continue
     let
       flag = sim.flags[team]
       objectId = FlagObjectBase + ord(team)
@@ -7732,26 +8226,45 @@ proc warmBoardRenderCaches*(sim: SimServer) =
   for skin in Skin:
     if skin notin usedSkins:
       continue
-    for team in sim.teams():
-      for rot in 0 ..< SoldierRotations:
-        discard soldierRotPixels(team, skin, rot, scale)
+    if sim.config.isFfa():
+      for colorIndex in 0 ..< PlayerColors.len:
+        for rot in 0 ..< SoldierRotations:
+          discard soldierRotPixelsForColor(colorIndex, skin, rot, scale)
+    else:
+      for team in sim.teams():
+        for rot in 0 ..< SoldierRotations:
+          discard soldierRotPixels(team, skin, rot, scale)
   # The board turret-rig head follows the configured skin; the remaining segments
   # are shared. Prebake the REST pose at every aim/heading step so a
   # standing/straight-driving cog is hot on the first frame; maneuvering poses
   # bake lazily.
-  for skin in usedSkins:
+  if sim.config.isFfa():
+    for colorIndex in 0 ..< PlayerColors.len:
+      for skin in usedSkins:
+        for rot in 0 ..< SoldierRotations:
+          discard rigSegPixelsForColor(
+            colorIndex, rsHead, rot, 0, 0,
+            renderScale = scale, skin = skin)
+      for rot in 0 ..< SoldierRotations:
+        for seg in RigSeg:
+          if seg != rsHead:
+            discard rigSegPixelsForColor(colorIndex, seg, rot, 0, 0, scale)
+        discard rigGunPixelsForColor(colorIndex, rot, scale)
+        discard rigSprayCanPixelsForColor(colorIndex, rot, scale)
+  else:
+    for skin in usedSkins:
+      for team in sim.teams():
+        for rot in 0 ..< SoldierRotations:
+          discard rigSegPixels(
+            team, rsHead, rot, 0, 0,
+            renderScale = scale, skin = skin)
     for team in sim.teams():
       for rot in 0 ..< SoldierRotations:
-        discard rigSegPixels(
-          team, rsHead, rot, 0, 0,
-          renderScale = scale, skin = skin)
-  for team in sim.teams():
-    for rot in 0 ..< SoldierRotations:
-      for seg in RigSeg:
-        if seg != rsHead:
-          discard rigSegPixels(team, seg, rot, 0, 0, scale)
-      discard rigGunPixels(team, rot, scale)
-      discard rigSprayCanPixels(team, rot, scale)
+        for seg in RigSeg:
+          if seg != rsHead:
+            discard rigSegPixels(team, seg, rot, 0, 0, scale)
+        discard rigGunPixels(team, rot, scale)
+        discard rigSprayCanPixels(team, rot, scale)
   discard boardTypeface()
   block:
     # Encode the map-band wire messages too: they are byte-identical for

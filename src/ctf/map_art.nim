@@ -596,7 +596,8 @@ proc shapeLogicalBounds(shape: ArenaShape): tuple[x0, y0, x1, y1: int] =
 
 proc renderArenaRgbaPair*(
   gameMap: CtfMap,
-  scale: int
+  scale: int,
+  withCtfPresentation = true
 ): tuple[hot, cold: seq[uint8]] =
   ## The arena VISUAL rasterized natively at `scale`× map resolution for the
   ## spectator/replay renderer — real detail, not an upscale: wall shapes are
@@ -625,8 +626,9 @@ proc renderArenaRgbaPair*(
     dir = gameDir()
     floorTex = readImage(dir / "data/arena_floor.png")
   var pedSprs: array[Team, Image]
-  for team in gameMap.teams():
-    pedSprs[team] = readImage(dir / "data/ped_" & teamText(team) & ".png")
+  if withCtfPresentation:
+    for team in gameMap.teams():
+      pedSprs[team] = readImage(dir / "data/ped_" & teamText(team) & ".png")
   # The art mask at output resolution: border + obstacle shapes from float
   # geometry, minus the spinning center diamonds (drawn live as objects).
   # Window pixels (glass) get their own mask in the same per-shape pass: wall
@@ -681,7 +683,7 @@ proc renderArenaRgbaPair*(
       tileBlock[y * tileW + x] =
         tileSampleF(floorTex, (float(x) + 0.5) / float(scale), fy)
   let
-    tints = endzoneTints(gameMap)
+    tints = if withCtfPresentation: endzoneTints(gameMap) else: @[]
     playLo = ArenaBorder
     playHi = w - 1 - ArenaBorder
     playLoY = ArenaBorder
@@ -716,8 +718,12 @@ proc renderArenaRgbaPair*(
         coldColor = hotColor
       else:
         coldColor = tileBlock[tileRow + x mod tileW]
-        hotColor = endzoneColorAt(
-          tints, coldColor, lx, ly, playLo, playHi, playLoY, playHiY)
+        hotColor =
+          if withCtfPresentation:
+            endzoneColorAt(
+              tints, coldColor, lx, ly, playLo, playHi, playLoY, playHiY)
+          else:
+            coldColor
         # The trench pit (config-gated trenches) paints over the finished floor on both
         # variants; it sits at the center, well clear of the endzone glow.
         coldColor = trenchArtColorAt(coldColor, lx, ly)
@@ -733,44 +739,49 @@ proc renderArenaRgbaPair*(
       put(result.cold, i * 4, coldColor)
   # Pedestals: pixie still resizes the painted masters, but the composite onto
   # the board is a manual straight-alpha src-over into the byte buffers.
-  for team in gameMap.teams():
-    let
-      home = gameMap.flagHome(team)
-      full = pedSprs[team]
-      size = PedestalCoverSize * scale
-      scaled = full.resize(size, size)
-      dimmed = scaled.pedestalDimmed()
-      px0 = home.x * scale - size div 2
-      py0 = home.y * scale - size div 2
-    for sy in 0 ..< size:
-      let dy = py0 + sy
-      if dy < 0 or dy >= oh:
-        continue
-      for sx in 0 ..< size:
-        let dx = px0 + sx
-        if dx < 0 or dx >= ow:
+  if withCtfPresentation:
+    for team in gameMap.teams():
+      let
+        home = gameMap.flagHome(team)
+        full = pedSprs[team]
+        size = PedestalCoverSize * scale
+        scaled = full.resize(size, size)
+        dimmed = scaled.pedestalDimmed()
+        px0 = home.x * scale - size div 2
+        py0 = home.y * scale - size div 2
+      for sy in 0 ..< size:
+        let dy = py0 + sy
+        if dy < 0 or dy >= oh:
           continue
-        let
-          litPx = scaled.data[sy * size + sx].rgba
-          dimPx = dimmed.data[sy * size + sx].rgba
-          offset = (dy * ow + dx) * 4
-        template blend(buf: seq[uint8], src: ColorRGBA) =
-          if src.a == 255'u8:
-            buf[offset] = src.r
-            buf[offset + 1] = src.g
-            buf[offset + 2] = src.b
-          elif src.a > 0'u8:
-            let a = src.a.int
-            buf[offset] =
-              uint8((src.r.int * a + buf[offset].int * (255 - a)) div 255)
-            buf[offset + 1] =
-              uint8((src.g.int * a + buf[offset + 1].int * (255 - a)) div 255)
-            buf[offset + 2] =
-              uint8((src.b.int * a + buf[offset + 2].int * (255 - a)) div 255)
-        blend(result.hot, litPx)
-        blend(result.cold, dimPx)
+        for sx in 0 ..< size:
+          let dx = px0 + sx
+          if dx < 0 or dx >= ow:
+            continue
+          let
+            litPx = scaled.data[sy * size + sx].rgba
+            dimPx = dimmed.data[sy * size + sx].rgba
+            offset = (dy * ow + dx) * 4
+          template blend(buf: seq[uint8], src: ColorRGBA) =
+            if src.a == 255'u8:
+              buf[offset] = src.r
+              buf[offset + 1] = src.g
+              buf[offset + 2] = src.b
+            elif src.a > 0'u8:
+              let a = src.a.int
+              buf[offset] =
+                uint8((src.r.int * a + buf[offset].int * (255 - a)) div 255)
+              buf[offset + 1] =
+                uint8((src.g.int * a + buf[offset + 1].int * (255 - a)) div 255)
+              buf[offset + 2] =
+                uint8((src.b.int * a + buf[offset + 2].int * (255 - a)) div 255)
+          blend(result.hot, litPx)
+          blend(result.cold, dimPx)
 
-proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
+proc loadMapLayers*(
+  gameMap: CtfMap,
+  withEndzoneGlow = true,
+  withCtfPresentation = true
+):
     tuple[mapImage, walkImage, wallImage: Image] =
   ## Builds the visual map plus the walk and wall masks for the arena. The
   ## visuals: a tiled top-down polished-concrete floor, and ONE coherent
@@ -798,8 +809,9 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
     dir = gameDir()
     floorTex = readImage(dir / "data/arena_floor.png")
   var pedSprs: array[Team, Image]
-  for team in gameMap.teams():
-    pedSprs[team] = readImage(dir / "data/ped_" & teamText(team) & ".png")
+  if withCtfPresentation:
+    for team in gameMap.teams():
+      pedSprs[team] = readImage(dir / "data/ped_" & teamText(team) & ".png")
   ## Pass 1: the boolean wall mask (border + obstacles), shared by the shading
   ## bevel and the collision masks so art and geometry can never disagree.
   ## Rasterized per shape (isArenaWall per pixel scans the whole obstacle
@@ -857,7 +869,7 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
   ## captureZoneXRange (Red's inclusive right threshold, Blue's inclusive left),
   ## painted into the FLOOR below so a carrier can read where to run.
   let
-    tints = endzoneTints(gameMap)
+    tints = if withCtfPresentation: endzoneTints(gameMap) else: @[]
     playLo = ArenaBorder                     # inner playfield edges: the glow
     playHi = w - 1 - ArenaBorder             # anchors home, fades to the line.
     playLoY = ArenaBorder
@@ -879,7 +891,7 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
       var color =
         if windowPixel: windowGlassColor(artMask, w, h, x, y)
         elif artWall: rooftopColor(artMask, w, h, x, y)
-        elif withEndzoneGlow: endzoneColorAt(tints,
+        elif withEndzoneGlow and withCtfPresentation: endzoneColorAt(tints,
           tileSample(floorTex, x, y), x, y, playLo, playHi, playLoY, playHiY)
         else: tileSample(floorTex, x, y)
       if not wall and trenchNear[y * w + x]:
@@ -905,12 +917,13 @@ proc loadMapLayers*(gameMap: CtfMap, withEndzoneGlow = true):
   ## disc (see pedestalDimmed) so the broadcast crossfade dims the disc along with
   ## the floor glow when the heart is gone — otherwise a hot==cold pedestal never
   ## fades. The RGB/hot map (withEndzoneGlow) keeps the pedestal at full light.
-  for team in gameMap.teams():
-    let
-      home = gameMap.flagHome(team)
-      full = pedSprs[team]
-      spr = if withEndzoneGlow: full else: full.pedestalDimmed()
-    blitCover(result.mapImage, spr, home.x, home.y, PedestalCoverSize)
+  if withCtfPresentation:
+    for team in gameMap.teams():
+      let
+        home = gameMap.flagHome(team)
+        full = pedSprs[team]
+        spr = if withEndzoneGlow: full else: full.pedestalDimmed()
+      blitCover(result.mapImage, spr, home.x, home.y, PedestalCoverSize)
 
 proc coldEndzoneMapRgba*(gameMap: CtfMap): seq[uint8] =
   ## Builds the map RGBA with the endzone crack-glow and capture line OMITTED —
@@ -944,4 +957,3 @@ proc loadDarkBgPixels*(): seq[uint8] =
       let color = nearestPaletteIndex(image[x, y])
       result[y * ScreenWidth + x] =
         if color == TransparentColorIndex: SpaceColor else: color
-

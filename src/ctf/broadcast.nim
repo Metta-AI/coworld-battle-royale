@@ -51,6 +51,16 @@ proc slotOf(sim: SimServer, index: int): int =
     return sim.players[index].joinOrder
   -1
 
+proc firstPersonShotTeamToken*(sim: SimServer, color: uint8): string =
+  ## Returns the historical team token for CTF shots and the shooter's
+  ## identity-color token for FFA shots.
+  if sim.config.isFfa():
+    return playerColorName(playerColorIndex(color))
+  for team in sim.teams():
+    if color == teamColor(team):
+      return teamText(team)
+  ""
+
 proc snapshot(tracker: var BroadcastTracker, sim: SimServer) =
   ## Copies the current sim state into the tracker without emitting events.
   tracker.alive.setLen(sim.players.len)
@@ -115,13 +125,24 @@ proc stepEvents*(
   if sim.phase != tracker.prevPhase:
     events.add(%*{"t": tick, "k": "phase", "phase": ($sim.phase).toLowerAscii})
     if sim.phase == GameOver:
-      events.add(%*{
+      var over = %*{
         "t": tick,
         "k": "gameover",
         "winner": teamText(sim.winner),
         "draw": sim.isDraw,
         "tl": sim.timeLimitReached
-      })
+      }
+      # ffa is decided per PLAYER, so the verdict names the winning slot. The
+      # key is written only in ffa, leaving a ctf replay's event stream
+      # byte-identical.
+      if sim.config.isFfa():
+        over["slot"] = %sim.ffaWinnerSlot
+        for player in sim.players:
+          if player.joinOrder == sim.ffaWinnerSlot:
+            over["winnerColor"] =
+              %playerColorName(playerColorIndex(player.color))
+            break
+      events.add(over)
 
   # Kills and respawns, diffed per player like expand_replay.
   let killer = sim.killerThisStep(tracker)
@@ -269,6 +290,8 @@ proc rosterJson(sim: SimServer): JsonNode =
       "mk3": p.multiKills3,
       "tk": p.teamKills
     }
+    if sim.config.isFfa():
+      item["colorName"] = %playerColorName(playerColorIndex(p.color))
     # This seat's perks, wire-named (PerkNames), present only when it has any
     # — so a perk-free game's roster is byte-identical and the scorebug can
     # group a team's perk badges by policy (every seat of one policy shares
@@ -540,17 +563,10 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
       shots.add(%*{
         "pts": pts,
         "age": sim.tickCount - shot.firedTick,
-        # Shooter's TEAM, so the client paints the beam from the same team
-        # palette it already uses for cogs and hearts (the board resolves paint
-        # through the sprite Palette, which isn't in this module's graph — team
-        # is the stable contract and reads identically).
-        "team": (block:
-          var shotTeam = ""
-          for team in sim.teams():
-            if shot.color == teamColor(team):
-              shotTeam = teamText(team)
-              break
-          shotTeam),
+        # CTF keeps the historical team token. FFA has no meaningful team
+        # token, so this field carries the shooter's identity color instead;
+        # the baseline bot consumes sprite labels, not this broadcast JSON.
+        "team": sim.firstPersonShotTeamToken(shot.color),
         # Hits draw bright, misses pre-faded — matching the board.
         "hit": shot.hit,
         # Nearest range, for the payload triage below.
@@ -704,6 +720,17 @@ proc buildStateJson*(
     "roster": sim.rosterJson(),
     "events": (if events.isNil: newJArray() else: events)
   }
+  if sim.config.isFfa() and sim.config.ringEnabled:
+    let (ringX, ringY) = ffaRingCenter()
+    state["ring"] = %*{
+      "center": [ringX, ringY],
+      "startRadius": ffaRingStartRadius(),
+      "floorRadius": ffaRingFloorRadius(sim.config),
+      "radius": ffaRingRadiusAt(sim.config, sim.gameTicksElapsed()),
+      "shrinkSec": sim.config.ringShrinkSec,
+      "damageTicks": sim.config.ringDamageTicks,
+      "recoveryTicks": sim.config.ringRecoveryTicks
+    }
 
   # Resolved perk magnitudes for the scorebug icon tooltips (the sim is the
   # single source of the mods, like the handicap deltas). Fractions are
@@ -744,16 +771,21 @@ proc buildStateJson*(
   # the tick followed by one lives count per team, in `teams` order. Absent on
   # every later frame — the client caches it.
   if livesSeries.len > 0:
-    var teamNames = newJArray()
-    for team in sim.teams():
-      teamNames.add(%teamText(team))
     var pts = newJArray()
     for point in livesSeries:
       var row = newJArray()
       for value in point:
         row.add(%value)
       pts.add(row)
-    state["lead"] = %*{"teams": teamNames, "pts": pts}
+    if sim.config.isFfa():
+      state["lead"] = %*{"kind": "alive", "pts": pts}
+    else:
+      var teamNames = newJArray()
+      for team in sim.teams():
+        teamNames.add(%teamText(team))
+      state["lead"] = %*{"teams": teamNames, "pts": pts}
+  if sim.config.isFfa():
+    state["ffa"] = %true
 
   # Static minimap wall silhouette for the EYES tactical inset, sent ONCE per
   # viewer (like the lead series). Absent on every later frame — the client
@@ -801,6 +833,13 @@ proc buildStateJson*(
       "redProg": sim.teamFlagProgress(Red),
       "blueProg": sim.teamFlagProgress(Blue)
     }
+    if sim.config.isFfa():
+      state["over"]["winnerSlot"] = %sim.ffaWinnerSlot
+      for player in sim.players:
+        if player.joinOrder == sim.ffaWinnerSlot:
+          state["over"]["winnerColor"] =
+            %playerColorName(playerColorIndex(player.color))
+          break
     # End-segment hold countdown: whole seconds until a looping replay
     # restarts. Present only during the hold, so the end-card can show a
     # "replaying in N" line without ever inventing a countdown after a seek.

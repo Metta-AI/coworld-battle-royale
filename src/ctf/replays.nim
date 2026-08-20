@@ -47,12 +47,12 @@ type
       ## watch). Playback auto-starts here, loops back here, and the scrubber /
       ## tick clock are offset by it so the shown timeline is 0 = first action.
     livesSeries*: seq[seq[int]]
-      ## [tick, livesPerTeam…] change-points across the WHOLE match (one lives
-      ## count per team, in Team order), precomputed on the deterministic
-      ## keyframe walk so the momentum graph can draw its full-timeline shape
-      ## all at once (not accumulate as it plays). Only points where some
-      ## team's lives CHANGE are stored (compact step series); the client holds
-      ## each value to the next point and to maxTick.
+      ## [tick, livesPerTeam…] change-points for CTF, or [tick, aliveCount]
+      ## points for FFA, across the WHOLE match. Precomputed on the
+      ## deterministic keyframe walk so the momentum graph can draw its
+      ## full-timeline shape all at once (not accumulate as it plays). Only
+      ## points where the metric changes are stored (compact step series); the
+      ## client holds each value to the next point and to maxTick.
     endHoldFrames*: int
       ## Real-time frames left to HOLD on the final game-over frame before a
       ## looping replay restarts, so the end segment (winner, win condition,
@@ -453,9 +453,14 @@ proc buildLullSpans*(
     if i < beatTicks.len:
       prevBeat = nextBeat
 
-proc scanTeamLives(sim: SimServer): seq[int] =
-  ## One lives count per team, in Team order, so the series reads the same
-  ## for any team count.
+proc scanSeriesValues(sim: SimServer): seq[int] =
+  ## CTF uses one lives count per team; FFA uses the number of living seats.
+  if sim.config.isFfa():
+    var alive = 0
+    for player in sim.players:
+      if player.alive:
+        inc alive
+    return @[alive]
   for team in sim.teams():
     result.add(sim.teamLivesRemaining(team))
 
@@ -497,7 +502,7 @@ proc initReplayScan*(
   scan.builder.mismatchQuit = replay.mismatchQuit
   scan.maxTick = scan.builder.replayMaxTick()
   replay.keyframes.add(scan.builder.saveReplayKeyframe(scan.sim))
-  scan.lastLives = scanTeamLives(scan.sim)
+  scan.lastLives = scanSeriesValues(scan.sim)
   replay.livesSeries.add(scanSeriesPoint(scan.sim.tickCount, scan.lastLives))
   # Beat ticks for the lull map are derived by the SAME tracker the broadcast
   # channel uses, so "nothing happens here" agrees with the story the kill
@@ -548,7 +553,7 @@ proc advanceReplayScan*(replay: var ReplayPlayer, maxTicks: int) =
     # momentum graph draws its whole-timeline shape up front (deterministic
     # replay: a tick's lives are fixed). Only points where some team's lives
     # change are stored to keep the series compact.
-    let lives = scanTeamLives(scan.sim)
+    let lives = scanSeriesValues(scan.sim)
     if lives != scan.lastLives:
       replay.livesSeries.add(scanSeriesPoint(scan.sim.tickCount, lives))
       scan.lastLives = lives

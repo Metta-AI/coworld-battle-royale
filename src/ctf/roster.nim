@@ -5,7 +5,7 @@
 ## docs/plans/2026-08-01-sim-split.md; re-exported by sim.nim.
 
 import
-  std/json,
+  std/[algorithm, json],
   sim_types, sim_state
 
 proc perkSetForJoin*(sim: SimServer, team: Team, address: string): PerkSet =
@@ -106,7 +106,12 @@ proc shoutIdentityName*(sim: SimServer, shout: Shout): string =
 
 proc playerSlotLimit*(config: GameConfig): int =
   ## Returns the number of slots players may occupy.
-  if config.closedRoster: config.slots.len else: MaxPlayers
+  if config.isFfa():
+    config.numPlayers
+  elif config.closedRoster:
+    config.slots.len
+  else:
+    MaxPlayers
 
 proc usedSkins*(config: GameConfig): set[Skin] =
   ## Returns the skins needed by slots that can join this game.
@@ -121,6 +126,10 @@ proc canAddPlayer*(sim: SimServer): bool =
 
 proc playerLimitError(config: GameConfig): string =
   ## Returns a user-facing message for the current player cap.
+  if config.isFfa():
+    let limit = config.playerSlotLimit()
+    return "Configured roster is full (" & $limit &
+      (if limit == 1: " player)." else: " players).")
   if config.closedRoster:
     let limit = config.playerSlotLimit()
     return "Configured roster is full (" & $limit &
@@ -493,6 +502,10 @@ proc addPlayer*(
     color =
       if slot.hasColor:
         slot.color
+      elif sim.config.isFfa():
+        # ffa identity is per PLAYER, never per team: each seat takes its own
+        # hue off the wheel so the board reads as N individuals.
+        PlayerColors[order mod PlayerColors.len]
       else:
         teamColor(team)
     accountIndex = sim.ensureRewardAccount(address)
@@ -629,6 +642,10 @@ proc playerResultsJson*(sim: SimServer): string =
     shotsFiredList = newJArray()
     shotsHitList = newJArray()
     results = newJObject()
+  var
+    damageList = newJArray()
+    survivalTicksList = newJArray()
+    placementList = newJArray()
   for slotIndex in 0 ..< sim.playerResultSlotCount():
     resultSlots.add(slotIndex)
   for slotIndex in resultSlots:
@@ -689,6 +706,15 @@ proc playerResultsJson*(sim: SimServer): string =
     capturesList.add(%captures)
     shotsFiredList.add(%shotsFired)
     shotsHitList.add(%shotsHit)
+    if sim.config.isFfa():
+      damageList.add(%(if playerIndex >= 0: sim.players[playerIndex].damageDealt else: 0))
+      let elapsedTicks = max(0, sim.tickCount - sim.gameStartTick)
+      let survivalTicks =
+        if playerIndex < 0 or sim.players[playerIndex].deathTick < 0:
+          elapsedTicks
+        else:
+          max(0, sim.players[playerIndex].deathTick - sim.gameStartTick)
+      survivalTicksList.add(%survivalTicks)
   results["names"] = names
   results["scores"] = scores
   results["win"] = win
@@ -696,10 +722,32 @@ proc playerResultsJson*(sim: SimServer): string =
   results["kills"] = killsList
   results["deaths"] = deathsList
   results["captures"] = capturesList
+  if sim.config.isFfa():
+    var places: seq[int] = @[]
+    for i in 0 ..< sim.players.len:
+      places.add(i)
+    places.sort(proc (a, b: int): int =
+      let first = sim.players[a]
+      let second = sim.players[b]
+      if first.alive != second.alive:
+        return if first.alive: -1 else: 1
+      if first.deathTick != second.deathTick:
+        return if first.deathTick > second.deathTick: -1 else: 1
+      if first.kills != second.kills:
+        return if first.kills > second.kills: -1 else: 1
+      if first.damageDealt != second.damageDealt:
+        return if first.damageDealt > second.damageDealt: -1 else: 1
+      cmp(first.joinOrder, second.joinOrder)
+    )
+    for place in 0 ..< places.len:
+      placementList.add(%(sim.players[places[place]].joinOrder))
+    results["damage"] = damageList
+    results["survivalTicks"] = survivalTicksList
+    results["placementSlots"] = placementList
+    results["winnerSlot"] = %sim.ffaWinnerSlot
   # shotsFired/shotsHit stay OUT of the results payload: the platform's
   # episode-results schema is closed (additionalProperties: false) and the
   # certifier rejects unknown fields, blocking every canonical upload. The
   # counters remain on the players for replay-side analysis; re-add here
   # only after the platform schema learns the fields.
   $results
-

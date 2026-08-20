@@ -11,6 +11,7 @@
 import
   std/[math, os, strutils],
   bitworld/aseprite,
+  bitworld/spriteprotocol,
   pixie,
   sim_types
 
@@ -209,6 +210,14 @@ var
   sprayMaster: Image
   sprayScale: float
   sprayLoaded: bool
+  soldierRotColorCache: array[
+    PlayerColors.len,
+    array[Skin, array[SoldierRotations, seq[tuple[
+      scale: int, pixels: seq[uint8]
+    ]]]]
+  ]
+  soldierIconColorCache: array[
+    PlayerColors.len, seq[tuple[sizePx: int, pixels: seq[uint8]]]]
 
 proc measureSoldierBody(skin: Skin, team: Team, master: Image) =
   ## Finds the body pivot and the master->canvas scale: the centroid and
@@ -423,6 +432,11 @@ var
   # (0 for non-legs).
   rigSegCache: array[Skin, array[Team, array[RigSeg, seq[tuple[
     baseStep, artStep, shortenStep, scale: int, pixels: seq[uint8]]]]]]
+  rigSegColorCache: array[
+    PlayerColors.len,
+    array[Skin, array[RigSeg, seq[tuple[
+      baseStep, artStep, shortenStep, scale: int, pixels: seq[uint8]]]]]
+  ]
 
 proc rigSegPath(seg: RigSeg): string =
   case seg
@@ -653,6 +667,114 @@ proc soldierIconPixels*(team: Team, sizePx: int): seq[uint8] =
     result[i * 4 + 1] = c.g
     result[i * 4 + 2] = c.b
     result[i * 4 + 3] = c.a
+
+var identityTintCalls: int
+
+proc identityTintCallCount*(): int =
+  identityTintCalls
+
+proc tintIdentityPixels(pixels: seq[uint8], colorIndex: int): seq[uint8] =
+  ## Recolors the warm-red team paint in a rig/icon sprite while preserving
+  ## the neutral metal, visor, and shadow pixels. FFA identity art uses the
+  ## same authored silhouette for every seat; only its paint hue varies.
+  inc identityTintCalls
+  let
+    normalizedColor = ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod
+      PlayerColors.len
+    target = Palette[PlayerColors[normalizedColor] and 0x0f]
+  result = pixels
+  for i in 0 ..< result.len div 4:
+    let
+      offset = i * 4
+      r = pixels[offset]
+      g = pixels[offset + 1]
+      b = pixels[offset + 2]
+    if pixels[offset + 3] == 0 or int(r) <= int(g) + 18 or
+        int(r) <= int(b) + 18:
+      continue
+    let brightness = float(r) / 255.0
+    result[offset] = uint8(clamp(int(round(float(target.r) * brightness)), 0, 255))
+    result[offset + 1] =
+      uint8(clamp(int(round(float(target.g) * brightness)), 0, 255))
+    result[offset + 2] =
+      uint8(clamp(int(round(float(target.b) * brightness)), 0, 255))
+
+proc soldierRotPixelsForColor*(
+  colorIndex: int,
+  skin: Skin,
+  rot: int,
+  renderScale = 1
+): seq[uint8] =
+  ## FFA player-view soldier art tinted to the seat identity color.
+  let normalizedColor =
+    ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod PlayerColors.len
+  let r = ((rot mod SoldierRotations) + SoldierRotations) mod SoldierRotations
+  for cached in soldierRotColorCache[normalizedColor][skin][r]:
+    if cached.scale == renderScale:
+      return cached.pixels
+  let pixels = tintIdentityPixels(
+    soldierRotPixels(Red, skin, r, renderScale),
+    normalizedColor
+  )
+  soldierRotColorCache[normalizedColor][skin][r].add(
+    (scale: renderScale, pixels: pixels))
+  pixels
+
+proc rigSegPixelsForColor*(
+  colorIndex: int,
+  seg: RigSeg,
+  baseStep, artStep: int,
+  shortenStep = 0,
+  renderScale = 1,
+  skin = DefaultSkin
+): seq[uint8] =
+  ## FFA rig art: the red authored rig is tinted to the seat identity color.
+  let normalizedColor =
+    ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod PlayerColors.len
+  let
+    b = ((baseStep mod RigSteps) + RigSteps) mod RigSteps
+    sh = clamp(shortenStep, 0, RigShortenSteps)
+    effectiveSkin = if seg == rsHead: skin else: DefaultSkin
+  for cached in rigSegColorCache[normalizedColor][effectiveSkin][seg]:
+    if cached.baseStep == b and cached.artStep == artStep and
+        cached.shortenStep == sh and cached.scale == renderScale:
+      return cached.pixels
+  let pixels = tintIdentityPixels(
+    rigSegPixels(Red, seg, b, artStep, sh, renderScale, effectiveSkin),
+    normalizedColor
+  )
+  rigSegColorCache[normalizedColor][effectiveSkin][seg].add(
+    (baseStep: b, artStep: artStep, shortenStep: sh, scale: renderScale,
+     pixels: pixels))
+  pixels
+
+proc soldierIconPixelsForColor*(colorIndex, sizePx: int): seq[uint8] =
+  ## FFA game-over roster icon in the seat identity color.
+  let normalizedColor =
+    ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod PlayerColors.len
+  for cached in soldierIconColorCache[normalizedColor]:
+    if cached.sizePx == sizePx:
+      return cached.pixels
+  let pixels = tintIdentityPixels(
+    soldierIconPixels(Red, sizePx), normalizedColor)
+  soldierIconColorCache[normalizedColor].add((sizePx: sizePx, pixels: pixels))
+  pixels
+
+proc rigGunPixelsForColor*(
+  colorIndex, aimStep: int,
+  renderScale = 1
+): seq[uint8] =
+  ## FFA held-gun art is neutral and shared by identity; the rig key uses one
+  ## definition per aim pose rather than duplicating this raster 16 times.
+  rigGunPixels(Red, aimStep, renderScale)
+
+proc rigSprayCanPixelsForColor*(
+  colorIndex, aimStep: int,
+  renderScale = 1
+): seq[uint8] =
+  ## FFA held-spray art is neutral and shared by identity; the rig key uses one
+  ## definition per aim pose rather than duplicating this raster 16 times.
+  rigSprayCanPixels(Red, aimStep, renderScale)
 
 
 ## --- Cog driving physics: how the segmented trike steers/turns (broadcast-only) ---

@@ -15,10 +15,10 @@ server, and replay infrastructure, and replaces the social-deduction game layer
 The **full, authoritative ruleset lives in [`docs/RULES.md`](docs/RULES.md)**. The
 summary below is just an orientation.
 
-This repo publishes one `paintbot` Coworld manifest for both products. Paintbot
-keeps its established variant ids (`2v2`, `4ffa`, `4ffa8`, `default`, `1v1`),
-while the CTF leagues select `ctf-default` or `ctf-1v1`. The leagues remain
-independent; they share only the versioned game artifact and schema.
+This repo publishes one `battleroyale` Coworld manifest with the `br-12` and
+`br-16` variants. The battle-royale league is a free-for-all: every seat is its
+own team and receives its own identity color. CTF compatibility remains in the
+engine and tests, but is not the artifact published by this repository.
 
 If docs, commands, runtime behavior, logs, or replays disagree while you are
 building or submitting a CTF policy, preserve the evidence and file a GitHub issue
@@ -141,8 +141,8 @@ To play one slot yourself, open a configured player URL in the browser, e.g.
 
 ## Run the game with Docker
 
-> **Note:** the public CTF images are not published yet. Build the image locally
-> first (`docker build -t coworld-ctf:local .`) and substitute it below, or wait
+> **Note:** the public battle-royale images are not published yet. Build the image locally
+> first (`docker build -t coworld-battle-royale:local .`) and substitute it below, or wait
 > for the published image. The flow mirrors Crewrift's.
 
 ```sh
@@ -156,7 +156,7 @@ docker run --rm -d \
   -e COGAME_HOST=0.0.0.0 \
   -e COGAME_PORT=2000 \
   -e COGAME_CONFIG_URI=file:///workspace/ctf/config.json \
-  coworld-ctf:local
+  coworld-battle-royale:local
 ```
 
 ## Policy starting points

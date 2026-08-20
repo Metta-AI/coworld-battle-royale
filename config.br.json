@@ -1,0 +1,19 @@
+{
+  "mode": "ffa",
+  "numPlayers": 12,
+  "hitPoints": 20,
+  "maxTicks": 8640,
+  "seed": 42,
+  "fastMode": true,
+  "mapPath": "gen",
+  "mapSeed": 42,
+  "mapSize": "huge",
+  "mapSymmetry": "mirror",
+  "mapColumns": 18,
+  "mapWindows": 4,
+  "mapCenterFeature": "ring",
+  "mapEndzone": "disc",
+  "mapPits": 18,
+  "ringShrinkSec": 150,
+  "ringFloorAreaPct": 35
+}

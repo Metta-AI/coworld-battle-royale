@@ -3,8 +3,8 @@ name: Publish images
 # Builds and pushes the game and baseline-bot images to GHCR.
 # Manual (workflow_dispatch) or on a version tag, so ordinary pushes to main
 # do not republish images. The manifest references:
-#   ghcr.io/metta-ai/coworld-ctf           (game)
-#   ghcr.io/metta-ai/coworld-ctf-baseline  (baseline bot)
+#   ghcr.io/metta-ai/coworld-battle-royale           (game)
+#   ghcr.io/metta-ai/coworld-battle-royale-baseline  (baseline bot)
 on:
   workflow_dispatch:
   push:
@@ -20,9 +20,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: coworld-ctf
+          - image: coworld-battle-royale
             dockerfile: Dockerfile
-          - image: coworld-ctf-baseline
+          - image: coworld-battle-royale-baseline
             dockerfile: players/baseline/Dockerfile
     steps:
       - uses: actions/checkout@v5
