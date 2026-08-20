@@ -497,12 +497,12 @@ suite "ffa elimination":
     game.tryFire(0)
     check game.players[1].hp == FfaHitPoints - FfaFistDamage
 
-  test "fists can kill at seven contact hits and miss outside reach":
+  test "fists can kill at ten contact hits and miss outside reach":
     var game = ffaGame(2)
     game.players[0].placeAtCenter(300, MapHeight div 2)
     game.players[1].placeAtCenter(350, MapHeight div 2)
     game.players[0].aimBrads = 0
-    for i in 0 ..< 7:
+    for i in 0 ..< 10:
       game.players[0].fireCooldown = 0
       game.tryFire(0)
     check not game.players[1].alive

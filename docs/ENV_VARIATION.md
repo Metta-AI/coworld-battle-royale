@@ -106,8 +106,8 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `ringShrinkSec` | int / `150` (`FfaRingShrinkSec`) | `ringShrinkSec` | `>=1` (ffa only) | Linear safe-zone shrink duration from the arena-covering radius to the configured floor. |
 | `ringFloorAreaPct` | int / `35` (`FfaRingFloorAreaPct`) | `ringFloorAreaPct` | `1..100` (ffa only) | Safe-zone floor as a percentage of the arena area. |
 | `ringDamageTicks` | int / `48` (`FfaRingDamageTicks`) | `ringDamageTicks` | `>=1` (ffa only) | Cadence for one HP of outside-ring damage. |
-| `ringRecoveryTicks` | int / `2` (`FfaRingRecoveryTicks`) | `ringRecoveryTicks` | `>=0` (ffa only) | Exposure ticks drained per tick spent inside the safe zone; zero reproduces reset-on-entry behavior for measurement arm A. |
-| `ffaGunDamage` | int / `2` (`FfaGunDamage`) | `ffaGunDamage` | `1..4` (ffa only) | Direct gun damage per hit against the FFA hit-point pool. |
+| `ringRecoveryTicks` | int / `2` (`FfaRingRecoveryTicks`) | `ringRecoveryTicks` | `>=0` (ffa only) | Exposure ticks drained per tick spent inside the safe zone; zero reproduces reset-on-entry behavior. |
+| `ffaGunDamage` | int / `3` (`FfaGunDamage`, mid-tier) | `ffaGunDamage` | `1..5` (ffa only) | Direct mid-tier gun damage per hit against the FFA hit-point pool; low and heavy tiers use their named ladder constants. |
 | `ffaSprayDamage` | int / `4` (`FfaSprayDamage`) | `ffaSprayDamage` | `1..4` (ffa only) | Direct plasma-arc damage in FFA. |
 | `ffaGrenadeDamage` | int / `4` (`FfaGrenadeDamage`) | `ffaGrenadeDamage` | `1..4` (ffa only) | Direct grenade damage in FFA. |
 | `ffaGrenadeTrenchSplashDamage` | int / `1` (`FfaGrenadeTrenchSplashDamage`) | `ffaGrenadeTrenchSplashDamage` | `1..4` (ffa only) | FFA grenade damage when the victim is in another trench. |
@@ -208,8 +208,8 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 | `podiumPoints` | `seq[int]` / `@[100, 40, 15]` (`FfaPodiumPoints`) | `podiumPoints` | each `>=0` (ffa only) | ffa reward by final placement, best first; places past the list pay nothing. |
 
 ffa consts: `FfaHitPoints`=20 (spawn pool), weapon ladder
-`FfaFistDamage`=3 / `FfaLowGunDamage`=1 / `FfaMidGunDamage`=2 /
-`FfaHeavyGunDamage`=4 with cooldown percentages 200% / 150% / 100% / 60%,
+`FfaFistDamage`=2 / `FfaLowGunDamage`=2 / `FfaMidGunDamage`=3 /
+`FfaHeavyGunDamage`=5 with cooldown percentages 200% / 150% / 100% / 60%,
 plus `FfaSprayDamage`=4 / `FfaGrenadeDamage`=4 /
 `FfaGrenadeTrenchSplashDamage`=1,
 `FfaMedKitSpawns`=2,

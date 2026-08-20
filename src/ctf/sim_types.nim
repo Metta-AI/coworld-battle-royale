@@ -21,7 +21,9 @@ const
   GameVersion* = "44"  ## GV44 (FFA weapon ladder): FFA starts with fists and upgrades through low, mid, and heavy weapons.
   ## FFA adds a serialized weapon tier and deterministic low/mid/heavy
   ## pickups, so old replays cannot re-simulate under the new Player wire
-  ## shape or combat rules: fixtures re-recorded.
+  ## shape or combat rules: fixtures re-recorded. The shipped ladder floor is
+  ## 2/2/3/5 damage for fist/low/mid/heavy, with 200%/150%/100%/60%
+  ## cooldowns; CTF remains on its armed mid-tier behavior.
   ##
   ## Previously GV43 (puddle rule): PUDDLES BITE TWICE AS HARD.
   ## `DefaultPuddleDamagePct` goes 10 -> 20: a full second of continuous
@@ -489,10 +491,10 @@ const
   FfaWeaponLow* = 1
   FfaWeaponMid* = 2
   FfaWeaponHeavy* = 3
-  FfaFistDamage* = 3          ## Seven contact punches deplete the 20 HP pool.
-  FfaLowGunDamage* = 1        ## Low tier is plentiful but weak.
-  FfaMidGunDamage* = 2        ## Mid tier reproduces the existing FFA gun band.
-  FfaHeavyGunDamage* = 4      ## Heavy tier rewards the center risk.
+  FfaFistDamage* = 2          ## Ten contact punches deplete the 20 HP pool.
+  FfaLowGunDamage* = 2        ## Low tier matches the old gun's damage.
+  FfaMidGunDamage* = 3        ## Mid tier rewards the intermediate loot route.
+  FfaHeavyGunDamage* = 5      ## Heavy tier rewards the center risk.
   FfaLowGunCooldownPct* = 150
   FfaMidGunCooldownPct* = 100
   FfaHeavyGunCooldownPct* = 60
@@ -505,10 +507,10 @@ const
   FfaFistCooldownTicks* = 2 * FireCooldownTicks
                               ## Fists recover at twice the gun cooldown.
                               ## Against the 20 HP pool, the fist/low/mid/heavy
-                              ## ladder spans 3/1/2/4 damage per contact or shot.
-                              ## Spray and direct grenade hits use 4 damage for
-                              ## their reach, while a cross-trench grenade splash
-                              ## uses 1 and paint puddles retain their classic 1.
+                              ## ladder spans 2/2/3/5 damage per contact or shot.
+                              ## Spray and direct grenade hits use 4 damage,
+                              ## while a cross-trench grenade splash uses 1
+                              ## and paint puddles retain their classic 1.
   FfaSprayDamage* = 4
   FfaGrenadeDamage* = 4
   FfaGrenadeTrenchSplashDamage* = 1

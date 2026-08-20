@@ -484,6 +484,13 @@
           "minimum": 0,
           "default": 2
         },
+        "ffaGunDamage": {
+          "description": "FFA only: direct mid-tier gun damage per hit; low and heavy tiers use their named ladder constants.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3
+        },
         "ffaLootCount": {
           "description": "FFA only: total items in the deterministic center loot cluster, weighted toward offense as it grows.",
           "type": "integer",

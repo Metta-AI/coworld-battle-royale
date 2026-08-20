@@ -663,9 +663,9 @@ proc validate(config: GameConfig) =
     if config.ringRecoveryTicks < 0:
       raise newException(
         CtfError, "Config field ringRecoveryTicks must be non-negative.")
-    if config.ffaGunDamage notin 1 .. 4:
+    if config.ffaGunDamage notin 1 .. 5:
       raise newException(
-        CtfError, "Config field ffaGunDamage must be 1..4.")
+        CtfError, "Config field ffaGunDamage must be 1..5.")
     if config.ffaSprayDamage notin 1 .. 4:
       raise newException(
         CtfError, "Config field ffaSprayDamage must be 1..4.")

@@ -117,6 +117,8 @@ const SampleJson = """{
                       "ringDamageTicks": 48},
   "ringRecoveryTicks": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
                         "ringRecoveryTicks": 2},
+  "ffaGunDamage": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                   "ffaGunDamage": 4},
   "ffaLootCount": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
                    "ffaLootCount": 8},
   "ffaLootRadius": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
@@ -213,6 +215,8 @@ suite "league manifest config_schema vs GameConfig":
       FfaRingDamageTicks
     check schema["properties"]["ringRecoveryTicks"]["default"].getInt ==
       FfaRingRecoveryTicks
+    check schema["properties"]["ffaGunDamage"]["default"].getInt ==
+      FfaGunDamage
     check schema["properties"]["ffaLootCount"]["default"].getInt ==
       FfaLootCount
     check schema["properties"]["ffaLootRadius"]["default"].getInt ==
