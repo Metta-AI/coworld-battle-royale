@@ -207,8 +207,11 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 | `assistWindowTicks` | int / `240` (`FfaAssistWindowTicks`) | `assistWindowTicks` | `>=0` (ffa only) | How far back a damager still counts as an assister; also bounds the in-sim damage log. |
 | `podiumPoints` | `seq[int]` / `@[100, 40, 15]` (`FfaPodiumPoints`) | `podiumPoints` | each `>=0` (ffa only) | ffa reward by final placement, best first; places past the list pay nothing. |
 
-ffa consts: `FfaHitPoints`=20 (spawn pool), weapon band `FfaGunDamage`=2 /
-`FfaSprayDamage`=4 / `FfaGrenadeDamage`=4 / `FfaGrenadeTrenchSplashDamage`=1,
+ffa consts: `FfaHitPoints`=20 (spawn pool), weapon ladder
+`FfaFistDamage`=3 / `FfaLowGunDamage`=1 / `FfaMidGunDamage`=2 /
+`FfaHeavyGunDamage`=4 with cooldown percentages 200% / 150% / 100% / 60%,
+plus `FfaSprayDamage`=4 / `FfaGrenadeDamage`=4 /
+`FfaGrenadeTrenchSplashDamage`=1,
 `FfaMedKitSpawns`=2,
 `FfaSpawnRingPermille`=800 (spawn-ring radius as permille of the inscribed
 circle), `FfaMinPlayers`=2, `FfaMaxPlayers`=16. ffa win logic: the game ends

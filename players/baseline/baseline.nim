@@ -206,6 +206,8 @@ const
                               # the normal combat deadband.
   ArcReach = 130.0            # spray cone: sim reach 136px, small margin
   ArcConeBrads = 9            # cone half-width ~14deg at max reach
+  WeaponUpgradeDetour = 180.0 # armed bots take a nearby strictly better gun
+                              # without abandoning their current route
   CenterScanHalf = 280.0      # |x - CenterX| under this counts as the corridor
   TargetCallCooldown = 48     # min ticks between one bot's engage callouts
   ScanArc = 44                # scan sweeps this many brads each side of the
@@ -1723,6 +1725,24 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       moveTarget = center
     objective = "arm"
     action = "move_gun"
+  elif weaponTier < 3:
+    var bestUpgrade = 1e18
+    for upgrade in [(FfaWeaponMid, LabelWeaponMidGun),
+        (FfaWeaponHeavy, LabelWeaponHeavyGun)]:
+      let tier = upgrade[0]
+      let label = upgrade[1]
+      if tier <= weaponTier:
+        continue
+      for o in client.spriteObjectsWithLabel(label):
+        let gun = client.mapPos(o)
+        let d = dist(me, gun)
+        if d < bestUpgrade and d <= WeaponUpgradeDetour and
+            dist(gun, center) <= float(max(1, ringRadius)):
+          bestUpgrade = d
+          moveTarget = gun
+    if bestUpgrade < 1e18:
+      objective = "upgrade"
+      action = "move_upgrade"
   elif hp < FfaRetreatHp:
     objective = "heal"
     action = "disengage"

@@ -7798,7 +7798,7 @@ proc addCogRigObjects(
               rigGunPixelsForColor(ffaColorIndex, aimStep, boardScale)
             else:
               rigGunPixels(player.team, aimStep, boardScale))),
-        labelCogWeapon(color, spray = holdsSpray, gun = holdsGun,
+        labelCogWeapon(color, spray = holdsSpray,
           tier = player.weaponTier, ffa = sim.config.isFfa()),
         native = boardScale)
     let weaponObjectId = RigGunObjectBase + base

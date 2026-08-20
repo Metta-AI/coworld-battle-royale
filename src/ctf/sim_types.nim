@@ -19,17 +19,22 @@ import
 const
   GameName* = "ctf"
   GameVersion* = "44"  ## GV44 (FFA weapon ladder): FFA starts with fists and upgrades through low, mid, and heavy weapons.
-    ## `DefaultPuddleDamagePct` goes 10 -> 20: a full second of continuous
-    ## paint-puddle occupancy now rolls a 20% chance of 1 damage instead of
-    ## 10%. The default matters because spec-pinned puddles (the campaign's
-    ## per-cell maps) ride `mapSpec` with no `puddleDamagePct` in the config,
-    ## so their replays echo NO pct key and re-simulate on whatever the
-    ## binary's default is — the roll's RNG draw happens on every completed
-    ## second regardless of outcome, so the stream is unchanged up to the
-    ## first draw in [10,20), where the outcome flips and the sims diverge.
-    ## (mapPuddles-knob replays are safe: the echo pins their pct
-    ## explicitly.) GV42 spec-pinned puddle replays therefore re-simulate
-    ## differently: fixtures re-recorded.
+  ## FFA adds a serialized weapon tier and deterministic low/mid/heavy
+  ## pickups, so old replays cannot re-simulate under the new Player wire
+  ## shape or combat rules: fixtures re-recorded.
+  ##
+  ## Previously GV43 (puddle rule): PUDDLES BITE TWICE AS HARD.
+  ## `DefaultPuddleDamagePct` goes 10 -> 20: a full second of continuous
+  ## paint-puddle occupancy now rolls a 20% chance of 1 damage instead of
+  ## 10%. The default matters because spec-pinned puddles (the campaign's
+  ## per-cell maps) ride `mapSpec` with no `puddleDamagePct` in the config,
+  ## so their replays echo NO pct key and re-simulate on whatever the
+  ## binary's default is — the roll's RNG draw happens on every completed
+  ## second regardless of outcome, so the stream is unchanged up to the
+  ## first draw in [10,20), where the outcome flips and the sims diverge.
+  ## (mapPuddles-knob replays are safe: the echo pins their pct
+  ## explicitly.) GV42 spec-pinned puddle replays therefore re-simulate
+  ## differently: fixtures re-recorded.
     ##
     ## Previously GV42 (heart rule): STAND ON THE PEDESTAL, TAKE THE
     ## HEART. `FlagPickupRange` goes 12 -> 34, keyed to the drawn art instead
@@ -484,25 +489,28 @@ const
   FfaWeaponLow* = 1
   FfaWeaponMid* = 2
   FfaWeaponHeavy* = 3
-  FfaLowGunDamage* = 1
-  FfaMidGunDamage* = 2
-  FfaHeavyGunDamage* = 4
-  FfaLowGunCooldownScale* = 3
-  FfaMidGunCooldownScale* = 2
-  FfaHeavyGunCooldownScale* = 6
+  FfaFistDamage* = 3          ## Seven contact punches deplete the 20 HP pool.
+  FfaLowGunDamage* = 1        ## Low tier is plentiful but weak.
+  FfaMidGunDamage* = 2        ## Mid tier reproduces the existing FFA gun band.
+  FfaHeavyGunDamage* = 4      ## Heavy tier rewards the center risk.
+  FfaLowGunCooldownPct* = 150
+  FfaMidGunCooldownPct* = 100
+  FfaHeavyGunCooldownPct* = 60
   FfaLowGunRange* = 700
   FfaMidGunRange* = GunRange
   FfaHeavyGunRange* = GunRange
   FfaGunDamage* = FfaMidGunDamage
-  FfaFistDamage* = 3          ## Unarmed FFA melee damage.
   FfaFistReach* = 70          ## Unarmed FFA melee reach in map pixels.
   FfaFistAimHalfBrads* = 48   ## Unarmed FFA melee aim-cone half-width.
   FfaFistCooldownTicks* = 2 * FireCooldownTicks
                               ## Fists recover at twice the gun cooldown.
-  FfaSprayDamage* = 4         ## 1..4: the spray and a direct grenade hit
-  FfaGrenadeDamage* = 4       ## pay for their reach, the paintball is the
-                              ## cheap poke, and a paint puddle still bites
-                              ## for its classic 1.
+                              ## Against the 20 HP pool, the fist/low/mid/heavy
+                              ## ladder spans 3/1/2/4 damage per contact or shot.
+                              ## Spray and direct grenade hits use 4 damage for
+                              ## their reach, while a cross-trench grenade splash
+                              ## uses 1 and paint puddles retain their classic 1.
+  FfaSprayDamage* = 4
+  FfaGrenadeDamage* = 4
   FfaGrenadeTrenchSplashDamage* = 1
                               ## ffa blast on a victim caught in some OTHER
                               ## trench: the pit still shields. The

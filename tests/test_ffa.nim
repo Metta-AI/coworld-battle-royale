@@ -90,11 +90,11 @@ suite "ffa config":
     check game.weaponDamageForTier(FfaWeaponMid) == FfaMidGunDamage
     check game.weaponDamageForTier(FfaWeaponHeavy) == FfaHeavyGunDamage
     check game.weaponCooldownForTier(FfaWeaponLow) ==
-      game.config.fireCooldownTicks * FfaLowGunCooldownScale div 2
+      max(1, game.config.fireCooldownTicks * FfaLowGunCooldownPct div 100)
     check game.weaponCooldownForTier(FfaWeaponMid) ==
-      game.config.fireCooldownTicks
+      max(1, game.config.fireCooldownTicks * FfaMidGunCooldownPct div 100)
     check game.weaponCooldownForTier(FfaWeaponHeavy) ==
-      max(1, game.config.fireCooldownTicks * FfaHeavyGunCooldownScale div 10)
+      max(1, game.config.fireCooldownTicks * FfaHeavyGunCooldownPct div 100)
     check game.weaponRangeForTier(FfaWeaponLow) == FfaLowGunRange
     check game.weaponRangeForTier(FfaWeaponMid) == FfaMidGunRange
     check game.weaponRangeForTier(FfaWeaponHeavy) == FfaHeavyGunRange

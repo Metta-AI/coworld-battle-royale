@@ -127,6 +127,9 @@ const
     ## tail changes every time the wearer picks something up.
   LabelPrefixCogGun* = "cog gun "
     ## The held paintball marker, `cog gun <color>` (board stream only).
+  LabelPrefixCogLowGun* = "cog low gun "
+  LabelPrefixCogMidGun* = "cog mid gun "
+  LabelPrefixCogHeavyGun* = "cog heavy gun "
   LabelPrefixCogSprayCan* = "cog spray can "
     ## The held spray can, `cog spray can <color>`, which REPLACES the gun
     ## sprite while one is carried — so the silhouette shows the live weapon.
@@ -452,17 +455,19 @@ proc labelWeapon*(token: string): string =
   ## LabelWeaponSpray.
   LabelPrefixWeapon & token
 
-proc labelCogWeapon*(color: string; spray = true; gun = true; tier = 2;
-    ffa = false): string =
+proc labelCogWeapon*(color: string; spray, ffa: bool; tier: int): string =
   ## The held-weapon sprite label on the board rig: `cog spray can <color>`
-  ## when a spray can is carried, `cog gun <color>` otherwise. A cog holds
-  ## exactly one thing, so these two are mutually exclusive per player.
-  (if spray: LabelPrefixCogSprayCan
-   elif not gun: LabelPrefixCogFist
-   elif tier == 1: "cog low gun "
-   elif tier == 3: "cog heavy gun "
-   elif ffa: "cog mid gun "
-   else: LabelPrefixCogGun) & color
+  ## when a spray can is carried; otherwise the tier names the held weapon.
+  ## Tier zero is the unarmed FFA fist, while CTF tier two keeps its legacy
+  ## `cog gun <color>` label.
+  let prefix =
+    if spray: LabelPrefixCogSprayCan
+    elif tier == 0: LabelPrefixCogFist
+    elif tier == 1: LabelPrefixCogLowGun
+    elif tier == 3: LabelPrefixCogHeavyGun
+    elif ffa: LabelPrefixCogMidGun
+    else: LabelPrefixCogGun
+  prefix & color
 
 proc labelShoutPrefix*(color: string): string =
   ## The prefix a listener matches to attribute a shout to a team:
@@ -536,6 +541,12 @@ const PolicyScannedLabels* = [
   LabelBarrier,
   LabelBarrierCarried,
   LabelThrowTarget,
+  labelWeapon(LabelWeaponFist),
+  labelWeapon(LabelWeaponLowGun),
+  labelWeapon(LabelWeaponMidGun),
+  labelWeapon(LabelWeaponHeavyGun),
+  labelWeapon(LabelWeaponSpray),
+  labelWeapon(LabelWeaponGun),
   labelFlag("red"),
   labelFlag("blue"),
   labelFlagPlanted("red"),

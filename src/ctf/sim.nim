@@ -1207,11 +1207,12 @@ proc weaponDamageForTier*(sim: SimServer, tier: int): int =
 
 proc weaponCooldownForTier*(sim: SimServer, tier: int): int =
   let base = sim.config.fireCooldownTicks
-  if not sim.config.isFfa() or tier == FfaWeaponMid:
+  if not sim.config.isFfa():
     return base
   case tier
-  of FfaWeaponLow: base * FfaLowGunCooldownScale div 2
-  of FfaWeaponHeavy: max(1, base * FfaHeavyGunCooldownScale div 10)
+  of FfaWeaponLow: max(1, base * FfaLowGunCooldownPct div 100)
+  of FfaWeaponMid: max(1, base * FfaMidGunCooldownPct div 100)
+  of FfaWeaponHeavy: max(1, base * FfaHeavyGunCooldownPct div 100)
   else: base
 
 proc weaponRangeForTier*(sim: SimServer, tier: int): int =

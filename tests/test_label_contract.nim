@@ -540,7 +540,10 @@ neither failure surfaces until a league round comes back wrong.
     # exact match against a label the engine stopped emitting is the quietest
     # bug in the codebase, so assert the producer still emits each one.
     var game = fullFeatureGame()
-    let emitted = game.collectLabels()
+    var emitted = game.collectLabels()
+    var ffaWeapons = ffaWeaponGame()
+    for label in ffaWeapons.collectFfaWeaponLabels():
+      emitted.incl(label)
     for wanted in PolicyScannedLabels:
       let pattern = wanted.normalizeLabel()
       if pattern notin emitted:
