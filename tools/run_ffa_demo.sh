@@ -137,13 +137,25 @@ PY
   exit 1
 }
 
+BOT_ENV=(
+  CTF_BOT_FAST_READY=1
+  CTF_BOT_SHOUT=1
+  CTF_BOT_TRACE=1
+  CTF_BOT_TRACE_TICK_SCALE=16
+  CTF_BOT_TRACE_MAX_TICKS=8640
+)
+case "$ARM" in
+  E1|E2)
+    BOT_ENV+=(CTF_BOT_FFA_RETREAT_HP=12 CTF_BOT_FFA_FIRE_WHILE_HURT=0)
+    ;;
+  E3|E4)
+    BOT_ENV+=(CTF_BOT_FFA_RETREAT_HP=6 CTF_BOT_FFA_FIRE_WHILE_HURT=1)
+    ;;
+esac
+
 for slot in $(seq 0 $((N - 1))); do
-  CTF_BOT_FAST_READY=1 CTF_BOT_SHOUT=1 CTF_BOT_TRACE=1 \
-  CTF_BOT_TRACE_TICK_SCALE=16 \
-  CTF_BOT_TRACE_MAX_TICKS=8640 \
-  CTF_BOT_FFA_RETREAT_HP="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 6 || echo 12)" \
-  CTF_BOT_FFA_FIRE_WHILE_HURT="$([ "$ARM" = "E3" ] || [ "$ARM" = "E4" ] && echo 1 || echo 0)" \
-    COWORLD_PLAYER_WS_URL="ws://127.0.0.1:$PORT/player?name=Bot_$slot&slot=$slot&token=0xBADA55_$slot" \
+  env "${BOT_ENV[@]}" \
+    "COWORLD_PLAYER_WS_URL=ws://127.0.0.1:$PORT/player?name=Bot_$slot&slot=$slot&token=0xBADA55_$slot" \
     "$PWD/players/baseline/baseline.out" >>"$BOT_LOG" 2>&1 &
   BOT_PIDS+=("$!")
 done
