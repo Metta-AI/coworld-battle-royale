@@ -1580,9 +1580,9 @@ proc ffaRingRadiusAt(tick: int): int =
     (FfaRingStartRadius - FfaRingFloorRadius) * step div total
 
 proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
-  ## Simple FFA doctrine: center on the safe zone, heal behind cover, take
-  ## only critical or locally superior fights, and patrol deterministic
-  ## waypoints so every seat eventually crosses the same playable ground.
+  ## Simple FFA doctrine: converge on the safe-zone center, heal behind cover,
+  ## and take healthy visible fights so every seat eventually crosses the same
+  ## contested ground.
   let
     (alive, me) = client.findFfaSelf()
     center = vec(float(FfaRingCenterX), float(FfaRingCenterY))
@@ -1632,7 +1632,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     targetCritical = targetIndex >= 0 and actors[targetIndex].hp > 0 and
       actors[targetIndex].hp <= 4
     localAdvantage = nearby >= 2
-    engage = targetIndex >= 0 and (targetCritical or localAdvantage) and
+    healthy = hp >= 12
+    engage = targetIndex >= 0 and (healthy or targetCritical or localAdvantage) and
       targetDist < 520.0
   var moveTarget = center
   var objective = "ring"
@@ -1641,7 +1642,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     moveTarget = center
     objective = "safe_zone"
     action = "retreat_ring"
-  elif hp <= 8:
+  elif hp < 12:
     objective = "heal"
     action = "disengage"
     var bestKit = 1e18
@@ -1658,18 +1659,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     objective = "fight"
     action = "engage"
   else:
-    let phase = (bot.tick div 180 + bot.slot) mod 4
-    let
-      orbit = float(max(100, ringRadius * 3 div 5))
-      points = [
-        vec(float(FfaRingCenterX) + orbit, float(FfaRingCenterY)),
-        vec(float(FfaRingCenterX), float(FfaRingCenterY) + orbit),
-        vec(float(FfaRingCenterX) - orbit, float(FfaRingCenterY)),
-        vec(float(FfaRingCenterX), float(FfaRingCenterY) - orbit)
-      ]
-    moveTarget = points[phase]
-    objective = "roam"
-    action = "patrol"
+    moveTarget = center
+    objective = "converge"
+    action = "move_center"
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false

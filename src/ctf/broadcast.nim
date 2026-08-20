@@ -718,7 +718,8 @@ proc buildStateJson*(
       "floorRadius": ffaRingFloorRadius(sim.config),
       "radius": ffaRingRadiusAt(sim.config, sim.gameTicksElapsed()),
       "shrinkSec": sim.config.ringShrinkSec,
-      "damageTicks": sim.config.ringDamageTicks
+      "damageTicks": sim.config.ringDamageTicks,
+      "recoveryTicks": sim.config.ringRecoveryTicks
     }
 
   # Resolved perk magnitudes for the scorebug icon tooltips (the sim is the

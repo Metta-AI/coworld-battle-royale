@@ -504,12 +504,12 @@ const
   FfaPodiumPoints* = [100, 40, 15]
                               ## End-of-match podium by placement, so
                               ## outlasting the field dominates the meter.
-  FfaRingShrinkSec* = 240     ## Seconds the safe zone takes to shrink from
+  FfaRingShrinkSec* = 150     ## Seconds the safe zone takes to shrink from
                               ## covering the whole board to its floor. The
                               ## schedule is LINEAR and then constant: a
                               ## fence that closes once, not a clock that
                               ## kills everyone.
-  FfaRingFloorAreaPct* = 40   ## The floor the ring stops at, as a percent of
+  FfaRingFloorAreaPct* = 35   ## The floor the ring stops at, as a percent of
                               ## the arena's area. It never closes further,
                               ## so the ring can crowd a match but can never
                               ## decide it.
@@ -518,6 +518,7 @@ const
                               ## scaling: at 20 hp an agent can walk the
                               ## whole board through the fire and live.
   FfaRingDamage* = 1          ## hp per exposure tick-count outside the ring.
+  FfaRingRecoveryTicks* = 2   ## Exposure ticks drained per safe-zone tick.
 
   FlagPickupRange* = 34       ## touch radius to steal the enemy flag: STAND ON
                               ## THE PEDESTAL AND THE HEART IS YOURS (GV42).
@@ -1278,6 +1279,7 @@ type
                                   ## arena AREA (FfaRingFloorAreaPct).
     ringDamageTicks*: int         ## ffa: ticks outside the ring per point of
                                   ## damage (FfaRingDamageTicks).
+    ringRecoveryTicks*: int       ## ffa: exposure ticks drained while inside.
 
   Player* = object
     x*, y*: int
@@ -1374,11 +1376,10 @@ type
                                ## never died. The ffa placement order reads
                                ## it (later death outranks earlier);
                                ## excluded from gameHash.
-    ringTicks*: int            ## ffa: consecutive ticks spent outside the
-                               ## safe zone, reset by stepping back in (the
-                               ## puddleTicks pattern, and excluded from
-                               ## gameHash for the same reason — the hp it
-                               ## costs is hashed, the counter is not).
+    ringTicks*: int            ## ffa: exposure ticks accumulated outside the
+                               ## safe zone, drained gradually while inside
+                               ## (excluded from gameHash; the hp it costs is
+                               ## hashed).
 
   FfaDamageHit* = object
     ## One ffa damage event, kept just long enough to resolve assists

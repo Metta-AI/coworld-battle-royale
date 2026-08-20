@@ -63,7 +63,8 @@ proc defaultGameConfig*(): GameConfig =
     ringEnabled: false,
     ringShrinkSec: FfaRingShrinkSec,
     ringFloorAreaPct: FfaRingFloorAreaPct,
-    ringDamageTicks: FfaRingDamageTicks
+    ringDamageTicks: FfaRingDamageTicks,
+    ringRecoveryTicks: 0
   )
 
 proc defaultFfaConfig*(numPlayers: int): GameConfig =
@@ -73,6 +74,7 @@ proc defaultFfaConfig*(numPlayers: int): GameConfig =
   result = defaultGameConfig()
   result.mode = FfaMode
   result.numPlayers = numPlayers
+  result.ringRecoveryTicks = FfaRingRecoveryTicks
   result.minPlayers = numPlayers
   result.lives = 1
   result.hitPoints = FfaHitPoints
@@ -647,6 +649,9 @@ proc validate(config: GameConfig) =
     if config.ringDamageTicks < 1:
       raise newException(
         CtfError, "Config field ringDamageTicks must be at least 1.")
+    if config.ringRecoveryTicks < 0:
+      raise newException(
+        CtfError, "Config field ringRecoveryTicks must be non-negative.")
   elif config.numPlayers != 0:
     raise newException(
       CtfError,
@@ -760,6 +765,7 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("ringShrinkSec", config.ringShrinkSec)
   node.readConfigInt("ringFloorAreaPct", config.ringFloorAreaPct)
   node.readConfigInt("ringDamageTicks", config.ringDamageTicks)
+  node.readConfigInt("ringRecoveryTicks", config.ringRecoveryTicks)
   # ffa's own baseline, derived from the mode and from N: single life (the
   # game is elimination, so respawn never rearms) and the deep spawn pool,
   # and a lobby that waits for exactly the seats the match is sized for.
@@ -773,6 +779,8 @@ proc update*(config: var GameConfig, jsonText: string) =
       config.minPlayers = config.numPlayers
     if not node.hasKey("ringEnabled"):
       config.ringEnabled = true
+    if not node.hasKey("ringRecoveryTicks"):
+      config.ringRecoveryTicks = FfaRingRecoveryTicks
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
   node.readConfigBool("fastMode", config.fastMode)
   node.readConfigInt("teams", config.teams)
@@ -987,7 +995,7 @@ proc configJson*(config: GameConfig): string =
     node["ringShrinkSec"] = %config.ringShrinkSec
     node["ringFloorAreaPct"] = %config.ringFloorAreaPct
     node["ringDamageTicks"] = %config.ringDamageTicks
+    node["ringRecoveryTicks"] = %config.ringRecoveryTicks
   if config.mapSpec.len > 0:
     node["mapSpec"] = fromJson(config.mapSpec)
   $node
-

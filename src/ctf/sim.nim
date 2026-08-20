@@ -900,6 +900,8 @@ proc killPlayer*(
   # the weapon is known first-hand.
   sim.emitEvent(
     Death, source = targetIndex, target = killerIndex,
+    weapon =
+      if sim.config.isFfa() and cause == "left the safe zone": "ring" else: "",
     x = float(sim.players[targetIndex].x + CollisionW div 2),
     y = float(sim.players[targetIndex].y + CollisionH div 2),
     targetSlot = killerSlot
@@ -2889,7 +2891,8 @@ proc updateFfaRing*(sim: var SimServer) =
       centerX = sim.players[i].x + CollisionW div 2
       centerY = sim.players[i].y + CollisionH div 2
     if not ffaOutsideRing(sim.config, elapsed, centerX, centerY):
-      sim.players[i].ringTicks = 0
+      sim.players[i].ringTicks = max(
+        0, sim.players[i].ringTicks - sim.config.ringRecoveryTicks)
       continue
     inc sim.players[i].ringTicks
     if sim.players[i].ringTicks mod sim.config.ringDamageTicks != 0:

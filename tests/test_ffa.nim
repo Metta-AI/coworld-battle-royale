@@ -39,6 +39,9 @@ suite "ffa config":
     check config.assistPoints == FfaAssistPoints
     check config.assistWindowTicks == FfaAssistWindowTicks
     check config.podiumPoints == @FfaPodiumPoints
+    check config.ringShrinkSec == FfaRingShrinkSec
+    check config.ringFloorAreaPct == FfaRingFloorAreaPct
+    check config.ringRecoveryTicks == FfaRingRecoveryTicks
 
   test "ctf is the default and echoes no ffa key":
     let config = defaultGameConfig()
@@ -141,9 +144,9 @@ suite "ffa elimination":
     game.updateFfaRing()
     check game.players[0].hp == hp - 1
     game.players[0].placeAtCenter(center.x, center.y)
-    game.players[0].ringTicks = 0
+    game.players[0].ringTicks = 5
     game.updateFfaRing()
-    check game.players[0].ringTicks == 0
+    check game.players[0].ringTicks == 5 - FfaRingRecoveryTicks
 
   test "one life over a 20 hp pool, and no respawn ever rearms":
     var game = ffaGame(4)
@@ -259,10 +262,11 @@ suite "ffa chat":
     let config = defaultFfaConfig(4)
     let echoed = parseJson(config.configJson())
     for key in ["ringEnabled", "ringShrinkSec", "ringFloorAreaPct",
-        "ringDamageTicks"]:
+        "ringDamageTicks", "ringRecoveryTicks"]:
       check echoed.hasKey(key)
     check echoed["ringShrinkSec"].getInt == FfaRingShrinkSec
     check echoed["ringDamageTicks"].getInt == FfaRingDamageTicks
+    check echoed["ringRecoveryTicks"].getInt == FfaRingRecoveryTicks
 
 suite "ffa endings":
   test "a wipe ends the match on the named survivor":

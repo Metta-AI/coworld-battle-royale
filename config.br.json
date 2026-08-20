@@ -7,11 +7,13 @@
   "fastMode": true,
   "mapPath": "gen",
   "mapSeed": 42,
-  "mapSize": "giant",
+  "mapSize": "huge",
   "mapSymmetry": "mirror",
   "mapColumns": 18,
   "mapWindows": 4,
   "mapCenterFeature": "ring",
   "mapEndzone": "disc",
-  "mapPits": 18
+  "mapPits": 18,
+  "ringShrinkSec": 150,
+  "ringFloorAreaPct": 35
 }
