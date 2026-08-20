@@ -3335,9 +3335,14 @@ proc chunkSpritePacket*(packet: seq[uint8], maxBytes: int): seq[seq[uint8]] =
     inc offset
     case messageType
     of 0x01:  # sprite: id,w,h (6) + clen (4) + pixels + llen (2) + label
-      let clen = packet.readU32(offset + 6)
+      # Avoid readU32 here: its openArray overload copies the entire packet to
+      # a string on every call, turning large FFA init packets into O(n²) work.
+      let clen = packet[offset + 6].int or
+        (packet[offset + 7].int shl 8) or
+        (packet[offset + 8].int shl 16) or
+        (packet[offset + 9].int shl 24)
       offset += 10 + clen
-      let llen = packet.readU16(offset)
+      let llen = packet[offset].int or (packet[offset + 1].int shl 8)
       offset += 2 + llen
     of 0x02: offset += 11   # object
     of 0x03: offset += 2    # delete object

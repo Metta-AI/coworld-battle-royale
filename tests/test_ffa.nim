@@ -332,6 +332,12 @@ suite "ffa spawn ring":
       orangeSoldier = soldierRotPixelsForColor(1, DefaultSkin, 0)
     check redBubble.pixels != orangeBubble.pixels
     check redSoldier != orangeSoldier
+    let tintBefore = identityTintCallCount()
+    discard soldierRotPixelsForColor(15, CrownSkin, 7, 3)
+    let tintAfterFirst = identityTintCallCount()
+    discard soldierRotPixelsForColor(15, CrownSkin, 7, 3)
+    check tintAfterFirst == tintBefore + 1
+    check identityTintCallCount() == tintAfterFirst
 
   test "ffa spectator header is alive count and timer, not team lives":
     var game = ffaGame(4)

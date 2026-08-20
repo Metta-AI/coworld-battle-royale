@@ -210,6 +210,14 @@ var
   sprayMaster: Image
   sprayScale: float
   sprayLoaded: bool
+  soldierRotColorCache: array[
+    PlayerColors.len,
+    array[Skin, array[SoldierRotations, seq[tuple[
+      scale: int, pixels: seq[uint8]
+    ]]]]
+  ]
+  soldierIconColorCache: array[
+    PlayerColors.len, seq[tuple[sizePx: int, pixels: seq[uint8]]]]
 
 proc measureSoldierBody(skin: Skin, team: Team, master: Image) =
   ## Finds the body pivot and the master->canvas scale: the centroid and
@@ -424,6 +432,11 @@ var
   # (0 for non-legs).
   rigSegCache: array[Skin, array[Team, array[RigSeg, seq[tuple[
     baseStep, artStep, shortenStep, scale: int, pixels: seq[uint8]]]]]]
+  rigSegColorCache: array[
+    PlayerColors.len,
+    array[Skin, array[RigSeg, seq[tuple[
+      baseStep, artStep, shortenStep, scale: int, pixels: seq[uint8]]]]]
+  ]
 
 proc rigSegPath(seg: RigSeg): string =
   case seg
@@ -655,15 +668,20 @@ proc soldierIconPixels*(team: Team, sizePx: int): seq[uint8] =
     result[i * 4 + 2] = c.b
     result[i * 4 + 3] = c.a
 
+var identityTintCalls: int
+
+proc identityTintCallCount*(): int =
+  identityTintCalls
+
 proc tintIdentityPixels(pixels: seq[uint8], colorIndex: int): seq[uint8] =
   ## Recolors the warm-red team paint in a rig/icon sprite while preserving
   ## the neutral metal, visor, and shadow pixels. FFA identity art uses the
   ## same authored silhouette for every seat; only its paint hue varies.
+  inc identityTintCalls
   let
-    target = Palette[PlayerColors[
-      ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod
-        PlayerColors.len
-    ] and 0x0f]
+    normalizedColor = ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod
+      PlayerColors.len
+    target = Palette[PlayerColors[normalizedColor] and 0x0f]
   result = pixels
   for i in 0 ..< result.len div 4:
     let
@@ -688,10 +706,19 @@ proc soldierRotPixelsForColor*(
   renderScale = 1
 ): seq[uint8] =
   ## FFA player-view soldier art tinted to the seat identity color.
-  tintIdentityPixels(
-    soldierRotPixels(Red, skin, rot, renderScale),
-    colorIndex
+  let normalizedColor =
+    ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod PlayerColors.len
+  let r = ((rot mod SoldierRotations) + SoldierRotations) mod SoldierRotations
+  for cached in soldierRotColorCache[normalizedColor][skin][r]:
+    if cached.scale == renderScale:
+      return cached.pixels
+  let pixels = tintIdentityPixels(
+    soldierRotPixels(Red, skin, r, renderScale),
+    normalizedColor
   )
+  soldierRotColorCache[normalizedColor][skin][r].add(
+    (scale: renderScale, pixels: pixels))
+  pixels
 
 proc rigSegPixelsForColor*(
   colorIndex: int,
@@ -702,14 +729,36 @@ proc rigSegPixelsForColor*(
   skin = DefaultSkin
 ): seq[uint8] =
   ## FFA rig art: the red authored rig is tinted to the seat identity color.
-  tintIdentityPixels(
-    rigSegPixels(Red, seg, baseStep, artStep, shortenStep, renderScale, skin),
-    colorIndex
+  let normalizedColor =
+    ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod PlayerColors.len
+  let
+    b = ((baseStep mod RigSteps) + RigSteps) mod RigSteps
+    sh = clamp(shortenStep, 0, RigShortenSteps)
+    effectiveSkin = if seg == rsHead: skin else: DefaultSkin
+  for cached in rigSegColorCache[normalizedColor][effectiveSkin][seg]:
+    if cached.baseStep == b and cached.artStep == artStep and
+        cached.shortenStep == sh and cached.scale == renderScale:
+      return cached.pixels
+  let pixels = tintIdentityPixels(
+    rigSegPixels(Red, seg, b, artStep, sh, renderScale, effectiveSkin),
+    normalizedColor
   )
+  rigSegColorCache[normalizedColor][effectiveSkin][seg].add(
+    (baseStep: b, artStep: artStep, shortenStep: sh, scale: renderScale,
+     pixels: pixels))
+  pixels
 
 proc soldierIconPixelsForColor*(colorIndex, sizePx: int): seq[uint8] =
   ## FFA game-over roster icon in the seat identity color.
-  tintIdentityPixels(soldierIconPixels(Red, sizePx), colorIndex)
+  let normalizedColor =
+    ((colorIndex mod PlayerColors.len) + PlayerColors.len) mod PlayerColors.len
+  for cached in soldierIconColorCache[normalizedColor]:
+    if cached.sizePx == sizePx:
+      return cached.pixels
+  let pixels = tintIdentityPixels(
+    soldierIconPixels(Red, sizePx), normalizedColor)
+  soldierIconColorCache[normalizedColor].add((sizePx: sizePx, pixels: pixels))
+  pixels
 
 proc rigGunPixelsForColor*(
   colorIndex, aimStep: int,
