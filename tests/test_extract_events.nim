@@ -6,7 +6,7 @@ import
 
 const
   # The event-substrate fixture: a full 16-bot match recorded against the
-  # CURRENT gameplay rules (GameVersion 43, seed 907, lives 9:
+  # CURRENT gameplay rules (GameVersion 44, seed 907, lives 9:
   #   record_fixture.sh tests/replays/ctf.bitreplay 907 10000 '{"lives":9}')
   # The GV43 take kept all three weapon kills on the FIRST recording
   # (gun 70 / grenade 5 / spray 8, one capture, eight steals).

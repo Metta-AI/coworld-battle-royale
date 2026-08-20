@@ -199,6 +199,8 @@ proc gameHash*(sim: SimServer): uint64 =
     result.mixHashBool(player.hasShield)
     result.mixHashInt(player.shieldHp)
     result.mixHashBool(player.hasPlasmaArc)
+    if sim.config.isFfa():
+      result.mixHashInt(player.weaponTier)
     result.mixHashInt(player.arcTicksLeft)
     result.mixHashInt(player.arcAimBrads)
     # A 32-seat board can set bit 31 of the arc-hit mask; converting through
@@ -219,6 +221,16 @@ proc gameHash*(sim: SimServer): uint64 =
   for spawn in sim.grenadeSpawns:
     result.mixHashBool(spawn.present)
     result.mixHashInt(spawn.respawnAt)
+  if sim.config.isFfa():
+    for spawn in sim.lowGunSpawns:
+      result.mixHashBool(spawn.present)
+      result.mixHashInt(spawn.respawnAt)
+    for spawn in sim.midGunSpawns:
+      result.mixHashBool(spawn.present)
+      result.mixHashInt(spawn.respawnAt)
+    for spawn in sim.heavyGunSpawns:
+      result.mixHashBool(spawn.present)
+      result.mixHashInt(spawn.respawnAt)
   for spawn in sim.medKitSpawns:
     result.mixHashBool(spawn.present)
     result.mixHashInt(spawn.respawnAt)

@@ -72,7 +72,10 @@ proc defaultGameConfig*(): GameConfig =
     ffaMedKitSpawns: FfaMedKitSpawns,
     ffaLootCount: FfaLootCount,
     ffaLootRadius: FfaLootRadius,
-    ffaLootRespawnTicks: FfaLootRespawnTicks
+    ffaLootRespawnTicks: FfaLootRespawnTicks,
+    ffaLowGunSpawns: FfaLowGunSpawns,
+    ffaMidGunSpawns: FfaMidGunSpawns,
+    ffaHeavyGunSpawns: FfaHeavyGunSpawns
   )
 
 proc defaultFfaConfig*(numPlayers: int): GameConfig =
@@ -684,6 +687,12 @@ proc validate(config: GameConfig) =
     if config.ffaLootRespawnTicks < 1:
       raise newException(
         CtfError, "Config field ffaLootRespawnTicks must be at least 1.")
+    if config.ffaLowGunSpawns < 0 or config.ffaLowGunSpawns > FfaMaxPlayers or
+        config.ffaMidGunSpawns < 0 or config.ffaMidGunSpawns > FfaMaxPlayers or
+        config.ffaHeavyGunSpawns < 0 or
+        config.ffaHeavyGunSpawns > FfaMaxPlayers:
+      raise newException(CtfError,
+        "Config gun spawn fields must be 0.." & $FfaMaxPlayers & ".")
   elif config.numPlayers != 0:
     raise newException(
       CtfError,
@@ -701,7 +710,10 @@ proc validate(config: GameConfig) =
       config.ffaMedKitSpawns != FfaMedKitSpawns or
       config.ffaLootCount != FfaLootCount or
       config.ffaLootRadius != FfaLootRadius or
-      config.ffaLootRespawnTicks != FfaLootRespawnTicks:
+      config.ffaLootRespawnTicks != FfaLootRespawnTicks or
+      config.ffaLowGunSpawns != FfaLowGunSpawns or
+      config.ffaMidGunSpawns != FfaMidGunSpawns or
+      config.ffaHeavyGunSpawns != FfaHeavyGunSpawns:
     raise newException(
       CtfError,
       "FFA combat economy fields only apply to mode " & FfaMode & "."
@@ -819,6 +831,9 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("ffaLootCount", config.ffaLootCount)
   node.readConfigInt("ffaLootRadius", config.ffaLootRadius)
   node.readConfigInt("ffaLootRespawnTicks", config.ffaLootRespawnTicks)
+  node.readConfigInt("ffaLowGunSpawns", config.ffaLowGunSpawns)
+  node.readConfigInt("ffaMidGunSpawns", config.ffaMidGunSpawns)
+  node.readConfigInt("ffaHeavyGunSpawns", config.ffaHeavyGunSpawns)
   # ffa's own baseline, derived from the mode and from N: single life (the
   # game is elimination, so respawn never rearms) and the deep spawn pool,
   # and a lobby that waits for exactly the seats the match is sized for.
@@ -1058,6 +1073,12 @@ proc configJson*(config: GameConfig): string =
     node["ffaLootCount"] = %config.ffaLootCount
     node["ffaLootRadius"] = %config.ffaLootRadius
     node["ffaLootRespawnTicks"] = %config.ffaLootRespawnTicks
+    if config.ffaLowGunSpawns != FfaLowGunSpawns:
+      node["ffaLowGunSpawns"] = %config.ffaLowGunSpawns
+    if config.ffaMidGunSpawns != FfaMidGunSpawns:
+      node["ffaMidGunSpawns"] = %config.ffaMidGunSpawns
+    if config.ffaHeavyGunSpawns != FfaHeavyGunSpawns:
+      node["ffaHeavyGunSpawns"] = %config.ffaHeavyGunSpawns
   if config.mapSpec.len > 0:
     node["mapSpec"] = fromJson(config.mapSpec)
   $node

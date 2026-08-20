@@ -52,6 +52,24 @@ suite "ffa config":
     check config.ffaLootCount == FfaLootCount
     check config.ffaLootRadius == FfaLootRadius
     check config.ffaLootRespawnTicks == FfaLootRespawnTicks
+    check config.ffaLowGunSpawns == FfaLowGunSpawns
+    check config.ffaMidGunSpawns == FfaMidGunSpawns
+    check config.ffaHeavyGunSpawns == FfaHeavyGunSpawns
+
+  test "ffa starts unarmed, while ctf starts armed":
+    let ffa = ffaGame(4)
+    for player in ffa.players:
+      check player.weaponTier == FfaWeaponUnarmed
+    check ffa.lowGunSpawns.len == max(1, 4)
+    check ffa.midGunSpawns.len == max(2, 4 div 4)
+    check ffa.heavyGunSpawns.len == max(1, 4 div 4)
+    var ctf = initCtfForTest(defaultGameConfig())
+    for i in 0 ..< 4:
+      discard ctf.addPlayer("ctf" & $i)
+    ctf.startGame()
+    for player in ctf.players:
+      check player.weaponTier == FfaWeaponMid
+    check ctf.lowGunSpawns.len == 0
 
   test "ctf is the default and echoes no ffa key":
     let config = defaultGameConfig()
@@ -62,8 +80,24 @@ suite "ffa config":
         "assistPoints", "assistWindowTicks", "podiumPoints", "ffaGunDamage",
         "ffaSprayDamage", "ffaGrenadeDamage",
         "ffaGrenadeTrenchSplashDamage", "ffaMedKitSpawns",
-        "ffaLootCount", "ffaLootRadius", "ffaLootRespawnTicks"]:
+        "ffaLootCount", "ffaLootRadius", "ffaLootRespawnTicks",
+        "ffaLowGunSpawns", "ffaMidGunSpawns", "ffaHeavyGunSpawns"]:
       check not echoed.hasKey(key)
+
+  test "ffa weapon tiers have distinct deterministic stats":
+    let game = ffaGame(4)
+    check game.weaponDamageForTier(FfaWeaponLow) == FfaLowGunDamage
+    check game.weaponDamageForTier(FfaWeaponMid) == FfaMidGunDamage
+    check game.weaponDamageForTier(FfaWeaponHeavy) == FfaHeavyGunDamage
+    check game.weaponCooldownForTier(FfaWeaponLow) ==
+      game.config.fireCooldownTicks * FfaLowGunCooldownScale div 2
+    check game.weaponCooldownForTier(FfaWeaponMid) ==
+      game.config.fireCooldownTicks
+    check game.weaponCooldownForTier(FfaWeaponHeavy) ==
+      max(1, game.config.fireCooldownTicks * FfaHeavyGunCooldownScale div 10)
+    check game.weaponRangeForTier(FfaWeaponLow) == FfaLowGunRange
+    check game.weaponRangeForTier(FfaWeaponMid) == FfaMidGunRange
+    check game.weaponRangeForTier(FfaWeaponHeavy) == FfaHeavyGunRange
 
   test "an ffa config round-trips through its replay echo":
     var config = defaultFfaConfig(9)
@@ -77,6 +111,7 @@ suite "ffa config":
     config.ffaLootCount = 8
     config.ffaLootRadius = 120
     config.ffaLootRespawnTicks = 96
+    config.ffaLowGunSpawns = 5
     var reloaded = defaultGameConfig()
     reloaded.update(config.configJson())
     check reloaded.mode == FfaMode
@@ -447,12 +482,106 @@ suite "ffa elimination":
     game.stepNone(3 * game.config.respawnTicks)
     check not game.players[0].alive
 
+  test "unarmed fists hit only the nearest target in the aim cone":
+    var game = ffaGame(3)
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(350, MapHeight div 2)
+    game.players[2].placeAtCenter(390, MapHeight div 2 + 20)
+    game.players[0].aimBrads = 0
+    game.tryFire(0)
+    check game.players[0].fireCooldown == FfaFistCooldownTicks
+    check game.players[1].hp == FfaHitPoints - FfaFistDamage
+    check game.players[2].hp == FfaHitPoints
+    game.players[1].x = game.players[0].x + 100
+    game.players[0].fireCooldown = 0
+    game.tryFire(0)
+    check game.players[1].hp == FfaHitPoints - FfaFistDamage
+
+  test "fists can kill at seven contact hits and miss outside reach":
+    var game = ffaGame(2)
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(350, MapHeight div 2)
+    game.players[0].aimBrads = 0
+    for i in 0 ..< 7:
+      game.players[0].fireCooldown = 0
+      game.tryFire(0)
+    check not game.players[1].alive
+    var miss = ffaGame(2)
+    miss.players[0].placeAtCenter(300, MapHeight div 2)
+    miss.players[1].placeAtCenter(380, MapHeight div 2)
+    miss.players[0].aimBrads = 0
+    miss.tryFire(0)
+    check miss.players[1].hp == FfaHitPoints
+
+  test "touching an ffa gun arms the player and enables gun fire":
+    var game = ffaGame(2)
+    let spawn = game.lowGunSpawns[0]
+    game.players[0].x = spawn.x - CollisionW div 2
+    game.players[0].y = spawn.y - CollisionH div 2
+    game.tryPickupGuns(0)
+    check game.players[0].weaponTier == FfaWeaponLow
+    check not game.lowGunSpawns[0].present
+    game.players[1].placeAtCenter(game.players[0].x + 40, game.players[0].y)
+    game.players[0].aimBrads = 0
+    game.armToFire(0)
+    game.tryFire(0)
+    check game.players[1].hp == FfaHitPoints - FfaLowGunDamage
+
+  test "lower weapon pickups do not downgrade or disappear":
+    var game = ffaGame(2)
+    let spawn = game.lowGunSpawns[0]
+    game.players[0].weaponTier = FfaWeaponMid
+    game.players[0].x = spawn.x - CollisionW div 2
+    game.players[0].y = spawn.y - CollisionH div 2
+    game.tryPickupGuns(0)
+    check game.players[0].weaponTier == FfaWeaponMid
+    check game.lowGunSpawns[0].present
+
+  test "higher tier pickup upgrades once and respawns deterministically":
+    var game = ffaGame(4)
+    let spawn = game.heavyGunSpawns[0]
+    game.players[0].weaponTier = FfaWeaponLow
+    game.players[0].x = spawn.x - CollisionW div 2
+    game.players[0].y = spawn.y - CollisionH div 2
+    game.players[0].fireWindup = 4
+    game.players[0].windupBrads = 0
+    game.tryPickupGuns(0)
+    check game.players[0].weaponTier == FfaWeaponHeavy
+    check game.heavyGunSpawns[0].present == false
+    check game.players[0].fireWindup == 0
+    check game.players[0].windupBrads == -1
+    game.tickCount = game.heavyGunSpawns[0].respawnAt
+    game.updateGuns()
+    check game.heavyGunSpawns[0].present
+
+  test "weapon families occupy their intended deterministic bands":
+    let first = ffaGame(12)
+    let second = ffaGame(12)
+    let center = ffaRingCenter()
+    proc radiusSquared(spawn: PickupSpawn): int =
+      let cx = spawn.x - center.x
+      let cy = spawn.y - center.y
+      cx * cx + cy * cy
+    check first.lowGunSpawns.mapIt((it.x, it.y)) ==
+      second.lowGunSpawns.mapIt((it.x, it.y))
+    check first.midGunSpawns.mapIt((it.x, it.y)) ==
+      second.midGunSpawns.mapIt((it.x, it.y))
+    check first.heavyGunSpawns.mapIt((it.x, it.y)) ==
+      second.heavyGunSpawns.mapIt((it.x, it.y))
+    check first.lowGunSpawns.allIt(
+      radiusSquared(it) > FfaLootRadius * FfaLootRadius)
+    check first.heavyGunSpawns.allIt(
+      radiusSquared(it) <= FfaLootRadius * FfaLootRadius)
+    check first.midGunSpawns.allIt(
+      radiusSquared(it) > FfaLootRadius * FfaLootRadius)
+
   test "an ffa gun hit takes 2 of the pool and books damage dealt":
     var game = ffaGame(2)
     let midY = MapHeight div 2
     game.players[0].placeAtCenter(300, midY)
     game.players[1].placeAtCenter(340, midY)
     game.players[0].aimBrads = 0
+    game.players[0].weaponTier = FfaWeaponMid
     game.armToFire(0)
     game.tryFire(0)
     check game.players[1].hp == FfaHitPoints - FfaGunDamage
@@ -471,6 +600,7 @@ suite "ffa elimination":
     game.players[0].placeAtCenter(300, midY)
     game.players[1].placeAtCenter(340, midY)
     game.players[0].aimBrads = 0
+    game.players[0].weaponTier = FfaWeaponMid
     game.armToFire(0)
     game.tryFire(0)
     check game.players[1].hp == FfaHitPoints - 4

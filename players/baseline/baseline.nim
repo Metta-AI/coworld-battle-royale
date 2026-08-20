@@ -1646,6 +1646,16 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   let statedAim = client.ownAimBrads()
   if statedAim >= 0:
     bot.estAim = statedAim
+  var weapon = LabelWeaponFist
+  for (_, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixWeapon):
+    weapon = label[LabelPrefixWeapon.len .. ^1]
+    break
+  let weaponTier =
+    if weapon == LabelWeaponHeavyGun: 3
+    elif weapon == LabelWeaponMidGun or weapon == LabelWeaponGun: 2
+    elif weapon == LabelWeaponLowGun: 1
+    else: 0
+  let unarmed = weaponTier == 0
 
   var hp = bot.hp
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
@@ -1699,6 +1709,20 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     moveTarget = center
     objective = "safe_zone"
     action = "retreat_ring"
+  elif unarmed:
+    var bestGun = 1e18
+    for label in [LabelWeaponLowGun, LabelWeaponMidGun, LabelWeaponHeavyGun,
+        LabelWeaponGun]:
+      for o in client.spriteObjectsWithLabel(label):
+        let gun = client.mapPos(o)
+        let d = dist(me, gun)
+        if d < bestGun and dist(gun, center) <= float(max(1, ringRadius)):
+          bestGun = d
+          moveTarget = gun
+    if bestGun == 1e18:
+      moveTarget = center
+    objective = "arm"
+    action = "move_gun"
   elif hp < FfaRetreatHp:
     objective = "heal"
     action = "disengage"
@@ -1733,11 +1757,18 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         bestTrackD = d
         aimTarget = track.pos + track.vel * LeadTicks
     desiredAim = bradsOf(aimTarget - me)
-    if (engage or fireWhileHurt) and targetDist < 520.0:
+    let fireRange =
+      if unarmed: 70.0
+      elif weaponTier == 1: float(FfaLowGunRange)
+      else: 520.0
+    if (engage or fireWhileHurt) and targetDist < fireRange:
       rayClear = client.pixelRayClear(me, target.pos)
       wantFire = rayClear and
-        abs(bradsErr(desiredAim, bot.estAim)) <=
-          fireToleranceBrads(targetDist)
+        (if unarmed:
+          abs(bradsErr(desiredAim, bot.estAim)) <= FfaFistAimHalfBrads
+        else:
+          abs(bradsErr(desiredAim, bot.estAim)) <=
+            fireToleranceBrads(targetDist))
   let steer = bot.navSteer(client, me, moveTarget)
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
   if dist(me, bot.lastPos) < 0.8:

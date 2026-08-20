@@ -185,7 +185,10 @@ proc ffaLootSeed(sim: SimServer): int =
 
 proc ffaLootPoints(
   sim: SimServer,
-  count: int
+  count: int,
+  radiusOverride = -1,
+  minRadiusOverride = -1,
+  phaseOffset = 0
 ): seq[tuple[x, y: int]] =
   ## Returns deterministic, scattered center targets for FFA loot.
   ## The seed rotates the integer bands; CTF never calls this path.
@@ -194,18 +197,25 @@ proc ffaLootPoints(
   let
     (cx, cy) = ffaRingCenter()
     floorRadius = ffaRingFloorRadius(sim.config)
-    radius = min(sim.config.ffaLootRadius, max(1, floorRadius - PlayerHalf - 4))
+    radius = min(
+      if radiusOverride > 0: radiusOverride else: sim.config.ffaLootRadius,
+      max(1, floorRadius - PlayerHalf - 4)
+    )
+    minRadius = min(
+      (if minRadiusOverride > 0: minRadiusOverride else: 1),
+      max(1, radius - PlayerHalf)
+    )
     rawSeed = sim.ffaLootSeed()
-    phase = ((rawSeed mod 256) + 256) mod 256
+    phase = ((rawSeed + phaseOffset mod 1024) mod 256 + 256) mod 256
     spacing = 2 * MedKitPickupRange
   for i in 0 ..< count:
     let
       brads = phase + i * 256 div count + (i * 37 mod 23) - 11
-      bandRadius = case i mod 4
-        of 0: max(1, radius * 55 div 100)
-        of 1: max(1, radius * 75 div 100)
-        of 2: max(1, radius * 90 div 100)
-        else: radius
+      bandRadius = max(minRadius, case i mod 4
+          of 0: max(1, radius * 55 div 100)
+          of 1: max(1, radius * 75 div 100)
+          of 2: max(1, radius * 90 div 100)
+          else: radius)
     let target = (
       cx + bandRadius * ringCos(brads) div 1024,
       cy - bandRadius * ringSin(brads) div 1024
@@ -259,7 +269,8 @@ proc ffaLootPoints(
 
 proc ffaLootFamilyCounts*(
   sim: SimServer
-): tuple[medKits, shields, plasmaArcs, barriers: int] =
+): tuple[medKits, shields, plasmaArcs, barriers, lowGuns, midGuns,
+  heavyGuns: int] =
   ## Keeps sustain at roughly one sixth of the configurable cluster each.
   ## The med-kit knob caps its weighted share; offensive items get the rest.
   let count = max(0, sim.config.ffaLootCount)
@@ -277,13 +288,22 @@ proc ffaLootFamilyCounts*(
   let offensive = count - result.medKits - result.shields
   result.plasmaArcs = (offensive + 1) div 2
   result.barriers = offensive div 2
+  result.lowGuns =
+    if sim.config.ffaLowGunSpawns > 0: sim.config.ffaLowGunSpawns
+    else: max(1, sim.config.numPlayers)
+  result.midGuns =
+    if sim.config.ffaMidGunSpawns > 0: sim.config.ffaMidGunSpawns
+    else: max(2, sim.config.numPlayers div 4)
+  result.heavyGuns =
+    if sim.config.ffaHeavyGunSpawns > 0: sim.config.ffaHeavyGunSpawns
+    else: max(1, sim.config.numPlayers div 4)
 
 proc ffaFamilyTargets(
   sim: SimServer,
   family: int
 ): seq[tuple[x, y: int]] =
-  let points = sim.ffaLootPoints(sim.config.ffaLootCount + 4)
   let counts = sim.ffaLootFamilyCounts()
+  let points = sim.ffaLootPoints(sim.config.ffaLootCount + 4)
   var
     offset = 0
     count = 0
@@ -299,6 +319,24 @@ proc ffaFamilyTargets(
   of 3:
     offset = counts.medKits + counts.shields + counts.plasmaArcs
     count = counts.barriers
+  of 4:
+    let floorRadius = ffaRingFloorRadius(sim.config)
+    return sim.ffaLootPoints(
+      counts.lowGuns,
+      radiusOverride = floorRadius,
+      minRadiusOverride = sim.config.ffaLootRadius + 24,
+      phaseOffset = 173
+    )
+  of 5:
+    return sim.ffaLootPoints(
+      counts.midGuns,
+      radiusOverride = max(sim.config.ffaLootRadius + 40,
+        ffaRingFloorRadius(sim.config) div 2),
+      minRadiusOverride = sim.config.ffaLootRadius + 20,
+      phaseOffset = 347
+    )
+  of 6:
+    return sim.ffaLootPoints(counts.heavyGuns)
   else:
     return
   for i in 4 + offset ..< 4 + offset + count:
@@ -415,6 +453,21 @@ proc resetPlasmaArcs*(sim: var SimServer) =
     sim.players[i].arcAimBrads = -1
     sim.players[i].arcHitMask = 0
 
+proc resetGuns*(sim: var SimServer) =
+  ## Places FFA weapon tiers with no opening stagger.
+  if sim.config.isFfa():
+    sim.placeFfaPickups(
+      sim.lowGunSpawns,
+      sim.ffaFamilyTargets(4),
+      stagger = false
+    )
+    sim.placeFfaPickups(sim.midGunSpawns, sim.ffaFamilyTargets(5), false)
+    sim.placeFfaPickups(sim.heavyGunSpawns, sim.ffaFamilyTargets(6), false)
+  else:
+    sim.lowGunSpawns = @[]
+    sim.midGunSpawns = @[]
+    sim.heavyGunSpawns = @[]
+
 proc resetBarriers*(sim: var SimServer) =
   ## Places the config-gated barrier pickups (none by default), clears every
   ## standing barrier off the field, and empties every cog's hands of
@@ -455,6 +508,8 @@ proc startGame*(sim: var SimServer) =
     sim.players[i].fireCooldown = 0
     sim.players[i].fireWindup = 0
     sim.players[i].windupBrads = -1
+    sim.players[i].weaponTier =
+      if sim.config.isFfa(): FfaWeaponUnarmed else: FfaWeaponMid
     sim.players[i].aimBrads = sim.gameMap.spawnAimBrads(sim.players[i].team)
     sim.players[i].flipH = sim.gameMap.spawnFlipH(sim.players[i].team)
     sim.players[i].carryingFlag = false
@@ -479,6 +534,7 @@ proc startGame*(sim: var SimServer) =
   sim.resetGrenades()
   sim.resetShields()
   sim.resetPlasmaArcs()
+  sim.resetGuns()
   sim.resetBarriers()
   sim.emitPhaseChange(Playing)
   sim.phase = Playing
@@ -1137,7 +1193,116 @@ proc canFire*(sim: SimServer, shooterIndex: int): bool =
   if shooterIndex < 0 or shooterIndex >= sim.players.len:
     return false
   let shooter = sim.players[shooterIndex]
-  shooter.alive and shooter.fireCooldown <= 0 and not shooter.hasPlasmaArc
+  shooter.alive and shooter.weaponTier > FfaWeaponUnarmed and
+    shooter.fireCooldown <= 0 and
+    not shooter.hasPlasmaArc
+
+proc weaponDamageForTier*(sim: SimServer, tier: int): int =
+  if not sim.config.isFfa():
+    return sim.config.ffaGunDamage
+  case tier
+  of FfaWeaponLow: FfaLowGunDamage
+  of FfaWeaponHeavy: FfaHeavyGunDamage
+  else: sim.config.ffaGunDamage
+
+proc weaponCooldownForTier*(sim: SimServer, tier: int): int =
+  let base = sim.config.fireCooldownTicks
+  if not sim.config.isFfa() or tier == FfaWeaponMid:
+    return base
+  case tier
+  of FfaWeaponLow: base * FfaLowGunCooldownScale div 2
+  of FfaWeaponHeavy: max(1, base * FfaHeavyGunCooldownScale div 10)
+  else: base
+
+proc weaponRangeForTier*(sim: SimServer, tier: int): int =
+  if not sim.config.isFfa() or tier == FfaWeaponMid:
+    return sim.config.gunRange
+  case tier
+  of FfaWeaponLow: FfaLowGunRange
+  of FfaWeaponHeavy: FfaHeavyGunRange
+  else: FfaMidGunRange
+
+proc weaponToken*(tier: int): string =
+  case tier
+  of FfaWeaponLow: "low gun"
+  of FfaWeaponHeavy: "heavy gun"
+  of FfaWeaponMid: "mid gun"
+  else: "fist"
+
+proc weaponEventToken(sim: SimServer, tier: int): string =
+  if sim.config.isFfa(): weaponToken(tier) else: "gun"
+
+proc selectFistTarget(sim: SimServer, shooterIndex: int): int =
+  ## Selects the nearest living opponent in the punch's short aim cone.
+  let shooter = sim.players[shooterIndex]
+  let
+    sx = shooter.x + CollisionW div 2
+    sy = shooter.y + CollisionH div 2
+  var bestDist = FfaFistReach * FfaFistReach + 1
+  for i in 0 ..< sim.players.len:
+    if i == shooterIndex or not sim.players[i].alive:
+      continue
+    let
+      tx = sim.players[i].x + CollisionW div 2
+      ty = sim.players[i].y + CollisionH div 2
+      dx = tx - sx
+      dy = ty - sy
+      distance = dx * dx + dy * dy
+    if distance > FfaFistReach * FfaFistReach or distance >= bestDist:
+      continue
+    let aimError = abs(
+      ((bradsOfVector(dx, dy) - shooter.aimBrads + 512) mod 1024) - 512
+    )
+    if aimError >
+        FfaFistAimHalfBrads:
+      continue
+    if not sim.paintPathClear(sx, sy, tx, ty):
+      continue
+    bestDist = distance
+    result = i
+
+proc tryFist*(sim: var SimServer, shooterIndex: int) =
+  ## Resolves one immediate FFA punch; fists have no windup or projectile FX.
+  if not sim.config.isFfa() or shooterIndex < 0 or
+      shooterIndex >= sim.players.len:
+    return
+  let shooter = sim.players[shooterIndex]
+  if not shooter.alive or shooter.weaponTier > FfaWeaponUnarmed or
+      shooter.hasPlasmaArc or
+      shooter.fireCooldown > 0:
+    return
+  sim.players[shooterIndex].fireCooldown =
+    2 * sim.config.fireCooldownTicks
+  let targetIndex = sim.selectFistTarget(shooterIndex)
+  if targetIndex < 0:
+    return
+  let
+    tx = sim.players[targetIndex].x + CollisionW div 2
+    ty = sim.players[targetIndex].y + CollisionH div 2
+    damage = FfaFistDamage
+    blocked = sim.absorbDamage(targetIndex, damage)
+  sim.recordFfaDamage(shooterIndex, targetIndex, damage)
+  sim.emitEvent(
+    Hit, source = shooterIndex, target = targetIndex, weapon = "fist",
+    amount = damage, x = float(tx), y = float(ty)
+  )
+  sim.emitEvent(
+    Damage, source = shooterIndex, target = targetIndex, weapon = "fist",
+    amount = damage, hp = max(0, sim.players[targetIndex].hp),
+    blocked = blocked, x = float(tx), y = float(ty)
+  )
+  sim.damagePops.add DamageFx(
+    x: tx, y: ty, tick: sim.tickCount, amount: damage,
+    color: sim.players[targetIndex].color
+  )
+  if sim.players[targetIndex].hp <= 0:
+    sim.killPlayer(targetIndex, shooterIndex)
+    sim.recordKill(shooterIndex)
+    sim.recordTeamKill(shooterIndex, targetIndex)
+    sim.emitEvent(
+      Kill, source = shooterIndex, target = targetIndex, weapon = "fist",
+      amount = damage, x = float(tx), y = float(ty)
+    )
 
 proc canFireArc*(sim: SimServer, attackerIndex: int): bool =
   ## Returns whether one player can fire an immediate spray burst.
@@ -1418,7 +1583,7 @@ proc selectFireTarget(
     shooter = sim.players[shooterIndex]
     sx = shooter.x + CollisionW div 2
     sy = shooter.y + CollisionH div 2
-    maxRange = float(sim.config.gunRange)
+    maxRange = float(sim.weaponRangeForTier(sim.players[shooterIndex].weaponTier))
     shooterTrench = sim.playerTrench(shooterIndex)
   # Every body the bullet corridor crosses, at its distance along the ray.
   var crossed: seq[tuple[t: float, index: int]] = @[]
@@ -1467,6 +1632,7 @@ type PendingGunShot = object
   headingBrads: int          ## the INTENDED locked aim (events, animation).
   dirX, dirY: float          ## the fuzzed direction the shot actually flew.
   actionId: int64
+  weaponTier: int
 
 proc selectGunShot(sim: var SimServer, shooterIndex: int): PendingGunShot =
   ## Selects a target and snapshots the trigger metadata before any
@@ -1490,7 +1656,8 @@ proc selectGunShot(sim: var SimServer, shooterIndex: int): PendingGunShot =
     headingBrads: headingBrads,
     dirX: ux,
     dirY: uy,
-    actionId: sim.eventActionId(shooterIndex, GunAction, triggerTick)
+    actionId: sim.eventActionId(shooterIndex, GunAction, triggerTick),
+    weaponTier: shooter.weaponTier
   )
 
 proc applyFire(sim: var SimServer, shot: PendingGunShot) =
@@ -1513,7 +1680,7 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
   if sim.playerTrench(shooterIndex) >= 0:
     cooldownScale = max(cooldownScale, TrenchFireSlowdown)
   sim.players[shooterIndex].fireCooldown =
-    sim.config.fireCooldownTicks * cooldownScale
+    sim.weaponCooldownForTier(shot.weaponTier) * cooldownScale
   sim.players[shooterIndex].windupBrads = -1
   # Accuracy bookkeeping (analysis-only, excluded from gameHash): every call
   # here is one released shot; a shot that locked onto a live enemy on the ray
@@ -1523,7 +1690,7 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
   sim.emitEvent(
     Shot,
     source = shooterIndex,
-    weapon = "gun",
+    weapon = sim.weaponEventToken(shot.weaponTier),
     x = float(sx),
     y = float(sy),
     actionId = shot.actionId,
@@ -1539,13 +1706,14 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
     ex = sim.players[targetIndex].x + CollisionW div 2
     ey = sim.players[targetIndex].y + CollisionH div 2
     sim.emitEvent(
-      Hit, source = shooterIndex, target = targetIndex, weapon = "gun",
+      Hit, source = shooterIndex, target = targetIndex,
+      weapon = sim.weaponEventToken(shot.weaponTier),
       x = float(ex), y = float(ey)
     )
   else:
     # March along the unit aim to the last wall-free pixel or max range
     # (checking each sampled pixel keeps this O(range) at 1050px).
-    let maxRange = sim.config.gunRange
+    let maxRange = sim.weaponRangeForTier(shot.weaponTier)
     var
       lastClear = 0
       wallX = 0
@@ -1607,7 +1775,9 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
     # A lucky shot (luck perk) deals perkMods.luckDamage instead of 1. Rolled once
     # per LANDED hit, only when the shooter carries the perk, so a perk-free
     # game draws no extra RNG and re-simulates byte-for-byte.
-    var damage = sim.weaponDamage(1, sim.config.ffaGunDamage)
+    var damage =
+      if sim.config.isFfa(): sim.weaponDamageForTier(shot.weaponTier)
+      else: sim.weaponDamage(1, sim.config.ffaGunDamage)
     if PerkLuck in shooter.perks and
         sim.rng.rand(999) < sim.config.perkMods.luckChance:
       damage = sim.config.perkMods.luckDamage
@@ -1620,7 +1790,8 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
     if not bubbleUp:
       sim.players[targetIndex].paintHitTick = sim.tickCount
     sim.emitEvent(
-      Damage, source = shooterIndex, target = targetIndex, weapon = "gun",
+      Damage, source = shooterIndex, target = targetIndex,
+      weapon = sim.weaponEventToken(shot.weaponTier),
       amount = damage, hp = max(0, sim.players[targetIndex].hp),
       blocked = blocked,
       x = float(sim.players[targetIndex].x + CollisionW div 2),
@@ -1631,7 +1802,7 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
         ShotImpact,
         source = shooterIndex,
         target = targetIndex,
-        weapon = "gun",
+        weapon = sim.weaponEventToken(shot.weaponTier),
         x = float(ex),
         y = float(ey),
         actionId = shot.actionId,
@@ -1674,7 +1845,8 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
       sim.recordKill(shooterIndex)
       sim.recordTeamKill(shooterIndex, targetIndex)
       sim.emitEvent(
-        Kill, source = shooterIndex, target = targetIndex, weapon = "gun",
+        Kill, source = shooterIndex, target = targetIndex,
+        weapon = sim.weaponEventToken(shot.weaponTier),
         amount = damage,
         x = float(sim.players[targetIndex].x + CollisionW div 2),
         y = float(sim.players[targetIndex].y + CollisionH div 2)
@@ -1705,7 +1877,7 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
       ShotImpact,
       source = shooterIndex,
       target = targetIndex,
-      weapon = "gun",
+      weapon = sim.weaponEventToken(shot.weaponTier),
       x = float(ex),
       y = float(ey),
       actionId = shot.actionId,
@@ -1715,6 +1887,12 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
 
 proc tryFire*(sim: var SimServer, shooterIndex: int) =
   ## Fires one shot immediately (the single-shooter path).
+  if sim.config.isFfa() and shooterIndex >= 0 and
+      shooterIndex < sim.players.len and
+      sim.players[shooterIndex].weaponTier == FfaWeaponUnarmed and
+      not sim.players[shooterIndex].hasPlasmaArc:
+    sim.tryFist(shooterIndex)
+    return
   if not sim.canFire(shooterIndex):
     return
   sim.applyFire(sim.selectGunShot(shooterIndex))
@@ -1732,7 +1910,7 @@ proc startFireWindup*(sim: var SimServer, shooterIndex: int) =
   sim.emitEvent(
     GunTrigger,
     source = shooterIndex,
-    weapon = "gun",
+    weapon = sim.weaponEventToken(sim.players[shooterIndex].weaponTier),
     x = float(sim.players[shooterIndex].x + CollisionW div 2),
     y = float(sim.players[shooterIndex].y + CollisionH div 2),
     actionId = actionId,
@@ -2154,6 +2332,13 @@ proc updatePlasmaArcs*(sim: var SimServer) =
   ## Refills side-center spray can pickups whose respawn timer elapsed.
   sim.refillElapsedPickups(plasmaArcSpawns)
 
+proc updateGuns*(sim: var SimServer) =
+  ## Refills FFA weapon pickups whose respawn timer elapsed.
+  if sim.config.isFfa():
+    sim.refillElapsedPickups(lowGunSpawns)
+    sim.refillElapsedPickups(midGunSpawns)
+    sim.refillElapsedPickups(heavyGunSpawns)
+
 proc tryPickupMedKits*(sim: var SimServer, playerIndex: int) =
   ## Lets a hurt living player pick up a center med kit by touch, restoring
   ## hit points back to full. A healthy player walks over it untouched, so a
@@ -2219,6 +2404,35 @@ proc tryPickupPlasmaArcs*(sim: var SimServer, playerIndex: int) =
       playerColorText(sim.players[playerIndex].color) &
         " picked up a spray can"
     )
+
+proc tryPickupGuns*(sim: var SimServer, playerIndex: int) =
+  ## Lets an FFA player upgrade to one weapon tier by touch.
+  if not sim.config.isFfa() or not sim.players[playerIndex].alive or
+      sim.players[playerIndex].weaponTier >= FfaWeaponHeavy:
+    return
+  let
+    px = sim.players[playerIndex].x + CollisionW div 2
+    py = sim.players[playerIndex].y + CollisionH div 2
+    rangeSq = MedKitPickupRange * MedKitPickupRange
+  template take(spawns: untyped, tier: int, token: string) =
+    for spawn in spawns.mitems:
+      if spawn.present and distSq(px, py, spawn.x, spawn.y) <= rangeSq:
+        if tier <= sim.players[playerIndex].weaponTier:
+          return
+        spawn.present = false
+        spawn.respawnAt = sim.tickCount + FfaLootRespawnTicks
+        sim.players[playerIndex].weaponTier = tier
+        sim.players[playerIndex].fireWindup = 0
+        sim.players[playerIndex].windupBrads = -1
+        sim.emitPickup(playerIndex, token, spawn.x, spawn.y)
+        sim.logGameEvent(
+          playerColorText(sim.players[playerIndex].color) &
+            " picked up a " & token
+        )
+        return
+  take(sim.heavyGunSpawns, FfaWeaponHeavy, "heavy gun")
+  take(sim.midGunSpawns, FfaWeaponMid, "mid gun")
+  take(sim.lowGunSpawns, FfaWeaponLow, "low gun")
 
 proc tryPickupBarriers*(sim: var SimServer, playerIndex: int) =
   ## Lets a living player pick up one folded cardboard barrier by touch. The
@@ -3855,6 +4069,8 @@ proc step*(
       if sim.players[playerIndex].hasPlasmaArc:
         if sim.canFireArc(playerIndex):
           arcFiring.add(playerIndex)
+      elif sim.players[playerIndex].weaponTier == FfaWeaponUnarmed:
+        sim.tryFist(playerIndex)
       else:
         if sim.config.fireWindupTicks <= 0:
           if sim.canFire(playerIndex) and sim.players[playerIndex].fireWindup == 0:
@@ -3870,6 +4086,7 @@ proc step*(
   sim.updateMedKits()
   sim.updateShields()
   sim.updatePlasmaArcs()
+  sim.updateGuns()
   sim.updateBarriers()
 
   for playerIndex in 0 ..< sim.players.len:
@@ -3878,6 +4095,7 @@ proc step*(
     sim.tryPickupMedKits(playerIndex)
     sim.tryPickupShields(playerIndex)
     sim.tryPickupPlasmaArcs(playerIndex)
+    sim.tryPickupGuns(playerIndex)
     sim.tryPickupBarriers(playerIndex)
   sim.updateFlags()
   sim.respawnPlayers()

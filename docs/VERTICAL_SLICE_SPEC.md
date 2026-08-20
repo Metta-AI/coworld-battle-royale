@@ -27,6 +27,9 @@ battle-royale match, used by the demo script.
 3. No hearts/flags in ffa: none spawned, no carry/capture/steal path reachable,
    no capture scoring. Endzone/pedestal geometry may remain as terrain.
 4. Spawn pads: procedurally spaced ring for any N — equal distance to center,
+   with every FFA player starting unarmed. Fists are the fallback weapon, while
+   a low/mid/heavy weapon ladder offers a safer weak pickup, a current-strength
+   mid pickup, or a scarce heavy weapon in the center risk/reward contest.
    maximum pairwise spacing, snapped to reachable floor, never a fixed array.
    Teams are irrelevant in ffa: per-player identity comes from `color`/skin
    (distinct hue per slot), and no code path may branch on `team` for

@@ -18,7 +18,7 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "43"  ## GV43 (puddle rule): PUDDLES BITE TWICE AS HARD.
+  GameVersion* = "44"  ## GV44 (FFA weapon ladder): FFA starts with fists and upgrades through low, mid, and heavy weapons.
     ## `DefaultPuddleDamagePct` goes 10 -> 20: a full second of continuous
     ## paint-puddle occupancy now rolls a 20% chance of 1 damage instead of
     ## 10%. The default matters because spec-pinned puddles (the campaign's
@@ -480,7 +480,25 @@ const
                               ## sized by N, never by a fixed-width array.
   FfaHitPoints* = 20          ## ffa spawn pool: deep enough that losing a
                               ## fight's opening is information, not death.
-  FfaGunDamage* = 2           ## The ffa weapon band against that pool is
+  FfaWeaponUnarmed* = 0
+  FfaWeaponLow* = 1
+  FfaWeaponMid* = 2
+  FfaWeaponHeavy* = 3
+  FfaLowGunDamage* = 1
+  FfaMidGunDamage* = 2
+  FfaHeavyGunDamage* = 4
+  FfaLowGunCooldownScale* = 3
+  FfaMidGunCooldownScale* = 2
+  FfaHeavyGunCooldownScale* = 6
+  FfaLowGunRange* = 700
+  FfaMidGunRange* = GunRange
+  FfaHeavyGunRange* = GunRange
+  FfaGunDamage* = FfaMidGunDamage
+  FfaFistDamage* = 3          ## Unarmed FFA melee damage.
+  FfaFistReach* = 70          ## Unarmed FFA melee reach in map pixels.
+  FfaFistAimHalfBrads* = 48   ## Unarmed FFA melee aim-cone half-width.
+  FfaFistCooldownTicks* = 2 * FireCooldownTicks
+                              ## Fists recover at twice the gun cooldown.
   FfaSprayDamage* = 4         ## 1..4: the spray and a direct grenade hit
   FfaGrenadeDamage* = 4       ## pay for their reach, the paintball is the
                               ## cheap poke, and a paint puddle still bites
@@ -500,6 +518,9 @@ const
   FfaLootRespawnTicks* = 20 * ReplayFps
                               ## ffa cluster refill cadence and initial
                               ## appearance spacing.
+  FfaLowGunSpawns* = 0        ## FFA low-tier count override; zero derives N.
+  FfaMidGunSpawns* = 0        ## FFA mid-tier count override; zero derives N/4.
+  FfaHeavyGunSpawns* = 0      ## FFA heavy-tier count override; zero derives N/4.
   FfaSpawnRingPermille* = 800 ## ffa spawn pads sit on a ring this far out
                               ## (permille) of the largest circle the map
                               ## border allows: maximum pairwise spacing
@@ -1300,6 +1321,9 @@ type
                                   ## sequence-backed pickup families.
     ffaLootRadius*: int           ## ffa: center cluster radius in px.
     ffaLootRespawnTicks*: int     ## ffa: item refill cadence in ticks.
+    ffaLowGunSpawns*: int         ## ffa: low-tier count override; 0 derives.
+    ffaMidGunSpawns*: int         ## ffa: mid-tier count override; 0 derives.
+    ffaHeavyGunSpawns*: int       ## ffa: heavy-tier count override; 0 derives.
 
   Player* = object
     x*, y*: int
@@ -1323,6 +1347,7 @@ type
     shieldHp*: int             ## remaining shield-layer hp (0..ShieldLayerHp);
                                ## damage depletes it before base hp.
     hasPlasmaArc*: bool        ## each player carries at most one plasma arc.
+    weaponTier*: int           ## 0 fists, 1 low, 2 mid, 3 heavy.
     arcTicksLeft*: int         ## remaining active ticks of a fired spray
                                ## cone (0 = the cone is off).
     arcAimBrads*: int          ## aim direction locked at the spray's fire
@@ -1702,6 +1727,9 @@ type
                                           ## sides maps, 4 on 4-team maps).
     shieldSpawns*: seq[PickupSpawn]       ## one shield per team endzone.
     plasmaArcSpawns*: seq[PickupSpawn]    ## one spray can per team endzone.
+    lowGunSpawns*: seq[PickupSpawn]       ## FFA-only spread low-tier guns.
+    midGunSpawns*: seq[PickupSpawn]       ## FFA-only mid-radius guns.
+    heavyGunSpawns*: seq[PickupSpawn]     ## FFA-only center heavy guns.
     airborneGrenades*: seq[AirborneGrenade]
     plasmaArcFlashes*: seq[PlasmaArcFx]
     gameStartTick*: int

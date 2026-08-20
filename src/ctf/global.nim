@@ -341,6 +341,11 @@ const
                                  ## few fading per-tick snapshots and respawns
                                  ## let carriers overlap, so size to the
                                  ## player count like every shooter pool.
+  LowGunPickupSpriteId = 1430
+  MidGunPickupSpriteId = 1431
+  HeavyGunPickupSpriteId = 1432
+  GunPickupSize = RigCanvas
+  GunPickupObjectBase = 40500
   ## Cardboard barriers (config-gated pickups + standing half-hexes).
   ## Static sprites sit in the 1488..1499 gap (above the bubble deform
   ## variants at 1424..1487, clear of the corpses at 1500); the standing pool
@@ -789,6 +794,7 @@ const
     ("med kits", MedKitObjectBase, 4),
     ("rot diamonds", RotDiamondObjectBase, 8),
     ("plasma arc pickups", PlasmaArcPickupObjectBase, 4),
+    ("gun pickups", GunPickupObjectBase, 48),
     ("plasma arc carry markers", PlasmaArcCarryObjectBase, MaxPlayers),
     ("plasma arc fx", PlasmaArcFxObjectBase,
       PlasmaArcMaxFlashes * PlasmaArcFxPulses),
@@ -5492,6 +5498,42 @@ proc addPlasmaArcs(
       PlasmaArcCarrySpriteId
     )
 
+proc addGuns(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  currentIds: var seq[int],
+  packet: var seq[uint8],
+  viewerIndex = -1
+) {.measure.} =
+  ## Places the FFA weapon-tier pickups; CTF has no gun family.
+  if not sim.config.isFfa():
+    return
+  template addFamily(
+    spawns: untyped, spriteId: int, objectOffset: int, label: string
+  ) =
+    for i, spawn in spawns:
+      if not spawn.present:
+        continue
+      if viewerIndex >= 0 and
+          not sim.fovVisibleAt(viewerIndex, spawn.x, spawn.y):
+        continue
+      if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
+        packet.addBoardSpriteChanged(
+          spriteDefs, spriteId, GunPickupSize, GunPickupSize,
+          rigGunPixels(Red, 0, boardScale), label,
+          native = boardScale
+        )
+      let objectId = GunPickupObjectBase + objectOffset + i
+      currentIds.add(objectId)
+      packet.addBoardObject(
+        objectId, spawn.x - GunPickupSize div 2,
+        spawn.y - GunPickupSize div 2, spawn.y, MapLayerId, spriteId
+      )
+  addFamily(sim.lowGunSpawns, LowGunPickupSpriteId, 0, LabelWeaponLowGun)
+  addFamily(sim.midGunSpawns, MidGunPickupSpriteId, 16, LabelWeaponMidGun)
+  addFamily(sim.heavyGunSpawns, HeavyGunPickupSpriteId, 32,
+    LabelWeaponHeavyGun)
+
 proc plasmaArcRenderPose*(
   sim: SimServer, flashIndex: int
 ): tuple[x, y, aimBrads: int] =
@@ -6469,7 +6511,13 @@ proc addIdentityBadges(
       IdentityNames[identityIndex],
       shield = player.hasShield,
       nade = player.hasGrenade,
-      weapon = (if player.hasPlasmaArc: LabelWeaponSpray else: LabelWeaponGun)
+      weapon =
+        if player.hasPlasmaArc: LabelWeaponSpray
+        elif not sim.config.isFfa(): LabelWeaponGun
+        elif player.weaponTier == FfaWeaponLow: LabelWeaponLowGun
+        elif player.weaponTier == FfaWeaponHeavy: LabelWeaponHeavyGun
+        elif player.weaponTier == FfaWeaponMid: LabelWeaponMidGun
+        else: LabelWeaponFist
     )
     # 16 aim steps x identity means the pixels are worth building only when this
     # id is genuinely new or its loadout tail moved; addBoardSpriteChanged would
@@ -6983,6 +7031,12 @@ proc buildSpriteProtocolPlayerUpdates*(
       result,
       viewerIndex = playerIndex
     )
+    sim.addGuns(
+      nextState.spriteDefs,
+      currentIds,
+      result,
+      viewerIndex = playerIndex
+    )
     sim.addPlasmaArcFlashes(
       nextState.spriteDefs,
       currentIds,
@@ -7046,7 +7100,13 @@ proc buildSpriteProtocolPlayerUpdates*(
     # weapon from floating markers gets it wrong at the worst moments. The
     # label is the machine contract ("weapon gun" | "weapon spray").
     let
-      weaponText = if player.hasPlasmaArc: LabelWeaponSpray else: LabelWeaponGun
+      weaponText =
+        if player.hasPlasmaArc: LabelWeaponSpray
+        elif not sim.config.isFfa(): LabelWeaponGun
+        elif player.weaponTier == FfaWeaponLow: LabelWeaponLowGun
+        elif player.weaponTier == FfaWeaponHeavy: LabelWeaponHeavyGun
+        elif player.weaponTier == FfaWeaponMid: LabelWeaponMidGun
+        else: LabelWeaponFist
       weapon = sim.buildSpriteProtocolTextSprite([weaponText], 2'u8)
     currentIds.add(SpritePlayerWeaponObjectId)
     result.addSpriteChanged(
@@ -7712,7 +7772,9 @@ proc addCogRigObjects(
   # weapon is live. Both share one object slot (a cog can't hold both).
   let
     holdsSpray = player.hasPlasmaArc
-    weaponSpriteId =
+    holdsGun = player.weaponTier > FfaWeaponUnarmed
+  if holdsSpray or holdsGun:
+    let weaponSpriteId =
       if holdsSpray:
         (if sim.config.isFfa():
            rigSpraySpriteId(ffaColorIndex, aimStep)
@@ -7723,25 +7785,26 @@ proc addCogRigObjects(
            rigGunSpriteId(ffaColorIndex, aimStep)
          else:
            rigGunSpriteId(player.team, aimStep))
-  if spriteDefs.spriteDefinitionIndex(weaponSpriteId) < 0:
-    packet.addBoardSpriteChanged(
-      spriteDefs, weaponSpriteId, RigCanvas, RigCanvas,
-      (if holdsSpray:
-         (if sim.config.isFfa():
-            rigSprayCanPixelsForColor(ffaColorIndex, aimStep, boardScale)
-          else:
-            rigSprayCanPixels(player.team, aimStep, boardScale))
-       else:
-         (if sim.config.isFfa():
-            rigGunPixelsForColor(ffaColorIndex, aimStep, boardScale)
-          else:
-            rigGunPixels(player.team, aimStep, boardScale))),
-      labelCogWeapon(color, spray = holdsSpray),
-      native = boardScale)
-  let weaponObjectId = RigGunObjectBase + base
-  currentIds.add(weaponObjectId)
-  packet.addBoardObject(
-    weaponObjectId, rigX, rigY, player.y + 1, MapLayerId, weaponSpriteId)
+    if spriteDefs.spriteDefinitionIndex(weaponSpriteId) < 0:
+      packet.addBoardSpriteChanged(
+        spriteDefs, weaponSpriteId, RigCanvas, RigCanvas,
+        (if holdsSpray:
+           (if sim.config.isFfa():
+              rigSprayCanPixelsForColor(ffaColorIndex, aimStep, boardScale)
+            else:
+              rigSprayCanPixels(player.team, aimStep, boardScale))
+         else:
+           (if sim.config.isFfa():
+              rigGunPixelsForColor(ffaColorIndex, aimStep, boardScale)
+            else:
+              rigGunPixels(player.team, aimStep, boardScale))),
+        labelCogWeapon(color, spray = holdsSpray, gun = holdsGun,
+          tier = player.weaponTier, ffa = sim.config.isFfa()),
+        native = boardScale)
+    let weaponObjectId = RigGunObjectBase + base
+    currentIds.add(weaponObjectId)
+    packet.addBoardObject(
+      weaponObjectId, rigX, rigY, player.y + 1, MapLayerId, weaponSpriteId)
 
 proc buildSpriteProtocolUpdates*(
   sim: var SimServer,
@@ -7937,6 +8000,7 @@ proc buildSpriteProtocolUpdates*(
   sim.addGrenades(nextState.spriteDefs, currentIds, result)
   sim.addBarriers(nextState.spriteDefs, currentIds, result)
   sim.addPlasmaArcs(nextState.spriteDefs, currentIds, result)
+  sim.addGuns(nextState.spriteDefs, currentIds, result)
   sim.addPlasmaArcFlashes(nextState.spriteDefs, currentIds, result)
   sim.addBoardShouts(nextState, currentIds, result)
   sim.addAimIndicators(nextState.spriteDefs, currentIds, result)

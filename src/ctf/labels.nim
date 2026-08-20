@@ -130,6 +130,8 @@ const
   LabelPrefixCogSprayCan* = "cog spray can "
     ## The held spray can, `cog spray can <color>`, which REPLACES the gun
     ## sprite while one is carried — so the silhouette shows the live weapon.
+  LabelPrefixCogFist* = "cog fist "
+    ## An unarmed FFA cog, carrying neither spray nor gun.
   LabelPrefixGameParams* = "game teams "
     ## The episode-parameter marker, `game teams <count> map <width>x<height>`:
     ## an invisible 1x1 object in the init snapshot stating the match setup
@@ -248,6 +250,11 @@ const
   LabelWeaponSpray* = "spray"
     ## Spray can. (0.7.x renamed the plasma arc, whose token was "arc"; the
     ## internal `hasPlasmaArc` field kept its name, the wire token did not.)
+  LabelWeaponFist* = "fist"
+    ## Unarmed FFA fallback weapon.
+  LabelWeaponLowGun* = "low gun"
+  LabelWeaponMidGun* = "mid gun"
+  LabelWeaponHeavyGun* = "heavy gun"
   LabelTokenShield* = "shield"
     ## Optional identity-badge suffix: the wearer carries a shield.
   LabelTokenNade* = "nade"
@@ -445,11 +452,17 @@ proc labelWeapon*(token: string): string =
   ## LabelWeaponSpray.
   LabelPrefixWeapon & token
 
-proc labelCogWeapon*(color: string; spray: bool): string =
+proc labelCogWeapon*(color: string; spray = true; gun = true; tier = 2;
+    ffa = false): string =
   ## The held-weapon sprite label on the board rig: `cog spray can <color>`
   ## when a spray can is carried, `cog gun <color>` otherwise. A cog holds
   ## exactly one thing, so these two are mutually exclusive per player.
-  (if spray: LabelPrefixCogSprayCan else: LabelPrefixCogGun) & color
+  (if spray: LabelPrefixCogSprayCan
+   elif not gun: LabelPrefixCogFist
+   elif tier == 1: "cog low gun "
+   elif tier == 3: "cog heavy gun "
+   elif ffa: "cog mid gun "
+   else: LabelPrefixCogGun) & color
 
 proc labelShoutPrefix*(color: string): string =
   ## The prefix a listener matches to attribute a shout to a team:
@@ -539,6 +552,4 @@ const PolicyScannedLabels* = [
   labelCorpse("red", LabelSideLeft),
   labelCorpse("blue", LabelSideRight),
   labelCorpse("blue", LabelSideLeft),
-  labelWeapon(LabelWeaponGun),
-  labelWeapon(LabelWeaponSpray)
 ]

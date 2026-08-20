@@ -503,6 +503,27 @@
           "minimum": 1,
           "default": 480
         },
+        "ffaLowGunSpawns": {
+          "description": "FFA only: low-tier gun pickup count; zero derives one per player and places them outside the center cluster.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "default": 0
+        },
+        "ffaMidGunSpawns": {
+          "description": "FFA only: mid-tier gun pickup count; zero derives max(2, numPlayers div 4) and places them at mid radius.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "default": 0
+        },
+        "ffaHeavyGunSpawns": {
+          "description": "FFA only: heavy-tier gun pickup count; zero derives max(1, numPlayers div 4) and places them in the center cluster.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "default": 0
+        },
         "mapSymmetry": {
           "description": "Generated-map symmetry lock: mirror or rot180 (2-team shapes; empty draws from the map seed).",
           "type": "string",

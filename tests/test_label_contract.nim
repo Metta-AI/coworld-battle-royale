@@ -367,6 +367,50 @@ proc collectLabels(sim: var SimServer): HashSet[string] =
   sim.players[0].hasPlasmaArc = false
   result.absorb(sim.buildPlayerMessages(0, livingState))
 
+proc ffaWeaponGame(): SimServer =
+  var config = defaultFfaConfig(4)
+  result = initCtfForTest(config)
+  for i in 0 ..< 4:
+    discard result.addPlayer("ffa" & $i)
+  result.startGame()
+  result.players[0].weaponTier = FfaWeaponUnarmed
+  result.players[1].weaponTier = FfaWeaponLow
+  result.players[2].weaponTier = FfaWeaponMid
+  result.players[3].weaponTier = FfaWeaponHeavy
+  let center = result.gameMap.center
+  for i in 0 ..< result.players.len:
+    result.players[i].x = center.x - 80 + i * 40
+    result.players[i].y = center.y
+
+proc collectFfaWeaponLabels(sim: var SimServer): HashSet[string] =
+  var state: PlayerViewerState
+  for i in 0 ..< sim.players.len:
+    for message in sim.buildPlayerMessages(i, state):
+      if message.kind == spkSprite:
+        result.incl(message.sprite.label.normalizeLabel())
+  var globalState = initGlobalViewerState()
+  for message in sim.buildGlobalMessages(globalState):
+    if message.kind == spkSprite:
+      result.incl(message.sprite.label.normalizeLabel())
+  for spawn in sim.lowGunSpawns:
+    sim.players[0].x = spawn.x + 50
+    sim.players[0].y = spawn.y
+    for message in sim.buildPlayerMessages(0, state):
+      if message.kind == spkSprite:
+        result.incl(message.sprite.label.normalizeLabel())
+  for spawn in sim.midGunSpawns:
+    sim.players[0].x = spawn.x + 50
+    sim.players[0].y = spawn.y
+    for message in sim.buildPlayerMessages(0, state):
+      if message.kind == spkSprite:
+        result.incl(message.sprite.label.normalizeLabel())
+  for spawn in sim.heavyGunSpawns:
+    sim.players[0].x = spawn.x + 50
+    sim.players[0].y = spawn.y
+    for message in sim.buildPlayerMessages(0, state):
+      if message.kind == spkSprite:
+        result.incl(message.sprite.label.normalizeLabel())
+
 suite "sprite label contract":
   test "the emitted label vocabulary matches tests/label_manifest.txt":
     var game = fullFeatureGame()
@@ -384,6 +428,9 @@ suite "sprite label contract":
     var emitted4 = game4.collectLabels()
     game = fullFeatureGame()
     var emitted = game.collectLabels()
+    var ffaWeapons = ffaWeaponGame()
+    for label in ffaWeapons.collectFfaWeaponLabels():
+      emitted.incl(label)
     for label in emitted4:
       emitted.incl(label)
     # Trenches never appear in EITHER fixture above: the hand-authored

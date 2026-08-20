@@ -20,6 +20,8 @@ blast stage <n>
 cog arm <color>
 cog gun <color>
 cog leg <color>
+cog low gun <color>
+cog mid gun <color>
 cog spray can <color>
 cog wheel <color>
 corpse <color> <side>
@@ -28,6 +30,7 @@ damage pop <color> KO stage <n>
 diamond
 endzone <color> <shape> <n>,<n> <n>,<n>
 endzone <color> power <n> band <n>
+ffa header ALIVE <n>  TIME <n>:<n>
 fire icon
 fire icon cooldown
 fog
@@ -38,19 +41,27 @@ grenade barrage depth <n> rate <n> start <n> sat <n>
 grenade carried
 grenade sound
 handicap <color> <n> hp <n> lives <n> spd <n> miss <n>
+heavy gun
 hit splat <color> stage <n>
 hp <n>/<n>
 hp <n>/<n> shield <n>
+identity <color> <name> fist
 identity <color> <name> gun
+identity <color> <name> heavy gun
+identity <color> <name> low gun
+identity <color> <name> mid gun
 identity <color> <name> nade gun
 identity <color> <name> shield gun
 identity <color> <name> spray
 interstitial background
 lives <n>hp x<n>
+low gun
 map
 map band <n>
 med kit
+mid gun
 muzzle bloom stage <n>
+name ffa<n>
 name p<n>
 name p<n> flag <n>
 own aim <n>
@@ -61,6 +72,8 @@ perks <color> grenade thruster,luck mods hp <n> aim <n> nade <n> spd <n> luck <n
 player <color>
 player <color> <side>
 puddle <n>,<n> <n>,<n>
+ring center <n>,<n> start <n> floor <n> shrink <n> damage <n>
+score ffa<n> <n> color <n>
 score p<n> <n> color <n>
 score pip <color>
 selected player <color> <side>
@@ -81,5 +94,9 @@ team score YELLOW <n>/0
 throw target
 trench <n>,<n> <n>,<n>
 walkability map
+weapon fist
 weapon gun
+weapon heavy gun
+weapon low gun
+weapon mid gun
 weapon spray

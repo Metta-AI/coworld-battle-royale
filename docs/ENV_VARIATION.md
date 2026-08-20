@@ -115,6 +115,9 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `ffaLootCount` | int / `12` (`FfaLootCount`) | `ffaLootCount` | `0..64` (ffa only) | Total seq-backed center-cluster items. Sustain items use roughly one sixth each when large enough; the remainder is split between spray cans and barriers, plus four relocated grenade slots. |
 | `ffaLootRadius` | int / `180` (`FfaLootRadius`) | `ffaLootRadius` | `>=1` (ffa only) | Maximum center-cluster radius in map pixels; deterministic items use multiple inward/outward bands and placement clamps inside the configured final ring floor. |
 | `ffaLootRespawnTicks` | int / `480` (`FfaLootRespawnTicks`) | `ffaLootRespawnTicks` | `>=1` (ffa only) | Respawn cadence for offensive FFA cluster items after pickup. Med kits and shields retain their slower 30-second cadence; initial appearances are staggered every three seconds. |
+| `ffaLowGunSpawns` | int / `0` (`FfaLowGunSpawns`) | `ffaLowGunSpawns` | `0..16` (ffa only) | Low-tier gun pickups. `0` derives one per player; deterministic placements are outside the center cluster and use the offensive loot respawn cadence. |
+| `ffaMidGunSpawns` | int / `0` (`FfaMidGunSpawns`) | `ffaMidGunSpawns` | `0..16` (ffa only) | Mid-tier gun pickups. `0` derives `max(2, numPlayers div 4)`; deterministic placements sit between the center cluster and spawn ring and use the offensive loot respawn cadence. |
+| `ffaHeavyGunSpawns` | int / `0` (`FfaHeavyGunSpawns`) | `ffaHeavyGunSpawns` | `0..16` (ffa only) | Heavy-tier gun pickups. `0` derives `max(1, numPlayers div 4)`; deterministic placements are center-cluster only and use the offensive loot respawn cadence. |
 
 **Per-team handicap** ([sim_types.nim `handicaps`](../src/ctf/sim_types.nim), accessors
 `hitPointsFor`/`livesFor`/`maxSpeedFor`/`missPermilleFor`): a single `0.0..1.0`
