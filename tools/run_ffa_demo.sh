@@ -91,6 +91,10 @@ if [[ "${DEMO_BUILD:-1}" != "0" ]]; then
   nim c -d:release --out:"$PWD/players/baseline/baseline.out" \
     players/baseline/baseline.nim >/dev/null
 fi
+VALIDATOR_BIN="${CTF_EXTRACT_EVENTS_BIN:-${TMPDIR:-/tmp}/coworld-extract-events-$$}"
+if [[ ! -x "$VALIDATOR_BIN" ]]; then
+  nim c -d:release --out:"$VALIDATOR_BIN" tools/extract_events.nim >/dev/null
+fi
 
 COGAME_HOST=127.0.0.1 COGAME_PORT="$PORT" \
 COGAME_FFA_STARTUP_BARRIER=1 \
@@ -173,6 +177,11 @@ wait "$SERVER_PID" || {
   tail -40 "$SERVER_LOG" >&2
   exit 1
 }
+
+if ! "$VALIDATOR_BIN" "$REPLAY" >/dev/null; then
+  echo "replay validation failed: $REPLAY" >&2
+  exit 1
+fi
 
 python3 - "$RESULTS" "$EVENTS" "$BOT_LOG" "$CFG" "$REPLAY" "$METRICS" "$ARM" <<'PY'
 import json, re, sys
