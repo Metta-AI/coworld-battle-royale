@@ -271,6 +271,7 @@ proc startGame*(sim: var SimServer) =
     sim.players[i].arcKillsThisFire = 0
     sim.players[i].damageDealt = 0
     sim.players[i].deathTick = -1
+    sim.players[i].ringTicks = 0
     sim.recordGameTeamAssigned(i)
   sim.ffaWinnerSlot = -1
   sim.ffaDamageLog = @[]
@@ -852,6 +853,7 @@ proc killPlayer*(
   sim.players[targetIndex].throwCharge = 0
   sim.players[targetIndex].hasBarrier = false  # carried cardboard is lost too.
   sim.players[targetIndex].puddleTicks = 0
+  sim.players[targetIndex].ringTicks = 0
   for team in sim.teams():
     if sim.flags[team].carrier == targetIndex:
       sim.players[targetIndex].carryingFlag = false
@@ -2097,6 +2099,8 @@ proc applyShout*(sim: var SimServer, playerIndex: int, text: string): bool {.dis
   )
   true
 
+proc playerVisibleTo*(sim: SimServer, viewerIndex, targetIndex: int): bool
+
 proc shoutAudibleTo*(sim: SimServer, viewerIndex: int, shout: Shout): bool =
   ## Whether one viewer can hear a shout: within ShoutRange of where it was
   ## made. Shouts carry through walls and fog like gunfire, but dead viewers
@@ -2105,6 +2109,15 @@ proc shoutAudibleTo*(sim: SimServer, viewerIndex: int, shout: Shout): bool =
     return false
   if not sim.players[viewerIndex].alive:
     return false
+  if sim.config.isFfa():
+    var speakerIndex = -1
+    for i in 0 ..< sim.players.len:
+      if sim.players[i].address == shout.address:
+        speakerIndex = i
+        break
+    if speakerIndex < 0 or not sim.players[speakerIndex].alive:
+      return false
+    return sim.playerVisibleTo(speakerIndex, viewerIndex)
   let
     vx = sim.players[viewerIndex].x + CollisionW div 2
     vy = sim.players[viewerIndex].y + CollisionH div 2
@@ -2858,6 +2871,44 @@ proc updateBarrage*(sim: var SimServer) =
     # accumulator still drains so a capped stretch never banks a burst.
     if sim.airborneGrenades.len < MaxPlayers:
       sim.launchBarrageShell()
+
+proc updateFfaRing*(sim: var SimServer) =
+  ## Applies the shrinking-ring damage schedule in ffa: once the match has
+  ## started, each live player accumulates outside ticks while standing past
+  ## the current safe radius. Every ringDamageTicks of continuous exposure
+  ## costs one hp, flat, and stepping back inside resets the counter.
+  if not sim.config.isFfa() or not sim.config.ringEnabled or
+      sim.phase != Playing:
+    return
+  let elapsed = sim.gameTicksElapsed()
+  for i in 0 ..< sim.players.len:
+    if not sim.players[i].alive:
+      sim.players[i].ringTicks = 0
+      continue
+    let
+      centerX = sim.players[i].x + CollisionW div 2
+      centerY = sim.players[i].y + CollisionH div 2
+    if not ffaOutsideRing(sim.config, elapsed, centerX, centerY):
+      sim.players[i].ringTicks = 0
+      continue
+    inc sim.players[i].ringTicks
+    if sim.players[i].ringTicks mod sim.config.ringDamageTicks != 0:
+      continue
+    let blocked = sim.absorbDamage(i, FfaRingDamage)
+    sim.emitEvent(
+      Damage,
+      target = i,
+      weapon = "ring",
+      amount = FfaRingDamage,
+      hp = sim.players[i].hp,
+      blocked = blocked,
+      x = float(centerX),
+      y = float(centerY)
+    )
+    if sim.players[i].hp > 0:
+      sim.players[i].paintHitTick = sim.tickCount
+    else:
+      sim.killPlayer(i, -1, cause = "left the safe zone")
 
 proc ffaPlacements*(sim: SimServer): seq[int] =
   ## The ffa finishing order, best first, as player indices. A TOTAL order by
@@ -3618,6 +3669,7 @@ proc step*(
   # so a lethal roll feeds the same tick's wipe resolution.
   sim.updatePuddles()
   sim.updateBarrage()
+  sim.updateFfaRing()
 
   sim.updateFfaSurvival()
   sim.checkWinCondition()

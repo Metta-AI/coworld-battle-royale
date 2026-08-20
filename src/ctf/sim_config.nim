@@ -59,7 +59,11 @@ proc defaultGameConfig*(): GameConfig =
     killPoints: FfaKillPoints,
     assistPoints: FfaAssistPoints,
     assistWindowTicks: FfaAssistWindowTicks,
-    podiumPoints: @FfaPodiumPoints
+    podiumPoints: @FfaPodiumPoints,
+    ringEnabled: false,
+    ringShrinkSec: FfaRingShrinkSec,
+    ringFloorAreaPct: FfaRingFloorAreaPct,
+    ringDamageTicks: FfaRingDamageTicks
   )
 
 proc defaultFfaConfig*(numPlayers: int): GameConfig =
@@ -72,6 +76,7 @@ proc defaultFfaConfig*(numPlayers: int): GameConfig =
   result.minPlayers = numPlayers
   result.lives = 1
   result.hitPoints = FfaHitPoints
+  result.ringEnabled = true
 
 proc readConfigInt(node: JsonNode, name: string, value: var int) =
   ## Reads one optional integer config field.
@@ -633,10 +638,24 @@ proc validate(config: GameConfig) =
           CtfError,
           "Config field podiumPoints[" & $place & "] must not be negative."
         )
+    if config.ringShrinkSec < 1:
+      raise newException(
+        CtfError, "Config field ringShrinkSec must be at least 1.")
+    if config.ringFloorAreaPct < 1 or config.ringFloorAreaPct > 100:
+      raise newException(
+        CtfError, "Config field ringFloorAreaPct must be 1..100.")
+    if config.ringDamageTicks < 1:
+      raise newException(
+        CtfError, "Config field ringDamageTicks must be at least 1.")
   elif config.numPlayers != 0:
     raise newException(
       CtfError,
       "Config field numPlayers only applies to mode " & FfaMode & "."
+    )
+  elif config.ringEnabled:
+    raise newException(
+      CtfError,
+      "Config field ringEnabled only applies to mode " & FfaMode & "."
     )
   if config.slots.len > MaxPlayers:
     raise newException(CtfError, "Config field slots cannot have more than 8 entries.")
@@ -737,6 +756,10 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("assistPoints", config.assistPoints)
   node.readConfigInt("assistWindowTicks", config.assistWindowTicks)
   node.readConfigPodiumPoints(config)
+  node.readConfigBool("ringEnabled", config.ringEnabled)
+  node.readConfigInt("ringShrinkSec", config.ringShrinkSec)
+  node.readConfigInt("ringFloorAreaPct", config.ringFloorAreaPct)
+  node.readConfigInt("ringDamageTicks", config.ringDamageTicks)
   # ffa's own baseline, derived from the mode and from N: single life (the
   # game is elimination, so respawn never rearms) and the deep spawn pool,
   # and a lobby that waits for exactly the seats the match is sized for.
@@ -748,6 +771,8 @@ proc update*(config: var GameConfig, jsonText: string) =
       config.hitPoints = FfaHitPoints
     if not node.hasKey("minPlayers"):
       config.minPlayers = config.numPlayers
+    if not node.hasKey("ringEnabled"):
+      config.ringEnabled = true
   node.readConfigBool("showPlayerLabels", config.showPlayerLabels)
   node.readConfigBool("fastMode", config.fastMode)
   node.readConfigInt("teams", config.teams)
@@ -958,6 +983,10 @@ proc configJson*(config: GameConfig): string =
     node["assistPoints"] = %config.assistPoints
     node["assistWindowTicks"] = %config.assistWindowTicks
     node["podiumPoints"] = %config.podiumPoints
+    node["ringEnabled"] = %config.ringEnabled
+    node["ringShrinkSec"] = %config.ringShrinkSec
+    node["ringFloorAreaPct"] = %config.ringFloorAreaPct
+    node["ringDamageTicks"] = %config.ringDamageTicks
   if config.mapSpec.len > 0:
     node["mapSpec"] = fromJson(config.mapSpec)
   $node

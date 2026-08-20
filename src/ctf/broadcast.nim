@@ -710,6 +710,16 @@ proc buildStateJson*(
     "roster": sim.rosterJson(),
     "events": (if events.isNil: newJArray() else: events)
   }
+  if sim.config.isFfa() and sim.config.ringEnabled:
+    let (ringX, ringY) = ffaRingCenter()
+    state["ring"] = %*{
+      "center": [ringX, ringY],
+      "startRadius": ffaRingStartRadius(),
+      "floorRadius": ffaRingFloorRadius(sim.config),
+      "radius": ffaRingRadiusAt(sim.config, sim.gameTicksElapsed()),
+      "shrinkSec": sim.config.ringShrinkSec,
+      "damageTicks": sim.config.ringDamageTicks
+    }
 
   # Resolved perk magnitudes for the scorebug icon tooltips (the sim is the
   # single source of the mods, like the handicap deltas). Fractions are

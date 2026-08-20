@@ -138,6 +138,10 @@ const
     ## team count from counting room markers or pedestals, the map size from
     ## the walkability sprite's dimensions. Those channels still work; this
     ## label is the stated-value contract for them.
+  LabelPrefixRing* = "ring "
+    ## The ring-schedule marker, `ring center <x>,<y> start <r> floor <r>
+    ## shrink <sec> damage <ticks>`: a single invisible 1x1 object in the
+    ## init snapshot stating the ffa safe-zone schedule outright.
   LabelPrefixOwnAim* = "own aim "
     ## The own-aim readback, `own aim <brads>`: an invisible 1x1 HUD marker on
     ## the PLAYER stream whose label states your own turret angle in brads
@@ -327,6 +331,14 @@ proc labelGameParams*(teams, mapWidth, mapHeight: int): string =
   ## `["<count>", "map", "<width>x<height>"]` — the `map` token is fixed, and
   ## the size splits once more on the `x`.
   LabelPrefixGameParams & $teams & " map " & $mapWidth & "x" & $mapHeight
+
+proc labelRing*(centerX, centerY, startRadius, floorRadius, shrinkSec,
+    damageTicks: int): string =
+  ## The ring-schedule marker label,
+  ## `ring center <x>,<y> start <r> floor <r> shrink <sec> damage <ticks>`.
+  LabelPrefixRing & "center " & $centerX & "," & $centerY & " start " &
+    $startRadius & " floor " & $floorRadius & " shrink " & $shrinkSec &
+    " damage " & $damageTicks
 
 proc labelEndzone*(color, shape: string; x0, y0, x1, y1: int): string =
   ## One team's endzone marker label,

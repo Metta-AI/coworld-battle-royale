@@ -120,6 +120,31 @@ suite "ffa spawn ring":
       check not game.players[i].carryingFlag
 
 suite "ffa elimination":
+  test "the ring shrinks linearly, damages only on cadence, and respects floor":
+    var game = ffaGame(2)
+    game.config.ringShrinkSec = 1
+    game.config.ringDamageTicks = 3
+    game.players[0].placeAtCenter(20, 20)
+    let
+      start = ffaRingStartRadius()
+      floor = ffaRingFloorRadius(game.config)
+      center = ffaRingCenter()
+    check ffaRingRadiusAt(game.config, 0) == start
+    check ffaRingRadiusAt(game.config, TargetFps div 2) < start
+    check ffaRingRadiusAt(game.config, TargetFps) == floor
+    check ffaRingRadiusAt(game.config, 20 * TargetFps) == floor
+    game.tickCount = TargetFps
+    let hp = game.players[0].hp
+    game.updateFfaRing()
+    check game.players[0].hp == hp
+    game.players[0].ringTicks = game.config.ringDamageTicks - 1
+    game.updateFfaRing()
+    check game.players[0].hp == hp - 1
+    game.players[0].placeAtCenter(center.x, center.y)
+    game.players[0].ringTicks = 0
+    game.updateFfaRing()
+    check game.players[0].ringTicks == 0
+
   test "one life over a 20 hp pool, and no respawn ever rearms":
     var game = ffaGame(4)
     for player in game.players:
@@ -213,6 +238,31 @@ suite "ffa scoring":
     game.killPlayer(0, 2)
     check game.players[2].reward == FfaKillPoints
     check game.players[1].reward == 0
+
+suite "ffa chat":
+  test "shouts use the sender's vision and LOS, while range blocks delivery":
+    var game = ffaGame(2)
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(380, MapHeight div 2)
+    game.players[0].aimBrads = 0
+    discard game.refreshPlayerFov(0)
+    check game.playerVisibleTo(0, 1)
+    check game.applyShout(0, "hello")
+    check game.recentShouts.len == 1
+    check game.shoutAudibleTo(1, game.recentShouts[0])
+    game.players[1].placeAtCenter(MapWidth - 30, MapHeight - 30)
+    discard game.refreshPlayerFov(0)
+    check not game.playerVisibleTo(0, 1)
+    check not game.shoutAudibleTo(1, game.recentShouts[0])
+
+  test "the ffa player config echoes the full ring schedule":
+    let config = defaultFfaConfig(4)
+    let echoed = parseJson(config.configJson())
+    for key in ["ringEnabled", "ringShrinkSec", "ringFloorAreaPct",
+        "ringDamageTicks"]:
+      check echoed.hasKey(key)
+    check echoed["ringShrinkSec"].getInt == FfaRingShrinkSec
+    check echoed["ringDamageTicks"].getInt == FfaRingDamageTicks
 
 suite "ffa endings":
   test "a wipe ends the match on the named survivor":

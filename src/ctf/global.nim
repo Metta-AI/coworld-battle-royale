@@ -3455,6 +3455,28 @@ proc addMapMarkers(
     )
   )
   inc index
+  if sim.config.isFfa():
+    let
+      (cx, cy) = ffaRingCenter()
+      startRadius = ffaRingStartRadius()
+      floorRadius = ffaRingFloorRadius(sim.config)
+    packet.addMapMarker(
+      spriteDefs,
+      index,
+      0,
+      0,
+      1,
+      1,
+      labelRing(
+        cx,
+        cy,
+        startRadius,
+        floorRadius,
+        sim.config.ringShrinkSec,
+        sim.config.ringDamageTicks
+      )
+    )
+    inc index
   for team in sim.gameMap.teams():
     let zone = sim.gameMap.captureZone(team)
     if zone.diag:

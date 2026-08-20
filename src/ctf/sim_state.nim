@@ -316,6 +316,46 @@ proc ffaSpawnPosition*(sim: SimServer, slot, seats: int): tuple[x, y: int] =
     targetY = cy - radius * ringSin(brads) div 1024
   sim.nearestWalkable(targetX, targetY)
 
+proc ffaRingCenter*(): tuple[x, y: int] =
+  ## The safe zone's center: the middle of the board, fixed for the match so
+  ## a policy can plan against it from tick 0.
+  (MapWidth div 2, MapHeight div 2)
+
+proc ffaRingStartRadius*(): int =
+  ## The opening radius: the half-diagonal, so the zone covers the whole
+  ## arena and nobody starts in the fire.
+  let (cx, cy) = ffaRingCenter()
+  intSqrt(cx * cx + cy * cy) + 1
+
+proc ffaRingFloorRadius*(config: GameConfig): int =
+  ## The radius the ring stops at: the circle whose area is
+  ## ringFloorAreaPct of the arena. pi is 3142/1000 here — integer-only, and
+  ## the same number on every target.
+  let
+    pct = max(1, min(100, config.ringFloorAreaPct))
+    area = MapWidth * MapHeight * pct div 100
+  min(intSqrt(area * 1000 div 3142), ffaRingStartRadius())
+
+proc ffaRingRadiusAt*(config: GameConfig, elapsed: int): int =
+  ## The safe radius `elapsed` ticks into the match: LINEAR from the start
+  ## radius down to the floor over ringShrinkSec seconds, then constant. All
+  ## integer division, so the schedule is a step function every target walks
+  ## identically.
+  let
+    start = ffaRingStartRadius()
+    floorRadius = ffaRingFloorRadius(config)
+    total = max(1, config.ringShrinkSec * TargetFps)
+    step = max(0, min(total, elapsed))
+  start - (start - floorRadius) * step div total
+
+proc ffaOutsideRing*(config: GameConfig, elapsed, x, y: int): bool =
+  ## Whether a map point is outside the safe zone, compared as SQUARED
+  ## distances so no root is ever taken on a gameplay path.
+  let
+    (cx, cy) = ffaRingCenter()
+    radius = ffaRingRadiusAt(config, elapsed)
+  distSq(x, y, cx, cy) > radius * radius
+
 proc captureZone*(sim: SimServer, team: Team): CaptureZone =
   ## Returns one team's home capture zone on the installed map.
   sim.gameMap.captureZone(team)
@@ -546,4 +586,3 @@ proc resetFlags*(sim: var SimServer) =
       sim.resetFlag(team)
     else:
       sim.flags[team] = FlagState(x: 0, y: 0, carrier: -1)
-

@@ -504,6 +504,20 @@ const
   FfaPodiumPoints* = [100, 40, 15]
                               ## End-of-match podium by placement, so
                               ## outlasting the field dominates the meter.
+  FfaRingShrinkSec* = 240     ## Seconds the safe zone takes to shrink from
+                              ## covering the whole board to its floor. The
+                              ## schedule is LINEAR and then constant: a
+                              ## fence that closes once, not a clock that
+                              ## kills everyone.
+  FfaRingFloorAreaPct* = 40   ## The floor the ring stops at, as a percent of
+                              ## the arena's area. It never closes further,
+                              ## so the ring can crowd a match but can never
+                              ## decide it.
+  FfaRingDamageTicks* = 48    ## Ticks of CONTINUOUS exposure outside the
+                              ## ring that cost FfaRingDamage. Flat, never
+                              ## scaling: at 20 hp an agent can walk the
+                              ## whole board through the fire and live.
+  FfaRingDamage* = 1          ## hp per exposure tick-count outside the ring.
 
   FlagPickupRange* = 34       ## touch radius to steal the enemy flag: STAND ON
                               ## THE PEDESTAL AND THE HEART IS YOURS (GV42).
@@ -1254,6 +1268,16 @@ type
                                   ## first (FfaPodiumPoints). Sized by the
                                   ## config, not by the seat count: places
                                   ## past its length pay nothing.
+    ringEnabled*: bool            ## ffa: whether the shrinking safe zone is
+                                  ## live. Off in ctf and unreadable there —
+                                  ## every ring path also tests isFfa.
+    ringShrinkSec*: int           ## ffa: seconds from the start radius to
+                                  ## the floor radius (FfaRingShrinkSec),
+                                  ## linear, constant afterwards.
+    ringFloorAreaPct*: int        ## ffa: the floor radius as a percent of
+                                  ## arena AREA (FfaRingFloorAreaPct).
+    ringDamageTicks*: int         ## ffa: ticks outside the ring per point of
+                                  ## damage (FfaRingDamageTicks).
 
   Player* = object
     x*, y*: int
@@ -1350,6 +1374,11 @@ type
                                ## never died. The ffa placement order reads
                                ## it (later death outranks earlier);
                                ## excluded from gameHash.
+    ringTicks*: int            ## ffa: consecutive ticks spent outside the
+                               ## safe zone, reset by stepping back in (the
+                               ## puddleTicks pattern, and excluded from
+                               ## gameHash for the same reason — the hp it
+                               ## costs is hashed, the counter is not).
 
   FfaDamageHit* = object
     ## One ffa damage event, kept just long enough to resolve assists
@@ -1762,6 +1791,20 @@ proc ringSin*(brads: int): int =
 proc ringCos*(brads: int): int =
   ## cos of an aim angle in 1024ths, integer-only (sin a quarter turn on).
   ringSin(brads + 64)
+
+proc intSqrt*(value: int): int =
+  ## Integer floor of a square root, by bit-halving Newton steps. The ring
+  ## radii are sim state, so they are computed the one way that is identical
+  ## on every target: no `math.sqrt`, no float rounding to disagree about.
+  if value <= 0:
+    return 0
+  var
+    guess = value
+    next = (guess + 1) div 2
+  while next < guess:
+    guess = next
+    next = (guess + value div guess) div 2
+  guess
 
 # Pure aim-angle math (needed on both sides of the art/gameplay split).
 proc distSq*(ax, ay, bx, by: int): int =

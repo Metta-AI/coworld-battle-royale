@@ -432,6 +432,13 @@ var
   MultiReady = false
     # the anchors above are derived (deriveMultiFrame). Gated on GameTeams
     # so classic 2-team boards NEVER leave the tuned mirrored-arena math.
+  FfaModeActive = false
+  FfaRingCenterX = 0
+  FfaRingCenterY = 0
+  FfaRingStartRadius = 0
+  FfaRingFloorRadius = 0
+  FfaRingShrinkSec = 0
+  FfaRingDamageTicks = 0
 
 proc multiFrameOn(): bool {.inline.} =
   ## Whether the geometry procs run on the multi-team endzone frame.
@@ -586,6 +593,15 @@ proc mapPos(client: ProtocolClient, o: SpriteObjectInfo): Vec =
     float(o.y + o.height div 2 + client.mapCameraY)
   )
 
+proc mapPos(client: ProtocolClient, o: tuple[
+    objectId: int, x: int, y: int, width: int, height: int,
+    label: string
+]): Vec =
+  vec(
+    float(o.x + o.width div 2 + client.mapCameraX),
+    float(o.y + o.height div 2 + client.mapCameraY)
+  )
+
 proc ownAimBrads(client: ProtocolClient): int =
   ## The engine-stated own-aim angle from the `own aim <brads>` HUD marker,
   ## or -1 when the marker is absent (pre-marker engines) or unparsable.
@@ -606,6 +622,40 @@ proc findSelf(
       color, if facingRight: LabelSideRight else: LabelSideLeft)
     for o in client.spriteObjectsWithLabel(label):
       return (alive: true, pos: client.mapPos(o))
+
+proc findFfaSelf(client: ProtocolClient): tuple[alive: bool, pos: Vec] =
+  ## FFA uses one color per seat rather than a red/blue team pair, so the
+  ## self marker's prefix is the authoritative identity.
+  for o in client.spriteObjects():
+    if o.label.startsWith(LabelPrefixSelf):
+      return (alive: true, pos: client.mapPos(o))
+
+proc ffaActorsFor(client: ProtocolClient): seq[Actor] {.measure.} =
+  ## Collects every visible living seat regardless of its individual color.
+  ## The baseline only needs positions and nearby hp bars to choose fights.
+  for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixPlayer):
+    discard label
+    result.add(Actor(pos: client.mapPos(o)))
+  for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
+    let tail = label[LabelPrefixHp.len .. ^1]
+    let slash = tail.find('/')
+    if slash <= 0:
+      continue
+    var hp = 0
+    try:
+      hp = parseInt(tail[0 ..< slash])
+    except ValueError:
+      continue
+    let p = client.mapPos(o)
+    var best = -1
+    var bestD = HpPipRadius
+    for i in 0 ..< result.len:
+      let d = dist(result[i].pos, p)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      result[best].hp = hp
 
 proc actorsFor(client: ProtocolClient, color: string): seq[Actor] {.measure.} =
   ## Visible players of one color in map coordinates plus horizontal facing
@@ -899,6 +949,7 @@ proc adoptGameParams(client: ProtocolClient) =
   ## The team count is the marker's unique intel; the map size restates the
   ## walkability sprite's dimensions, which adoptMapSize already adopted, so
   ## it is not re-read here.
+  FfaModeActive = false
   for o in client.spriteObjects():
     if o.label.startsWith(LabelPrefixGameParams):
       let parts = o.label[LabelPrefixGameParams.len .. ^1].split(' ')
@@ -908,6 +959,28 @@ proc adoptGameParams(client: ProtocolClient) =
         except ValueError:
           discard
       break
+  for o in client.spriteObjects():
+    if not o.label.startsWith(LabelPrefixRing):
+      continue
+    let parts = o.label[LabelPrefixRing.len .. ^1].split(' ')
+    if parts.len != 10 or parts[0] != "center" or parts[2] != "start" or
+        parts[4] != "floor" or parts[6] != "shrink" or
+        parts[8] != "damage":
+      continue
+    let center = parts[1].split(',')
+    if center.len != 2:
+      continue
+    try:
+      FfaRingCenterX = parseInt(center[0])
+      FfaRingCenterY = parseInt(center[1])
+      FfaRingStartRadius = parseInt(parts[3])
+      FfaRingFloorRadius = parseInt(parts[5])
+      FfaRingShrinkSec = parseInt(parts[7])
+      FfaRingDamageTicks = parseInt(parts[9])
+      FfaModeActive = FfaRingStartRadius > 0 and FfaRingFloorRadius > 0
+    except ValueError:
+      discard
+    break
 
 proc adoptEndzones(client: ProtocolClient) =
   ## Reads every team's stated home capture region off the per-team init
@@ -1497,10 +1570,158 @@ proc friendlyBlocked(bot: Bot, me, aim: Vec, enemyDist: float): bool =
       return true
   false
 
+proc ffaRingRadiusAt(tick: int): int =
+  if FfaRingStartRadius <= 0:
+    return 0
+  let
+    total = max(1, FfaRingShrinkSec * 24)
+    step = clamp(tick, 0, total)
+  FfaRingStartRadius -
+    (FfaRingStartRadius - FfaRingFloorRadius) * step div total
+
+proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
+  ## Simple FFA doctrine: center on the safe zone, heal behind cover, take
+  ## only critical or locally superior fights, and patrol deterministic
+  ## waypoints so every seat eventually crosses the same playable ground.
+  let
+    (alive, me) = client.findFfaSelf()
+    center = vec(float(FfaRingCenterX), float(FfaRingCenterY))
+  if not alive:
+    bot.firedLast = false
+    bot.rotSign = 0
+    bot.wasDead = true
+    artFrame(FrameSnap(tick: bot.tick, alive: false,
+      x: int(bot.lastPos.x), y: int(bot.lastPos.y), hp: 0,
+      objective: "dead", action: "dead", engageDist: -1))
+    return 0
+  if bot.wasDead:
+    bot.wasDead = false
+    bot.estAim = 0
+    bot.gameStart = bot.tick
+  let statedAim = client.ownAimBrads()
+  if statedAim >= 0:
+    bot.estAim = statedAim
+
+  var hp = bot.hp
+  for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
+    discard o
+    let tail = label[LabelPrefixHp.len .. ^1]
+    let slash = tail.find('/')
+    if slash > 0:
+      try:
+        hp = parseInt(tail[0 ..< slash])
+      except ValueError:
+        discard
+  bot.hp = hp
+  let
+    actors = client.ffaActorsFor()
+    ringRadius = ffaRingRadiusAt(max(0, bot.tick - bot.gameStart))
+    ringDist = dist(me, center)
+  var
+    targetIndex = -1
+    targetDist = 1e18
+    nearby = 0
+  for i, actor in actors:
+    let d = dist(me, actor.pos)
+    if d < 300.0:
+      inc nearby
+    if d < targetDist:
+      targetDist = d
+      targetIndex = i
+  let
+    targetCritical = targetIndex >= 0 and actors[targetIndex].hp > 0 and
+      actors[targetIndex].hp <= 4
+    localAdvantage = nearby >= 2
+    engage = targetIndex >= 0 and (targetCritical or localAdvantage) and
+      targetDist < 520.0
+  var moveTarget = center
+  var objective = "ring"
+  var action = "move_ring"
+  if ringDist > float(max(1, ringRadius - 80)):
+    moveTarget = center
+    objective = "safe_zone"
+    action = "retreat_ring"
+  elif hp <= 8:
+    objective = "heal"
+    action = "disengage"
+    var bestKit = 1e18
+    for o in client.spriteObjectsWithLabel(LabelMedKit):
+      let kit = client.mapPos(o)
+      let d = dist(me, kit)
+      if d < bestKit and dist(kit, center) <= float(max(1, ringRadius)):
+        bestKit = d
+        moveTarget = kit
+    if bestKit == 1e18:
+      moveTarget = center
+  elif engage:
+    moveTarget = actors[targetIndex].pos
+    objective = "fight"
+    action = "engage"
+  else:
+    let phase = (bot.tick div 180 + bot.slot) mod 4
+    let
+      orbit = float(max(100, ringRadius * 3 div 5))
+      points = [
+        vec(float(FfaRingCenterX) + orbit, float(FfaRingCenterY)),
+        vec(float(FfaRingCenterX), float(FfaRingCenterY) + orbit),
+        vec(float(FfaRingCenterX) - orbit, float(FfaRingCenterY)),
+        vec(float(FfaRingCenterX), float(FfaRingCenterY) - orbit)
+      ]
+    moveTarget = points[phase]
+    objective = "roam"
+    action = "patrol"
+
+  var desiredAim = bradsOf(moveTarget - me)
+  var wantFire = false
+  if targetIndex >= 0:
+    let target = actors[targetIndex]
+    desiredAim = bradsOf(target.pos - me)
+    wantFire = engage and targetDist < 520.0 and
+      client.pixelRayClear(me, target.pos) and
+      abs(bradsErr(desiredAim, bot.estAim)) <= CombatDeadband
+  let steer = bot.navSteer(client, me, moveTarget)
+  var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
+  if dist(me, bot.lastPos) < 0.8:
+    inc bot.stuckTicks
+  else:
+    bot.stuckTicks = 0
+  bot.lastPos = me
+  if getEnv("CTF_BOT_TRACE").len > 0 and bot.tick mod 24 == 0:
+    echo "TRACE slot=", bot.slot, " tick=", bot.tick, " x=", me.x, " y=", me.y
+  if bot.stuckTicks > 20:
+    bot.stuckTicks = 0
+    bot.navGoal = -1
+    moveMask = octantBits(center - me)
+
+  var rotBits: uint8 = 0
+  let err = bradsErr(desiredAim, bot.estAim)
+  if err > CombatDeadband:
+    rotBits = ButtonB
+  elif err < -CombatDeadband:
+    rotBits = ButtonSelect
+  var mask = moveMask or rotBits
+  if wantFire and not bot.firedLast:
+    mask = moveMask or ButtonA
+  bot.firedLast = (mask and ButtonA) != 0
+  bot.rotSign =
+    if (mask and ButtonB) != 0: 1
+    elif (mask and ButtonSelect) != 0: -1
+    else: 0
+  if targetIndex >= 0 and bot.tick - bot.lastShoutTick >= 24:
+    bot.shoutWant = "seen"
+    bot.lastShoutTick = bot.tick
+  artFrame(FrameSnap(tick: bot.tick, alive: true,
+    x: int(me.x), y: int(me.y), hp: hp, aim: bot.estAim,
+    objective: objective, action: action,
+    engageDist: if targetIndex >= 0: int(targetDist) else: -1))
+  mask
+
 proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   ## Core CTF policy for one frame.
   when defined(statue):
     return 0'u8                          # test dummy: stand still all game
+  if FfaModeActive:
+    return decideFfa(bot, client)
   # Our wire color: the slot-dealt guess until the self marker — the one
   # sprite only WE ever see — confirms it. Explicit slot configs can deal
   # colors in any order, and a wrong color makes every scan below blind.
@@ -3019,6 +3240,8 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   else:
     bot.stuckTicks = 0
   bot.lastPos = me
+  if getEnv("CTF_BOT_TRACE").len > 0 and bot.tick mod 24 == 0:
+    echo "TRACE slot=", bot.slot, " tick=", bot.tick, " x=", me.x, " y=", me.y
   if holdStill:
     bot.stuckTicks = 0
   var jinked = false
