@@ -187,8 +187,8 @@ proc ffaLootPoints(
   sim: SimServer,
   count: int
 ): seq[tuple[x, y: int]] =
-  ## Returns deterministic, evenly spaced center targets for FFA loot.
-  ## The seed only rotates the integer ring; CTF never calls this path.
+  ## Returns deterministic, scattered center targets for FFA loot.
+  ## The seed rotates the integer bands; CTF never calls this path.
   if count <= 0:
     return
   let
@@ -199,13 +199,19 @@ proc ffaLootPoints(
     phase = ((rawSeed mod 256) + 256) mod 256
     spacing = 2 * MedKitPickupRange
   for i in 0 ..< count:
-    let brads = phase + i * 256 div count
+    let
+      brads = phase + i * 256 div count + (i * 37 mod 23) - 11
+      bandRadius = case i mod 4
+        of 0: max(1, radius * 55 div 100)
+        of 1: max(1, radius * 75 div 100)
+        of 2: max(1, radius * 90 div 100)
+        else: radius
     let target = (
-      cx + radius * ringCos(brads) div 1024,
-      cy - radius * ringSin(brads) div 1024
+      cx + bandRadius * ringCos(brads) div 1024,
+      cy - bandRadius * ringSin(brads) div 1024
     )
     var spot = sim.nearestWalkable(target[0], target[1])
-    var separated = true
+    var separated = distSq(spot.x, spot.y, cx, cy) <= radius * radius
     for point in result:
       if distSq(spot.x, spot.y, point.x, point.y) <= spacing * spacing:
         separated = false
@@ -251,14 +257,52 @@ proc ffaLootPoints(
                   break search
     result.add((spot.x, spot.y))
 
+proc ffaLootFamilyCounts*(
+  sim: SimServer
+): tuple[medKits, shields, plasmaArcs, barriers: int] =
+  ## Keeps sustain at roughly one sixth of the configurable cluster each.
+  ## The med-kit knob caps its weighted share; offensive items get the rest.
+  let count = max(0, sim.config.ffaLootCount)
+  if count == 0:
+    return
+  let weightedShare = count div 6
+  result.medKits = min(
+    sim.config.ffaMedKitSpawns,
+    max(1, weightedShare)
+  )
+  result.shields = min(
+    weightedShare,
+    count - result.medKits
+  )
+  let offensive = count - result.medKits - result.shields
+  result.plasmaArcs = (offensive + 1) div 2
+  result.barriers = offensive div 2
+
 proc ffaFamilyTargets(
   sim: SimServer,
   family: int
 ): seq[tuple[x, y: int]] =
   let points = sim.ffaLootPoints(sim.config.ffaLootCount + 4)
-  for i in 4 ..< points.len:
-    if (i - 4) mod 4 == family:
-      result.add(points[i])
+  let counts = sim.ffaLootFamilyCounts()
+  var
+    offset = 0
+    count = 0
+  case family
+  of 0:
+    count = counts.medKits
+  of 1:
+    offset = counts.medKits
+    count = counts.shields
+  of 2:
+    offset = counts.medKits + counts.shields
+    count = counts.plasmaArcs
+  of 3:
+    offset = counts.medKits + counts.shields + counts.plasmaArcs
+    count = counts.barriers
+  else:
+    return
+  for i in 4 + offset ..< 4 + offset + count:
+    result.add(points[i])
 
 proc placeFfaPickups(
   sim: var SimServer,
@@ -268,17 +312,23 @@ proc placeFfaPickups(
 ) =
   spawns.setLen(targets.len)
   for i, target in targets:
-    let spot = sim.nearestWalkable(target.x, target.y)
     let delay = if stagger: i * 3 * ReplayFps else: 0
     spawns[i] = PickupSpawn(
-      x: spot.x,
-      y: spot.y,
+      x: target.x,
+      y: target.y,
       present: delay == 0,
       respawnAt: sim.tickCount + delay
     )
 
-proc effectivePickupRespawnTicks(sim: SimServer, ctfTicks: int): int =
-  if sim.config.isFfa(): sim.config.ffaLootRespawnTicks else: ctfTicks
+proc effectivePickupRespawnTicks(
+  sim: SimServer,
+  ctfTicks: int,
+  offensive: bool
+): int =
+  if sim.config.isFfa() and offensive:
+    sim.config.ffaLootRespawnTicks
+  else:
+    ctfTicks
 
 proc resetGrenades*(sim: var SimServer) =
   ## Refills every corner pickup and clears carried and airborne grenades.
@@ -2046,6 +2096,7 @@ template pickupByTouch(
   playerIndex: int,
   spawnsField: untyped,
   pickupRange, respawnTicks: int,
+  offensive: bool,
   taken: untyped
 ) =
   ## Shared touch-pickup skeleton for the four pickup families: scans present
@@ -2061,7 +2112,7 @@ template pickupByTouch(
     if spawn.present and distSq(px, py, spawn.x, spawn.y) <= rangeSq:
       spawn.present = false
       spawn.respawnAt = sim.tickCount +
-        sim.effectivePickupRespawnTicks(respawnTicks)
+        sim.effectivePickupRespawnTicks(respawnTicks, offensive)
       taken
       return
 
@@ -2081,7 +2132,7 @@ proc tryPickupGrenades*(sim: var SimServer, playerIndex: int) =
       sim.players[playerIndex].hasBarrier:
     return
   sim.pickupByTouch(playerIndex, grenadeSpawns, GrenadePickupRange,
-      GrenadeRespawnTicks):
+      GrenadeRespawnTicks, true):
     sim.players[playerIndex].hasGrenade = true
     sim.emitPickup(playerIndex, "grenade", spawn.x, spawn.y)
     sim.logGameEvent(
@@ -2108,7 +2159,7 @@ proc tryPickupMedKits*(sim: var SimServer, playerIndex: int) =
   if sim.players[playerIndex].hp >= maxHp:
     return
   sim.pickupByTouch(playerIndex, medKitSpawns, MedKitPickupRange,
-      MedKitRespawnTicks):
+      MedKitRespawnTicks, false):
     let healed = maxHp - sim.players[playerIndex].hp
     sim.players[playerIndex].hp = maxHp
     sim.emitPickup(playerIndex, "med_kit", spawn.x, spawn.y)
@@ -2139,7 +2190,7 @@ proc tryPickupShields*(sim: var SimServer, playerIndex: int) =
   if sim.players[playerIndex].shieldHp >= ShieldLayerHp:
     return
   sim.pickupByTouch(playerIndex, shieldSpawns, ShieldPickupRange,
-      ShieldRespawnTicks):
+      ShieldRespawnTicks, false):
     sim.players[playerIndex].hasShield = true
     sim.players[playerIndex].shieldHp = ShieldLayerHp
     sim.emitPickup(playerIndex, "shield", spawn.x, spawn.y)
@@ -2153,7 +2204,7 @@ proc tryPickupPlasmaArcs*(sim: var SimServer, playerIndex: int) =
   if not sim.players[playerIndex].alive or sim.players[playerIndex].hasPlasmaArc:
     return
   sim.pickupByTouch(playerIndex, plasmaArcSpawns, PlasmaArcPickupRange,
-      PlasmaArcRespawnTicks):
+      PlasmaArcRespawnTicks, true):
     sim.players[playerIndex].hasPlasmaArc = true
     sim.players[playerIndex].fireWindup = 0
     sim.players[playerIndex].windupBrads = -1
@@ -2172,7 +2223,7 @@ proc tryPickupBarriers*(sim: var SimServer, playerIndex: int) =
       sim.players[playerIndex].hasGrenade:
     return
   sim.pickupByTouch(playerIndex, barrierSpawns, BarrierPickupRange,
-      BarrierRespawnTicks):
+      BarrierRespawnTicks, true):
     sim.players[playerIndex].hasBarrier = true
     sim.emitPickup(playerIndex, "barrier", spawn.x, spawn.y)
     sim.logGameEvent(

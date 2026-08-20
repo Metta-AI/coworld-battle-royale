@@ -111,10 +111,10 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `ffaSprayDamage` | int / `4` (`FfaSprayDamage`) | `ffaSprayDamage` | `1..4` (ffa only) | Direct plasma-arc damage in FFA. |
 | `ffaGrenadeDamage` | int / `4` (`FfaGrenadeDamage`) | `ffaGrenadeDamage` | `1..4` (ffa only) | Direct grenade damage in FFA. |
 | `ffaGrenadeTrenchSplashDamage` | int / `1` (`FfaGrenadeTrenchSplashDamage`) | `ffaGrenadeTrenchSplashDamage` | `1..4` (ffa only) | FFA grenade damage when the victim is in another trench. |
-| `ffaMedKitSpawns` | int / `2` (`FfaMedKitSpawns`) | `ffaMedKitSpawns` | `1..2` (ffa only) | Number of active center med-kit points in FFA. |
-| `ffaLootCount` | int / `12` (`FfaLootCount`) | `ffaLootCount` | `0..64` (ffa only) | Total center-cluster items, distributed round-robin across med kits, shields, spray cans, and barriers. |
-| `ffaLootRadius` | int / `180` (`FfaLootRadius`) | `ffaLootRadius` | `>=1` (ffa only) | Center-cluster radius in map pixels; placement clamps it inside the configured final ring floor. |
-| `ffaLootRespawnTicks` | int / `480` (`FfaLootRespawnTicks`) | `ffaLootRespawnTicks` | `>=1` (ffa only) | Respawn cadence for FFA cluster items after pickup. Initial appearances are staggered every three seconds. |
+| `ffaMedKitSpawns` | int / `2` (`FfaMedKitSpawns`) | `ffaMedKitSpawns` | `1..2` (ffa only) | Upper bound on the weighted med-kit share of the FFA center cluster; the share remains a minority as the cluster grows. |
+| `ffaLootCount` | int / `12` (`FfaLootCount`) | `ffaLootCount` | `0..64` (ffa only) | Total seq-backed center-cluster items. Sustain items use roughly one sixth each when large enough; the remainder is split between spray cans and barriers, plus four relocated grenade slots. |
+| `ffaLootRadius` | int / `180` (`FfaLootRadius`) | `ffaLootRadius` | `>=1` (ffa only) | Maximum center-cluster radius in map pixels; deterministic items use multiple inward/outward bands and placement clamps inside the configured final ring floor. |
+| `ffaLootRespawnTicks` | int / `480` (`FfaLootRespawnTicks`) | `ffaLootRespawnTicks` | `>=1` (ffa only) | Respawn cadence for offensive FFA cluster items after pickup. Med kits and shields retain their slower 30-second cadence; initial appearances are staggered every three seconds. |
 
 **Per-team handicap** ([sim_types.nim `handicaps`](../src/ctf/sim_types.nim), accessors
 `hitPointsFor`/`livesFor`/`maxSpeedFor`/`missPermilleFor`): a single `0.0..1.0`

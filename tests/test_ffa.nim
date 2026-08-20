@@ -138,6 +138,22 @@ suite "ffa config":
       config.update("""{"ffaGunDamage": 4}""")
 
 suite "ffa spawn ring":
+  test "center loot weights sustain as a minority across cluster sizes":
+    for (count, expectedMed, expectedShield) in [
+        (4, 1, 0), (8, 1, 1), (12, 2, 2), (16, 2, 2)]:
+      var config = defaultFfaConfig(4)
+      config.ffaLootCount = count
+      let game = initCtfForTest(config)
+      let families = game.ffaLootFamilyCounts()
+      check families.medKits == expectedMed
+      check families.shields == expectedShield
+      check families.medKits + families.shields <
+        families.plasmaArcs + families.barriers
+    var capped = defaultFfaConfig(4)
+    capped.ffaMedKitSpawns = 1
+    capped.ffaLootCount = FfaLootCount
+    check initCtfForTest(capped).ffaLootFamilyCounts().medKits == 1
+
   test "center loot is deterministic, spaced, walkable, and inside the ring floor":
     var first = ffaGame(4)
     var second = ffaGame(4)
@@ -146,6 +162,9 @@ suite "ffa spawn ring":
     check first.grenadeSpawns.len == 4
     let floor = ffaRingFloorRadius(first.config)
     var points: seq[tuple[x, y: int]] = @[]
+    var
+      minRadius = high(int)
+      maxRadius = 0
     for spawn in first.medKitSpawns:
       points.add((spawn.x, spawn.y))
     for spawn in first.shieldSpawns:
@@ -158,11 +177,15 @@ suite "ffa spawn ring":
       points.add((spawn.x, spawn.y))
     for i, point in points:
       check first.canOccupy(point.x, point.y)
-      check distSq(point.x, point.y, MapWidth div 2, MapHeight div 2) <=
+      let radius = distSq(point.x, point.y, MapWidth div 2, MapHeight div 2)
+      minRadius = min(minRadius, radius)
+      maxRadius = max(maxRadius, radius)
+      check radius <=
         (floor + 20) * (floor + 20)
       for other in points[0 ..< i]:
         check distSq(point.x, point.y, other.x, other.y) >
           (2 * MedKitPickupRange) * (2 * MedKitPickupRange)
+    check maxRadius - minRadius > 20 * 20
     check first.medKitSpawns == second.medKitSpawns
     check first.shieldSpawns == second.shieldSpawns
     check first.plasmaArcSpawns == second.plasmaArcSpawns
@@ -179,6 +202,48 @@ suite "ffa spawn ring":
     for spawn in first.barrierSpawns:
       staggered = staggered or not spawn.present
     check staggered
+
+  test "ffa loot uses slower sustain and faster offensive respawn cadences":
+    var medGame = ffaGame(2)
+    medGame.tickCount = 100
+    medGame.players[0].hp = 1
+    medGame.players[0].placeAtCenter(
+      medGame.medKitSpawns[0].x, medGame.medKitSpawns[0].y)
+    medGame.tryPickupMedKits(0)
+    check medGame.medKitSpawns[0].respawnAt ==
+      100 + MedKitRespawnTicks
+
+    var shieldGame = ffaGame(2)
+    shieldGame.tickCount = 100
+    shieldGame.players[0].placeAtCenter(
+      shieldGame.shieldSpawns[0].x, shieldGame.shieldSpawns[0].y)
+    shieldGame.tryPickupShields(0)
+    check shieldGame.shieldSpawns[0].respawnAt ==
+      100 + ShieldRespawnTicks
+
+    var plasmaGame = ffaGame(2)
+    plasmaGame.tickCount = 100
+    plasmaGame.players[0].placeAtCenter(
+      plasmaGame.plasmaArcSpawns[0].x, plasmaGame.plasmaArcSpawns[0].y)
+    plasmaGame.tryPickupPlasmaArcs(0)
+    check plasmaGame.plasmaArcSpawns[0].respawnAt ==
+      100 + plasmaGame.config.ffaLootRespawnTicks
+
+    var barrierGame = ffaGame(2)
+    barrierGame.tickCount = 100
+    barrierGame.players[0].placeAtCenter(
+      barrierGame.barrierSpawns[0].x, barrierGame.barrierSpawns[0].y)
+    barrierGame.tryPickupBarriers(0)
+    check barrierGame.barrierSpawns[0].respawnAt ==
+      100 + barrierGame.config.ffaLootRespawnTicks
+
+    var grenadeGame = ffaGame(2)
+    grenadeGame.tickCount = 100
+    grenadeGame.players[0].placeAtCenter(
+      grenadeGame.grenadeSpawns[0].x, grenadeGame.grenadeSpawns[0].y)
+    grenadeGame.tryPickupGrenades(0)
+    check grenadeGame.grenadeSpawns[0].respawnAt ==
+      100 + grenadeGame.config.ffaLootRespawnTicks
 
   test "spawn pads derive from N alone, for N in 2, 5 and 16":
     for seats in [2, 5, 16]:
