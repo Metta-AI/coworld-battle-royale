@@ -365,6 +365,9 @@ type
     carrierPos, carrierVel: Vec   # last fix on the thief carrying OUR flag
     carrierSeen: int
     lastEnemySeen: int        # last tick ANY enemy was inside our vision
+    contactTicks: int         # ffa: ticks with at least one live opponent visible
+    sightingEpisodes: int     # ffa: empty-to-nonempty visible-opponent transitions
+    hadVisibleOpponent: bool   # ffa: previous frame had a visible opponent
     gameStart: int            # tick of the last lobby-to-playing transition
     firedLast: bool           # A was set on the previous sent mask
     estAim: int               # dead-reckoned own aim angle in brads
@@ -1617,6 +1620,12 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     actors = client.ffaActorsFor()
     ringRadius = ffaRingRadiusAt(max(0, bot.tick - bot.gameStart))
     ringDist = dist(me, center)
+  let visibleOpponent = actors.len > 0
+  if visibleOpponent:
+    bot.contactTicks += max(1, client.frameAdvance)
+    if not bot.hadVisibleOpponent:
+      inc bot.sightingEpisodes
+  bot.hadVisibleOpponent = visibleOpponent
   var
     targetIndex = -1
     targetDist = 1e18
@@ -1679,7 +1688,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.stuckTicks = 0
   bot.lastPos = me
   if getEnv("CTF_BOT_TRACE").len > 0 and bot.tick mod 24 == 0:
-    echo "TRACE slot=", bot.slot, " tick=", bot.tick, " x=", me.x, " y=", me.y
+    echo "TRACE slot=", bot.slot, " tick=", bot.tick, " x=", me.x, " y=", me.y,
+      " contactTicks=", bot.contactTicks,
+      " sightingEpisodes=", bot.sightingEpisodes,
+      " visible=", (if visibleOpponent: 1 else: 0)
   if bot.stuckTicks > 20:
     bot.stuckTicks = 0
     bot.navGoal = -1
@@ -3394,6 +3406,9 @@ proc runBot(url: string) =
       client.reset()
       bot.navBuilt = false
       bot.resetTransient()
+      bot.contactTicks = 0
+      bot.sightingEpisodes = 0
+      bot.hadVisibleOpponent = false
       component.hasSent = false
       while true:
         if not client.receiveLatestFrame(ws, false):

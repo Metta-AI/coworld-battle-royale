@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run one headless baseline-bot FFA and save its replay and reports.
 # Usage: tools/run_ffa_demo.sh [numPlayers] [seed] [arm]
-# Arms: A = giant/current ring, B = giant/changed ring, C = huge/changed ring.
+# Arms: A/B/C are the prior matrix; D1=huge, D2=large, D3=small, D4=small.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -42,13 +42,23 @@ elif arm == "B":
     cfg["ringShrinkSec"] = 150
     cfg["ringFloorAreaPct"] = 35
     cfg["ringRecoveryTicks"] = 2
-elif arm == "C":
+elif arm in ("C", "D1"):
     cfg["mapSize"] = "huge"
     cfg["ringShrinkSec"] = 150
     cfg["ringFloorAreaPct"] = 35
     cfg["ringRecoveryTicks"] = 2
+elif arm == "D2":
+    cfg["mapSize"] = "large"
+    cfg["ringShrinkSec"] = 150
+    cfg["ringFloorAreaPct"] = 35
+    cfg["ringRecoveryTicks"] = 2
+elif arm in ("D3", "D4"):
+    cfg["mapSize"] = "small"
+    cfg["ringShrinkSec"] = 150
+    cfg["ringFloorAreaPct"] = 35
+    cfg["ringRecoveryTicks"] = 2
 else:
-    raise SystemExit("arm must be A, B, or C")
+    raise SystemExit("arm must be A, B, C, D1, D2, D3, or D4")
 json.dump(cfg, open(path, "w"))
 PY
 
@@ -160,16 +170,35 @@ first_kill_tick = min((e["tick"] for e in events if e.get("kind") == "kill"),
 survival_ticks = results.get("survivalTicks", [])
 max_ticks = cfg.get("maxTicks", 0)
 alive_at_cap = sum(t >= max_ticks for t in survival_ticks)
+match_ticks = max(survival_ticks, default=0)
+end_condition = "cap" if alive_at_cap > 0 else "wipe"
 median_survival_sec = median(survival_ticks) / 24 if survival_ticks else 0
 trace = []
+contact = {}
 for line in open(bots_path, errors="replace"):
     m = re.search(r"TRACE slot=(\d+) tick=(\d+) x=([0-9.]+) y=([0-9.]+)", line)
     if m:
         trace.append(tuple([int(m.group(1)), int(m.group(2)),
                             float(m.group(3)), float(m.group(4))]))
+    m = re.search(
+        r"TRACE slot=(\d+).*contactTicks=(\d+) sightingEpisodes=(\d+)", line)
+    if m:
+        slot = int(m.group(1))
+        contact[slot] = {
+            "contactTicks": int(m.group(2)),
+            "sightingEpisodes": int(m.group(3)),
+        }
 xs = [p[2] for p in trace]
 ys = [p[3] for p in trace]
-area = (cfg.get("mapWidth") or 3211) * (cfg.get("mapHeight") or 1713)
+map_dimensions = {
+    "small": (1050, 560),
+    "standard": (1235, 659),
+    "large": (1606, 857),
+    "huge": (2223, 1186),
+    "giant": (3211, 1713),
+}
+map_width, map_height = map_dimensions[cfg["mapSize"]]
+area = map_width * map_height
 if xs and ys:
     used = max(0.0, (max(xs) - min(xs)) * (max(ys) - min(ys)))
     utilization = 100.0 * used / area
@@ -181,6 +210,24 @@ metrics = {
     "seed": int(cfg["seed"]),
     "numPlayers": int(cfg["numPlayers"]),
     "mapSize": cfg.get("mapSize", ""),
+    "mapWidth": map_width,
+    "mapHeight": map_height,
+    "mapArea": area,
+    "areaPerAgent": area / int(cfg["numPlayers"]),
+    "contactTicksByAgent": contact,
+    "meanContactPct": (
+        100.0 * sum(v["contactTicks"] for v in contact.values()) /
+        (int(cfg["numPlayers"]) * match_ticks)
+        if contact and match_ticks else 0.0
+    ),
+    "meanSightingEpisodes": (
+        sum(v["sightingEpisodes"] for v in contact.values()) /
+        len(contact) if contact else 0.0
+    ),
+    "killsPerSightingEpisode": (
+        kills / sum(v["sightingEpisodes"] for v in contact.values())
+        if sum(v["sightingEpisodes"] for v in contact.values()) > 0 else 0.0
+    ),
     "shotEvents": shots,
     "damageEvents": damage_events,
     "hits": hits,
@@ -189,19 +236,27 @@ metrics = {
     "ringDeaths": ring_deaths,
     "firstKillTick": first_kill_tick,
     "playersAliveAtCap": alive_at_cap,
+    "endCondition": end_condition,
+    "matchTicks": match_ticks,
     "medianSurvivalSec": median_survival_sec,
     "shoutEvents": shouts,
     "ticks": events[-1].get("ticks", None) if events else None,
     "replay": replay_path,
 }
 json.dump(metrics, open(metrics_path, "w"), indent=2)
-print(f"arm: {arm}; seed: {cfg['seed']}; map: {cfg.get('mapSize', '?')}")
+print(f"arm: {arm}; seed: {cfg['seed']}; map: {cfg.get('mapSize', '?')} "
+      f"{map_width}x{map_height} ({area} px²; "
+      f"{area / int(cfg['numPlayers']):.0f} px²/agent)")
 print(f"winner slot: {results.get('winnerSlot', -1)}")
 print(f"ticks: {events[-1].get('ticks', '?') if events else '?'}")
 print(f"shots: {shots}; damage events: {damage_events}; hits: {hits}")
 print(f"kills: {kills}; deaths: {deaths}; ring deaths: {ring_deaths}")
 print(f"first kill tick: {first_kill_tick}; players alive at cap: {alive_at_cap}")
+print(f"ending: {end_condition}")
 print(f"median survival seconds: {median_survival_sec:.1f}; shout events: {shouts}")
+print(f"mean contact ticks: {metrics['meanContactPct']:.2f}% of cap; "
+      f"mean sighting episodes: {metrics['meanSightingEpisodes']:.2f}; "
+      f"kills/sighting episode: {metrics['killsPerSightingEpisode']:.4f}")
 print(f"map use: {utilization_text}")
 print("placement  slot  survival_s  kills  damage  score  name")
 for rank, row in enumerate(rows, 1):
