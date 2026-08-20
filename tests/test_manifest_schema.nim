@@ -31,9 +31,29 @@ proc findConfigSchema(node: JsonNode): JsonNode =
         return found
   nil
 
+proc findResultsSchema(node: JsonNode): JsonNode =
+  ## Depth-first search for the "results_schema" object in a manifest.
+  if node.kind == JObject:
+    if node.hasKey("results_schema"):
+      return node["results_schema"]
+    for _, value in node:
+      let found = findResultsSchema(value)
+      if found != nil:
+        return found
+  elif node.kind == JArray:
+    for value in node:
+      let found = findResultsSchema(value)
+      if found != nil:
+        return found
+  nil
+
 proc manifestSchema(name: string): JsonNode =
   result = findConfigSchema(parseFile(GameDir / name))
   doAssert result != nil, name & " has no config_schema"
+
+proc manifestResultsSchema(name: string): JsonNode =
+  result = findResultsSchema(parseFile(GameDir / name))
+  doAssert result != nil, name & " has no results_schema"
 
 proc manifestVariant(variantId: string): JsonNode =
   let manifest = parseFile(GameDir / ManifestName)
@@ -173,11 +193,49 @@ suite "league manifest config_schema vs GameConfig":
       let description = schema["properties"][key]["description"].getStr
       check "platform" in description
 
+  test "schema defaults match the engine defaults":
+    let defaults = defaultGameConfig()
+    check schema["properties"]["aimTurnRate"]["default"].getInt ==
+      defaults.aimTurnRate
+    check schema["properties"]["hitPoints"]["default"].getInt ==
+      defaults.hitPoints
+    check schema["properties"]["ringShrinkSec"]["default"].getInt ==
+      FfaRingShrinkSec
+    check schema["properties"]["ringFloorAreaPct"]["default"].getInt ==
+      FfaRingFloorAreaPct
+    check schema["properties"]["ringDamageTicks"]["default"].getInt ==
+      FfaRingDamageTicks
+    check schema["properties"]["ringRecoveryTicks"]["default"].getInt ==
+      FfaRingRecoveryTicks
+    check schema["properties"]["ffaLootCount"]["default"].getInt ==
+      FfaLootCount
+    check schema["properties"]["ffaLootRadius"]["default"].getInt ==
+      FfaLootRadius
+    check schema["properties"]["ffaLootRespawnTicks"]["default"].getInt ==
+      FfaLootRespawnTicks
+
   test "the repo's local config.json loads and validates":
     # update() runs the full field validation internally and raises on any
     # rejected value, so a clean call IS the validation.
     var config = defaultGameConfig()
     config.update(readFile(GameDir / "config.json"))
+
+  test "emitted ffa results keys are closed by the manifest":
+    let resultsSchema = manifestResultsSchema(ManifestName)
+    var config = defaultFfaConfig(3)
+    config.startWaitTicks = 0
+    var game = initCtfForTest(config)
+    for i in 0 ..< 3:
+      discard game.addPlayer("Player" & $(i + 1))
+    game.startGame()
+    game.killPlayer(0, 1)
+    game.killPlayer(2, 1)
+    let input = game.none()
+    game.step(input, input)
+    check game.phase == GameOver
+    let results = parseJson(game.playerResultsJson())
+    for key, _ in results:
+      check resultsSchema["properties"].hasKey(key)
 
   test "published variants are the battle-royale identities":
     var variantIds: seq[string]

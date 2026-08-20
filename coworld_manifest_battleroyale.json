@@ -501,7 +501,7 @@
           "description": "FFA only: respawn cadence for offensive center-cluster pickups (sustain items keep the slower 30s cadence).",
           "type": "integer",
           "minimum": 1,
-          "default": 600
+          "default": 480
         },
         "mapSymmetry": {
           "description": "Generated-map symmetry lock: mirror or rot180 (2-team shapes; empty draws from the map seed).",
