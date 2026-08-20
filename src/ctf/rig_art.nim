@@ -715,15 +715,16 @@ proc rigGunPixelsForColor*(
   colorIndex, aimStep: int,
   renderScale = 1
 ): seq[uint8] =
-  ## FFA held-gun art has its own identity-keyed definition even though the
-  ## weapon silhouette is neutral.
+  ## FFA held-gun art is neutral and shared by identity; the rig key uses one
+  ## definition per aim pose rather than duplicating this raster 16 times.
   rigGunPixels(Red, aimStep, renderScale)
 
 proc rigSprayCanPixelsForColor*(
   colorIndex, aimStep: int,
   renderScale = 1
 ): seq[uint8] =
-  ## FFA held-spray art has its own identity-keyed definition.
+  ## FFA held-spray art is neutral and shared by identity; the rig key uses one
+  ## definition per aim pose rather than duplicating this raster 16 times.
   rigSprayCanPixels(Red, aimStep, renderScale)
 
 

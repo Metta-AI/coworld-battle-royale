@@ -51,6 +51,16 @@ proc slotOf(sim: SimServer, index: int): int =
     return sim.players[index].joinOrder
   -1
 
+proc firstPersonShotTeamToken*(sim: SimServer, color: uint8): string =
+  ## Returns the historical team token for CTF shots and the shooter's
+  ## identity-color token for FFA shots.
+  if sim.config.isFfa():
+    return playerColorName(playerColorIndex(color))
+  for team in sim.teams():
+    if color == teamColor(team):
+      return teamText(team)
+  ""
+
 proc snapshot(tracker: var BroadcastTracker, sim: SimServer) =
   ## Copies the current sim state into the tracker without emitting events.
   tracker.alive.setLen(sim.players.len)
@@ -546,17 +556,10 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
       shots.add(%*{
         "pts": pts,
         "age": sim.tickCount - shot.firedTick,
-        # Shooter's TEAM, so the client paints the beam from the same team
-        # palette it already uses for cogs and hearts (the board resolves paint
-        # through the sprite Palette, which isn't in this module's graph — team
-        # is the stable contract and reads identically).
-        "team": (block:
-          var shotTeam = ""
-          for team in sim.teams():
-            if shot.color == teamColor(team):
-              shotTeam = teamText(team)
-              break
-          shotTeam),
+        # CTF keeps the historical team token. FFA has no meaningful team
+        # token, so this field carries the shooter's identity color instead;
+        # the baseline bot consumes sprite labels, not this broadcast JSON.
+        "team": sim.firstPersonShotTeamToken(shot.color),
         # Hits draw bright, misses pre-faded — matching the board.
         "hit": shot.hit,
         # Nearest range, for the payload triage below.

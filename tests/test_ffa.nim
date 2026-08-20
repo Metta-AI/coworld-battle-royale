@@ -7,7 +7,7 @@ import
   helpers,
   std/[json, sequtils, strutils, unittest],
   bitworld/spriteprotocol,
-  ctf/[global, sim]
+  ctf/[broadcast, global, sim]
 
 proc ffaGame(seats: int, maxTicks = 0): SimServer =
   ## A started ffa match with `seats` players, one per distinct address.
@@ -280,7 +280,7 @@ suite "ffa spawn ring":
   test "rig sprite keys use identity in ffa and team in ctf":
     check rigHeadSpriteId(0, DefaultSkin, 0) !=
       rigHeadSpriteId(1, DefaultSkin, 0)
-    check rigGunSpriteId(0, 0) != rigGunSpriteId(1, 0)
+    check rigGunSpriteId(0, 0) == rigGunSpriteId(1, 0)
     check rigArmSpriteId(0, rsArmL, 0, 0) !=
       rigArmSpriteId(1, rsArmL, 0, 0)
     check rigLegSpriteId(0, rsLegFL, 0, 0, 0) !=
@@ -290,6 +290,32 @@ suite "ffa spawn ring":
     check rigHeadSpriteId(Red, DefaultSkin, 0) !=
       rigHeadSpriteId(Blue, DefaultSkin, 0)
     check rigGunSpriteId(Red, 0) != rigGunSpriteId(Blue, 0)
+
+  test "all identity-colored blast stages occupy disjoint pools":
+    var ids: seq[int] = @[]
+    for colorIndex in 0 ..< PlayerColors.len:
+      for stage in 0 ..< BlastStages:
+        let blast = blastSpriteId(colorIndex, stage)
+        let trench = trenchBlastSpriteId(colorIndex, stage)
+        check blast notin ids
+        check trench notin ids
+        check blast < DynamicSpriteWireBase
+        check trench < DynamicSpriteWireBase
+        ids.add blast
+        ids.add trench
+    check ids.len == PlayerColors.len * BlastStages * 2
+    check ids.len == ids.deduplicate().len
+    check BlastSpriteBase + PlayerColors.len * BlastStages - 1 <
+      TrenchBlastSpriteBase
+    check TrenchBlastSpriteBase + PlayerColors.len * BlastStages - 1 <
+      DynamicSpriteWireBase
+
+  test "first-person shot token is identity-colored only in ffa":
+    let
+      ffa = ffaGame(2)
+      ctf = initCtfForTest(defaultGameConfig())
+    check ffa.firstPersonShotTeamToken(ffa.players[1].color) == "orange"
+    check ctf.firstPersonShotTeamToken(teamColor(Red)) == "red"
 
   test "ffa player-view art and identity badges use distinct color pools":
     check soldierPlayerSpriteId(0, DefaultSkin, 0) !=

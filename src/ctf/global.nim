@@ -243,20 +243,22 @@ const
                                  ## (EndzoneRampBandsPerFrame).
   GlowFadeStages* = 8          ## crossfade steps; 0 = full glow, 7 = fully cold.
   ## Grenades (0.7.0): a paint-bomb orb PNG shared by three placements plus a
-  ## drawn charge ring and blast flash. Sprite ids 840..845 sit above the sound
-  ## ring (830) and below the tracer dots (900). Object pools live at 19300+.
+  ## drawn charge ring and blast flash. The static grenade sprites occupy the
+  ## historical 840..843 ids; CTF keeps its historical team-specific blast
+  ## ids, while FFA identity-keyed blast families live in their own full-width
+  ## pools below the dynamic wire window. Object pools live at 19300+.
   PaintBombPickupSpriteId = 840  ## corner pickup orb (native size).
   PaintBombAirSpriteId = 841     ## in-flight orb (slightly smaller).
   PaintBombCarrySpriteId = 842   ## the "grenade carried" marker over a carrier.
   ThrowTargetSpriteId = 843      ## the charge-time landing ring.
-  BlastSpriteBase = 844          ## landing paint-splat sprites, keyed
-                                 ## colorIndex*BlastStages+stage. Team colors
-                                 ## (Red idx0, Blue idx6) → ids 844..847 and
-                                 ## 868..871, clear of tracers at 900.
-  TrenchBlastSpriteBase = 848    ## the trench-truncated variant of the same
-                                 ## landing splat, same colorIndex*BlastStages+
-                                 ## stage keying → ids 848..851 and 872..875:
-                                 ## still clear of tracers at 900.
+  CtfBlastSpriteBase = 844        ## historical CTF red/blue landing splats.
+  CtfTrenchBlastSpriteBase = 848  ## historical CTF red/blue trench splats.
+  BlastSpriteBase* = 35440        ## FFA landing paint-splat sprites, keyed
+                                 ## colorIndex*BlastStages+stage for all 16
+                                 ## identity colors: 35440..35503.
+  TrenchBlastSpriteBase* = 35504  ## the trench-truncated variant of the same
+                                 ## all-color landing-splat pool:
+                                 ## 35504..35567.
   PaintBombPickupSize = 22       ## px footprint of a corner pickup orb.
   PaintBombAirSize = 16          ## px footprint of the airborne orb.
   PaintBombCarrySize = 10        ## px footprint of the carried marker.
@@ -272,11 +274,9 @@ const
     ## pit's own square (56px) instead of the open-field BlastSize (108px),
     ## so the flash reads as trapped in the pit rather than spilling over
     ## its rim.
-  BlastStages = 4                ## landing-splat fade stages across BlastFxTicks.
+  BlastStages* = 4                ## landing-splat fade stages across BlastFxTicks.
   PaintBombPickupObjectBase = 19300  ## corner pickups: 19300..19303 (four corners).
-  MedKitSpriteId = 1400          ## center med kit pickup (native size);
-                                 ## 845 collided with red blast stage 1
-                                 ## (BlastSpriteBase 844..847).
+  MedKitSpriteId = 1400          ## center med kit pickup (native size).
   MedKitSize = 26                ## px footprint of a med kit pickup.
   MedKitObjectBase = 19600       ## med kits: 19600..19603 (2 on sides maps,
                                  ## 4 on 4-team maps).
@@ -885,8 +885,16 @@ const
     ("sound ring", SoundRingSpriteId, 1),
     ("impact ring", ShotImpactSpriteId, 1),
     ("grenade statics", PaintBombPickupSpriteId, 4),
-    ("blast flashes", BlastSpriteBase, 4),
-    ("trench blasts", TrenchBlastSpriteBase, 4),
+    ("CTF red blast flashes", CtfBlastSpriteBase, BlastStages),
+    ("CTF red trench blasts", CtfTrenchBlastSpriteBase, BlastStages),
+    ("CTF blue blast flashes", CtfBlastSpriteBase + 6 * BlastStages,
+      BlastStages),
+    ("CTF blue trench blasts", CtfTrenchBlastSpriteBase + 6 * BlastStages,
+      BlastStages),
+    ("FFA blast flashes", BlastSpriteBase,
+      PlayerColors.len * BlastStages),
+    ("FFA trench blasts", TrenchBlastSpriteBase,
+      PlayerColors.len * BlastStages),
     ("tracer dots", TracerDotSpriteBase, 384),
     ("muzzle blooms", MuzzleBloomSpriteBase, 4),
     ("hit flashes", HitFlashSpriteBase, 4),
@@ -1522,14 +1530,14 @@ proc transportSheet(): Sprite =
     TransportSheet = readRequiredSprite(clientDataDir() / "transport.png")
   TransportSheet
 
-proc playerColorIndex(color: uint8): int =
+proc playerColorIndex*(color: uint8): int =
   ## Returns the player color slot for a palette color.
   for i in 0 ..< PlayerColors.len:
     if PlayerColors[i] == color:
       return i
   0
 
-proc playerColorName(index: int): string =
+proc playerColorName*(index: int): string =
   ## Returns the display name for one player color slot.
   if index >= 0 and index < PlayerColorNames.len:
     return PlayerColorNames[index]
@@ -1624,16 +1632,14 @@ proc rigHeadSpriteId*(
   ))
 
 proc rigGunSpriteId*(colorIndex, aimStep: int): int =
-  wireSpriteId(rigFfaKey(
-    RigGunSpriteBase + colorIndex * RigSteps + aimStep,
-    colorIndex
-  ))
+  ## FFA held-gun art is neutral, so every identity shares one definition per
+  ## aim pose instead of baking 16 byte-identical color variants.
+  wireSpriteId(rigFfaKey(RigGunSpriteBase + aimStep, 0))
 
 proc rigSpraySpriteId*(colorIndex, aimStep: int): int =
-  wireSpriteId(rigFfaKey(
-    RigSpraySpriteBase + colorIndex * RigSteps + aimStep,
-    colorIndex
-  ))
+  ## FFA held-spray art is neutral, so every identity shares one definition per
+  ## aim pose instead of baking 16 byte-identical color variants.
+  wireSpriteId(rigFfaKey(RigSpraySpriteBase + aimStep, 0))
 
 proc rigArmSpriteId*(team: Team, seg: RigSeg, aimStep, reach: int): int =
   ## reach 0 = tucked (idle), 1 = reaching forward (carrying).
@@ -1728,6 +1734,14 @@ proc dynamicRigPoseCount*(): int =
          key < RigFfaSpriteKeyNamespace +
            PlayerColors.len * RigFfaSpriteKeyStride):
       inc result
+
+proc blastSpriteId*(colorIndex, stage: int): int =
+  ## Returns the all-identity-color open-field grenade blast sprite id.
+  BlastSpriteBase + colorIndex * BlastStages + stage
+
+proc trenchBlastSpriteId*(colorIndex, stage: int): int =
+  ## Returns the all-identity-color trench grenade blast sprite id.
+  TrenchBlastSpriteBase + colorIndex * BlastStages + stage
 
 proc corpseSoldierSpriteId(team: Team, skin: Skin, rot: int): int =
   ## Sprite id for a dead soldier (grey corpse) at rotation `rot` (the
@@ -5837,9 +5851,15 @@ proc addGrenades(
         stage = clamp(age * BlastStages div BlastFxTicks, 0, BlastStages - 1)
         colorIndex = playerColorIndex(blast.color)
         size = if blast.trenchLanding: TrenchBlastSize else: BlastSize
-        spriteBase =
-          if blast.trenchLanding: TrenchBlastSpriteBase else: BlastSpriteBase
-        spriteId = spriteBase + colorIndex * BlastStages + stage
+        spriteId =
+          if sim.config.isFfa():
+            if blast.trenchLanding:
+              trenchBlastSpriteId(colorIndex, stage)
+            else:
+              blastSpriteId(colorIndex, stage)
+          else:
+            (if blast.trenchLanding: CtfTrenchBlastSpriteBase
+             else: CtfBlastSpriteBase) + colorIndex * BlastStages + stage
       if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
         packet.addBoardSpriteChanged(
           spriteDefs, spriteId, size, size,
