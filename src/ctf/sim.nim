@@ -175,12 +175,126 @@ template placeWalkablePickups(
       x: spot.x, y: spot.y, present: true, respawnAt: 0
     )
 
+proc ffaLootSeed(sim: SimServer): int =
+  if sim.gameMap.genSeed != 0:
+    sim.gameMap.genSeed
+  elif sim.config.mapSeed != -1:
+    sim.config.mapSeed
+  else:
+    sim.config.seed
+
+proc ffaLootPoints(
+  sim: SimServer,
+  count: int
+): seq[tuple[x, y: int]] =
+  ## Returns deterministic, evenly spaced center targets for FFA loot.
+  ## The seed only rotates the integer ring; CTF never calls this path.
+  if count <= 0:
+    return
+  let
+    (cx, cy) = ffaRingCenter()
+    floorRadius = ffaRingFloorRadius(sim.config)
+    radius = min(sim.config.ffaLootRadius, max(1, floorRadius - PlayerHalf - 4))
+    rawSeed = sim.ffaLootSeed()
+    phase = ((rawSeed mod 256) + 256) mod 256
+    spacing = 2 * MedKitPickupRange
+  for i in 0 ..< count:
+    let brads = phase + i * 256 div count
+    let target = (
+      cx + radius * ringCos(brads) div 1024,
+      cy - radius * ringSin(brads) div 1024
+    )
+    var spot = sim.nearestWalkable(target[0], target[1])
+    var separated = true
+    for point in result:
+      if distSq(spot.x, spot.y, point.x, point.y) <= spacing * spacing:
+        separated = false
+        break
+    if not separated:
+      block search:
+        for r in 1 .. radius:
+          for dy in -r .. r:
+            for dx in [-r, r]:
+              let
+                x = target[0] + dx
+                y = target[1] + dy
+              if x < cx - radius or x > cx + radius or
+                  y < cy - radius or y > cy + radius or
+                  distSq(x, y, cx, cy) > radius * radius or
+                  not sim.canOccupy(x, y):
+                continue
+              var clear = true
+              for point in result:
+                if distSq(x, y, point.x, point.y) <= spacing * spacing:
+                  clear = false
+                  break
+              if clear:
+                spot = (x, y)
+                break search
+            for dx in -r + 1 .. r - 1:
+              for dy in [-r, r]:
+                let
+                  x = target[0] + dx
+                  y = target[1] + dy
+                if x < cx - radius or x > cx + radius or
+                    y < cy - radius or y > cy + radius or
+                    distSq(x, y, cx, cy) > radius * radius or
+                    not sim.canOccupy(x, y):
+                  continue
+                var clear = true
+                for point in result:
+                  if distSq(x, y, point.x, point.y) <= spacing * spacing:
+                    clear = false
+                    break
+                if clear:
+                  spot = (x, y)
+                  break search
+    result.add((spot.x, spot.y))
+
+proc ffaFamilyTargets(
+  sim: SimServer,
+  family: int
+): seq[tuple[x, y: int]] =
+  let points = sim.ffaLootPoints(sim.config.ffaLootCount + 4)
+  for i in 4 ..< points.len:
+    if (i - 4) mod 4 == family:
+      result.add(points[i])
+
+proc placeFfaPickups(
+  sim: var SimServer,
+  spawns: var seq[PickupSpawn],
+  targets: seq[tuple[x, y: int]],
+  stagger: bool
+) =
+  spawns.setLen(targets.len)
+  for i, target in targets:
+    let spot = sim.nearestWalkable(target.x, target.y)
+    let delay = if stagger: i * 3 * ReplayFps else: 0
+    spawns[i] = PickupSpawn(
+      x: spot.x,
+      y: spot.y,
+      present: delay == 0,
+      respawnAt: sim.tickCount + delay
+    )
+
+proc effectivePickupRespawnTicks(sim: SimServer, ctfTicks: int): int =
+  if sim.config.isFfa(): sim.config.ffaLootRespawnTicks else: ctfTicks
+
 proc resetGrenades*(sim: var SimServer) =
   ## Refills every corner pickup and clears carried and airborne grenades.
-  let points = sim.gameMap.grenadeSpawnPoints()
+  var points: seq[tuple[x, y: int]]
+  if sim.config.isFfa():
+    points = sim.ffaLootPoints(sim.config.ffaLootCount + 4)
+  else:
+    for point in sim.gameMap.grenadeSpawnPoints():
+      points.add((point.x, point.y))
   for i in 0 ..< sim.grenadeSpawns.len:
+    let delay = if sim.config.isFfa(): i * 3 * ReplayFps else: 0
     sim.grenadeSpawns[i] = PickupSpawn(
-      x: points[i].x, y: points[i].y, present: true, respawnAt: 0
+      x: points[i].x,
+      y: points[i].y,
+      present: delay == 0,
+      respawnAt: if sim.config.isFfa(): sim.tickCount + delay else: 0
     )
   sim.airborneGrenades = @[]
   for i in 0 ..< sim.players.len:
@@ -191,6 +305,13 @@ proc resetMedKits*(sim: var SimServer) =
   ## Places both med kits on the map's active spawn points (generated maps
   ## draw the pair per map; hand-authored maps carry the classic center-line
   ## thirds), nudged to the nearest walkable floor, and refills them.
+  if sim.config.isFfa():
+    sim.placeFfaPickups(
+      sim.medKitSpawns,
+      sim.ffaFamilyTargets(0),
+      stagger = true
+    )
+    return
   var targets: seq[tuple[x, y: int]]
   if sim.gameMap.medKitSpawns.len >= 2:
     let count =
@@ -212,14 +333,31 @@ proc resetShields*(sim: var SimServer) =
   ## as the corner grenade pickups but in the BOTTOM half (three quarters of
   ## the map height down) — the spray cans hold the matching top-half spots —
   ## nudged to the nearest walkable floor, and refills both.
-  sim.placeWalkablePickups(shieldSpawns, sim.gameMap.shieldSpawnPoints())
+  if sim.config.isFfa():
+    sim.placeFfaPickups(
+      sim.shieldSpawns,
+      sim.ffaFamilyTargets(1),
+      stagger = true
+    )
+  else:
+    sim.placeWalkablePickups(shieldSpawns, sim.gameMap.shieldSpawnPoints())
   for i in 0 ..< sim.players.len:
     sim.players[i].hasShield = false
     sim.players[i].shieldHp = 0
 
 proc resetPlasmaArcs*(sim: var SimServer) =
   ## Refills every team's spray can pickup and clears carried cans.
-  sim.placeWalkablePickups(plasmaArcSpawns, sim.gameMap.plasmaArcSpawnPoints())
+  if sim.config.isFfa():
+    sim.placeFfaPickups(
+      sim.plasmaArcSpawns,
+      sim.ffaFamilyTargets(2),
+      stagger = true
+    )
+  else:
+    sim.placeWalkablePickups(
+      plasmaArcSpawns,
+      sim.gameMap.plasmaArcSpawnPoints()
+    )
   sim.plasmaArcFlashes = @[]
   for i in 0 ..< sim.players.len:
     sim.players[i].hasPlasmaArc = false
@@ -231,10 +369,17 @@ proc resetBarriers*(sim: var SimServer) =
   ## Places the config-gated barrier pickups (none by default), clears every
   ## standing barrier off the field, and empties every cog's hands of
   ## cardboard.
-  sim.placeWalkablePickups(
-    barrierSpawns,
-    sim.gameMap.barrierSpawnPoints(sim.config.barrierPickups)
-  )
+  if sim.config.isFfa():
+    sim.placeFfaPickups(
+      sim.barrierSpawns,
+      sim.ffaFamilyTargets(3),
+      stagger = true
+    )
+  else:
+    sim.placeWalkablePickups(
+      barrierSpawns,
+      sim.gameMap.barrierSpawnPoints(sim.config.barrierPickups)
+    )
   sim.placedBarriers = @[]
   for i in 0 ..< sim.players.len:
     sim.players[i].hasBarrier = false
@@ -1915,7 +2060,8 @@ template pickupByTouch(
   for spawn {.inject.} in sim.spawnsField.mitems:
     if spawn.present and distSq(px, py, spawn.x, spawn.y) <= rangeSq:
       spawn.present = false
-      spawn.respawnAt = sim.tickCount + respawnTicks
+      spawn.respawnAt = sim.tickCount +
+        sim.effectivePickupRespawnTicks(respawnTicks)
       taken
       return
 
@@ -3393,7 +3539,10 @@ proc initSimServer*(config: GameConfig): SimServer =
   result.gameMap = loadCtfMap(config)
   result.rooms = result.gameMap.rooms
 
-  let (mapImage, walkImage, wallImage) = loadMapLayers(result.gameMap)
+  let (mapImage, walkImage, wallImage) = loadMapLayers(
+    result.gameMap,
+    withCtfPresentation = not result.config.isFfa()
+  )
   result.mapPixels = newSeq[uint8](MapWidth * MapHeight)
   result.mapRgba = newSeq[uint8](MapWidth * MapHeight * 4)
   result.darkBgPixels = loadDarkBgPixels()

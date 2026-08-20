@@ -1177,6 +1177,7 @@ var
 var
   boardMapCache: seq[uint8]
   boardColdMapCache: seq[uint8]
+  boardMapCacheFfa = false
     ## Process-wide caches of the boardScale× arena renders (hot + cold). The
     ## arena is fixed per process, so one native bake serves every connection —
     ## same pattern as EndzoneStripCache.
@@ -1186,10 +1187,16 @@ proc ensureBoardMaps(sim: SimServer) =
   ## mask and floor pass — see renderArenaRgbaPair). boardScale > 1 only.
   let expected =
     sim.gameMap.width * boardScale * sim.gameMap.height * boardScale * 4
-  if boardMapCache.len != expected or boardColdMapCache.len != expected:
-    let pair = renderArenaRgbaPair(sim.gameMap, boardScale)
+  if boardMapCache.len != expected or boardColdMapCache.len != expected or
+      boardMapCacheFfa != sim.config.isFfa():
+    let pair = renderArenaRgbaPair(
+      sim.gameMap,
+      boardScale,
+      withCtfPresentation = not sim.config.isFfa()
+    )
     boardMapCache = pair.hot
     boardColdMapCache = pair.cold
+    boardMapCacheFfa = sim.config.isFfa()
 
 proc boardScaledMapPixels(sim: SimServer): seq[uint8] =
   ## The NATIVE boardScale× hot arena RGBA (float wall geometry, bilinear
@@ -3431,6 +3438,8 @@ proc addMapMarkers(
   ## emitted for every team on the same absence-means-old-engine rule.
   var index = 0
   for room in sim.rooms:
+    if sim.config.isFfa() and room.name != "Center":
+      continue
     packet.addMapMarker(
       spriteDefs,
       index,
@@ -3477,34 +3486,30 @@ proc addMapMarkers(
       )
     )
     inc index
-  for team in sim.gameMap.teams():
-    let zone = sim.gameMap.captureZone(team)
-    if zone.diag:
-      ## The `corner` contract promises the threshold diagonal joins the two
-      ## box corners adjacent to the map corner — true exactly when the L1
-      ## limit was not clamped by the far map edges. HomeDepth's bounds keep
-      ## anchors well inside the clamp on every map class; hold that here so
-      ## a retune cannot silently bend the stated geometry.
-      doAssert zone.diagLimit == zone.xHi - zone.xLo and
-          zone.diagLimit == zone.yHi - zone.yLo,
-        "clamped diagonal capture zone breaks the corner-marker contract"
-    packet.addMapMarker(
-      spriteDefs,
-      index,
-      zone.xLo,
-      zone.yLo,
-      1,
-      1,
-      labelEndzone(
-        teamText(team),
-        sim.gameMap.endzoneShapeToken(zone),
+  if not sim.config.isFfa():
+    for team in sim.gameMap.teams():
+      let zone = sim.gameMap.captureZone(team)
+      if zone.diag:
+        doAssert zone.diagLimit == zone.xHi - zone.xLo and
+            zone.diagLimit == zone.yHi - zone.yLo,
+          "clamped diagonal capture zone breaks the corner-marker contract"
+      packet.addMapMarker(
+        spriteDefs,
+        index,
         zone.xLo,
         zone.yLo,
-        zone.xHi,
-        zone.yHi
+        1,
+        1,
+        labelEndzone(
+          teamText(team),
+          sim.gameMap.endzoneShapeToken(zone),
+          zone.xLo,
+          zone.yLo,
+          zone.xHi,
+          zone.yHi
+        )
       )
-    )
-    inc index
+      inc index
   for team in sim.gameMap.teams():
     # The deltas are resolved HERE, mirroring broadcast.nim's teamStateJson —
     # the label states what the sim actually plays, never a re-derivation.
@@ -3928,7 +3933,7 @@ proc addTeamScoreboard(
   ## Adds the team kills/deaths scoreboard above the field: red on the left,
   ## blue on the right, each in its team color. Playing only — interstitial
   ## screens put their own title in the same top-center spot.
-  if sim.phase != Playing:
+  if sim.phase != Playing or sim.config.isFfa():
     return
   var kills, deaths: array[Team, int]
   for p in sim.players:
@@ -4273,6 +4278,8 @@ proc addFlagSprites(
   ## Adds every active team's banner sprites (carried + big planted) plus
   ## carrier halos. The builders raster at the emission scale, so pass
   ## native = boardScale.
+  if sim.config.isFfa():
+    return
   for team in sim.teams():
     packet.addBoardSpriteChanged(
       spriteDefs,
@@ -7040,6 +7047,8 @@ proc addEndzonePrewarm(
   ## a later steal/return ramp costs band-object placements (a few bytes
   ## each) instead of sprite pixel sends right at the dramatic moment. Bands the fade ramp already
   ## shipped on demand are skipped by the per-viewer sprite-def check.
+  if sim.config.isFfa():
+    return
   if state.endzonePrewarmFrames mod EndzonePrewarmEveryFrames == 0:
     # Map the step counter onto its (team, stage, band) slot in the fixed
     # drip order: team-major, stages 1.. (stage 0 never draws), bands within
@@ -7074,6 +7083,8 @@ proc addEndzoneGlowFade(
   ## bands (at most EndzoneRampBandsPerFrame per frame), so a steal that
   ## outruns the prewarm slows the fade a little instead of stalling the
   ## frame or tearing the overlay into mixed-stage seams.
+  if sim.config.isFfa():
+    return
   for team in sim.teams():
     # GV32: a captured heart never comes home — an eliminated team's endzone
     # glow stays down for the rest of the game.
@@ -7571,6 +7582,8 @@ proc buildSpriteProtocolUpdates*(
   # as the brightest figure on the board. A retired heart (GV32 capture or
   # GV33 dead team) is out of play and never drawn.
   for team in sim.teams():
+    if sim.config.isFfa():
+      continue
     let
       flag = sim.flags[team]
       objectId = FlagObjectBase + ord(team)

@@ -494,6 +494,12 @@ const
   FfaMedKitSpawns* = 2       ## ffa active med-kit points by default; the
                               ## config can reduce this to one for a leaner
                               ## healing economy.
+  FfaLootCount* = 12         ## ffa center cluster count across med kits,
+                              ## shields, spray cans, and barriers.
+  FfaLootRadius* = 180       ## ffa center cluster radius in map pixels.
+  FfaLootRespawnTicks* = 20 * ReplayFps
+                              ## ffa cluster refill cadence and initial
+                              ## appearance spacing.
   FfaSpawnRingPermille* = 800 ## ffa spawn pads sit on a ring this far out
                               ## (permille) of the largest circle the map
                               ## border allows: maximum pairwise spacing
@@ -1290,6 +1296,10 @@ type
                                   ## ffa: grenade splash damage in another
                                   ## trench.
     ffaMedKitSpawns*: int         ## ffa: active center med-kit count.
+    ffaLootCount*: int            ## ffa: total center cluster items across
+                                  ## sequence-backed pickup families.
+    ffaLootRadius*: int           ## ffa: center cluster radius in px.
+    ffaLootRespawnTicks*: int     ## ffa: item refill cadence in ticks.
 
   Player* = object
     x*, y*: int

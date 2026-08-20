@@ -5,8 +5,9 @@
 
 import
   helpers,
-  std/[json, unittest],
-  ctf/sim
+  std/[json, sequtils, strutils, unittest],
+  bitworld/spriteprotocol,
+  ctf/[global, sim]
 
 proc ffaGame(seats: int, maxTicks = 0): SimServer =
   ## A started ffa match with `seats` players, one per distinct address.
@@ -48,6 +49,9 @@ suite "ffa config":
     check config.ffaGrenadeTrenchSplashDamage ==
       FfaGrenadeTrenchSplashDamage
     check config.ffaMedKitSpawns == FfaMedKitSpawns
+    check config.ffaLootCount == FfaLootCount
+    check config.ffaLootRadius == FfaLootRadius
+    check config.ffaLootRespawnTicks == FfaLootRespawnTicks
 
   test "ctf is the default and echoes no ffa key":
     let config = defaultGameConfig()
@@ -57,7 +61,8 @@ suite "ffa config":
     for key in ["mode", "numPlayers", "survivalPointsPerSec", "killPoints",
         "assistPoints", "assistWindowTicks", "podiumPoints", "ffaGunDamage",
         "ffaSprayDamage", "ffaGrenadeDamage",
-        "ffaGrenadeTrenchSplashDamage", "ffaMedKitSpawns"]:
+        "ffaGrenadeTrenchSplashDamage", "ffaMedKitSpawns",
+        "ffaLootCount", "ffaLootRadius", "ffaLootRespawnTicks"]:
       check not echoed.hasKey(key)
 
   test "an ffa config round-trips through its replay echo":
@@ -69,6 +74,9 @@ suite "ffa config":
     config.ffaGrenadeDamage = 2
     config.ffaGrenadeTrenchSplashDamage = 1
     config.ffaMedKitSpawns = 1
+    config.ffaLootCount = 8
+    config.ffaLootRadius = 120
+    config.ffaLootRespawnTicks = 96
     var reloaded = defaultGameConfig()
     reloaded.update(config.configJson())
     check reloaded.mode == FfaMode
@@ -82,6 +90,9 @@ suite "ffa config":
     check reloaded.ffaGrenadeDamage == 2
     check reloaded.ffaGrenadeTrenchSplashDamage == 1
     check reloaded.ffaMedKitSpawns == 1
+    check reloaded.ffaLootCount == 8
+    check reloaded.ffaLootRadius == 120
+    check reloaded.ffaLootRespawnTicks == 96
 
   test "ctf retains the original combat economy defaults":
     let config = defaultGameConfig()
@@ -92,6 +103,7 @@ suite "ffa config":
     check config.ffaGrenadeTrenchSplashDamage ==
       FfaGrenadeTrenchSplashDamage
     check config.ffaMedKitSpawns == FfaMedKitSpawns
+    check config.ffaLootCount == FfaLootCount
 
   test "numPlayers is validated, and only in ffa":
     expect CtfError:
@@ -114,9 +126,60 @@ suite "ffa config":
       config.update("""{"mode": "ffa", "ffaMedKitSpawns": 3}""")
     expect CtfError:
       var config = defaultGameConfig()
+      config.update("""{"mode": "ffa", "ffaLootCount": 65}""")
+    expect CtfError:
+      var config = defaultGameConfig()
+      config.update("""{"mode": "ffa", "ffaLootRadius": 0}""")
+    expect CtfError:
+      var config = defaultGameConfig()
+      config.update("""{"mode": "ffa", "ffaLootRespawnTicks": 0}""")
+    expect CtfError:
+      var config = defaultGameConfig()
       config.update("""{"ffaGunDamage": 4}""")
 
 suite "ffa spawn ring":
+  test "center loot is deterministic, spaced, walkable, and inside the ring floor":
+    var first = ffaGame(4)
+    var second = ffaGame(4)
+    check first.medKitSpawns.len + first.shieldSpawns.len +
+      first.plasmaArcSpawns.len + first.barrierSpawns.len == FfaLootCount
+    check first.grenadeSpawns.len == 4
+    let floor = ffaRingFloorRadius(first.config)
+    var points: seq[tuple[x, y: int]] = @[]
+    for spawn in first.medKitSpawns:
+      points.add((spawn.x, spawn.y))
+    for spawn in first.shieldSpawns:
+      points.add((spawn.x, spawn.y))
+    for spawn in first.plasmaArcSpawns:
+      points.add((spawn.x, spawn.y))
+    for spawn in first.barrierSpawns:
+      points.add((spawn.x, spawn.y))
+    for spawn in first.grenadeSpawns:
+      points.add((spawn.x, spawn.y))
+    for i, point in points:
+      check first.canOccupy(point.x, point.y)
+      check distSq(point.x, point.y, MapWidth div 2, MapHeight div 2) <=
+        (floor + 20) * (floor + 20)
+      for other in points[0 ..< i]:
+        check distSq(point.x, point.y, other.x, other.y) >
+          (2 * MedKitPickupRange) * (2 * MedKitPickupRange)
+    check first.medKitSpawns == second.medKitSpawns
+    check first.shieldSpawns == second.shieldSpawns
+    check first.plasmaArcSpawns == second.plasmaArcSpawns
+    check first.barrierSpawns == second.barrierSpawns
+    for i in 0 ..< first.grenadeSpawns.len:
+      check first.grenadeSpawns[i] == second.grenadeSpawns[i]
+    var staggered = false
+    for spawn in first.medKitSpawns:
+      staggered = staggered or not spawn.present
+    for spawn in first.shieldSpawns:
+      staggered = staggered or not spawn.present
+    for spawn in first.plasmaArcSpawns:
+      staggered = staggered or not spawn.present
+    for spawn in first.barrierSpawns:
+      staggered = staggered or not spawn.present
+    check staggered
+
   test "spawn pads derive from N alone, for N in 2, 5 and 16":
     for seats in [2, 5, 16]:
       var game = ffaGame(seats)
@@ -158,6 +221,18 @@ suite "ffa spawn ring":
         game.gameMap.flagHome(Red).x, game.gameMap.flagHome(Red).y)
       game.tryPickupFlags(i)
       check not game.players[i].carryingFlag
+
+  test "ffa map markers omit capture zones and team base rooms":
+    var game = ffaGame(4)
+    var state = initGlobalViewerState()
+    let messages = game.buildGlobalMessages(state)
+    var labels: seq[string] = @[]
+    for message in messages:
+      if message.kind == spkSprite:
+        labels.add(message.sprite.label)
+    check not labels.anyIt(it.startsWith("endzone "))
+    check "Room Red" notin labels
+    check "Room Blue" notin labels
 
 suite "ffa elimination":
   test "the ring shrinks linearly, damages only on cadence, and respects floor":
@@ -217,7 +292,7 @@ suite "ffa elimination":
   test "ffa combat economy overrides damage and med-kit count":
     var config = defaultFfaConfig(2)
     config.ffaGunDamage = 4
-    config.ffaMedKitSpawns = 1
+    config.ffaLootCount = 4
     var game = initCtfForTest(config)
     for i in 0 ..< 2:
       discard game.addPlayer("economy" & $i)
