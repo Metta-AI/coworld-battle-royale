@@ -788,8 +788,10 @@ html, body {
 }
 .zbtn:hover { background: rgba(242, 232, 216, 0.22); }
 .zbtn:disabled { opacity: 0.3; cursor: default; background: rgba(242, 232, 216, 0.05); }
-/* Zoom is geometric (1x..12x); the slider's travel is the LOG of it, so equal
-   thumb movement is equal perceived zoom rather than a dead left half. */
+/* Zoom is geometric (1x .. the board's ceiling, which is 12x the fit on a
+   normal board and further on a big one — the cap is on drawn scale, not on a
+   multiple of the fit); the slider's travel is the LOG of it, so equal thumb
+   movement is equal perceived zoom rather than a dead left half. */
 #zoom-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -4173,7 +4175,12 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
 
   function followWho(slot) {
     if (!(slot >= 0)) return '';
-    return lastState ? shortName(rosterName(lastState, slot)) : 'SEAT ' + (slot + 1);
+    // The seat id rides along with the name because names are not unique in
+    // the readout: shortName clips to 10 chars, so on identity-named team
+    // boards every seat of a squad renders as the same "GOLDRUSH:V" and
+    // cycling changed the shot without changing the text.
+    var tag = 'S' + slot;
+    return lastState ? shortName(rosterName(lastState, slot)) + ' ' + tag : tag;
   }
 
   function followSeatEntry(slot) {

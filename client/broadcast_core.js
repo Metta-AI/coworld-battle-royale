@@ -261,8 +261,15 @@
     let focusX = 0, focusY = 0;       // map px held at the viewport center.
     const minZoom = 1;                // 1 IS "fitted whole": the board can never
                                       // be smaller than the frame it lives in.
-    const maxZoom = 12;               // ~1 map px per 12 css px: past this the
-                                      // art is blocks, not detail.
+    // The zoom ceiling is a limit on the DRAWN scale — 12 css px per map px,
+    // past which the art is blocks, not detail — expressed per board rather
+    // than as a fixed multiple of the fit: the fit is ~1 on a normal board and
+    // ~0.15 on a colossal one, so a flat 12x means "12 css px per map px" on
+    // one and "1.8" on the other, capping the view (and the spectator shot)
+    // hardest exactly where the board is biggest and a cog is smallest. 12x
+    // the fit stays the floor, so no board zooms LESS far than it used to.
+    const maxDrawScale = 12;
+    let maxZoom = maxDrawScale;       // recomputed per fit (see computeFit)
     let reconnectDelay = 1000;
     const maxReconnectDelay = 8000;
     let reconnecting = false;
@@ -471,6 +478,9 @@
       const scaleX = cssW / nativeW;
       const scaleY = cssH / nativeH;
       fitScale = Math.min(scaleX, scaleY);
+      maxZoom = fitScale > 0
+        ? Math.max(maxDrawScale, maxDrawScale / fitScale)
+        : maxDrawScale;
       if (!(focusX > 0) || !(focusY > 0)) {
         focusX = nativeW / 2;
         focusY = nativeH / 2;
@@ -568,10 +578,12 @@
     // Vertical span the shot holds, in rig canvases. The rig canvas is the
     // engine's per-cog art square, so this is board-scale independent: it is
     // the same amount of GROUND on the 1x oversize boards and the 2x normal
-    // ones. 4.4 canvases ~ 420 map px ~ 12 cog widths: on a 760px stage that
-    // draws a cog at ~33px, where the aim, the weapon and the health pips all
-    // read, with a couple of seconds of warning before a cog reaches you.
-    const FOLLOW_SPAN_CANVASES = 4.4;
+    // ones. Chosen by looking at the rendered board: 4.4 canvases put a cog at
+    // ~50px on a 1200px-tall stage, which reads as "a fight in a neighborhood"
+    // — legible but not intimate. 3.1 draws the cog at ~75px, where the aim,
+    // the weapon and the health pips are unmistakable, and still holds ~9 cog
+    // heights of ground: a couple of seconds of warning before someone on you.
+    const FOLLOW_SPAN_CANVASES = 3.1;
     const FOLLOW_SMOOTH_MS = 130;     // time constant of the camera's lag
     const FOLLOW_SETTLED_PX = 0.25;   // board px: below this the camera is home
     // Auto-pick cadence, in presented frames, plus how much better a rival
