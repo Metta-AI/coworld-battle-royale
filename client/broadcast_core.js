@@ -48,6 +48,16 @@
   const CHROME_SPRITE_ID =
     (window.CTF_WIRE && window.CTF_WIRE.chromeSpriteId) || 4090;
 
+  // The rig-HEAD object pool: one board object per player seat, at the seat's
+  // rig canvas top-left, present ONLY while that seat is alive. It is the
+  // per-player position feed the spectator follow camera steers by — the
+  // stream already carries it, so following costs no new wire field, and a
+  // seat's death removes its object, which is how the camera notices.
+  const RIG_HEAD_OBJECT_BASE =
+    (window.CTF_WIRE && window.CTF_WIRE.rigHeadObjectBase) || 38100;
+  const MAX_PLAYER_SLOTS =
+    (window.CTF_WIRE && window.CTF_WIRE.maxPlayers) || 32;
+
   function readU16(bytes, offset) {
     return bytes[offset] | (bytes[offset + 1] << 8);
   }
@@ -366,6 +376,11 @@
         zoom = minZoom;
         focusX = size.w / 2;
         focusY = size.h / 2;
+        // A new board is new coordinates: the smoothed follow camera and the
+        // follow zoom (derived from this board's scale) both have to be
+        // re-derived rather than carried across.
+        followCamValid = false;
+        followZoomApplied = false;
       }
       nativeW = size.w;
       nativeH = size.h;
@@ -397,7 +412,10 @@
         scale, offsetX, offsetY, nativeW, nativeH,
         zoom, minZoom, maxZoom, fitScale, focusX, focusY,
         visW: Math.min(nativeW, size.w / scale),
-        visH: Math.min(nativeH, size.h / scale)
+        visH: Math.min(nativeH, size.h / scale),
+        // Who the camera is on, for the HUD: the seat (roster "s") being
+        // followed, or -1 while follow is off / before the first live seat.
+        followEnabled, followSlot
       };
     }
 
@@ -415,7 +433,9 @@
           next.nativeH !== lastTransform.nativeH ||
           next.zoom !== lastTransform.zoom ||
           next.focusX !== lastTransform.focusX ||
-          next.focusY !== lastTransform.focusY) {
+          next.focusY !== lastTransform.focusY ||
+          next.followEnabled !== lastTransform.followEnabled ||
+          next.followSlot !== lastTransform.followSlot) {
         lastTransform = next;
         onTransform(next);
       }
@@ -497,6 +517,9 @@
 
     function panBy(cssDX, cssDY) {
       if (zoom <= minZoom) return;    // fitted whole: there is nowhere to pan.
+      // Dragging the board means "I want to look HERE": the camera must let go
+      // rather than fight the hand back to its player on the next frame.
+      releaseFollow();
       focusX -= cssDX / scale;
       focusY -= cssDY / scale;
       computeFit();
@@ -508,6 +531,7 @@
     // at 2x and at 12x).
     function panByMap(mapDX, mapDY) {
       if (zoom <= minZoom) return;
+      releaseFollow();
       focusX += mapDX;
       focusY += mapDY;
       computeFit();
@@ -517,6 +541,7 @@
     // Put a map point at the viewport center (clicking or dragging the minimap).
     function panTo(mapX, mapY) {
       if (!(mapX >= 0) || !(mapY >= 0)) return;
+      releaseFollow();
       focusX = mapX;
       focusY = mapY;
       computeFit();
@@ -524,11 +549,258 @@
     }
 
     function resetView() {
+      releaseFollow();
       zoom = minZoom;
       focusX = nativeW / 2;
       focusY = nativeH / 2;
       computeFit();
       scheduleDraw();
+    }
+
+    // ---- Follow camera ----------------------------------------------------
+    // A 12-player battle royale on a huge arena letterboxed whole is ~0.3x:
+    // a cog is a dozen pixels and a duel is unreadable, so a spectator view
+    // that opens fitted shows nothing you can follow. The follow camera makes
+    // the default a broadcast shot — one seat centered, zoomed in far enough
+    // to read the fight and wide enough to see who is coming — while every
+    // manual control keeps working exactly as before once it lets go.
+    //
+    // Vertical span the shot holds, in rig canvases. The rig canvas is the
+    // engine's per-cog art square, so this is board-scale independent: it is
+    // the same amount of GROUND on the 1x oversize boards and the 2x normal
+    // ones. 4.4 canvases ~ 420 map px ~ 12 cog widths: on a 760px stage that
+    // draws a cog at ~33px, where the aim, the weapon and the health pips all
+    // read, with a couple of seconds of warning before a cog reaches you.
+    const FOLLOW_SPAN_CANVASES = 4.4;
+    const FOLLOW_SMOOTH_MS = 130;     // time constant of the camera's lag
+    const FOLLOW_SETTLED_PX = 0.25;   // board px: below this the camera is home
+    // Auto-pick cadence, in presented frames, plus how much better a rival
+    // seat must score to steal the shot. Re-picking every frame would strobe
+    // between two seats a pixel apart; the margin plus the interval make the
+    // shot hold on one fight until another is clearly bigger.
+    const FOLLOW_PICK_FRAMES = 24;
+    const FOLLOW_PICK_MARGIN = 1.35;
+
+    let followEnabled = config.follow !== false;
+    let followSlot = -1;              // seat (roster "s") the shot is on
+    let followPinned = false;         // the viewer chose it: no auto re-pick
+    let followCamX = 0, followCamY = 0;
+    let followCamValid = false;
+    let followZoomApplied = false;
+    let followLastAt = 0;
+    let followPickIn = 0;
+
+    // Every living seat, in seat order, with its CENTER in board px (the rig
+    // object is placed by its canvas corner) and the canvas span the shot is
+    // sized from. Reading the pool by id beats scanning `objects`: a board
+    // frame holds thousands of objects and this runs every presented frame.
+    function followLiveSeats() {
+      const seats = [];
+      for (let slot = 0; slot < MAX_PLAYER_SLOTS; slot++) {
+        const obj = objects.get(RIG_HEAD_OBJECT_BASE + slot);
+        if (!obj) continue;           // no rig head: that seat is dead or empty
+        const sprite = sprites.get(obj.spriteId);
+        const spanX = sprite ? sprite.width : 0;
+        const spanY = sprite ? sprite.height : 0;
+        seats.push({
+          slot,
+          x: obj.dispX + spanX / 2,
+          y: obj.dispY + spanY / 2,
+          span: spanX || spanY
+        });
+      }
+      return seats;
+    }
+
+    function followSeat(seats, slot) {
+      for (const seat of seats) if (seat.slot === slot) return seat;
+      return null;
+    }
+
+    // "Where the action is", from positions alone: how CROWDED a seat is.
+    // Summing 1/(1 + distance) over the other living cogs (in rig-canvas
+    // units, so it means the same on every board scale) puts the duels and
+    // the three-way scraps at the top and the lone cog crossing an empty
+    // quadrant at the bottom — without needing to know who shot whom.
+    function followScore(seats, index) {
+      const a = seats[index];
+      const unit = a.span > 0 ? a.span : 1;
+      let score = 0;
+      for (let i = 0; i < seats.length; i++) {
+        if (i === index) continue;
+        const b = seats[i];
+        const d = Math.hypot(a.x - b.x, a.y - b.y) / unit;
+        score += 1 / (1 + d);
+      }
+      return score;
+    }
+
+    // Deterministic given the same frames: the score is a pure function of
+    // seat positions and ties go to the lower seat.
+    function followBestSeat(seats) {
+      let best = -1, bestScore = -1;
+      for (let i = 0; i < seats.length; i++) {
+        const score = followScore(seats, i);
+        if (score > bestScore + 1e-9) {
+          bestScore = score;
+          best = i;
+        }
+      }
+      return best < 0 ? null : { slot: seats[best].slot, score: bestScore };
+    }
+
+    function followZoomFor(span) {
+      const size = canvasCssSize();
+      const shortEdge = Math.min(size.w, size.h);
+      const target = FOLLOW_SPAN_CANVASES * span;
+      if (!(shortEdge > 0) || !(fitScale > 0) || !(target > 0)) return zoom;
+      return Math.min(maxZoom, Math.max(minZoom, shortEdge / fitScale / target));
+    }
+
+    // Let go WITHOUT moving the view: a manual pan keeps whatever it panned
+    // to. (Turning follow off from the HUD refits — see setFollow.)
+    function releaseFollow() {
+      if (!followEnabled) return;
+      followEnabled = false;
+      followPinned = false;
+      followCamValid = false;
+    }
+
+    function engageFollow() {
+      followEnabled = true;
+      followCamValid = false;
+      followZoomApplied = false;
+      followLastAt = 0;
+      followPickIn = 0;
+    }
+
+    function setFollow(on) {
+      if (on) {
+        if (!followEnabled) {
+          followPinned = false;
+          engageFollow();
+        }
+        computeFit();
+        scheduleDraw();
+        return;
+      }
+      if (!followEnabled) return;
+      releaseFollow();
+      // Follow off is the whole board again: the view it was holding is a
+      // deep zoom on one cog, which is not a state anyone would choose to be
+      // left in by a toggle.
+      resetView();
+    }
+
+    function toggleFollow() {
+      setFollow(!followEnabled);
+    }
+
+    // Follow a specific seat (the spectator picked it, or POV'd it): pinned,
+    // so the auto-pick leaves it alone until it dies.
+    function followPlayer(slot) {
+      if (!(slot >= 0)) return;
+      engageFollow();
+      followPinned = true;
+      followSlot = slot;
+      computeFit();
+      scheduleDraw();
+    }
+
+    // Step to the next/previous LIVING seat, wrapping. Also the way follow is
+    // turned back on from the controls when it is off.
+    function followCycle(delta) {
+      const seats = followLiveSeats();
+      if (seats.length === 0) return;
+      const step = delta < 0 ? -1 : 1;
+      let index = -1;
+      for (let i = 0; i < seats.length; i++) {
+        if (seats[i].slot === followSlot) { index = i; break; }
+      }
+      const next = index < 0
+        ? (step > 0 ? 0 : seats.length - 1)
+        : (index + step + seats.length) % seats.length;
+      followPlayer(seats[next].slot);
+    }
+
+    // Drive focusX/focusY from the followed seat. Runs once per PRESENTED
+    // frame, off the interpolated (dispX/dispY) positions, so the shot glides
+    // with the cog instead of stepping at the packet rate. Returns whether the
+    // camera is still moving, which keeps the draw loop alive while it settles
+    // on an otherwise motionless board. computeFit() (in draw) does the
+    // clamping, so the shot never shows off-board void.
+    function updateFollow(now) {
+      if (!followEnabled) return false;
+      const seats = followLiveSeats();
+      if (seats.length === 0) return false;
+
+      let target = followSeat(seats, followSlot);
+      if (!target) {
+        // The followed cog died (its rig objects are gone) — or nothing has
+        // been picked yet. Cut to the best living seat instead of holding on
+        // an empty patch of floor. A pin does not survive its player.
+        const best = followBestSeat(seats);
+        if (!best) return false;
+        followSlot = best.slot;
+        followPinned = false;
+        followCamValid = false;
+        followPickIn = FOLLOW_PICK_FRAMES;
+        target = followSeat(seats, followSlot);
+      } else if (!followPinned && seats.length > 1) {
+        if (followPickIn > 0) followPickIn--;
+        else {
+          followPickIn = FOLLOW_PICK_FRAMES;
+          const best = followBestSeat(seats);
+          let currentScore = 0;
+          for (let i = 0; i < seats.length; i++) {
+            if (seats[i].slot === followSlot) {
+              currentScore = followScore(seats, i);
+              break;
+            }
+          }
+          if (best && best.slot !== followSlot &&
+              best.score > currentScore * FOLLOW_PICK_MARGIN) {
+            followSlot = best.slot;
+            followCamValid = false;
+            target = followSeat(seats, followSlot);
+          }
+        }
+      }
+      if (!target) return false;
+
+      // The follow zoom is applied ONCE per engage (and per board): after
+      // that the slider, the keys and pinch own the zoom, and the camera only
+      // owns where it points. Never zooms OUT — a spectator already closer in
+      // than the default shot asked for that.
+      if (!followZoomApplied && target.span > 0) {
+        const level = followZoomFor(target.span);
+        if (level > zoom) zoom = level;
+        followZoomApplied = true;
+      }
+
+      const dt = followLastAt > 0 ? Math.min(250, now - followLastAt) : 0;
+      followLastAt = now;
+      const size = canvasCssSize();
+      const visSpan = Math.max(1, Math.min(size.w, size.h) / (fitScale * zoom));
+      if (!followCamValid ||
+          Math.hypot(target.x - followCamX, target.y - followCamY) > visSpan) {
+        // First frame, a seat change, or a teleport (respawn, a replay seek):
+        // cut, never fly the camera across the arena.
+        followCamX = target.x;
+        followCamY = target.y;
+        followCamValid = true;
+      } else if (dt > 0) {
+        // Exponential approach, framed in TIME rather than per-frame: the lag
+        // is the same at 60Hz and 120Hz, and it is what keeps a cog's
+        // per-tick jitter out of the whole board's motion.
+        const k = 1 - Math.exp(-dt / FOLLOW_SMOOTH_MS);
+        followCamX += (target.x - followCamX) * k;
+        followCamY += (target.y - followCamY) * k;
+      }
+      focusX = followCamX;
+      focusY = followCamY;
+      return Math.hypot(target.x - followCamX, target.y - followCamY) >
+        FOLLOW_SETTLED_PX;
     }
 
     // ---- Minimap ----------------------------------------------------------
@@ -869,8 +1141,9 @@
       // board is motionless (pause, end hold, idle scene), so a held frame
       // costs zero draws.
       const animating = updateInterpolation(now);
+      const chasing = updateFollow(now);
       draw();
-      if (animating && !stopped) scheduleDraw();
+      if ((animating || chasing) && !stopped) scheduleDraw();
     }
 
     function scheduleDraw() {
@@ -1398,6 +1671,10 @@
       panByMap,
       panTo,
       resetView,
+      setFollow,
+      toggleFollow,
+      followPlayer,
+      followCycle,
       attachMinimap,
       stop
     };

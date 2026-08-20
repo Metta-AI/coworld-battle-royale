@@ -24,6 +24,12 @@ const WireConstantsJs* =
   ",chromeSpriteId:" & $BroadcastChromeSpriteId &
   ",shotFxTicks:" & $ShotFxTicks &
   ",shotTrailFalloff:" & $TrailFalloff &
+  # The rig-head object pool is the client's per-player position feed: one
+  # object per seat, present only while that seat is alive. The spectator
+  # follow camera reads seat positions off it, so the pool's base and length
+  # have to agree with the engine's.
+  ",rigHeadObjectBase:" & $RigHeadObjectBase &
+  ",maxPlayers:" & $MaxPlayers &
   "};"
 
 const WireConstantsMarker* = "<!-- WIRE_CONSTANTS -->"

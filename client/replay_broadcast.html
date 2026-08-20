@@ -831,6 +831,41 @@ html, body {
 }
 #zoom-read.zoomed { color: var(--amber); }
 
+/* The follow bar sits under the zoom bar as a second row of the same panel:
+   same plate, same buttons, because "where the camera is" and "how close it
+   is" are one control surface. The middle button is both the readout (who is
+   being followed) and the toggle, so there is no state you can read but not
+   change. */
+#followbar {
+  display: flex;
+  align-items: center;
+  gap: calc(5 * var(--u));
+  width: var(--viewpanel-w);
+  padding: calc(3 * var(--u)) calc(5 * var(--u));
+  margin-top: calc(2 * var(--u));
+  background: rgba(12, 9, 6, 0.82);
+  box-shadow: 0 0 0 1px rgba(232, 163, 61, 0.22);
+}
+.fbtn {
+  font-family: var(--pixfont);
+  font-size: max(calc(9 * var(--u)), 9px);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+  background: rgba(242, 232, 216, 0.08);
+  border: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: max(calc(18 * var(--u)), 20px);
+  padding: 0 calc(4 * var(--u));
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fbtn:hover { background: rgba(242, 232, 216, 0.22); }
+.fbtn.on { color: var(--amber); }
+
 /* ---------- 5. TRANSPORT ---------- */
 #transport {
   position: absolute;
@@ -1525,6 +1560,18 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
         <button class="zbtn" id="zoom-in" title="Zoom in (z)" aria-label="Zoom in">+</button>
         <span id="zoom-read" aria-live="off">FIT</span>
       </div>
+      <!-- Spectator camera. A 12-cog arena letterboxed whole is unreadable, so
+           the board OPENS following a player; the controls that matter are
+           therefore which cog the shot is on and how to get back out to the
+           whole board. Keys: c toggles, [ and ] walk the living seats. -->
+      <div id="followbar" role="group" aria-label="Spectator camera">
+        <button class="zbtn" id="follow-prev" title="Follow previous player ([)"
+                aria-label="Follow previous player">&#9666;</button>
+        <button class="fbtn" id="follow-toggle" title="Follow camera (c)"
+                aria-pressed="true"><span id="follow-read">FOLLOW</span></button>
+        <button class="zbtn" id="follow-next" title="Follow next player (])"
+                aria-label="Follow next player">&#9656;</button>
+      </div>
     </div>
 
     <div id="mmwarn">Replay hash mismatch — showing recorded inputs</div>
@@ -1986,6 +2033,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   // ============================================================
   var lastTick = -1;
   var lastFf = false;   // previous frame's fast-forward flag (jump detection)
+  var lastPovSlot = -1; // previous frame's POV seat (camera follows the lens)
   // (beat markers, lull spans, beats timeline and momentum state live in the
   // shared chrome closure — see chrome_common.js)
 
@@ -2019,6 +2067,19 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     var jumped = (s.t < lastTick) || (lastTick >= 0 && s.t - lastTick > stride * 4 + 2);
     if (jumped) { clearFeed(); clearBanners(); }
     lastFf = !!s.ff;
+
+    // The follow readout names a seat from the roster, which only this frame
+    // carries — re-sync it per frame so a mid-match camera switch (or a cog
+    // dying) names the right cog.
+    syncFollowUi();
+    // POV'ing a seat is a camera choice too: the board camera follows whoever
+    // the first-person lens is on, so the two views never disagree about who
+    // the spectator came to watch.
+    var povSlot = s.pov >= 0 ? s.pov : -1;
+    if (povSlot !== lastPovSlot) {
+      lastPovSlot = povSlot;
+      if (povSlot >= 0) core.followPlayer(povSlot);
+    }
 
     renderScorebug(s);
     renderClock(s);
@@ -3871,6 +3932,11 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     else if (k === 'z') core.zoomAt(ZOOM_STEP);
     else if (k === 'x') core.zoomAt(1 / ZOOM_STEP);
     else if (k === '0') core.resetView();
+    // Spectator camera: c toggles following, [ and ] walk the living seats
+    // (and re-engage follow if it was off).
+    else if (k === 'c') core.toggleFollow();
+    else if (k === '[' || k === '{') core.followCycle(-1);
+    else if (k === ']' || k === '}') core.followCycle(1);
     // Arrows walk the view one CELL at a time; with shift, ten cells. A cell is
     // a fixed distance in the WORLD — the same ground on every map and at every
     // zoom — so arrowing is a way of stepping across the arena, not a nudge
@@ -4093,7 +4159,54 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     }
     syncTouchAction(t);
     if (!dragging) canvas.style.cursor = zoomed ? 'grab' : '';
+    syncFollowUi(t);
   }
+
+  // ---- spectator follow camera -----------------------------------------
+  // The camera lives in broadcast_core (it steers the same focusX/focusY the
+  // pan controls do); the page owns the affordances and the "who" readout,
+  // which needs the roster the core never sees.
+  var btnFollowPrev = $('follow-prev');
+  var btnFollowNext = $('follow-next');
+  var btnFollowToggle = $('follow-toggle');
+  var followRead = $('follow-read');
+
+  function followWho(slot) {
+    if (!(slot >= 0)) return '';
+    return lastState ? shortName(rosterName(lastState, slot)) : 'SEAT ' + (slot + 1);
+  }
+
+  function followSeatEntry(slot) {
+    var roster = (lastState && lastState.roster) || [];
+    for (var i = 0; i < roster.length; i++) {
+      if (roster[i].s === slot) return roster[i];
+    }
+    return null;
+  }
+
+  function syncFollowUi(t) {
+    if (!btnFollowToggle) return;
+    t = t || core.getTransform();
+    var on = !!(t && t.followEnabled);
+    var slot = t && t.followSlot >= 0 ? t.followSlot : -1;
+    var who = on ? followWho(slot) : '';
+    btnFollowToggle.classList.toggle('on', on);
+    btnFollowToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    followRead.textContent = on ? (who ? 'FOLLOW ' + who : 'FOLLOW') : 'FREE VIEW';
+    btnFollowToggle.title = on
+      ? 'Following ' + (who || 'the action') + ' \u2014 click for the whole board (c)'
+      : 'Free view \u2014 click to follow the action (c)';
+    // Name the cog in ITS OWN color — the same identity color the endcard and
+    // the board name tags use — so the readout ties to what you are watching.
+    // Team games have no per-seat color; there the amber "on" state stands.
+    var seat = on ? followSeatEntry(slot) : null;
+    followRead.style.color =
+      seat && seat.colorName ? identityTextColor(seat.colorName) : '';
+  }
+
+  btnFollowToggle.addEventListener('click', function () { core.toggleFollow(); });
+  btnFollowPrev.addEventListener('click', function () { core.followCycle(-1); });
+  btnFollowNext.addEventListener('click', function () { core.followCycle(1); });
 
   core.attachMinimap($('minimap-canvas'));
 

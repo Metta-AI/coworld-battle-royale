@@ -196,6 +196,10 @@ self.onmessage = function (event) {
       else if (message.action === 'panMap') core.panByMap(message.dx, message.dy);
       else if (message.action === 'panTo') core.panTo(message.x, message.y);
       else if (message.action === 'reset') core.resetView();
+      else if (message.action === 'follow') core.setFollow(message.on);
+      else if (message.action === 'followToggle') core.toggleFollow();
+      else if (message.action === 'followSlot') core.followPlayer(Number(message.slot));
+      else if (message.action === 'followCycle') core.followCycle(Number(message.delta) || 1);
     } else if (message.type === 'minimap') {
       // The board pixels live here, so the minimap is drawn here too. The page
       // transferred its canvas across; hold it until the core exists.
