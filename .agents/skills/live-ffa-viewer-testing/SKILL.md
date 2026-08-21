@@ -89,6 +89,36 @@ Default FFA configs finish fast. Copy the config and relax it, e.g.:
 
 `fastMode: false` is what makes the server run in realtime so the browser view is watchable.
 
+### Make bots actually FIRE the weapon you want to look at (spray cans etc.)
+
+A default FFA match is mostly gun fire: spray cans are a fraction of the FFA loot
+cluster (`ffaFamilyTargets` / `resetPlasmaArcs` in `sim.nim`), so a scan of a default
+replay's events can show zero spray pickups. Flood the board with loot and keep every
+bot alive so bursts keep coming:
+
+```json
+{ "mode": "ffa", "seed": 42, "mapSeed": 42, "fastMode": false,
+  "hitPoints": 2000, "ffaGunDamage": 1, "ffaSprayDamage": 1, "ffaGrenadeDamage": 1,
+  "ffaLootCount": 64, "ffaLootRespawnTicks": 48,
+  "ringShrinkSec": 3000, "ringDamageTicks": 480, "maxTicks": 100000 }
+```
+
+With that config a handful of rapid `screenshot` calls in a row reliably lands on a
+burst mid-flight, so the replay/`extract_events` route below is optional for
+"is the FX shaped right" questions. Note that with low damage the match still thins
+out over ~10 minutes — if `ALIVE` drops to 2-3, restart the server and re-attach bots
+rather than hunting for fights.
+
+### Another session on the same box can kill your server
+
+`pkill -f ctf-server` / `pkill -f baseline.out` (common in other agents' test scripts)
+will take down YOUR live match too — the symptom is the viewer going
+`disconnected…`/`WAITING NEED MORE!` with **no error in the server log**. Defend by
+running from uniquely named copies, e.g. `cp bin/ctf-server /tmp/myviewsrv;
+cp players/baseline/baseline.out /tmp/mybot.out`, and start them with `setsid nohup`.
+Also avoid `pkill -f` yourself: patterns like `ctf-server` match the shell running the
+command and kill your own tool session.
+
 ## Viewer quirks (cost real debugging time)
 
 - The 2D canvas only repaints while the Chrome window/tab has focus. After switching
