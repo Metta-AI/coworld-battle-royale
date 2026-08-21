@@ -445,6 +445,24 @@ suite "ffa spawn ring":
     check over["roster"][0]["cap"].getInt == 0
     check over["roster"][0]["colorName"].getStr == "red"
 
+  test "ffa chrome state ships the ring the sim damages outside of":
+    var game = ffaGame(2)
+    game.stepNone(TargetFps)
+    let
+      state = parseJson(game.buildStateJson(
+        newJArray(), false, 1, game.effectiveMaxTicks(), false, true, -1, -1
+      ))
+      ring = state["ring"]
+      (cx, cy) = ffaRingCenter()
+    check ring["center"][0].getInt == cx
+    check ring["center"][1].getInt == cy
+    check ring["startRadius"].getInt == ffaRingStartRadius()
+    check ring["floorRadius"].getInt == ffaRingFloorRadius(game.config)
+    # The emitted radius is the CURRENT one — the exact value ffaOutsideRing
+    # compares against on this tick, not the start, floor, or next radius.
+    check ring["radius"].getInt ==
+      ffaRingRadiusAt(game.config, game.gameTicksElapsed())
+
   test "ffa game over title names the winning identity color":
     var game = ffaGame(3)
     game.killPlayer(0, 1)
