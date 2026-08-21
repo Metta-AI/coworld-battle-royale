@@ -2410,9 +2410,6 @@ proc buildShieldBubbleSprite(): seq[uint8] =
 const
   SprayJetStart = 0.55   ## how far along the reach the fan spans on its FIRST
                          ## frame; it grows to the full reach by the last stage.
-  SprayPuffOverlap = 1.35  ## puffs are drawn OVERSIZE for their slot so
-                           ## neighbours merge into one plume — at 1.0 the fan
-                           ## reads as beads on a string, floor showing between.
   SprayNozzleFwd = SprayHeldGripPx + SprayHeldLengthPx
     ## Where the paint actually LEAVES the can, ALONG the aim: the held can's
     ## tail sits SprayHeldGripPx along the aim and the can is SprayHeldLengthPx
@@ -2421,23 +2418,35 @@ const
     ## The fan starts HERE rather than at the body center. Starting at the center
     ## put the first puff ~10px BEHIND the nozzle, on top of the cog's own body,
     ## so the paint read as pouring out of the cog's FACE instead of the can.
-  SprayNozzleRight = GunRightPx
-    ## ...and PERPENDICULAR to the aim: the can is held at the cog's RIGHT, the
-    ## same GunRightPx off the aim ray as the marker it replaces, so the nozzle
-    ## is off-axis too. Without this the plume left the correct distance but the
-    ## wrong side, hanging in the air beside the can rather than out of it.
     ##
-    ## Both offsets are DERIVED from the mount constants, not hardcoded, so
+    ## The offset is DERIVED from the mount constants, not hardcoded, so
     ## re-posing the held can moves the paint with it.
-  SprayAxisConverge = 0.65
-    ## How much of the lateral offset has bled away by the far end of the plume.
-    ## The near puffs sit fully at the nozzle; further out they drift back toward
-    ## the cone's true center line, because that IS where the cone points — a jet
-    ## held rigidly off-axis for its whole length would visibly miss the hitbox it
-    ## represents. This is the visual bridge from the nozzle to the centered cone.
-    ##
-    ## The hitbox stays centered on the body throughout: selectArcVictims is
-    ## untouched, and this is a render-side offset only.
+  SprayConeSlope = float(PlasmaArcFxMaxWidth) / float(2 * PlasmaArcFxReach)
+    ## Half-width gained per px forward — the DAMAGE cone's own slope (the
+    ## static below proves the two are the same line), so a puff whose radius
+    ## is its distance times this slope is inscribed in the cone.
+  SprayConeNorm = sqrt(1.0 + SprayConeSlope * SprayConeSlope)
+    ## The cone edge is a slanted line, so a disc's clearance to it is its
+    ## PERPENDICULAR distance: an on-axis puff of radius r at distance f only
+    ## stays inside when r <= slope * f / this. Dividing the local half-width by
+    ## it is the whole difference between a plume that hugs the cone and one
+    ## that leans a few px over its edge.
+  SprayPuffMinRadius = 3
+    ## Floor for the puff at the nozzle, where the cone is only a few px wide;
+    ## the cone's body allowance (PlasmaArcBodyRadius) covers this stub many
+    ## times over, so it cannot paint anything the cone does not hit.
+
+static:
+  ## The plume is placed and sized against the FX span (PlasmaArcFxReach /
+  ## PlasmaArcFxMaxWidth) rather than the damage consts, so the drawn jet stays
+  ## SHORTER than the cone it depicts. That only stays honest while the two
+  ## describe the same wedge: if the cone's half-angle moves and the art's does
+  ## not, the mist starts lying about where the paint bites.
+  doAssert PlasmaArcFxMaxWidth * PlasmaArcReach ==
+      PlasmaArcMaxWidth * PlasmaArcFxReach,
+    "the drawn plume's half-angle must equal the damage cone's: " &
+    $PlasmaArcFxMaxWidth & "/" & $PlasmaArcFxReach & " vs " &
+    $PlasmaArcMaxWidth & "/" & $PlasmaArcReach
 
 proc sprayJetGrowth(stage: int): float =
   ## How far the fan has jetted out, 0 = just left the nozzle, 1 = full reach.
@@ -2448,38 +2457,53 @@ proc plasmaPulseForward*(pulse, stage: int): int =
   ## The forward distance of one paint-mist puff's center, in map px, measured
   ## from the sprayer's body center: the puff's slot along the fan, where the fan
   ## spans the NOZZLE out to however far this stage has jetted.
-  let tip = float(PlasmaArcFxReach) * sprayJetGrowth(stage)
-  if tip <= float(SprayNozzleFwd):
+  ##
+  ## The slots are spaced GEOMETRICALLY (each one the same factor further out
+  ## than the last), not evenly. Every puff is inscribed in the cone, so its
+  ## radius grows with its distance — evenly spaced slots would leave the near
+  ## end of the plume as separated beads while the far end piled up. A constant
+  ## ratio makes each gap grow with the radii that have to close it, so one
+  ## chain of cone-sized discs merges along its whole length.
+  let
+    tip = float(PlasmaArcFxReach) * sprayJetGrowth(stage)
+    start = float(SprayNozzleFwd)
+  if tip <= start or PlasmaArcFxPulses <= 1:
     return SprayNozzleFwd
-  SprayNozzleFwd + int(round((tip - float(SprayNozzleFwd)) *
-    float(2 * pulse + 1) / float(2 * PlasmaArcFxPulses)))
+  let ratio = pow(tip / start, 1.0 / float(PlasmaArcFxPulses - 1))
+  int(round(start * pow(ratio, float(pulse))))
 
 proc plasmaPulseRight*(pulse, stage: int): int =
   ## The PERPENDICULAR offset of one puff's center, in map px, positive toward
-  ## the cog's right (the side the can is held on). Full at the nozzle and
-  ## easing back toward the cone's center line with distance, per
-  ## SprayAxisConverge — so the plume visibly leaves the nozzle and then joins
-  ## the axis the cone actually covers.
-  if PlasmaArcFxPulses <= 1:
-    return SprayNozzleRight
-  let along = float(pulse) / float(PlasmaArcFxPulses - 1)   ## 0 near .. 1 far
-  int(round(float(SprayNozzleRight) * (1.0 - SprayAxisConverge * along)))
+  ## the cog's right (the side the can is held on). Always ZERO: the puffs ride
+  ## the cone's own center line.
+  ##
+  ## The plume used to start at the nozzle's lateral offset (the can is held
+  ## GunRightPx off the aim ray) and ease back onto the axis. That offset was
+  ## the bulk of the mist's dishonesty: point-blank the centerline cone is only
+  ## a few px wide, so a puff pushed 10px off the axis and drawn to the plume's
+  ## own width hung entirely outside the wedge that does the damage. Centering
+  ## the chain is what lets each puff be inscribed in the cone; the "paint
+  ## leaves the can" read survives on the FORWARD offset (SprayNozzleFwd), which
+  ## still starts the jet at the nozzle rather than the cog's chest.
+  0
 
 proc plasmaPulseDiameter*(pulse, stage: int): int =
-  ## One puff sprite's diameter: the plume's width AT that puff's current
-  ## distance (so the mist widens as it travels), scaled by the overlap so the
-  ## plume closes up. The floor keeps a near-nozzle puff from collapsing to a
-  ## speck.
+  ## One puff sprite's diameter: twice the cone's PERPENDICULAR clearance at
+  ## that puff's current distance, so the disc is inscribed in the wedge —
+  ## tangent to both edges, never over them — and the mist widens as it travels
+  ## because the cone does.
   ##
-  ## Sized against the FX span, NOT the damage reach: the overlap draws each
-  ## puff wider than its slot, so a plume sized directly off the cone would
-  ## always spill outside it, and growing the cone to catch the spill would
-  ## grow the plume with it. The damage cone is set to cover this shape
-  ## instead — test_plasma_arc asserts the containment.
+  ## Sized against the FX span, NOT the damage reach (the static above pins them
+  ## to the same half-angle): the drawn chain therefore stops short of the
+  ## damage tip instead of overhanging it, which is what makes "if paint touches
+  ## you, you took damage" true in every direction. Both sides are measured
+  ## against the same PlasmaArcBodyRadius victim disc, so the body allowance
+  ## cancels and the comparison is this outermost pixel against the bare cone —
+  ## the containment test_plasma_arc asserts.
   let
     forward = plasmaPulseForward(pulse, stage)
-    slot = PlasmaArcFxMaxWidth * forward div max(1, PlasmaArcFxReach)
-  max(10, int(round(float(slot) * SprayPuffOverlap)))
+    halfWidth = SprayConeSlope * float(forward) / SprayConeNorm
+  2 * max(SprayPuffMinRadius, int(halfWidth))
 
 ## --- Team-colored PAINT art: always tint from teamPaintRgba ---
 ## Every paint visual below (spray mist, grenade blast, paintball tracer + head,
