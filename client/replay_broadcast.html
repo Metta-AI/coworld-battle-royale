@@ -434,6 +434,129 @@ html, body {
 #stage.beat-active .amb,
 #stage.beat-active .plate.leader .lives-num { animation-play-state: paused; }
 
+/* ---------- 2b. FFA SCOREBUG (ffa only; the ctf plates above are untouched) ----
+   Free-for-all cannot use team plates: 16 seats have no sides to flank the clock
+   with. So the band reads left-to-right as ROSTER → CLOCK+ZONE → LEADERS: one
+   lamp per seat (all N, in slot color, dimmed on death) on the left, the top
+   three placements as plates on the right. Every measure derives from --u, so
+   the band's reserved height is stable at any --hudscale and never jumps on a
+   quiet frame. */
+.ffa-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(4 * var(--u));
+  min-width: 0;
+}
+.ffa-side.leaders { align-items: flex-end; }
+.ffa-cap {
+  display: flex;
+  align-items: baseline;
+  gap: calc(6 * var(--u));
+}
+.ffa-cap .lives-num { font-size: calc(18 * var(--u)); }
+/* Lamp row: one lamp per SEAT, in join-slot order so a lamp never moves. Lit =
+   alive in that seat's identity color, dim hollow = out. Sized so 16 lamps fit
+   the left track at the 640x360 floor. */
+.ffa-lamps {
+  display: flex;
+  align-items: center;
+  gap: calc(4 * var(--u));
+  min-width: 0;
+}
+.ffa-lamp {
+  width: calc(9 * var(--u));
+  height: calc(9 * var(--u));
+  flex: none;
+  background: currentColor;
+  opacity: 0.95;
+  cursor: pointer;
+  position: relative;
+  transition: opacity 140ms, transform 140ms;
+}
+.ffa-lamp:hover { transform: translateY(calc(-1 * var(--u))); }
+.ffa-lamp.out {                       /* eliminated: hollow, unlit */
+  background: transparent;
+  box-shadow: inset 0 0 0 calc(1.5 * var(--u)) currentColor;
+  opacity: 0.26;
+}
+.ffa-lamp.pov { box-shadow: 0 0 0 calc(1.5 * var(--u)) var(--paper); }
+
+/* Leader plate: rank, name, score, margin. Fixed row height and tabular numerals
+   so a ticking score never reflows the band. */
+.ffa-lead {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: calc(6 * var(--u));
+  min-width: 0;
+  max-width: 100%;
+  cursor: pointer;
+}
+.ffa-lead .rank {
+  font-family: var(--finefont);
+  font-size: calc(8 * var(--u));
+  letter-spacing: 0.1em;
+  color: var(--paper-dim);
+  flex: none;
+}
+.ffa-lead .pname {
+  font-family: var(--pixfont);
+  font-size: calc(13 * var(--u));
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--tc, var(--paper));
+  text-shadow: 0 calc(2 * var(--u)) 0 var(--ink);
+}
+.ffa-lead .score {
+  font-family: var(--pixfont);
+  font-size: calc(17 * var(--u));
+  line-height: 1;
+  color: var(--paper);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.ffa-lead .margin {
+  font-family: var(--finefont);
+  font-size: calc(8 * var(--u));
+  letter-spacing: 0.06em;
+  color: var(--paper-dim);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  min-width: calc(26 * var(--u));
+  text-align: right;
+}
+.ffa-lead.dead .pname, .ffa-lead.dead .score { opacity: 0.45; }
+.ffa-lead.crown .rank { color: var(--amber); }
+/* The leader's score is the one always-moving number in the band: an amber
+   breathe marks it, and it pauses with every other ambient on a beat (§11). */
+.ffa-lead.crown .score { animation: leaderpulse 1.9s ease-in-out infinite; }
+#stage.beat-active .ffa-lead.crown .score { animation-play-state: paused; }
+/* A step award (kill/assist/podium) flashes the numeral once — survival ticks
+   never flash, so the flash means "an award landed", not "time passed". */
+.ffa-lead .score.step { animation: ffastep 320ms steps(4); }
+@keyframes ffastep {
+  0% { color: var(--amber); text-shadow: 0 0 calc(10 * var(--u)) var(--amber); }
+  100% { color: var(--paper); text-shadow: none; }
+}
+/* Zone chip under the clock: the ONE zone read-out on this surface (the
+   server-drawn ZONE cue rides a UI layer the broadcast client never
+   composites), fed by ring.toFloorSec so it cannot drift from the sim. */
+.zonecue {
+  font-family: var(--finefont);
+  font-size: calc(8.5 * var(--u));
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--amber);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.zonecue.floor { color: var(--paper-dim); }
+
 /* ---------- 3. BANNER LANE ---------- */
 #bannerlane {
   position: absolute;
@@ -1469,10 +1592,14 @@ html, body {
 /* very small floor (≤620px stage): tighten reserves */
 #stage.tiny #killfeed { min-height: calc(3 * 20 * var(--u)); width: calc(190 * var(--u)); }
 #stage.tiny .plate .squad-pip { width: calc(6 * var(--u)); height: calc(6 * var(--u)); }
+/* 16 lamps plus gaps must clear the left track at the floor, so tighten both. */
+#stage.tiny .ffa-lamp { width: calc(6 * var(--u)); height: calc(6 * var(--u)); }
+#stage.tiny .ffa-lamps { gap: calc(3 * var(--u)); }
 
 @media (prefers-reduced-motion: reduce) {
   #grain, .clock.amb { animation: none; }
   .plate.leader .lives-num { animation: none; }
+  .ffa-lead.crown .score, .ffa-lead .score.step { animation: none; }
   .banner-chip, .feed-row { animation-duration: 1ms; }
 }
 
@@ -1683,7 +1810,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   var otherTeam = C.otherTeam, stripSeatSuffix = C.stripSeatSuffix;
   var teamPolicies = C.teamPolicies, teamName = C.teamName, teamHeadline = C.teamHeadline;
   var rosterName = C.rosterName, setName = C.setName, esc = C.esc, fmt = C.fmt;
-  var identityTextColor = C.identityTextColor;
+  var identityTextColor = C.identityTextColor, identityColor = C.identityColor;
   var setHandicap = C.setHandicap;
   var teamPerkGroups = C.teamPerkGroups, perkIconsHtml = C.perkIconsHtml;
   var togglePov = C.togglePov, renderClock = C.renderClock, renderTransport = C.renderTransport;
@@ -2243,39 +2370,189 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       var plate = document.createElement('div');
       plate.className = 'plate ' + team + ' ' + (i % 2 === 0 ? 'side-l' : 'side-r');
       plate.setAttribute('data-team', team);
-      if (team === 'ffa') {
-        plate.innerHTML =
-          '<div class="team-id">' +
-          '<div class="lives-line">' +
-          '<span class="lives-num" id="lives-' + team + '">—</span>' +
-          '<span class="team-name" id="name-' + team + '">ALIVE</span>' +
-          '</div>' +
-          '</div>';
-      } else {
-        plate.innerHTML =
-          '<div class="flagicon" id="flag-' + team + '"></div>' +
-          '<div class="team-id">' +
-          '<div class="lives-line">' +
-          '<span class="team-name" id="name-' + team + '">' + team.toUpperCase() + '</span>' +
-          '<span class="hcap" id="hcap-' + team + '" style="display:none"></span>' +
-          '<span class="lives-label">Lives</span>' +
-          '<span class="lives-num" id="lives-' + team + '">—</span>' +
-          '</div>' +
-          '<div class="squad" id="squad-' + team + '"></div>' +
-          '</div>';
-      }
+      plate.innerHTML =
+        '<div class="flagicon" id="flag-' + team + '"></div>' +
+        '<div class="team-id">' +
+        '<div class="lives-line">' +
+        '<span class="team-name" id="name-' + team + '">' + team.toUpperCase() + '</span>' +
+        '<span class="hcap" id="hcap-' + team + '" style="display:none"></span>' +
+        '<span class="lives-label">Lives</span>' +
+        '<span class="lives-num" id="lives-' + team + '">—</span>' +
+        '</div>' +
+        '<div class="squad" id="squad-' + team + '"></div>' +
+        '</div>';
       sides[i % 2].appendChild(plate);
-      if (team !== 'ffa') buildFlag($('flag-' + team), teamCol(team) || AMBER);
+      buildFlag($('flag-' + team), teamCol(team) || AMBER);
     });
+  }
+
+  // ---------- ffa scorebug ----------
+  // Free-for-all has no teams to plate, so the band reads ROSTER → CLOCK+ZONE →
+  // LEADERS: one lamp per seat on the left (all N, dimming on death) and the top
+  // three placements on the right. EVERY number here comes straight from the
+  // frame's `ffaScore` — server-derived from the sim's own reward and placement
+  // order — so this code formats, it never computes a score.
+  var FfaLeadRows = 3;
+  var ffaBuilt = false;
+  function ensureFfaScorebug() {
+    if (ffaBuilt) return;
+    ffaBuilt = true;
+    sbTeams = null;                    // a later ctf frame must rebuild plates
+    var left = $('plates-l');
+    var right = $('plates-r');
+    left.classList.remove('row');
+    right.classList.remove('row');
+    left.innerHTML =
+      '<div class="ffa-side">' +
+      '<div class="ffa-cap">' +
+      '<span class="lives-num" id="ffa-alive">—</span>' +
+      '<span class="lives-label">Alive</span>' +
+      '</div>' +
+      '<div class="ffa-lamps" id="ffa-lamps"></div>' +
+      '</div>';
+    var rows = '';
+    for (var i = 0; i < FfaLeadRows; i++) {
+      rows +=
+        '<div class="ffa-lead" id="ffa-lead-' + i + '" style="display:none">' +
+        '<span class="rank"></span>' +
+        '<span class="pname"></span>' +
+        '<span class="score">0</span>' +
+        '<span class="margin"></span>' +
+        '</div>';
+    }
+    right.innerHTML = '<div class="ffa-side leaders">' + rows + '</div>';
+    // Zone chip rides the clock column, so the band carries exactly one zone
+    // read-out. Created only for ffa: a ctf band keeps its exact DOM.
+    if (!$('zonecue')) {
+      var cue = document.createElement('div');
+      cue.className = 'zonecue';
+      cue.id = 'zonecue';
+      cue.style.display = 'none';
+      $('clock').parentNode.appendChild(cue);
+    }
+  }
+
+  function seatOf(s, slot) {
+    var roster = s.roster || [];
+    for (var i = 0; i < roster.length; i++) {
+      if (roster[i].s === slot) return roster[i];
+    }
+    return null;
+  }
+
+  // Lamp row keyed by the seat list: a lamp is created once and thereafter only
+  // ever changes state, so a seat's lamp never moves whatever the match does.
+  function renderFfaLamps(s, seats) {
+    var el = $('ffa-lamps');
+    var key = seats.map(function (seat) { return seat.s; }).join(',');
+    if (el._key !== key) {
+      el.innerHTML = '';
+      el._lamps = {};
+      seats.forEach(function (seat) {
+        var lamp = document.createElement('span');
+        var roster = seatOf(s, seat.s);
+        lamp.className = 'ffa-lamp';
+        lamp.title = shortName(rosterName(s, seat.s));
+        lamp.style.color = roster && roster.colorName
+          ? identityColor(roster.colorName) : AMBER;
+        lamp.addEventListener('click', function () { togglePov(seat.s); });
+        el.appendChild(lamp);
+        el._lamps[seat.s] = lamp;
+      });
+      el._key = key;
+    }
+    seats.forEach(function (seat) {
+      var lamp = el._lamps[seat.s];
+      if (!lamp) return;
+      lamp.classList.toggle('out', !seat.alive);
+      lamp.classList.toggle('pov', s.pov === seat.s);
+    });
+  }
+
+  function renderFfaLead(s, row, seat, runnerUp) {
+    row.style.display = '';
+    var roster = seatOf(s, seat.s);
+    row.querySelector('.rank').textContent = '#' + seat.rank;
+    var pname = row.querySelector('.pname');
+    pname.textContent = shortName(rosterName(s, seat.s));
+    pname.style.color = roster && roster.colorName
+      ? identityTextColor(roster.colorName) : '';
+    // Step flash: a rise bigger than one second of survival pay is an award
+    // (kill/assist/podium) landing, so it flashes; a survival tick never does.
+    var scoreEl = row.querySelector('.score');
+    var step = (s.ffaScore.rates && s.ffaScore.rates.sv) || 1;
+    if (scoreEl._seat === seat.s && seat.sc - scoreEl._val > step) {
+      scoreEl.classList.remove('step');
+      void scoreEl.offsetWidth;
+      scoreEl.classList.add('step');
+    }
+    scoreEl._seat = seat.s;
+    scoreEl._val = seat.sc;
+    scoreEl.textContent = seat.sc;
+    // Margin is the server's own signed gap to the rank-1 seat. Rank 1 shows its
+    // lead over rank 2 instead, so the top plate is never a blank column.
+    var margin = '';
+    if (seat.rank === 1) {
+      if (runnerUp) margin = '+' + (runnerUp.gap - seat.gap);
+    } else if (seat.gap > 0) {
+      margin = '\u2212' + seat.gap;
+    } else if (seat.gap < 0) {
+      margin = '+' + (-seat.gap);
+    }
+    row.querySelector('.margin').textContent = margin;
+    row.classList.toggle('crown', seat.rank === 1);
+    row.classList.toggle('dead', !seat.alive);
+    // The component split is the honesty receipt: hover reads the exact
+    // survival/combat/podium breakdown the server sent (combat = credited
+    // kills + assist splits; the server explains why those two are one number).
+    row.title = shortName(rosterName(s, seat.s)) + ' — ' + seat.sc + ' pts: ' +
+      seat.sv + ' survival + ' + seat.cb + ' combat' +
+      (seat.pd ? ' + ' + seat.pd + ' podium' : '') +
+      ', ' + seat.k + ' kills, ' + seat.dmg + ' damage';
+    row.onclick = function () { togglePov(seat.s); };
+  }
+
+  // Zone status from ring.toFloorSec (server-derived, the same helper the legacy
+  // server cue reads). Shown once, here: the server-drawn cue rides a UI sprite
+  // layer this client never composites, so nothing is duplicated or suppressed.
+  function renderZoneCue(s) {
+    var el = $('zonecue');
+    if (!el) return;
+    var secs = s.ring && typeof s.ring.toFloorSec === 'number'
+      ? s.ring.toFloorSec : -1;
+    if (secs < 0) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.classList.toggle('floor', secs === 0);
+    el.textContent = secs === 0 ? 'Zone floor' : 'Zone ' + fmt(secs);
+  }
+
+  function renderFfaScorebug(s) {
+    ensureFfaScorebug();
+    var seats = ((s.ffaScore || {}).seats || []);
+    var alive = 0;
+    seats.forEach(function (seat) { if (seat.alive) alive++; });
+    $('ffa-alive').textContent = seats.length ? alive : '—';
+    renderFfaLamps(s, seats);
+    // Placement order is the SERVER's (alive > later death > kills > damage >
+    // slot); the client only orders by the rank it was handed.
+    var ranked = seats.slice().sort(function (a, b) { return a.rank - b.rank; });
+    for (var i = 0; i < FfaLeadRows; i++) {
+      var row = $('ffa-lead-' + i);
+      if (!ranked[i]) { row.style.display = 'none'; continue; }
+      renderFfaLead(s, row, ranked[i], ranked[1]);
+    }
+    renderZoneCue(s);
   }
 
   function renderScorebug(s) {
     if (s.ffa) {
-      ensureScorebug(['ffa']);
-      var alive = (s.roster || []).filter(function (p) { return !!p.alive; }).length;
-      setName('name-ffa', 'ALIVE');
-      $('lives-ffa').textContent = alive;
+      renderFfaScorebug(s);
       return;
+    }
+    if (ffaBuilt) {                    // ffa → ctf, if a viewer ever switches
+      ffaBuilt = false;
+      var cue = $('zonecue');
+      if (cue) cue.parentNode.removeChild(cue);
     }
     var teams = activeTeams(s);
     ensureScorebug(teams);
