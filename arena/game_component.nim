@@ -50,7 +50,7 @@ proc gameStringFree(value: ptr GameString) {.
 var arenaGame: ArenaGame
 var gameInitialized = false
 
-proc prepareError(error: ptr GameString, message = "CTF game call failed") =
+proc prepareError(error: ptr GameString, message = "Arena game call failed") =
   ## With --exceptions:goto an unwind returns false without assigning the WIT
   ## error out-param. Preallocating it makes that generated-C path safe.
   gameStringDup(error, message)
@@ -88,12 +88,12 @@ proc exportsGameInit(
 ): bool {.exportc: "exports_game_init", cdecl.} =
   prepareError(error)
   if gameInitialized:
-    setError(error, "CTF game is already initialized")
+    setError(error, "Arena game is already initialized")
     return false
   arenaGame = initArenaGame(toString(config[].data, config[].len), int(seats), seed)
   gameInitialized = true
   emitReplay()
-  log("info", "CTF Arena game initialized")
+  log("info", "Arena game initialized")
   clearError(error)
   true
 
@@ -104,7 +104,7 @@ proc exportsGameStep(
 ): bool {.exportc: "exports_game_step", cdecl.} =
   prepareError(error)
   if not gameInitialized:
-    setError(error, "CTF game is not initialized")
+    setError(error, "Arena game is not initialized")
     return false
   var messages: seq[SeatMessage]
   let actionData = cast[ptr UncheckedArray[GameSeatMessage]](actions[].data)
@@ -137,7 +137,7 @@ proc exportsGameFinish(error: ptr GameString): bool {.
   exportc: "exports_game_finish", cdecl.} =
   prepareError(error)
   if not gameInitialized:
-    setError(error, "CTF game is not initialized")
+    setError(error, "Arena game is not initialized")
     return false
   let body = arenaGame.finish()
   gameInitialized = false
@@ -146,6 +146,6 @@ proc exportsGameFinish(error: ptr GameString): bool {.
   if body.len > 0:
     bytes.data = cast[ptr uint8](body[0].unsafeAddr)
   outputResults(bytes.addr)
-  log("info", "CTF Arena game finished")
+  log("info", "Arena game finished")
   clearError(error)
   true
