@@ -1728,9 +1728,26 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     action = "retreat_ring"
   elif FfaLateClose and livingCount > 0 and livingCount <= 3 and
       targetIndex >= 0:
-    moveTarget = actors[targetIndex].pos
-    objective = "late_close"
-    action = "close_last_three"
+    var
+      nearestGun = 1e18
+      nearestGunPos = me
+    if unarmed:
+      for label in [LabelWeaponLowGun, LabelWeaponMidGun, LabelWeaponHeavyGun,
+          LabelWeaponGun]:
+        for o in client.spriteObjectsWithLabel(label):
+          let gun = client.mapPos(o)
+          let d = dist(me, gun)
+          if d < nearestGun and dist(gun, center) <= float(max(1, ringRadius)):
+            nearestGun = d
+            nearestGunPos = gun
+    if unarmed and nearestGun < targetDist:
+      moveTarget = nearestGunPos
+      objective = "arm"
+      action = "move_gun"
+    else:
+      moveTarget = actors[targetIndex].pos
+      objective = "late_close"
+      action = "close_last_three"
   elif unarmed:
     var bestGun = 1e18
     for label in [LabelWeaponLowGun, LabelWeaponMidGun, LabelWeaponHeavyGun,
@@ -3542,7 +3559,7 @@ proc runBot(url: string) =
   var component = initBaselineComponent(slot)
   FfaRetreatHp = max(1, parseEnvInt("CTF_BOT_FFA_RETREAT_HP", 6))
   FfaFireWhileHurt = parseEnvBool("CTF_BOT_FFA_FIRE_WHILE_HURT", true)
-  FfaLateClose = parseEnvBool("CTF_BOT_FFA_LATE_CLOSE", false)
+  FfaLateClose = parseEnvBool("CTF_BOT_FFA_LATE_CLOSE", true)
   FfaTraceTickScale = max(1, parseEnvInt("CTF_BOT_TRACE_TICK_SCALE", 1))
   FfaTraceMaxTick = max(0, parseEnvInt("CTF_BOT_TRACE_MAX_TICKS", 0))
   let
@@ -3558,7 +3575,8 @@ proc runBot(url: string) =
     # never set this env, so competitive builds do not send ready at all.
     fastReadyEnabled = getEnv("CTF_BOT_FAST_READY").len > 0
   startProfileTrace()
-  echo "baseline slot=", slot, " team=", bot.team, " role=", bot.role, " -> ", endpoint
+  echo "baseline slot=", slot, " team=", bot.team, " role=", bot.role,
+    " ffaLateClose=", FfaLateClose, " -> ", endpoint
   artInit(slot, $bot.team, $bot.role)
   when defined(taunt):
     startTaunts()                        # worker thread + bank prefetch

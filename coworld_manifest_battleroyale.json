@@ -824,7 +824,7 @@
     {
       "id": "br-16",
       "name": "Battle Royale (16)",
-      "description": "The same free-for-all at full muster: sixteen players, one life and 20 hit points each, on random generated huge terrain with the shrinking safe zone and the center loot cluster.",
+      "description": "Sixteen-player free-for-all on random generated huge terrain: one life and 20 hit points each, a center loot cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color; last player standing wins and scoring is per player.",
       "game_config": {
         "players": [
           {

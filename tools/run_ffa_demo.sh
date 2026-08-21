@@ -161,7 +161,7 @@ case "$ARM" in
   E3|E4)
     BOT_ENV+=(CTF_BOT_FFA_RETREAT_HP=6 CTF_BOT_FFA_FIRE_WHILE_HURT=1)
     ;;
-  I|DEFAULT)
+  I)
     BOT_ENV+=(CTF_BOT_FFA_LATE_CLOSE=1)
     ;;
 esac

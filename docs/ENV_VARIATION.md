@@ -119,9 +119,10 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `ffaMidGunSpawns` | int / `0` (`FfaMidGunSpawns`) | `ffaMidGunSpawns` | `0..16` (ffa only) | Mid-tier gun pickups. `0` derives `max(2, numPlayers div 4)`; deterministic placements sit between the center cluster and spawn ring and use the offensive loot respawn cadence. |
 | `ffaHeavyGunSpawns` | int / `0` (`FfaHeavyGunSpawns`) | `ffaHeavyGunSpawns` | `0..16` (ffa only) | Heavy-tier gun pickups. `0` derives `max(1, numPlayers div 4)`; deterministic placements are center-cluster only and use the offensive loot respawn cadence. |
 
-When `CTF_BOT_FFA_LATE_CLOSE=1`, the baseline FFA bot closes on the nearest
-living enemy once three or fewer players remain, while retaining ring safety
-and normal aim/fire gates.
+The baseline FFA bot enables this late-close behavior by default: once three or
+fewer players remain, it closes on the nearest living enemy while retaining
+ring safety and normal aim/fire gates. Set `CTF_BOT_FFA_LATE_CLOSE=0` to
+disable it for comparison arms; `1` explicitly enables it.
 
 **Per-team handicap** ([sim_types.nim `handicaps`](../src/ctf/sim_types.nim), accessors
 `hitPointsFor`/`livesFor`/`maxSpeedFor`/`missPermilleFor`): a single `0.0..1.0`
