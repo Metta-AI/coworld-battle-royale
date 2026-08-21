@@ -4198,13 +4198,16 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     var winner = roster.filter(function (p) { return p.s === winnerSlot; })[0];
     var winnerName = winner ? shortName(rosterName(s, winner.s)) : 'UNKNOWN';
     var winnerColor = winner ? ffaSeatColor(s, winner.s) : AMBER;
+    // The loop countdown ticks every second while everything else is frozen,
+    // so it renders unconditionally; the static content is keyed below.
+    $('ec-replay').innerHTML = s.lp && s.hold > 0
+      ? 'Replaying in <b>' + s.hold + '</b>' : '';
+
     var key = [s.mx, o.winnerSlot, o.timeLimit, JSON.stringify(seats)].join('|');
     if (card._key === key) return;
     card._key = key;
     card._pdAnimated = false;
 
-    $('ec-replay').innerHTML = s.lp && s.hold > 0
-      ? 'Replaying in <b>' + s.hold + '</b>' : '';
     $('ec-wincond').textContent = o.timeLimit ? 'TIME CAP' : 'LAST ALIVE';
     $('ec-tname-ffa').textContent = 'FREE-FOR-ALL';
     var survivorCount = seats.filter(function (seat) { return !!seat.alive; }).length;
