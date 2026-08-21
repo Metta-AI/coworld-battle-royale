@@ -1366,6 +1366,12 @@ html, body {
   grid-template-columns: calc(17 * var(--u)) 1fr calc(22 * var(--u))
     calc(22 * var(--u)) calc(22 * var(--u)) calc(30 * var(--u));
 }
+/* the 12-seat FFA table can outgrow a short viewport: the headline and
+   verdict keep their height and the table scrolls inside the card */
+#endcard .headline,
+#endcard .wincond,
+#endcard .how { flex-shrink: 0; }
+#endcard .ec-teams { min-height: 0; overflow-y: auto; }
 /* name cell: name ellipsizes (but keeps a readable floor), the capture mark
    + honor badges ride after it; a pathological pileup clips inside the cell
    rather than bleeding into the K column */
