@@ -481,6 +481,46 @@ suite "sprite label contract":
         let normalized = message.sprite.label.normalizeLabel()
         if normalized.startsWith(LabelPrefixPuddle):
           emitted.incl(normalized)
+    # The FFA safe-zone overlay is TIME-gated, not just config-gated: at tick
+    # 0 the ring still spans the whole board, so nothing is outside it (no
+    # `safe zone wash ...` runs), the boundary pulse starts on its bright
+    # half, and the floor state is minutes away. A t=0-only sweep therefore
+    # records just `safe zone edge bright` and the countdown cue, and a
+    # rename of the wash, the dim pulse half, the floor variants, or the
+    # FLOOR cue would diff clean. Pose one ring game MID-SHRINK at both pulse
+    # parities and once AT THE FLOOR (gameStartTick is rewound instead of
+    # stepping thousands of ticks; the overlay derives from tick + config
+    # only), and merge just the safe-zone families in — this fixture's
+    # 4-seat roster is noise the golden has no business absorbing.
+    var zoneConfig = defaultFfaConfig(4)
+    zoneConfig.ringEnabled = true
+    var zoneGame = initCtfForTest(zoneConfig)
+    for i in 0 ..< 4:
+      discard zoneGame.addPlayer("z" & $i)
+    zoneGame.startGame()
+    let
+      zoneShrinkTicks = zoneGame.config.ringShrinkSec * TargetFps
+      # The pulse reads tickCount, not elapsed, so the two mid-shrink poses
+      # move tickCount by one pulse half-period (SafeZonePulseTicks, private
+      # to global.nim) to land on both parities.
+      zonePoses = [
+        (zoneShrinkTicks div 2, 0),   # mid-shrink, one pulse half
+        (zoneShrinkTicks div 2, 16),  # mid-shrink, the other half
+        (zoneShrinkTicks + 1, 0)      # at the floor
+      ]
+    for (elapsed, pulseShift) in zonePoses:
+      # gameStartTick must stay >= 0 (negative means "not started" and
+      # gameTicksElapsed clamps to 0), so jump tickCount forward instead of
+      # rewinding the start.
+      zoneGame.tickCount = elapsed + pulseShift
+      zoneGame.gameStartTick = pulseShift
+      var zoneViewer = initGlobalViewerState()
+      for message in zoneGame.buildGlobalMessages(zoneViewer):
+        if message.kind == spkSprite:
+          let normalized = message.sprite.label.normalizeLabel()
+          if normalized.startsWith("safe zone ") or
+              normalized.startsWith("ffa zone cue "):
+            emitted.incl(normalized)
     # Regenerating: `nim r -d:writeLabelManifest tests/test_label_contract.nim`
     # rewrites the golden from what the engine emits NOW, and the resulting git
     # diff is the artifact to review. Deliberately opt-in — if the test could

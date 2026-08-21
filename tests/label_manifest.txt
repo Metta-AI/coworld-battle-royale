@@ -31,6 +31,8 @@ diamond
 endzone <color> <shape> <n>,<n> <n>,<n>
 endzone <color> power <n> band <n>
 ffa header ALIVE <n>  TIME <n>:<n>
+ffa zone cue ZONE <n>:<n>
+ffa zone cue ZONE FLOOR
 fire icon
 fire icon cooldown
 fog
@@ -73,6 +75,11 @@ player <color>
 player <color> <side>
 puddle <n>,<n> <n>,<n>
 ring center <n>,<n> start <n> floor <n> shrink <n> damage <n>
+safe zone edge bright
+safe zone edge dim
+safe zone edge floor
+safe zone wash <n> floor
+safe zone wash <n> live
 score ffa<n> <n> color <n>
 score p<n> <n> color <n>
 score pip <color>
