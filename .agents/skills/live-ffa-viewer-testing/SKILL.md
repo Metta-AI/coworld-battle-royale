@@ -122,6 +122,49 @@ of the game port — the plain proxy drops the binary board frames. `tools/qa_te
 is **CTF-only**: it drives `#name-red`/`#name-blue` and throws on an FFA replay page, so it
 contributes no FFA coverage.
 
+## Landing on a transient FX frame (spray/plasma bursts, muzzle flashes)
+
+Combat FX last only a handful of ticks, so hunting for one by eye in the viewer wastes
+a lot of time. Drive it from the replay data instead:
+
+```bash
+nim c -d:release -o:/tmp/xevents tools/extract_events.nim
+/tmp/xevents /tmp/match.bitreplay --out /tmp/ev.jsonl --frames /tmp/frames.bin
+```
+
+`--frames` is a fixed-size per-tick record (header `<HHHH` slots/mapW/mapH/teams at
+offset 8, then per tick `<IBB` tick/phase/… + `slots` × `<hhBBBBBB`
+x/y/aim/hp/lives/flags/…). Flags **bit 64 = spray cone active**, so a ~30-line python
+scan prints every burst as `(tick, seat, x, y, aim)`.
+
+Two gotchas when translating those ticks into the viewer:
+
+- **The viewer's tick counter is game-relative, the frame dump is sim-absolute.** The
+  offset is the first tick whose `phase` byte is 1 (the lobby/countdown length; it was
+  510 in one CTF recording and 243 in an FFA one — do not assume a constant). Cross-check
+  with the HUD clock: `displayed tick / 24 == elapsed seconds`.
+- `http://127.0.0.1:<port>/client/replay?t=<simTick>` seeks **and pauses** there
+  (it uses the same `s:<tick>` command as the scrubber), and it takes the SIM tick, so
+  no conversion is needed for the URL. Do not press `space` afterwards — the page is
+  already paused and space resumes playback (and while playing you drift ~25 ticks per
+  reload attempt). If you do need fine positioning, click the timeline strip
+  (`x ≈ 10 + displayedTick / totalTicks * 1004` at 1024px wide) or the `◂|` back-one-tick
+  button, and turn OFF `▸▸` auto-skip-lulls, which silently plays at ~2x.
+- The FX belongs to the *sprayer*, who is usually off-screen: use the `◂`/`▸` follow
+  chips until the label reads the seat from the frame dump (`FOLLOW <name> S<seat>`),
+  then `zoom` into the nozzle region for the close-up.
+
+## Proving no new sprite family/label reached the streams
+
+Serve the SAME replay file on both builds (`--load-replay`, two ports), connect a python
+`websockets` client to `/global` and `/player?name=Obs&slot=0&token=0xBADA55_0` on each,
+and collect printable ASCII runs (`re.compile(rb"[ -~]{3,}")`) from the binary frames.
+Raw runs contain a lot of binary noise, so filter to label-shaped strings
+(`^[a-z][a-z ]{4,30}$`) before diffing — that filter gave stable sets (359 `/global`,
+275 `/player`) that diff cleanly between builds. FX labels only appear once the FX
+actually fires, which is why replaying a burst-rich recording (rather than an idle
+server) is what makes the check meaningful.
+
 ## Comparing against the pre-change build (recommended for art changes)
 
 Create a worktree at the base commit and **copy the repo-root `nim.cfg` into it**
