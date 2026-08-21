@@ -197,13 +197,13 @@ suite "ffa spawn ring":
     capped.ffaLootCount = FfaLootCount
     check initCtfForTest(capped).ffaLootFamilyCounts().medKits == 1
 
-  test "center loot is deterministic, spaced, walkable, and inside the ring floor":
+  test "center loot is deterministic, spaced, walkable, and inside its arena bound":
     var first = ffaGame(4)
     var second = ffaGame(4)
     check first.medKitSpawns.len + first.shieldSpawns.len +
       first.plasmaArcSpawns.len + first.barrierSpawns.len == FfaLootCount
     check first.grenadeSpawns.len == 4
-    let floor = ffaRingFloorRadius(first.config)
+    let arenaRadius = min(MapWidth div 2, MapHeight div 2) - PlayerHalf - 4
     var points: seq[tuple[x, y: int]] = @[]
     var
       minRadius = high(int)
@@ -224,7 +224,8 @@ suite "ffa spawn ring":
       minRadius = min(minRadius, radius)
       maxRadius = max(maxRadius, radius)
       check radius <=
-        (floor + 20) * (floor + 20)
+        (min(FfaLootRadius, arenaRadius) + 20) *
+        (min(FfaLootRadius, arenaRadius) + 20)
       for other in points[0 ..< i]:
         check distSq(point.x, point.y, other.x, other.y) >
           (2 * MedKitPickupRange) * (2 * MedKitPickupRange)
@@ -607,19 +608,29 @@ suite "ffa elimination":
       second.heavyGunSpawns.mapIt((it.x, it.y))
     check first.heavyGunSpawns.allIt(
       radiusSquared(it) <= FfaLootRadius * FfaLootRadius)
-    let floorRadius = ffaRingFloorRadius(first.config)
-    if floorRadius > FfaLootRadius:
-      check first.lowGunSpawns.allIt(
-        radiusSquared(it) > FfaLootRadius * FfaLootRadius)
-      check first.midGunSpawns.allIt(
-        radiusSquared(it) > FfaLootRadius * FfaLootRadius)
-    else:
-      # A tight final ring can be smaller than the center-cluster radius;
-      # low/mid families then clamp to that ring instead of escaping it.
-      check first.lowGunSpawns.allIt(
-        radiusSquared(it) <= floorRadius * floorRadius)
-      check first.midGunSpawns.allIt(
-        radiusSquared(it) <= floorRadius * floorRadius)
+    for floorPct in [3, 35]:
+      var config = defaultFfaConfig(12)
+      config.ringFloorAreaPct = floorPct
+      var game = initCtfForTest(config)
+      for i in 0 ..< 12:
+        discard game.addPlayer("band" & $floorPct & "-" & $i)
+      game.startGame()
+      var
+        heavyMax = 0
+        midMin = int.high
+        midMax = 0
+        lowMin = int.high
+      for spawn in game.heavyGunSpawns:
+        heavyMax = max(heavyMax, radiusSquared(spawn))
+      for spawn in game.midGunSpawns:
+        let radius = radiusSquared(spawn)
+        midMin = min(midMin, radius)
+        midMax = max(midMax, radius)
+      for spawn in game.lowGunSpawns:
+        lowMin = min(lowMin, radiusSquared(spawn))
+      check heavyMax < midMin
+      check midMax < lowMin
+      check lowMin > (FfaLootRadius + 40) * (FfaLootRadius + 40)
 
   test "an ffa gun hit takes 2 of the pool and books damage dealt":
     var game = ffaGame(2)

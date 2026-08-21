@@ -31,9 +31,11 @@ battle-royale match, used by the demo script.
    with every FFA player starting unarmed. A seed-derived integer offset rotates
    seat ownership of the unchanged pad set per episode; the mapping is
    bijective and CTF spawn positions are untouched. Fists are the fallback
-   weapon, while a low/mid/heavy weapon ladder offers a safer weak pickup, a current-strength
-   mid pickup, or a scarce heavy weapon in the center risk/reward contest.
-   maximum pairwise spacing, snapped to reachable floor, never a fixed array.
+   weapon, while arena-anchored low/mid/heavy bands offer a broad weak pickup,
+   an intermediate current-strength pickup, and a scarce heavy weapon in the
+   center risk/reward contest. The bands do not collapse when the safe zone
+   reaches its final floor. Pads use maximum pairwise spacing, snapped to
+   reachable floor, never a fixed array.
    Teams are irrelevant in ffa: per-player identity comes from `color`/skin
    (distinct hue per slot), and no code path may branch on `team` for
    damage, vision, scoring, or win.
@@ -89,8 +91,10 @@ report the largest that does and say so — do not silently ship a small map.
 Baseline doctrine (slice-level, in priority order): stay inside the ring →
 disengage and heal when hurt (break LOS first) → take fights only with an
 advantage (target is critical, or we outnumber) → otherwise roam/loot → hail
-agents that enter vision. It only has to make matches end decisively and read
-well on the broadcast; it does not have to be strong.
+agents that enter vision. With three or fewer players alive, it instead closes
+on the nearest enemy while retaining ring safety and normal aim/fire gates. It
+only has to make matches end decisively and read well on the broadcast; it
+does not have to be strong.
 
 Demo: one command that runs a full headless N-bot match (server + N baselines),
 prints the final ranking + scores, and writes a `.bitreplay` that plays in the

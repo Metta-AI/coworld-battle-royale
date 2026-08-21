@@ -391,15 +391,19 @@ FFA gun pickups form a permanent upgrade ladder:
 - **Low** weapons deal 2 damage, have shorter range, and fire at roughly 1.5×
   the normal cooldown. They are plentiful and spread outside the center.
 - **Mid** weapons deal 3 damage and use the normal gun range and cooldown. They
-  occupy the intermediate-radius pickups.
+  occupy a deterministic intermediate annulus between the center and outer
+  low-tier spread.
 - **Heavy** weapons deal 5 damage and fire at roughly 0.6× the normal
   cooldown. They are scarce and only appear in the center cluster.
 
 Pickups only upgrade a carrier. A pickup at or below the current tier remains
 on the map; a higher-tier pickup is consumed and the new tier lasts for the
 episode. All three families are present from tick 0 and use the offensive FFA
-respawn cadence. The center therefore offers the strongest weapon at the
-greatest contest risk, while low-tier pickups provide a safer but weaker
+respawn cadence. The bands are anchored to the playable arena rather than the
+shrinking ring floor: the center cluster remains compact even at the 3% final
+floor, low-tier pickups reach broadly across the board, and mid-tier pickups
+offer an intermediate route. The center therefore offers the strongest weapon
+at the greatest contest risk, while low-tier pickups provide a safer but weaker
 alternative away from the opening fight.
 
 The own HUD and visible cogs identify `weapon fist`, `weapon low gun`,

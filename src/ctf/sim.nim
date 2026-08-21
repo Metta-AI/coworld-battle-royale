@@ -196,10 +196,10 @@ proc ffaLootPoints(
     return
   let
     (cx, cy) = ffaRingCenter()
-    floorRadius = ffaRingFloorRadius(sim.config)
+    arenaRadius = max(1, min(cx, cy) - PlayerHalf - 4)
     radius = min(
       if radiusOverride > 0: radiusOverride else: sim.config.ffaLootRadius,
-      max(1, floorRadius - PlayerHalf - 4)
+      arenaRadius
     )
     minRadius = min(
       (if minRadiusOverride > 0: minRadiusOverride else: 1),
@@ -221,7 +221,9 @@ proc ffaLootPoints(
       cy - bandRadius * ringSin(brads) div 1024
     )
     var spot = sim.nearestWalkable(target[0], target[1])
-    var separated = distSq(spot.x, spot.y, cx, cy) <= radius * radius
+    let spotRadiusSq = distSq(spot.x, spot.y, cx, cy)
+    var separated = spotRadiusSq >= minRadius * minRadius and
+      spotRadiusSq <= radius * radius
     for point in result:
       if distSq(spot.x, spot.y, point.x, point.y) <= spacing * spacing:
         separated = false
@@ -236,6 +238,7 @@ proc ffaLootPoints(
                 y = target[1] + dy
               if x < cx - radius or x > cx + radius or
                   y < cy - radius or y > cy + radius or
+                  distSq(x, y, cx, cy) < minRadius * minRadius or
                   distSq(x, y, cx, cy) > radius * radius or
                   not sim.canOccupy(x, y):
                 continue
@@ -246,6 +249,7 @@ proc ffaLootPoints(
                   break
               if clear:
                 spot = (x, y)
+                separated = true
                 break search
             for dx in -r + 1 .. r - 1:
               for dy in [-r, r]:
@@ -254,6 +258,7 @@ proc ffaLootPoints(
                   y = target[1] + dy
                 if x < cx - radius or x > cx + radius or
                     y < cy - radius or y > cy + radius or
+                    distSq(x, y, cx, cy) < minRadius * minRadius or
                     distSq(x, y, cx, cy) > radius * radius or
                     not sim.canOccupy(x, y):
                   continue
@@ -264,7 +269,30 @@ proc ffaLootPoints(
                     break
                 if clear:
                   spot = (x, y)
+                  separated = true
                   break search
+    if not separated:
+      for turn in 1 .. 256:
+        let
+          altBrads = (brads + turn) mod 256
+          altTarget = (
+            cx + bandRadius * ringCos(altBrads) div 1024,
+            cy - bandRadius * ringSin(altBrads) div 1024
+          )
+          altSpot = sim.nearestWalkable(altTarget[0], altTarget[1])
+          altRadiusSq = distSq(altSpot.x, altSpot.y, cx, cy)
+        if altRadiusSq < minRadius * minRadius or
+            altRadiusSq > radius * radius:
+          continue
+        var clear = true
+        for point in result:
+          if distSq(altSpot.x, altSpot.y, point.x, point.y) <= spacing * spacing:
+            clear = false
+            break
+        if clear:
+          spot = altSpot
+          separated = true
+          break
     result.add((spot.x, spot.y))
 
 proc ffaLootFamilyCounts*(
@@ -320,19 +348,37 @@ proc ffaFamilyTargets(
     offset = counts.medKits + counts.shields + counts.plasmaArcs
     count = counts.barriers
   of 4:
-    let floorRadius = ffaRingFloorRadius(sim.config)
+    let
+      (cx, cy) = ffaRingCenter()
+      arenaRadius = max(1, min(cx, cy) - PlayerHalf - 4)
+      centerRadius = min(sim.config.ffaLootRadius, arenaRadius)
+      lowMin = min(
+        arenaRadius,
+        max(centerRadius + 24, arenaRadius * 78 div 100)
+      )
     return sim.ffaLootPoints(
       counts.lowGuns,
-      radiusOverride = floorRadius,
-      minRadiusOverride = sim.config.ffaLootRadius + 24,
+      radiusOverride = arenaRadius,
+      minRadiusOverride = lowMin,
       phaseOffset = 173
     )
   of 5:
+    let
+      (cx, cy) = ffaRingCenter()
+      arenaRadius = max(1, min(cx, cy) - PlayerHalf - 4)
+      centerRadius = min(sim.config.ffaLootRadius, arenaRadius)
+      midMin = min(
+        arenaRadius,
+        max(centerRadius + 24, arenaRadius * 45 div 100)
+      )
+      midMax = min(
+        arenaRadius,
+        max(midMin, arenaRadius * 65 div 100)
+      )
     return sim.ffaLootPoints(
       counts.midGuns,
-      radiusOverride = max(sim.config.ffaLootRadius + 40,
-        ffaRingFloorRadius(sim.config) div 2),
-      minRadiusOverride = sim.config.ffaLootRadius + 20,
+      radiusOverride = midMax,
+      minRadiusOverride = midMin,
       phaseOffset = 347
     )
   of 6:
