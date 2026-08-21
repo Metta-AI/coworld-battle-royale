@@ -386,15 +386,91 @@ punch has no windup, tracer, or stain; it hits the nearest living player in
 the ±48-brad aim cone. Fists are only available while the player has no gun
 or spray can.
 
-FFA gun pickups form a permanent upgrade ladder:
+Punch geometry in detail: reach is measured **center to center** (70 px, so
+two bodies whose 34 px silhouettes touch are always inside it), the cone is
+±48 brads of the 256-brad turn (**±67.5°**), and the target needs a clear line
+of paint. Inside reach, cone, and line of sight a punch **always connects** —
+the fist rolls no aim jitter and no trench duck, and pays no trench or shield
+fire slowdown, so it is the only FFA attack whose outcome is fully determined
+by geometry.
 
-- **Low** weapons deal 2 damage, have shorter range, and fire at roughly 1.5×
-  the normal cooldown. They are plentiful and spread outside the center.
-- **Mid** weapons deal 3 damage and use the normal gun range and cooldown. They
-  occupy a deterministic intermediate annulus between the center and outer
-  low-tier spread.
-- **Heavy** weapons deal 5 damage and fire at roughly 0.6× the normal
-  cooldown. They are scarce and only appear in the center cluster.
+FFA gun pickups form a permanent upgrade ladder. Every number below is the
+shipped value at the default `gunRange` (1050) and `fireCooldownTicks` (12):
+
+| Tier | Damage | Effective range | Cooldown | Hit % at that tier's own max range |
+|---|---:|---:|---:|---:|
+| fist | 2 (`FfaFistDamage`) | 70 px reach (`FfaFistReach`) | 24 ticks (1.0 s) | deterministic — no jitter |
+| low | 2 (`FfaLowGunDamage`) | 700 px (`FfaLowGunRange`) | 18 ticks (0.75 s, 150%) | ~94.5% |
+| mid | 3 (`ffaGunDamage`) | 1050 px (`config.gunRange`) | 12 ticks (0.5 s, 100%) | 80% |
+| heavy | 5 (`FfaHeavyGunDamage`) | 1050 px (`FfaHeavyGunRange`) | 7 ticks (~0.29 s, 60%) | 80% |
+
+- Heavy's advantage over mid is **rate and damage, not reach**: both stop at
+  the same 1050 px. Low is the only tier with a shorter envelope.
+- Cooldowns are `fireCooldownTicks × pct div 100`, floored at 1 tick, and are
+  multiplied (never compounded — the largest single factor wins) by the 3×
+  shield/carrier/trench fire slowdowns. Guns also pay the 5-tick
+  `fireWindupTicks` before each shot; fists do not.
+- Mid is the only tier whose damage is configurable (`ffaGunDamage`); every
+  other number in the table is a bare constant with no knob
+  (https://github.com/Metta-AI/coworld-battle-royale/issues/18).
+
+**No weapon has ammo, durability, or a magazine.** A tier is a permanent
+property of the player: it is set to unarmed at match start, raised by touching
+a higher-tier pickup, and never decremented by firing, by time, or by taking
+damage. There is nothing to reload and nothing to run out of, so the only way
+to lose a gun is to die — and FFA is single-life. The two consumables behave
+differently and are the only "supply" in the mode:
+
+- **Grenade** — at most one carried, thrown to use, and **lost on death**
+  (nothing drops for a scavenger).
+- **Spray can** — at most one carried, kept across bursts, and lost on death.
+  It is not consumed by spraying: each burst runs 5 active ticks and then
+  repressurizes for 20, i.e. one burst every 25 ticks, indefinitely.
+
+**Aim jitter is calibrated once, against `config.gunRange` — not per tier.**
+The GV34 contract ("a fully visible body at max range is hit exactly 80% of the
+time") is written for 1050 px, and sigma stays at 0.596° whatever tier fires.
+Mid and heavy therefore land on 80% at their own 1050 px edge, while low —
+whose envelope stops at 700 px — is *more* accurate than the contract at its
+own maximum, ~94.5%. Low's weakness is reach and cooldown, not precision.
+Whether that is intended is filed as
+https://github.com/Metta-AI/coworld-battle-royale/issues/19.
+
+FFA also re-points the two thrown/sprayed weapons at its deeper 20 HP pool.
+Against CTF's numbers:
+
+| Hit | CTF | FFA |
+|---|---:|---:|
+| spray touch (once per victim per burst) | 3 (`PlasmaArcDamage`) | 4 (`ffaSprayDamage`) |
+| grenade, victim not in a trench | 2 (`GrenadeDamage`) | 4 (`ffaGrenadeDamage`) |
+| grenade landing in the victim's own trench | 6 (`GrenadeTrenchDamage`) | **4** — same as open ground |
+| grenade, victim in a different trench | 1 | 1 (`ffaGrenadeTrenchSplashDamage`) |
+
+The third row is the one to note: CTF triples a grenade's damage when the blast
+lands in the victim's own trench, and **FFA has no analog** — the same-trench
+branch resolves to the ordinary `ffaGrenadeDamage`, so grenading a trench camper
+is worth no more than grenading them in the open
+(https://github.com/Metta-AI/coworld-battle-royale/issues/20).
+
+**No weapon tier touches movement.** Max speed, acceleration, friction, and the
+carrier/trench speed rules are identical for a fist-only player and a heavy
+carrier; the only speed modifiers in FFA are the ones every mode has (trench
+climb-out, paint puddles, thruster perk). Carrying the heavy costs nothing in
+mobility.
+
+Known deviations, filed rather than worked around (the fixes change `gameHash`
+and need their own `GameVersion` bump, so this docs pass only records them):
+
+- A punch that finds **no** target in its cone still resolves against **seat 0**
+  — at any distance, through walls — because target selection returns Nim's
+  default `result = 0` instead of `-1`
+  (https://github.com/Metta-AI/coworld-battle-royale/issues/13).
+- The cone's wrap-around fold is computed on a 1024-brad turn while brads are
+  256 to the turn, so the fold never fires and punches whose aim straddles the
+  0-brad seam are rejected even a few brads off target
+  (https://github.com/Metta-AI/coworld-battle-royale/issues/17). The ±67.5°
+  cone above is therefore the *intended* shape; the shipped cone is one-sided
+  for aim directions near 0.
 
 Pickups only upgrade a carrier. A pickup at or below the current tier remains
 on the map; a higher-tier pickup is consumed and the new tier lasts for the
@@ -435,14 +511,14 @@ hurt. They still respect safe-zone safety and the normal aim and fire gates.
   faster. A grenade is a snap weapon: the reaction window is the same as
   eating two aimed shots, not a mortar shell you can stroll away from.
 - **The blast hurts everyone whose body touches its radius (~52 px): enemies,
-  teammates, and the thrower alike**, removing 2 hit points each — **unless a
-  trench is involved, which changes the amount**; see the Trenches section. It
-  is your BODY that must reach the circle, not the point you stand on — the
-  same rule the gun's bullet corridor uses — so a cog centred up to ~58 px away
-  is still caught. The landing splat and the charge-time throw-target ring are
-  drawn at the blast diameter, so anything painted was hit, but a cog clipping
-  the rim from just outside it is hit too. Kills credit the thrower (except
-  suicides).
+  teammates, and the thrower alike**, removing 2 hit points in CTF or 4 in FFA
+  in the open; a blast in the victim's own trench removes 6 in CTF or 4 in FFA,
+  while a victim in a different trench takes 1. It is your BODY that must
+  reach the circle, not the point you stand on — the same rule the gun's bullet
+  corridor uses — so a cog centred up to ~58 px away is still caught. The
+  landing splat and the charge-time throw-target ring are drawn at the blast
+  diameter, so anything painted was hit, but a cog clipping the rim from just
+  outside it is hit too. Kills credit the thrower (except suicides).
 - **Throwing is silent; landing is loud.** A landing you could not see
   leaves a large jittered sound ring (label `grenade sound`) — landing-only
   audio, exactly like gunshot impact rings. The throw itself leaves nothing.
@@ -492,10 +568,10 @@ hurt. They still respect safe-zone safety and the normal aim and fire gates.
   across a fan of targets — only the origin moves with you, not the direction.
   Then the can takes **20 ticks to repressurize** (one burst every 25 ticks).
   The cone shuts off if its owner dies.
-- **A touch removes 3 hit points, once per victim per burst** — instantly
-  lethal to a bare 3 hp cog, while a 6 hp shield carrier survives the first
-  touch with 3 hp left. The cone affects teammates too and requires line
-  of sight. Kills credit the attacker.
+- **A touch removes 3 hit points in CTF or 4 in FFA, once per victim per
+  burst** — in CTF this is instantly lethal to a bare 3 hp cog, while a 6 hp
+  shield carrier survives the first touch with 3 hp left. The cone affects
+  teammates too and requires line of sight. Kills credit the attacker.
 - A spray touch **paints its victim** (it stamps the same paint-hit tick the
   paintball gun and grenade do), so a sprayed seat's first-person view takes a
   paint splat across the visor.
