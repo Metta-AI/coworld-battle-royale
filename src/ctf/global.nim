@@ -676,12 +676,18 @@ const
   SafeZoneWashMaxRuns = 2048     ## covers a colossal board: ~429 rows x up
                                  ## to 4 pool-width chunks, capped like fog.
   SafeZoneEdgeObjectBase = 15100 ## boundary dots along the ring circumference.
-  SafeZoneEdgeMaxDots = 1024
+  SafeZoneEdgeMaxDots = 1700     ## enough for touching dots on every size
+                                 ## class: 2*pi*startRadius / thickness is
+                                 ## ~scale-invariant (~1200-1400) because both
+                                 ## scale with the board.
   SafeZoneWashZ = low(int16) + 4 ## above the floor decals (stains at
                                  ## low+2), below every actor.
   SafeZoneEdgeZ = low(int16) + 5 ## the boundary draws over its own wash.
-  SafeZoneEdgeSize = 9           ## px dot canvas: 2-3px amber core + halo.
-  SafeZoneEdgeSpacingPx = 10     ## target arc length between dots.
+  SafeZoneEdgeRefViewportW = 320 ## MapWidth div this = core thickness in map
+                                 ## px, i.e. ~2 screen px with the full board
+                                 ## fit to a 640px-wide viewport.
+  SafeZoneEdgeMinThickness = 3   ## floor for small boards, where full-board
+                                 ## zoom runs near 1:1.
   SafeZonePulseTicks = 16        ## half-period of the shrinking-edge pulse.
   ## v7.0 sim renamed the top-left scoreboard layer consts; alias them back to
   ## the names this (v6.0) renderer uses, so the renderer stays byte-identical.
@@ -3884,27 +3890,43 @@ proc buildSafeZoneRunSprite(widthCells: int, atFloor: bool): seq[uint8] =
   for i in 0 ..< width * height:
     result.putRawRgbaPixel(i, r, g, b, a)
 
+proc safeZoneEdgeThickness(): int =
+  ## Boundary core thickness in map px, derived from the installed board so
+  ## the line reads as a near-continuous ~2px stroke at full-board zoom on
+  ## every size class instead of thinning out as boards grow.
+  max(SafeZoneEdgeMinThickness, MapWidth div SafeZoneEdgeRefViewportW)
+
+proc safeZoneEdgeSize(): int =
+  ## Dot canvas: the core plus a 2px warm-dark halo margin on each side.
+  safeZoneEdgeThickness() + 4
+
 proc buildSafeZoneEdgeSprite(variant: int): seq[uint8] =
   ## Builds one boundary dot: a drama-amber core over a warm-dark halo so the
   ## ring line reads on both pale and dark floor art. Variants 0/1 are the
   ## bright/dim halves of the shrinking pulse; variant 2 is the steady,
-  ## hotter floor state.
-  const Size = SafeZoneEdgeSize
-  result = newSeq[uint8](Size * Size * 4)
-  let center = Size div 2
-  for y in 0 ..< Size:
-    for x in 0 ..< Size:
+  ## hotter floor state. Core diameter comes from safeZoneEdgeThickness, and
+  ## dots sit one thickness apart along the arc, so adjacent dots touch and
+  ## the boundary reads as a continuous line rather than a dashed speckle.
+  let
+    size = safeZoneEdgeSize()
+    thickness = safeZoneEdgeThickness()
+    coreSq = thickness * thickness div 4
+    haloSq = (thickness + 2) * (thickness + 2) div 4
+    center = size div 2
+  result = newSeq[uint8](size * size * 4)
+  for y in 0 ..< size:
+    for x in 0 ..< size:
       let distSq = (x - center) * (x - center) + (y - center) * (y - center)
       var (r, g, b, a) = (0'u8, 0'u8, 0'u8, 0'u8)
-      if distSq <= 4:
+      if distSq <= coreSq:
         case variant
         of 0: (r, g, b, a) = (232'u8, 163'u8, 61'u8, 255'u8)
         of 1: (r, g, b, a) = (232'u8, 163'u8, 61'u8, 150'u8)
         else: (r, g, b, a) = (244'u8, 202'u8, 120'u8, 255'u8)
-      elif distSq <= 9:
+      elif distSq <= haloSq:
         (r, g, b, a) =
           (36'u8, 22'u8, 12'u8, if variant == 2: 230'u8 else: 190'u8)
-      result.putRawRgbaPixel(y * Size + x, r, g, b, a)
+      result.putRawRgbaPixel(y * size + x, r, g, b, a)
 
 proc addSafeZoneOverlay(
   sim: SimServer,
@@ -3998,18 +4020,19 @@ proc addSafeZoneOverlay(
     dotLabel = [
       "safe zone edge bright", "safe zone edge dim", "safe zone edge floor"
     ][variant]
+  let dotSize = safeZoneEdgeSize()
   if spriteDefs.spriteDefinitionIndex(dotSpriteId) < 0:
     packet.addBoardSpriteChanged(
       spriteDefs,
       dotSpriteId,
-      SafeZoneEdgeSize,
-      SafeZoneEdgeSize,
+      dotSize,
+      dotSize,
       buildSafeZoneEdgeSprite(variant),
       dotLabel
     )
   let dotCount = min(
     SafeZoneEdgeMaxDots,
-    max(24, radius * 6283 div (SafeZoneEdgeSpacingPx * 1000))
+    max(24, radius * 6283 div (safeZoneEdgeThickness() * 1000))
   )
   var dotIndex = 0
   for i in 0 ..< dotCount:
@@ -4023,8 +4046,8 @@ proc addSafeZoneOverlay(
     currentIds.add(objectId)
     packet.addBoardObject(
       objectId,
-      dotX - SafeZoneEdgeSize div 2,
-      dotY - SafeZoneEdgeSize div 2,
+      dotX - dotSize div 2,
+      dotY - dotSize div 2,
       SafeZoneEdgeZ,
       MapLayerId,
       dotSpriteId
