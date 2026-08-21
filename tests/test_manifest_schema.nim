@@ -261,12 +261,13 @@ suite "league manifest config_schema vs GameConfig":
     for variant in parseFile(GameDir / ManifestName)["variants"]:
       let gameConfig = variant["game_config"]
       check gameConfig["mode"].getStr() == "ffa"
-      check gameConfig["numPlayers"].getInt() in [12, 16]
-      check gameConfig["num_agents"].getInt() == gameConfig["numPlayers"].getInt()
-      check gameConfig["minPlayers"].getInt() == gameConfig["numPlayers"].getInt()
+      check gameConfig["players"].len in [12, 16]
+      check gameConfig["num_agents"].getInt() == gameConfig["players"].len
+      check not gameConfig.hasKey("numPlayers")
+      check not gameConfig.hasKey("minPlayers")
       check gameConfig["mapPath"].getStr() == "gen"
       var config = defaultGameConfig()
       config.update($gameConfig)
       check config.mode == FfaMode
-      check config.numPlayers == gameConfig["numPlayers"].getInt()
+      check config.numPlayers == gameConfig["players"].len
       check config.minPlayers == config.numPlayers

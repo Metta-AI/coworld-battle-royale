@@ -124,7 +124,7 @@
           "default": 679961
         },
         "minPlayers": {
-          "description": "Players needed before the game countdown starts.",
+          "description": "Players needed before the game countdown starts; omitted FFA configs derive it from numPlayers.",
           "type": "integer",
           "minimum": 1,
           "maximum": 32,
@@ -448,7 +448,7 @@
           "default": "ctf"
         },
         "numPlayers": {
-          "description": "FFA seat count N; every ffa derivation (fixed spawn ring, seed-derived per-episode seat-to-pad rotation, lobby minPlayers, per-player containers) follows it. Must be 0 in ctf.",
+          "description": "FFA seat count N; explicit values win, otherwise FFA derives it from players length or tokens length. Every ffa derivation (fixed spawn ring, seed-derived per-episode seat-to-pad rotation, lobby minPlayers, per-player containers) follows it. Must be 0 in ctf.",
           "type": "integer",
           "minimum": 0,
           "maximum": 16,
@@ -802,9 +802,7 @@
           }
         ],
         "mode": "ffa",
-        "numPlayers": 12,
         "num_agents": 12,
-        "minPlayers": 12,
         "maxTicks": 8640,
         "maxGames": 1,
         "startWaitTicks": 120,
@@ -877,9 +875,7 @@
           }
         ],
         "mode": "ffa",
-        "numPlayers": 16,
         "num_agents": 16,
-        "minPlayers": 16,
         "maxTicks": 8640,
         "maxGames": 1,
         "startWaitTicks": 120,

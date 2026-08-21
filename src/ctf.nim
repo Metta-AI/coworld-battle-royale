@@ -60,6 +60,7 @@ proc echoStartupConfig(
     " port=", runtimeConfig.port,
     " seed=", config.seed,
     " speed=", config.speed, "x",
+    " numPlayers=", config.numPlayers,
     " minPlayers=", config.minPlayers,
     " slots=", config.slots.len,
     " maxTicks=", config.maxTicks.limitText(),

@@ -1294,7 +1294,8 @@ type
                                   ## reads exactly this field, so a ctf game
                                   ## runs the pre-ffa code path unchanged.
     numPlayers*: int              ## ffa seat count N (FfaMinPlayers..
-                                  ## FfaMaxPlayers); 0 in ctf, where the
+                                  ## FfaMaxPlayers), roster-derived when
+                                  ## omitted; 0 in ctf, where the
                                   ## field has no meaning. The spawn ring,
                                   ## the lobby's minPlayers, and every
                                   ## per-player container derive from it.
