@@ -819,6 +819,13 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("ffaLootCount", config.ffaLootCount)
   node.readConfigInt("ffaLootRadius", config.ffaLootRadius)
   node.readConfigInt("ffaLootRespawnTicks", config.ffaLootRespawnTicks)
+  if config.isFfa() and not node.hasKey("numPlayers"):
+    # Platform seat resizing changes the authored players roster but does not
+    # rewrite game-specific fields. Let that roster select the FFA seat count.
+    if node.hasKey("players") and node["players"].kind == JArray:
+      config.numPlayers = node["players"].len
+    elif node.hasKey("tokens") and node["tokens"].kind == JArray:
+      config.numPlayers = node["tokens"].len
   # ffa's own baseline, derived from the mode and from N: single life (the
   # game is elimination, so respawn never rearms) and the deep spawn pool,
   # and a lobby that waits for exactly the seats the match is sized for.
