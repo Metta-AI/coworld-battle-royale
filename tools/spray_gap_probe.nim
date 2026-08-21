@@ -92,9 +92,19 @@ proc main() =
   else:
     echo &"    OVERDRAW {tip - float(PlasmaArcReach):.1f}px: a cog centered up to " &
       &"{tip + float(PlasmaArcBodyRadius):.1f}px out is painted but unhurt"
-  echo &"  lateral: worst overdraw {worstLateral:.1f}px (at {int(worstAt)}px forward)"
-  if worstLateral > 0:
-    echo "    an EDGE GRAZE only: the mist is drawn oversize so its puffs " &
-      "merge, so it runs wider than the cone that sizes them"
+  echo &"  lateral: worst reach past the CENTERLINE cone {worstLateral:.1f}px " &
+    &"(at {int(worstAt)}px forward)"
+  # Sideways the centerline is not the bound that matters: selectArcVictims
+  # tests a PlasmaArcBodyRadius disc, so paint out to the cone WIDENED by that
+  # radius still covers only cogs that lose hp. Near the nozzle the widening is
+  # most of the envelope (~20px against a ~4px wedge), which is what lets
+  # SprayPuffMinRadius draw an atomized burst there instead of a hairline.
+  if worstLateral <= float(PlasmaArcBodyRadius):
+    echo &"    INSIDE THE ENVELOPE: {float(PlasmaArcBodyRadius) - worstLateral:.1f}px " &
+      "of the victim-body allowance still unspent — a cog centered on any " &
+      "painted pixel loses hp"
+  else:
+    echo &"    OVERDRAW {worstLateral - float(PlasmaArcBodyRadius):.1f}px past the " &
+      "widened cone: paint can cover a cog that walks away clean"
 
 main()
