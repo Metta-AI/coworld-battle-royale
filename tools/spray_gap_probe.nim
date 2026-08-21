@@ -8,7 +8,7 @@
 ##
 ## Usage (from the repo root): nim r tools/spray_gap_probe.nim
 import
-  std/strformat,
+  std/[math, strformat],
   ../src/ctf/global, ../src/ctf/sim,
   toolutil
 
@@ -64,13 +64,16 @@ proc main() =
       if game.damages(d, s): lastSide = s else: break
     echo &"  forward {d:3}px -> hp comes off out to {lastSide:3}px sideways"
 
-  # A cog is PAINTED when the plume touches its body, and DAMAGED when its
-  # center is inside the cone. Both are measured against the same body radius,
-  # so it CANCELS: the honest comparison is the plume's own outermost pixel
-  # against the bare cone. (Adding the body to only one side is the mistake
-  # that made this weapon's overdraw look contained when it was not.)
+  # LENGTHWISE a cog is PAINTED when the plume touches its body and DAMAGED when
+  # its center is inside the reach, so the body radius appears on both sides and
+  # CANCELS: the honest forward comparison is the plume's outermost pixel against
+  # the bare reach. (Adding the body to only one side is the mistake that made
+  # this weapon's overdraw look contained when it was not.) SIDEWAYS it does not
+  # cancel, because the paint is centered ON the axis: see below.
   echo "\n=== PAINT vs CONE: does anything painted escape damage? ==="
-  let slope = float(PlasmaArcMaxWidth) / (2.0 * float(PlasmaArcReach))
+  let
+    slope = float(PlasmaArcMaxWidth) / (2.0 * float(PlasmaArcReach))
+    norm = sqrt(1.0 + slope * slope)
   var
     tip = 0.0
     worstLateral = -1e9
@@ -82,8 +85,11 @@ proc main() =
         w = abs(float(plasmaPulseRight(pulse, stage)))
         r = float(plasmaPulseDiameter(pulse, stage)) / 2
       tip = max(tip, f + r)
-      if (w + r) - slope * f > worstLateral:
-        worstLateral = (w + r) - slope * f
+      # A puff is a DISC, so what has to fit is its distance to the sim's
+      # boundary line (perp = slope * forward + body radius): the radius pays
+      # the slant, the center's own offset does not.
+      if w + r * norm - slope * f > worstLateral:
+        worstLateral = w + r * norm - slope * f
         worstAt = f
   echo &"  forward: paint tip {tip:.1f}px vs cone reach {PlasmaArcReach}px"
   if tip <= float(PlasmaArcReach):

@@ -46,8 +46,10 @@ proc strokeCone(
   let
     slope = float(halfWidthAtReach) / float(reach)
     norm = sqrt(1.0 + slope * slope)
-    off = float(pad) * norm      ## a perpendicular pad shifts a slanted edge
-                                 ## this far VERTICALLY.
+    off = float(pad)             ## selectArcVictims adds the body radius to the
+                                 ## perpendicular COORDINATE, so the edge shifts
+                                 ## by exactly `pad` there — not by pad * norm,
+                                 ## which would draw the (wider) Minkowski sum.
     a = vec2(float32(ax * scale), float32(ay * scale))
     tipTop = vec2(
       float32((ax + reach + pad) * scale),
@@ -189,7 +191,10 @@ proc main() =
         f = plasmaPulseForward(pulse, stage)
         r = plasmaPulseDiameter(pulse, stage) div 2
         cone = slope * float(f) / norm
-        envelope = cone + float(PlasmaArcBodyRadius)
+        # Perpendicular clearance from the axis to the sim's own boundary line
+        # (perp = slope * forward + PlasmaArcBodyRadius), which is what a disc
+        # centered on the axis has to fit inside.
+        envelope = (slope * float(f) + float(PlasmaArcBodyRadius)) / norm
       worst = max(worst, float(r) - envelope)
       doAssert float(r) <= envelope, "puff leaves the envelope"
       doAssert r <= f, "puff reaches behind the apex"
