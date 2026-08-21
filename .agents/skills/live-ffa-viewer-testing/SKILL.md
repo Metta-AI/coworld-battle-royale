@@ -100,6 +100,28 @@ Default FFA configs finish fast. Copy the config and relax it, e.g.:
   perspective (board goes dark with a visibility cone). Reload the page to get the
   full-board spectator view back.
 
+### POV lens vs the follow camera (they are different things)
+
+The POV lens is NOT the `FREE VIEW` / `FOLLOW` camera chip. Clicking a chrome control
+wired to `togglePov(slot)` (CTF `.squad-pip`, FFA lamps/leader plates, league KDA rows)
+shows `#povBadge` (`👁 POV: <name> — click to clear`) plus the EYES first-person PiP and
+a fogged board; the camera chip may still read `FREE VIEW`. Judge POV by `#povBadge` /
+the PiP / `pov` in the state frame, or you will report a working path as broken.
+`togglePov` also *clears* on a second click of the same seat, so clicking two seats in a
+row is fine but clicking one seat twice looks like nothing happened.
+
+Transport and POV commands leave the page as **binary** ASCII frames via
+`core.sendCommand`, so a `WebSocket.prototype.send` hook that only logs string args sees
+nothing. Log every arg and decode `ArrayBuffer`/`Blob` to see `v:8`, `s:<tick>`, etc.
+
+### Browser QA harnesses
+
+`tools/qa_aspects.cjs` / `tools/qa_mock_embed.cjs` (with `tools/mock_observatory.html`)
+sweep the embed at many aspect ratios. They need `tools/proxy_harness_binary.py` in front
+of the game port — the plain proxy drops the binary board frames. `tools/qa_teamname.cjs`
+is **CTF-only**: it drives `#name-red`/`#name-blue` and throws on an FFA replay page, so it
+contributes no FFA coverage.
+
 ## Comparing against the pre-change build (recommended for art changes)
 
 Create a worktree at the base commit and **copy the repo-root `nim.cfg` into it**

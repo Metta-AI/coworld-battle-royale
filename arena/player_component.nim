@@ -38,7 +38,7 @@ proc playerStringFree(value: ptr PlayerString) {.
 var baselineComponent: BaselineComponent
 var playerInitialized = false
 
-proc prepareError(error: ptr PlayerString, message = "CTF player call failed") =
+proc prepareError(error: ptr PlayerString, message = "Arena player call failed") =
   ## With --exceptions:goto an unwind returns false without assigning the WIT
   ## error out-param. Preallocating it makes that generated-C path safe.
   playerStringDup(error, message)
@@ -61,7 +61,7 @@ proc exportsPlayerStart(
   playerInitialized = true
   var
     level = "info"
-    message = "CTF baseline player initialized"
+    message = "Arena baseline player initialized"
     levelValue = PlayerString(data: cast[ptr uint8](level[0].unsafeAddr), len: csize_t(level.len))
     messageValue = PlayerString(data: cast[ptr uint8](message[0].unsafeAddr), len: csize_t(message.len))
   logLine(levelValue.addr, messageValue.addr)
@@ -75,7 +75,7 @@ proc exportsPlayerOnMessage(
 ): bool {.exportc: "exports_player_on_message", cdecl.} =
   prepareError(error)
   if not playerInitialized:
-    setError(error, "CTF player is not initialized")
+    setError(error, "Arena player is not initialized")
     return false
   var frame = newString(int(message[].len))
   if message[].len > 0:
