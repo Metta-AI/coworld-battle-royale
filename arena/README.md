@@ -1,11 +1,11 @@
 # Arena Wasm components
 
-This directory builds the CTF simulation and baseline player as the
+This directory builds the simulation and baseline player as the
 `softmax:game@0.1.0` and `softmax:player@0.1.0` WebAssembly components. The
-game component drives the deterministic simulation one tick per `step`, emits
-fog-limited Sprite v1 frames, and streams the existing CTF replay format. The
-player component runs the same baseline policy as the container entrypoint,
-with the WebSocket receive loop inverted into `on-message`.
+game component drives the deterministic CTF or FFA simulation one tick per
+`step`, emits fog-limited Sprite v1 frames, and streams the existing replay
+format. The player component runs the same baseline policy as the container
+entrypoint, with the WebSocket receive loop inverted into `on-message`.
 
 The checked-in WIT files are copied from the platform contract. Generated C
 bindings are checked in so contract changes remain visible in review; `build.sh`
@@ -74,6 +74,7 @@ With the same toolchain variables set, run:
 ./arena/test.sh
 ```
 
-The test drives the native and component builds with the same full-width seed
-and scripted Sprite v1 inputs, replays and compares all 13 `gameHash` records,
+The test drives native and component builds for both a two-seat CTF case and
+the 12-seat `config.br.json` FFA case with the same full-width seed and
+scripted Sprite v1 inputs. It replays and compares every recorded `gameHash`,
 compares native/Wasm baseline outputs, and verifies identical final results.

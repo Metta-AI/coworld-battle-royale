@@ -59,6 +59,62 @@ jobs:
             echo "::endgroup::"
           done
           exit $fail
+  arena-wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: treeform/setup-nim-action@v6
+      - run: nimby sync nimby.lock -g
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo
+            ~/.rustup
+          key: arena-toolchain-${{ runner.os }}-${{ hashFiles('arena/wit/**/*.wit') }}
+      - name: Install pinned Arena toolchain
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/arena-toolchain"
+          mkdir -p "$root"
+          rustup toolchain install stable --profile minimal
+          rustup target add --toolchain stable wasm32-wasip1
+          curl -fL --retry 3 \
+            -o "$root/wasi-sdk.tar.gz" \
+            https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz
+          mkdir "$root/sdk"
+          tar -xzf "$root/wasi-sdk.tar.gz" -C "$root/sdk"
+          export WASI_SDK_PATH="$root/sdk/wasi-sdk-33.0-x86_64-linux"
+          cargo +stable install wit-bindgen-cli --version 0.60.0 --locked \
+            --root "$root/wit-bindgen"
+          cargo +stable install wasm-tools --version 1.255.0 --locked \
+            --root "$root/wasm-tools"
+          curl -fL --retry 3 \
+            -o "$root/wasi-vfs.zip" \
+            https://github.com/kateinoigakukun/wasi-vfs/releases/download/v0.6.3/wasi-vfs-cli-x86_64-unknown-linux-gnu.zip
+          mkdir "$root/wasi-vfs"
+          unzip -q "$root/wasi-vfs.zip" -d "$root/wasi-vfs"
+          git clone --depth 1 --branch v0.6.3 --recurse-submodules \
+            https://github.com/kateinoigakukun/wasi-vfs.git "$root/wasi-vfs-src"
+          CFLAGS_wasm32_wasip1="--sysroot=$WASI_SDK_PATH/share/wasi-sysroot" \
+            WASI_SDK_PATH="$WASI_SDK_PATH" \
+            cargo +stable build \
+              --manifest-path "$root/wasi-vfs-src/Cargo.toml" \
+              --target wasm32-wasip1 --release
+          {
+            echo "WASI_SDK_PATH=$WASI_SDK_PATH"
+            echo "WIT_BINDGEN=$root/wit-bindgen/bin/wit-bindgen"
+            echo "WASM_TOOLS=$root/wasm-tools/bin/wasm-tools"
+            echo "WASI_VFS=$root/wasi-vfs/wasi-vfs"
+            echo "WASI_VFS_LIB=$root/wasi-vfs-src/target/wasm32-wasip1/release/libwasi_vfs.a"
+            echo "WASI_ADAPTER=$root/wasi-adapter.wasm"
+            echo "PATH=$HOME/.nimby/nim/bin:$PATH"
+          } >> "$GITHUB_ENV"
+          curl -fL --retry 3 \
+            -o "$root/wasi-adapter.wasm" \
+            https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasi_snapshot_preview1.reactor.wasm
+      - name: Build and validate Arena components
+        run: time arena/test.sh
   # The static replay viewer ships as wasm32: Nim `int` is 32 bits there
   # (overflow checks trap on math that is silently fine on 64-bit native)
   # and the address space ends at 2 GB. The native shards above can never
