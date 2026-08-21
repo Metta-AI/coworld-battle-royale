@@ -4443,20 +4443,30 @@ proc ffaScoreboardHeaderText*(sim: SimServer): string =
     timeText = $minutes & ":" & (if secs < 10: "0" else: "") & $secs
   "ALIVE " & $alive & "  TIME " & timeText
 
+proc ffaZoneFloorSeconds*(sim: SimServer): int =
+  ## Whole seconds until the safe zone reaches its floor radius: 0 once it is
+  ## there, -1 when there is no shrinking ring to report (ring off, not ffa, or
+  ## still in the lobby). Derived from tick + config only, and the single source
+  ## for BOTH zone read-outs — the server cue below and the replay chrome's
+  ## `ring.toFloorSec` — so the two can never drift apart.
+  if not (sim.config.isFfa() and sim.config.ringEnabled) or
+      sim.phase == Lobby:
+    return -1
+  let
+    total = max(1, sim.config.ringShrinkSec * TargetFps)
+    remaining = max(0, total - sim.gameTicksElapsed())
+  (remaining + TargetFps - 1) div TargetFps
+
 proc ffaZoneCueText*(sim: SimServer): string =
   ## Spectator-header safe-zone cue: the countdown until the ring reaches its
   ## floor while shrinking, then a steady FLOOR state. Empty when the ring is
   ## off or the game has not started; derived from tick + config only.
-  if not (sim.config.isFfa() and sim.config.ringEnabled) or
-      sim.phase == Lobby:
+  let seconds = sim.ffaZoneFloorSeconds()
+  if seconds < 0:
     return ""
-  let
-    total = max(1, sim.config.ringShrinkSec * TargetFps)
-    remaining = max(0, total - sim.gameTicksElapsed())
-  if remaining == 0:
+  if seconds == 0:
     return "ZONE FLOOR"
   let
-    seconds = (remaining + TargetFps - 1) div TargetFps
     minutes = seconds div 60
     secs = seconds mod 60
   "ZONE " & $minutes & ":" & (if secs < 10: "0" else: "") & $secs

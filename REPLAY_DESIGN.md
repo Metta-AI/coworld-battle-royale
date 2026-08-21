@@ -235,6 +235,16 @@ jumps on a quiet frame (L84):
    board; verified axis-exact (curve endpoint == played tick, playhead% == seek%) and static-when-paused
    at desktop 1330×700 and the 640×360 floor.
 6. **End-card** (owns the frame at GameOver).
+7. **FFA scorebug** (ffa replays only, replacing panel 1's team plates in the SAME reserved top band):
+   an alive-lamp row sized to N in slot colors (a lamp dims when its seat dies) with an ALIVE numeral,
+   the top-3 leader plates (rank, name, live ticking score, margin — the leader crowned), and the
+   safe-zone chip beside the clock. Every number is server-side (`ffaScore` in the state channel:
+   per-seat `sc` = the sim's own `player.reward`, split into `sv` survival / `cb` combat / `pd` podium
+   which sum to it exactly, plus `k`, `dmg`, `alive`, placement `rank` and the signed `gap` to rank 1),
+   so a displayed score cannot drift from the sim — the client formats, it never computes. Podium is 0
+   until GameOver. `ring.toFloorSec` feeds the zone chip from the same helper the server-drawn cue
+   reads. Honesty is pinned by `tests/test_ffa_scorebug.nim`, which re-derives the scores from the
+   tier-2 event ledger at sampled ticks of a recorded ffa replay.
 
 **Bounded-embed plan (L82/L83)**: the whole replay is ONE fixed-aspect composition (§2) — the board and
 every overlay scale together as a locked unit, so overlays never drift from the graphics regardless of
