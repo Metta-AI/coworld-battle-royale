@@ -411,6 +411,8 @@ const
   ShotFxTicks* = 12           ## ~0.5s a shot tracer stays visible (cosmetic only).
   HitFlashTicks* = 8          ## ~0.33s the struck-target flash rings a victim
                               ## in the spectator view (cosmetic only).
+  FistContactTicks* = 8       ## ~0.33s a landed punch's contact mark stays on
+                              ## the spectator board (cosmetic only).
   SplatterFxTicks* = 120      ## ~5s a death splatter stays visible (cosmetic only).
   HitFxTicks* = 34            ## ~1.4s a non-fatal hit's paint splat stays visible.
   StainChancePct* = 100       ## % of paint landing on TERRAIN that dries into a
@@ -1564,6 +1566,18 @@ type
       ## swings its aim reads as one plume, not a divergent trail. See
       ## plasmaArcRenderPose.
 
+  FistContactFx* = object
+    ## A cosmetic "a punch landed here" mark; never enters gameHash
+    ## (replay-safe), and WRITE-ONLY as far as the sim is concerned — nothing
+    ## in the gameplay path reads it back. Recorded where fist damage is
+    ## actually applied, so the mark cannot exist without the hit: unlike a
+    ## gun the fist has no windup, no tracer and no projectile, so a swing and
+    ## a connection look identical without it.
+    x*, y*: int                ## the victim's center at the moment of contact.
+    angleBrads*: int           ## puncher -> victim, so the mark can lean the
+                               ## way the punch travelled.
+    tick*: int                 ## when the fist connected.
+
   DamageFx* = object
     ## A cosmetic floating "-N" damage number that rises and fades above a
     ## player the instant they lose hit points; never enters gameHash
@@ -1723,6 +1737,8 @@ type
     tickCount*: int
     recentShots*: seq[ShotFx]  ## cosmetic shot tracers; excluded from gameHash.
     hitFlashes*: seq[HitFlashFx]  ## cosmetic struck-target flashes; excluded from gameHash.
+    fistContacts*: seq[FistContactFx]  ## cosmetic landed-punch marks, spectator
+                                       ## board only; excluded from gameHash.
     bubbleImpacts*: seq[BubbleImpactFx]  ## cosmetic shield-bubble impact blinks; excluded from gameHash.
     splatters*: seq[SplatterFx]  ## cosmetic death splatters; excluded from gameHash.
     diamondStains*: seq[DiamondStain]  ## permanent paint riding the spinning

@@ -460,6 +460,24 @@ const
                                ## tracer heads.
   HitFlashMaxCount = MaxPlayers  ## most flash rings drawn at once (hits within
                                ## HitFlashTicks are bounded by the shooters).
+  ## --- Landed-punch mark (SPECTATOR/BOARD ONLY) ---
+  ## A fist has no windup, no tracer and no projectile, so on the broadcast a
+  ## swing that connected and a swing that hit air look identical. This mark is
+  ## drawn from the sim's recorded CONTACT (sim.fistContacts, written only where
+  ## fist damage is actually applied), never from a button press, so it cannot
+  ## claim a hit that did not happen. Player views never carry it.
+  FistContactSpriteBase = 1370 ## per-stage knuckle-impact bursts: 1370..1373.
+  FistContactStages = 4        ## expanding/fading steps over FistContactTicks.
+  FistContactSize = 19         ## px canvas: a knuckle spark, smaller than the
+                               ## 34px struck-target ring a bullet rings with.
+  FistContactObjectBase = 16920  ## landed-punch mark pool: 16920..16951, in the
+                               ## gap between the hit flashes and the splatters.
+  FistContactMaxCount = MaxPlayers  ## most marks drawn at once (one landed
+                               ## punch per puncher within FistContactTicks:
+                               ## the fist cooldown is longer than the mark).
+  FistContactOffset = 8        ## px the mark is pushed back from the victim's
+                               ## center toward the puncher, so it sits on the
+                               ## struck side instead of centered on the body.
   MuzzleBloomSize = 7          ## a small colorless flash marking the shooter.
   TracerHeadSpriteBase = 1300  ## per color-and-fade-stage leading heads: 1300..1363.
   TracerHeadObjectBase = 16840  ## one leading head per drawn shot: 16840..16871.
@@ -813,6 +831,7 @@ const
     ("muzzle blooms", MuzzleBloomObjectBase, TracerMaxShots),
     ("tracer heads", TracerHeadObjectBase, TracerMaxShots),
     ("hit flashes", HitFlashObjectBase, HitFlashMaxCount),
+    ("fist contacts", FistContactObjectBase, FistContactMaxCount),
     ("splatters", SplatterObjectBase, SplatterMaxCount),
     ("hp pips", HpPipObjectBase, MaxPlayers),
     ("identity badges", IdentityBadgeObjectBase, MaxPlayers),
@@ -941,6 +960,7 @@ const
     ("tracer dots", TracerDotSpriteBase, 384),
     ("muzzle blooms", MuzzleBloomSpriteBase, 4),
     ("hit flashes", HitFlashSpriteBase, 4),
+    ("fist contacts", FistContactSpriteBase, FistContactStages),
     ("tracer heads", TracerHeadSpriteBase, 64),
     ("med kit", MedKitSpriteId, 1),
     ("rot diamonds", RotDiamondSpriteBase, 16),
@@ -2782,6 +2802,79 @@ proc addHitFlashes(
       objectId,
       victim.x + CollisionW div 2 - HitFlashSize div 2,
       victim.y + CollisionH div 2 - HitFlashSize div 2,
+      30007,
+      MapLayerId,
+      spriteId
+    )
+
+proc buildFistContactSprite(stage: int): seq[uint8] {.measure.} =
+  ## Builds one stage of the landed-punch mark: a small four-spoke knuckle
+  ## spark that snaps out and fades, deliberately tighter and dimmer than the
+  ## bullet hit flash so a punch never out-shouts a shot. Colorless, so it
+  ## recolors nobody.
+  result = newRgbaPixels(FistContactSize, FistContactSize)
+  let
+    c = float(FistContactSize - 1) / 2
+    t = stage.float / float(max(1, FistContactStages - 1))  ## 0 fresh → 1 dying.
+    reach = 4.0 + 4.5 * t                    ## spokes shoot outward.
+    alphaTop = 215.0 * (1.0 - 0.8 * t)       ## fades out.
+  for y in 0 ..< FistContactSize:
+    for x in 0 ..< FistContactSize:
+      let
+        dx = float(x) - c
+        dy = float(y) - c
+        dist = sqrt(dx * dx + dy * dy)
+        # A spoke is thin across its axis and long along it; the two axes
+        # crossing at the center read as an impact star, not a blob.
+        spoke = max(
+          clamp(1.4 - abs(dy), 0.0, 1.0),
+          clamp(1.4 - abs(dx), 0.0, 1.0)
+        )
+        along = clamp((reach - dist) / 2.0, 0.0, 1.0)
+        edge = spoke * along
+      if edge > 0:
+        result.putRawRgbaPixel(
+          y * FistContactSize + x,
+          255, 245, 225,
+          uint8(clamp(int(alphaTop * edge), 0, 255))
+        )
+
+proc addFistContacts(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  currentIds: var seq[int],
+  packet: var seq[uint8]
+) {.measure.} =
+  ## Sparks every recently landed punch on the spectator board, at the contact
+  ## site the sim recorded, nudged back toward the puncher so it reads as
+  ## knuckles on a body. BOARD/SPECTATOR ONLY — this is never called from a
+  ## player view, so no observation stream carries it and bots learn nothing.
+  for i in 0 ..< min(sim.fistContacts.len, FistContactMaxCount):
+    let
+      contact = sim.fistContacts[i]
+      age = sim.tickCount - contact.tick
+      stage = clamp(
+        age * FistContactStages div FistContactTicks, 0, FistContactStages - 1)
+      spriteId = FistContactSpriteBase + stage
+    packet.addBoardSpriteChanged(
+      spriteDefs,
+      spriteId,
+      FistContactSize,
+      FistContactSize,
+      buildFistContactSprite(stage),
+      "fist contact stage " & $stage
+    )
+    let
+      # Back off along the punch's own travel direction (puncher -> victim).
+      punch = aimVector(contact.angleBrads)
+      backX = int(-punch.x * float(FistContactOffset))
+      backY = int(-punch.y * float(FistContactOffset))
+      objectId = FistContactObjectBase + i
+    currentIds.add(objectId)
+    packet.addBoardObject(
+      objectId,
+      contact.x + backX - FistContactSize div 2,
+      contact.y + backY - FistContactSize div 2,
       30007,
       MapLayerId,
       spriteId
@@ -8309,6 +8402,8 @@ proc buildSpriteProtocolUpdates*(
   sim.addDamagePops(nextState.spriteDefs, currentIds, result)
   sim.addShotTracers(nextState.spriteDefs, currentIds, result)
   sim.addHitFlashes(nextState.spriteDefs, currentIds, result)
+  # Board only, on purpose: the fist stays silent in every player view.
+  sim.addFistContacts(nextState.spriteDefs, currentIds, result)
   sim.addRotatingDiamonds(nextState.spriteDefs, currentIds, result)
   sim.addMedKits(nextState.spriteDefs, currentIds, result)
   sim.addShields(nextState.spriteDefs, currentIds, result)
