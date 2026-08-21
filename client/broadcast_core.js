@@ -256,6 +256,7 @@
     let nativeW = 1, nativeH = 1;
     let lastBoardW = 0, lastBoardH = 0;  // last REAL board size; see updateNativeSize
     let scale = 1, offsetX = 0, offsetY = 0;
+    let ringBoard = null;             // ffa safe zone in BOARD px: {cx, cy, r}
     let fitScale = 1;                 // scale that fits the whole board (zoom 1).
     let zoom = 1;                     // multiplier over the fit, >= 1.
     let focusX = 0, focusY = 0;       // map px held at the viewport center.
@@ -862,6 +863,15 @@
       minimapCtx.imageSmoothingEnabled = true;
       minimapCtx.clearRect(0, 0, w, h);
       minimapCtx.drawImage(offscreenCanvas, 0, 0, w, h);
+      if (ringBoard) {
+        const mk = w / nativeW;
+        minimapCtx.beginPath();
+        minimapCtx.arc(ringBoard.cx * mk, ringBoard.cy * mk, ringBoard.r * mk,
+          0, Math.PI * 2);
+        minimapCtx.strokeStyle = 'rgba(178, 108, 255, 0.9)';
+        minimapCtx.lineWidth = 2;
+        minimapCtx.stroke();
+      }
 
       const size = canvasCssSize();
       const visW = Math.min(nativeW, size.w / scale);
@@ -1102,6 +1112,7 @@
         // bilinear wash, so keep smoothing off in every regime.
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(offscreenCanvas, 0, 0, nativeW * scale, nativeH * scale);
+        if (ringBoard) drawRing(ctx, scale);
         ctx.restore();
       }
 
@@ -1603,6 +1614,56 @@
       sendPacket(up);
     }
 
+    // The ffa safe zone, from the state frame's `ring` object. The frame
+    // carries logical map px; `boardScale` is the frame's `bs` (board px per
+    // map px). The sim damages outside exactly this circle (ffaOutsideRing),
+    // so the overlay draws the CURRENT radius the frame carries — never a
+    // predicted, eased, or interpolated one.
+    function setRing(ring, boardScale) {
+      if (!ring || !(ring.radius > 0) || !Array.isArray(ring.center)) {
+        if (ringBoard) { ringBoard = null; scheduleDraw(); }
+        return;
+      }
+      const k = Number(boardScale) || 1;
+      const next = {
+        cx: ring.center[0] * k,
+        cy: ring.center[1] * k,
+        r: ring.radius * k
+      };
+      if (ringBoard && ringBoard.cx === next.cx && ringBoard.cy === next.cy &&
+          ringBoard.r === next.r) {
+        return;
+      }
+      ringBoard = next;
+      scheduleDraw();
+    }
+
+    // Shade the danger region OUTSIDE the circle and stroke the boundary as a
+    // bright line over a dark halo (same recipe as the minimap view box: the
+    // board under it can be pale concrete or near-black pit). Runs in the
+    // board transform — the caller has already applied dpr and the letterbox
+    // offset — so positions scale by `drawScale` only.
+    function drawRing(targetCtx, drawScale) {
+      const cx = ringBoard.cx * drawScale;
+      const cy = ringBoard.cy * drawScale;
+      const r = ringBoard.r * drawScale;
+      targetCtx.save();
+      targetCtx.beginPath();
+      targetCtx.rect(0, 0, nativeW * drawScale, nativeH * drawScale);
+      targetCtx.arc(cx, cy, r, 0, Math.PI * 2);
+      targetCtx.fillStyle = 'rgba(96, 40, 160, 0.18)';
+      targetCtx.fill('evenodd');
+      targetCtx.beginPath();
+      targetCtx.arc(cx, cy, r, 0, Math.PI * 2);
+      targetCtx.strokeStyle = 'rgba(12, 6, 20, 0.85)';
+      targetCtx.lineWidth = 4;
+      targetCtx.stroke();
+      targetCtx.strokeStyle = 'rgba(178, 108, 255, 0.95)';
+      targetCtx.lineWidth = 2;
+      targetCtx.stroke();
+      targetCtx.restore();
+    }
+
     function getTransform() {
       return viewSnapshot();
     }
@@ -1677,6 +1738,7 @@
       setViewportFit,
       setViewportSize,
       getPaceStats,
+      setRing,
       zoomAt,
       setZoom,
       panBy,

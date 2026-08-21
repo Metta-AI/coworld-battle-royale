@@ -2056,6 +2056,10 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     if (core) {
       var bt = core.getTransform();
       if (bt.nativeW > 1 && bt.nativeH > 1) { s.boardW = bt.nativeW; s.boardH = bt.nativeH; }
+      // The ffa safe zone rides every state frame ("ring", logical map px at
+      // the frame's board scale); the core overlays it on the board so the
+      // circle spectators see IS the circle the sim damages outside of.
+      if (core.setRing) core.setRing(s.ring || null, s.bs || 1);
     }
     syncBoardAspect(s);
     postToShell('frame', s);
