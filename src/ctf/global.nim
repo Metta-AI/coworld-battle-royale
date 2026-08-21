@@ -2431,10 +2431,33 @@ const
     ## stays inside when r <= slope * f / this. Dividing the local half-width by
     ## it is the whole difference between a plume that hugs the cone and one
     ## that leans a few px over its edge.
-  SprayPuffMinRadius = 3
-    ## Floor for the puff at the nozzle, where the cone is only a few px wide;
-    ## the cone's body allowance (PlasmaArcBodyRadius) covers this stub many
-    ## times over, so it cannot paint anything the cone does not hit.
+  SprayPuffMinRadius = min(
+    SprayNozzleFwd,
+    int((float(PlasmaArcBodyRadius) + SprayConeSlope * float(SprayNozzleFwd)) /
+      SprayConeNorm)
+  )
+    ## Floor for the puff at the nozzle, where the CENTERLINE cone is only ~4px
+    ## wide. The centerline is not the envelope that damages: a victim is a
+    ## PlasmaArcBodyRadius disc, so the region a painted pixel can honestly
+    ## cover is the cone widened by that radius, and near the nozzle that
+    ## allowance dwarfs the wedge itself. A 3px stub therefore drew a mist far
+    ## THINNER than what the spray already hits — dishonest in the other
+    ## direction, and it read as a hairline dribble at the can rather than an
+    ## atomized burst.
+    ##
+    ## The floor is the largest radius that stays inside that envelope, and it
+    ## is DERIVED from the two limits that bind at the nozzle rather than
+    ## picked:
+    ##   sideways — the widened cone's perpendicular clearance,
+    ##              (PlasmaArcBodyRadius + slope * f) / norm, ~20px at f = 16;
+    ##   backwards — the nozzle distance itself, because selectArcVictims takes
+    ##              only forward > 0: nothing behind the sprayer's own center
+    ##              takes damage, so no puff may reach past the cone's apex.
+    ## The backward limit is the tighter of the two, so the floor is exactly
+    ## SprayNozzleFwd (16px): the near puff grows until it just touches the
+    ## apex. The static below re-checks both limits for every puff of every
+    ## stage, so re-posing the can or re-angling the cone cannot quietly push
+    ## the mist past the damage.
 
 static:
   ## The plume is placed and sized against the FX span (PlasmaArcFxReach /
@@ -2504,6 +2527,27 @@ proc plasmaPulseDiameter*(pulse, stage: int): int =
     forward = plasmaPulseForward(pulse, stage)
     halfWidth = SprayConeSlope * float(forward) / SprayConeNorm
   2 * max(SprayPuffMinRadius, int(halfWidth))
+
+static:
+  ## Containment, puff by puff: no drawn puff may leave the DAMAGE ENVELOPE —
+  ## the centerline cone widened by the PlasmaArcBodyRadius victim disc, which
+  ## is the region where a body centered on a painted pixel does take damage.
+  ## The floor above is the only place the drawn radius exceeds the bare cone,
+  ## and this is what bounds it.
+  for stage in 0 ..< PlasmaArcFxStages:
+    for pulse in 0 ..< PlasmaArcFxPulses:
+      let
+        forward = plasmaPulseForward(pulse, stage)
+        radius = plasmaPulseDiameter(pulse, stage) div 2
+        where = " (pulse " & $pulse & " stage " & $stage & ", forward " &
+          $forward & ", radius " & $radius & ")"
+      doAssert radius <= forward,
+        "a puff reaches behind the cone's apex, where nothing takes damage" &
+        where
+      doAssert float(radius) * SprayConeNorm - SprayConeSlope * float(forward) <=
+          float(PlasmaArcBodyRadius),
+        "a puff leans outside the cone widened by the victim-body radius" &
+        where
 
 ## --- Team-colored PAINT art: always tint from teamPaintRgba ---
 ## Every paint visual below (spray mist, grenade blast, paintball tracer + head,

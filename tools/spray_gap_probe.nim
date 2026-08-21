@@ -8,7 +8,7 @@
 ##
 ## Usage (from the repo root): nim r tools/spray_gap_probe.nim
 import
-  std/strformat,
+  std/[math, strformat],
   ../src/ctf/global, ../src/ctf/sim,
   toolutil
 
@@ -64,13 +64,16 @@ proc main() =
       if game.damages(d, s): lastSide = s else: break
     echo &"  forward {d:3}px -> hp comes off out to {lastSide:3}px sideways"
 
-  # A cog is PAINTED when the plume touches its body, and DAMAGED when its
-  # center is inside the cone. Both are measured against the same body radius,
-  # so it CANCELS: the honest comparison is the plume's own outermost pixel
-  # against the bare cone. (Adding the body to only one side is the mistake
-  # that made this weapon's overdraw look contained when it was not.)
+  # LENGTHWISE a cog is PAINTED when the plume touches its body and DAMAGED when
+  # its center is inside the reach, so the body radius appears on both sides and
+  # CANCELS: the honest forward comparison is the plume's outermost pixel against
+  # the bare reach. (Adding the body to only one side is the mistake that made
+  # this weapon's overdraw look contained when it was not.) SIDEWAYS it does not
+  # cancel, because the paint is centered ON the axis: see below.
   echo "\n=== PAINT vs CONE: does anything painted escape damage? ==="
-  let slope = float(PlasmaArcMaxWidth) / (2.0 * float(PlasmaArcReach))
+  let
+    slope = float(PlasmaArcMaxWidth) / (2.0 * float(PlasmaArcReach))
+    norm = sqrt(1.0 + slope * slope)
   var
     tip = 0.0
     worstLateral = -1e9
@@ -82,8 +85,11 @@ proc main() =
         w = abs(float(plasmaPulseRight(pulse, stage)))
         r = float(plasmaPulseDiameter(pulse, stage)) / 2
       tip = max(tip, f + r)
-      if (w + r) - slope * f > worstLateral:
-        worstLateral = (w + r) - slope * f
+      # A puff is a DISC, so what has to fit is its distance to the sim's
+      # boundary line (perp = slope * forward + body radius): the radius pays
+      # the slant, the center's own offset does not.
+      if w + r * norm - slope * f > worstLateral:
+        worstLateral = w + r * norm - slope * f
         worstAt = f
   echo &"  forward: paint tip {tip:.1f}px vs cone reach {PlasmaArcReach}px"
   if tip <= float(PlasmaArcReach):
@@ -92,9 +98,19 @@ proc main() =
   else:
     echo &"    OVERDRAW {tip - float(PlasmaArcReach):.1f}px: a cog centered up to " &
       &"{tip + float(PlasmaArcBodyRadius):.1f}px out is painted but unhurt"
-  echo &"  lateral: worst overdraw {worstLateral:.1f}px (at {int(worstAt)}px forward)"
-  if worstLateral > 0:
-    echo "    an EDGE GRAZE only: the mist is drawn oversize so its puffs " &
-      "merge, so it runs wider than the cone that sizes them"
+  echo &"  lateral: worst reach past the CENTERLINE cone {worstLateral:.1f}px " &
+    &"(at {int(worstAt)}px forward)"
+  # Sideways the centerline is not the bound that matters: selectArcVictims
+  # tests a PlasmaArcBodyRadius disc, so paint out to the cone WIDENED by that
+  # radius still covers only cogs that lose hp. Near the nozzle the widening is
+  # most of the envelope (~20px against a ~4px wedge), which is what lets
+  # SprayPuffMinRadius draw an atomized burst there instead of a hairline.
+  if worstLateral <= float(PlasmaArcBodyRadius):
+    echo &"    INSIDE THE ENVELOPE: {float(PlasmaArcBodyRadius) - worstLateral:.1f}px " &
+      "of the victim-body allowance still unspent — a cog centered on any " &
+      "painted pixel loses hp"
+  else:
+    echo &"    OVERDRAW {worstLateral - float(PlasmaArcBodyRadius):.1f}px past the " &
+      "widened cone: paint can cover a cog that walks away clean"
 
 main()
