@@ -87,7 +87,7 @@ jobs:
         # gen-colossal-4team is the address-space canary: a 4992x4992 board
         # only fits wasm32 because oversize boards emit at 1x (see
         # MaxSupersampledMapPixels). Re-record on GameVersion bumps with:
-        #   tools/record_colossal_demo.sh <out> 4242 1500 16
+        #   tools/record_colossal_demo.sh <out> 4242 300 16
         run: |
           fail=0
           for replay in tests/replays/ctf.bitreplay \
