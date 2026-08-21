@@ -21,8 +21,15 @@ nim c -d:release players/baseline/baseline.nim
 server binary and attach baseline bots yourself:
 
 ```bash
-bin/ctf-server --config config.br.json --port 9500 &      # FFA config (mode: "ffa")
-for i in $(seq 0 11); do players/baseline/baseline --port 9500 & done
+# Options use Nim colon syntax: --config-path:<path> --port:<port>
+# (also: --save-replay:<path> to record, --load-replay:<path> to replay).
+bin/ctf-server --config-path:config.br.json --port:9500 &   # FFA config (mode: "ffa")
+# Baseline bots read their connection from COWORLD_PLAYER_WS_URL; the binary is baseline.out.
+# Tokens must match the config's roster tokens (config.json / config.br.json use 0xBADA55_<slot>).
+for i in $(seq 0 11); do
+  COWORLD_PLAYER_WS_URL="ws://127.0.0.1:9500/player?name=Bot_$i&slot=$i&token=0xBADA55_$i" \
+    players/baseline/baseline.out &
+done
 ```
 
 Then open the spectator viewer at:
@@ -34,6 +41,26 @@ http://127.0.0.1:<port>/client/global
 `/client/global` is the generic bitworld global client (websocket `/global`); the
 `/replay*` routes serve a different, embedded replay client. Viewer path decisions
 live in `src/ctf/server.nim`.
+
+### Testing broadcast-chrome features (`s.ring`, HUD state): use a recorded replay
+
+The rich broadcast UI (`client/replay_broadcast.html` + `client/broadcast_core.js`)
+only receives its JSON state frames (`onFrame` — ring, roster, events) when the
+server is started with `--load-replay:<file>`; on a live server, `/client/replay`
+can stay stuck on the locker-room curtain (binary sprite packets arrive but no
+chrome frame dismisses it). Workflow that works:
+
+```bash
+bin/ctf-server --config-path:/tmp/my.json --save-replay:/tmp/match.bitreplay --port:9500 &
+# ...attach bots, let the match finish (fastMode:true finishes quickly)...
+bin/ctf-server --load-replay:/tmp/match.bitreplay --port:9501 &
+# open http://127.0.0.1:9501/client/replay — full chrome: timeline, seek, speed, minimap
+```
+
+The replay viewer's timeline makes shrink/floor comparisons easy (seek to two ticks,
+compare screenshots). To inspect numeric state (e.g. `ring.radius`, roster hp) from
+the devtools console, the parsed state is closure-scoped — hook `JSON.parse` to
+capture frames containing the field you care about.
 
 ### Make the match last long enough to inspect
 
