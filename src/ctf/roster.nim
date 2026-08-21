@@ -523,6 +523,7 @@ proc addPlayer*(
     aimBrads: sim.gameMap.spawnAimBrads(team),
     flipH: sim.gameMap.spawnFlipH(team),
     windupBrads: -1,
+    weaponTier: FfaWeaponMid,
     arcAimBrads: -1,
     team: team,
     alive: true,

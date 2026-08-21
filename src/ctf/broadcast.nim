@@ -508,6 +508,9 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
     for sp in sim.medKitSpawns: addPickup("medkit", sp)
     for sp in sim.shieldSpawns: addPickup("shield", sp)
     for sp in sim.plasmaArcSpawns: addPickup("spray", sp)
+    for sp in sim.lowGunSpawns: addPickup("low gun", sp)
+    for sp in sim.midGunSpawns: addPickup("mid gun", sp)
+    for sp in sim.heavyGunSpawns: addPickup("heavy gun", sp)
     for sp in sim.barrierSpawns: addPickup("barrier", sp)
 
     # --- paintball beams in flight (sim.recentShots; cosmetic, never hashed) ---
@@ -638,6 +641,9 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
   for sp in sim.medKitSpawns: addMapItem("medkit", sp)
   for sp in sim.shieldSpawns: addMapItem("shield", sp)
   for sp in sim.plasmaArcSpawns: addMapItem("spray", sp)
+  for sp in sim.lowGunSpawns: addMapItem("low gun", sp)
+  for sp in sim.midGunSpawns: addMapItem("mid gun", sp)
+  for sp in sim.heavyGunSpawns: addMapItem("heavy gun", sp)
   for sp in sim.barrierSpawns: addMapItem("barrier", sp)
 
   let mapJson = %*{

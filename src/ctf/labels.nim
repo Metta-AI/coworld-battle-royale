@@ -127,9 +127,14 @@ const
     ## tail changes every time the wearer picks something up.
   LabelPrefixCogGun* = "cog gun "
     ## The held paintball marker, `cog gun <color>` (board stream only).
+  LabelPrefixCogLowGun* = "cog low gun "
+  LabelPrefixCogMidGun* = "cog mid gun "
+  LabelPrefixCogHeavyGun* = "cog heavy gun "
   LabelPrefixCogSprayCan* = "cog spray can "
     ## The held spray can, `cog spray can <color>`, which REPLACES the gun
     ## sprite while one is carried — so the silhouette shows the live weapon.
+  LabelPrefixCogFist* = "cog fist "
+    ## An unarmed FFA cog, carrying neither spray nor gun.
   LabelPrefixGameParams* = "game teams "
     ## The episode-parameter marker, `game teams <count> map <width>x<height>`:
     ## an invisible 1x1 object in the init snapshot stating the match setup
@@ -248,6 +253,11 @@ const
   LabelWeaponSpray* = "spray"
     ## Spray can. (0.7.x renamed the plasma arc, whose token was "arc"; the
     ## internal `hasPlasmaArc` field kept its name, the wire token did not.)
+  LabelWeaponFist* = "fist"
+    ## Unarmed FFA fallback weapon.
+  LabelWeaponLowGun* = "low gun"
+  LabelWeaponMidGun* = "mid gun"
+  LabelWeaponHeavyGun* = "heavy gun"
   LabelTokenShield* = "shield"
     ## Optional identity-badge suffix: the wearer carries a shield.
   LabelTokenNade* = "nade"
@@ -445,11 +455,19 @@ proc labelWeapon*(token: string): string =
   ## LabelWeaponSpray.
   LabelPrefixWeapon & token
 
-proc labelCogWeapon*(color: string; spray: bool): string =
+proc labelCogWeapon*(color: string; spray, ffa: bool; tier: int): string =
   ## The held-weapon sprite label on the board rig: `cog spray can <color>`
-  ## when a spray can is carried, `cog gun <color>` otherwise. A cog holds
-  ## exactly one thing, so these two are mutually exclusive per player.
-  (if spray: LabelPrefixCogSprayCan else: LabelPrefixCogGun) & color
+  ## when a spray can is carried; otherwise the tier names the held weapon.
+  ## Tier zero is the unarmed FFA fist, while CTF tier two keeps its legacy
+  ## `cog gun <color>` label.
+  let prefix =
+    if spray: LabelPrefixCogSprayCan
+    elif tier == 0: LabelPrefixCogFist
+    elif tier == 1: LabelPrefixCogLowGun
+    elif tier == 3: LabelPrefixCogHeavyGun
+    elif ffa: LabelPrefixCogMidGun
+    else: LabelPrefixCogGun
+  prefix & color
 
 proc labelShoutPrefix*(color: string): string =
   ## The prefix a listener matches to attribute a shout to a team:
@@ -523,6 +541,12 @@ const PolicyScannedLabels* = [
   LabelBarrier,
   LabelBarrierCarried,
   LabelThrowTarget,
+  labelWeapon(LabelWeaponFist),
+  labelWeapon(LabelWeaponLowGun),
+  labelWeapon(LabelWeaponMidGun),
+  labelWeapon(LabelWeaponHeavyGun),
+  labelWeapon(LabelWeaponSpray),
+  labelWeapon(LabelWeaponGun),
   labelFlag("red"),
   labelFlag("blue"),
   labelFlagPlanted("red"),
@@ -539,6 +563,4 @@ const PolicyScannedLabels* = [
   labelCorpse("red", LabelSideLeft),
   labelCorpse("blue", LabelSideRight),
   labelCorpse("blue", LabelSideLeft),
-  labelWeapon(LabelWeaponGun),
-  labelWeapon(LabelWeaponSpray)
 ]

@@ -11,7 +11,7 @@
     "replay_viewer": {
       "bundle": "static-replay-viewer"
     },
-    "description": "Battle Royale: a free-for-all last-one-standing shooter, AI bots only. Every seat is its own team with its own color - there are no allies. N players (2-16) spawn on a ring around a large generated arena with 20 hit points and ONE life: there is no respawn, so a death is final and the episode ends when one player is left standing (or the clock expires, in which case the deepest survivor ranks first). A shrinking circular safe zone squeezes the board over 150 seconds down to 35% of its area; standing outside it costs a hit point every 48 ticks, and stepping back inside drains that exposure rather than resetting it, so the ring pressures players toward each other instead of executing them. A deterministic loot cluster sits in the center - med kits, shields, spray cans, barriers and grenades, weighted toward offense so survivors cannot simply out-heal the ring - and respawns on a timer, which makes the middle the scarce ground worth fighting over. Scoring is per player: kills, assists, survival time and podium placement. Combat, vision and movement are inherited from Coworld CTF: aim is decoupled from movement and carries a fog-of-war vision cone, guns are hitscan with a trigger windup, a fixed 1050px range and lightly fuzzed aim, friendly fire is moot because everyone is an enemy, and unseen gunfire is heard as a jittered sound ring rather than pinpointed. Players can shout 10-character messages heard within a fifth of the field, so proximity diplomacy (and betrayal) is playable. Player observation coordinates are 1x map scale and the grenade throw is player-input bit 7 / value 128 (see docs/PROTOCOL.md).",
+    "description": "Battle Royale: a free-for-all last-one-standing shooter, AI bots only. Every seat is its own team with its own color - there are no allies. N players (2-16) spawn on a large generated arena's evenly spaced ring; a deterministic seed-derived offset rotates seat ownership of the unchanged pads each episode. Players have 20 hit points and ONE life: there is no respawn, so a death is final and the episode ends when one player is left standing (or the clock expires, in which case the deepest survivor ranks first). A shrinking circular safe zone squeezes the board over 150 seconds down to a 3% floor of its area; standing outside it costs a hit point every 48 ticks, and stepping back inside drains that exposure rather than resetting it. The tight final floor herds late survivors into final engagements, while gradual outside damage limits ring-only executions. In the late game, when three or fewer players remain, baseline bots close on the nearest living enemy while still respecting ring safety and normal aim/fire gates. Arena-anchored deterministic loot bands keep low guns broad across the board, mid guns intermediate, and heavy guns in the center; the non-gun center cluster remains compact even at the 3% floor. Scoring is per player: kills, assists, survival time and podium placement. Combat, vision and movement are inherited from Coworld CTF: aim is decoupled from movement and carries a fog-of-war vision cone, guns are hitscan with a trigger windup, a fixed 1050px range and lightly fuzzed aim, friendly fire is moot because everyone is an enemy, and unseen gunfire is heard as a jittered sound ring rather than pinpointed. Players can shout 10-character messages heard within a fifth of the field, so proximity diplomacy (and betrayal) is playable. Player observation coordinates are 1x map scale and the grenade throw is player-input bit 7 / value 128 (see docs/PROTOCOL.md).",
     "owner": "treeform@softmax.com",
     "runnable": {
       "type": "game",
@@ -448,7 +448,7 @@
           "default": "ctf"
         },
         "numPlayers": {
-          "description": "FFA seat count N; explicit values win, otherwise FFA derives it from players length or tokens length. Every ffa derivation (spawn ring, lobby minPlayers, per-player containers) follows it. Must be 0 in ctf.",
+          "description": "FFA seat count N; explicit values win, otherwise FFA derives it from players length or tokens length. Every ffa derivation (fixed spawn ring, seed-derived per-episode seat-to-pad rotation, lobby minPlayers, per-player containers) follows it. Must be 0 in ctf.",
           "type": "integer",
           "minimum": 0,
           "maximum": 16,
@@ -466,11 +466,11 @@
           "default": 150
         },
         "ringFloorAreaPct": {
-          "description": "FFA only: safe-zone floor as a percent of arena area.",
+          "description": "FFA only: safe-zone floor as a percent of arena area; the shipped default is a 3% final floor that herds late survivors while gradual outside damage limits ring-only executions.",
           "type": "integer",
           "minimum": 1,
           "maximum": 100,
-          "default": 35
+          "default": 3
         },
         "ringDamageTicks": {
           "description": "FFA only: ticks of outside-ring exposure per hit point lost.",
@@ -483,6 +483,13 @@
           "type": "integer",
           "minimum": 0,
           "default": 2
+        },
+        "ffaGunDamage": {
+          "description": "FFA only: direct mid-tier gun damage per hit; low and heavy tiers use their named ladder constants.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3
         },
         "ffaLootCount": {
           "description": "FFA only: total items in the deterministic center loot cluster, weighted toward offense as it grows.",
@@ -502,6 +509,27 @@
           "type": "integer",
           "minimum": 1,
           "default": 480
+        },
+        "ffaLowGunSpawns": {
+          "description": "FFA only: low-tier gun pickup count; zero derives one per player and places them outside the center cluster.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "default": 0
+        },
+        "ffaMidGunSpawns": {
+          "description": "FFA only: mid-tier gun pickup count; zero derives max(2, numPlayers div 4) and places them at mid radius.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "default": 0
+        },
+        "ffaHeavyGunSpawns": {
+          "description": "FFA only: heavy-tier gun pickup count; zero derives max(1, numPlayers div 4) and places them in the center cluster.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "default": 0
         },
         "mapSymmetry": {
           "description": "Generated-map symmetry lock: mirror or rot180 (2-team shapes; empty draws from the map seed).",
@@ -733,7 +761,7 @@
     {
       "id": "br-12",
       "name": "Battle Royale (12)",
-      "description": "Twelve-player free-for-all on random generated huge terrain: one life and 20 hit points each, a center loot cluster, and a safe zone that shrinks to 35% of the arena over 150 seconds. Every seat is its own team with its own color. Last player standing wins; scoring is per player (kills, assists, survival, podium).",
+      "description": "Twelve-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color. Last player standing wins; scoring is per player (kills, assists, survival, podium).",
       "game_config": {
         "players": [
           {
@@ -794,7 +822,7 @@
     {
       "id": "br-16",
       "name": "Battle Royale (16)",
-      "description": "The same free-for-all at full muster: sixteen players, one life and 20 hit points each, on random generated huge terrain with the shrinking safe zone and the center loot cluster.",
+      "description": "Sixteen-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color; last player standing wins and scoring is per player.",
       "game_config": {
         "players": [
           {

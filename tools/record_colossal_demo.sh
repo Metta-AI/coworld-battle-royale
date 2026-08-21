@@ -20,6 +20,9 @@ cfg["mapPath"] = "gen"
 cfg["mapSeed"] = int(sys.argv[2])
 cfg["mapSize"] = "colossal"
 cfg["minPlayers"] = 32
+# This fixture is an address-space canary, not a barrage endurance run.
+# Pin the draw ceiling so replay-viewer smoke does not scan an overtime match.
+cfg["barrageMaxPerSec"] = 0
 cfg.pop("slots", None)
 cfg["tokens"] = [f"0xBADA55_{i}" for i in range(32)]
 # Hosted-style seat names: one policy per team, seated eight times each.

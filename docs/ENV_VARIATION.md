@@ -100,21 +100,29 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `perkMods` | `PerkMods` struct / `DefaultPerkMods` | `armorHp` `0..100`, `luckDamage` `1..100`, fractions authored `0.0..1.0` (permille-stored) | Perk magnitudes: `armorHp` (1) extra hp, `scopeAim` (0.5) aim-sigma cut, `grenadeRange` (0.25) extra throw range, `thrusterSpeed` (0.1) extra speed, `luckChance` (0.1) lucky-shot odds, `luckDamage` (2) lucky-shot hp. |
 | `puddleDamagePct` | int / `20` | `0..100` | Percent chance of 1 damage per full second of continuous paint-puddle occupancy; inert on maps without puddles (`mapPuddles`). |
 | `barrierPickups` | int / `0` | `0..2` ([sim_config.nim](../src/ctf/sim_config.nim) validate, cap `MaxBarrierPickupsPerTeam`) | Cardboard-barrier pickups PER TEAM, staged between base anchor and map center ([sim.nim `barrierSpawnPoints`](../src/ctf/sim.nim)); 0 = none (the default — echo omitted, no GV bump). |
-| `mode` | string / `"ctf"` | `mode` | `"ctf"` or `"ffa"` | Match rules. `"ctf"` is the classic team game and every ffa branch is gated off it (a ctf game draws no new RNG and hashes exactly as before); `"ffa"` is battle royale: single life, no hearts, N-derived spawn ring, last player standing. Echoed into the replay config only in ffa. |
-| `numPlayers` | int / `0` | `numPlayers` | `2..16` in ffa; must be `0` in ctf | ffa seat count N. Explicit values win; when omitted, FFA derives N from `players` length, or `tokens` length when no `players` roster is authored. Everything ffa derives from it — the spawn ring ([sim_state.nim `ffaSpawnPosition`](../src/ctf/sim_state.nim)), the lobby's `minPlayers` default, every per-player container. |
+| `mode` | string / `"ctf"` | `mode` | `"ctf"` or `"ffa"` | Match rules. `"ctf"` is the classic team game and every ffa branch is gated off it (a ctf game draws no new RNG and hashes exactly as before); `"ffa"` is battle royale: single life, no hearts, N-derived spawn ring with seed-rotated seat-to-pad ownership, last player standing. Echoed into the replay config only in ffa. |
+| `numPlayers` | int / `0` | `numPlayers` | `2..16` in ffa; must be `0` in ctf | ffa seat count N. Explicit values win; when omitted, FFA derives N from `players` length, or `tokens` length when no `players` roster is authored. Everything ffa derives from it — the fixed spawn-pad ring and its seed-derived per-episode rotation ([sim_state.nim `ffaSpawnPosition`](../src/ctf/sim_state.nim)), the lobby's `minPlayers` default, every per-player container. |
 | `ringEnabled` | bool / `false` | `ringEnabled` | ffa only | Enables the shrinking circular safe zone; omitted ffa configs enable it by default. |
 | `ringShrinkSec` | int / `150` (`FfaRingShrinkSec`) | `ringShrinkSec` | `>=1` (ffa only) | Linear safe-zone shrink duration from the arena-covering radius to the configured floor. |
-| `ringFloorAreaPct` | int / `35` (`FfaRingFloorAreaPct`) | `ringFloorAreaPct` | `1..100` (ffa only) | Safe-zone floor as a percentage of the arena area. |
+| `ringFloorAreaPct` | int / `3` (`FfaRingFloorAreaPct`) | `ringFloorAreaPct` | `1..100` (ffa only) | Safe-zone floor as a percentage of the arena area; the shipped 3% floor herds late survivors while gradual outside damage limits ring-only executions. |
 | `ringDamageTicks` | int / `48` (`FfaRingDamageTicks`) | `ringDamageTicks` | `>=1` (ffa only) | Cadence for one HP of outside-ring damage. |
-| `ringRecoveryTicks` | int / `2` (`FfaRingRecoveryTicks`) | `ringRecoveryTicks` | `>=0` (ffa only) | Exposure ticks drained per tick spent inside the safe zone; zero reproduces reset-on-entry behavior for measurement arm A. |
-| `ffaGunDamage` | int / `2` (`FfaGunDamage`) | `ffaGunDamage` | `1..4` (ffa only) | Direct gun damage per hit against the FFA hit-point pool. |
+| `ringRecoveryTicks` | int / `2` (`FfaRingRecoveryTicks`) | `ringRecoveryTicks` | `>=0` (ffa only) | Exposure ticks drained per tick spent inside the safe zone; zero reproduces reset-on-entry behavior. |
+| `ffaGunDamage` | int / `3` (`FfaGunDamage`, mid-tier) | `ffaGunDamage` | `1..5` (ffa only) | Direct mid-tier gun damage per hit against the FFA hit-point pool; low and heavy tiers use their named ladder constants. |
 | `ffaSprayDamage` | int / `4` (`FfaSprayDamage`) | `ffaSprayDamage` | `1..4` (ffa only) | Direct plasma-arc damage in FFA. |
 | `ffaGrenadeDamage` | int / `4` (`FfaGrenadeDamage`) | `ffaGrenadeDamage` | `1..4` (ffa only) | Direct grenade damage in FFA. |
 | `ffaGrenadeTrenchSplashDamage` | int / `1` (`FfaGrenadeTrenchSplashDamage`) | `ffaGrenadeTrenchSplashDamage` | `1..4` (ffa only) | FFA grenade damage when the victim is in another trench. |
 | `ffaMedKitSpawns` | int / `2` (`FfaMedKitSpawns`) | `ffaMedKitSpawns` | `1..2` (ffa only) | Upper bound on the weighted med-kit share of the FFA center cluster; the share remains a minority as the cluster grows. |
 | `ffaLootCount` | int / `12` (`FfaLootCount`) | `ffaLootCount` | `0..64` (ffa only) | Total seq-backed center-cluster items. Sustain items use roughly one sixth each when large enough; the remainder is split between spray cans and barriers, plus four relocated grenade slots. |
-| `ffaLootRadius` | int / `180` (`FfaLootRadius`) | `ffaLootRadius` | `>=1` (ffa only) | Maximum center-cluster radius in map pixels; deterministic items use multiple inward/outward bands and placement clamps inside the configured final ring floor. |
+| `ffaLootRadius` | int / `180` (`FfaLootRadius`) | `ffaLootRadius` | `>=1` (ffa only) | Maximum center-cluster radius in map pixels; center items are bounded by the rectangular arena, while low/mid/heavy gun families use deterministic per-axis outer, intermediate, and center bands. |
 | `ffaLootRespawnTicks` | int / `480` (`FfaLootRespawnTicks`) | `ffaLootRespawnTicks` | `>=1` (ffa only) | Respawn cadence for offensive FFA cluster items after pickup. Med kits and shields retain their slower 30-second cadence; initial appearances are staggered every three seconds. |
+| `ffaLowGunSpawns` | int / `0` (`FfaLowGunSpawns`) | `ffaLowGunSpawns` | `0..16` (ffa only) | Low-tier gun pickups. `0` derives one per player; deterministic placements are outside the center cluster and use the offensive loot respawn cadence. |
+| `ffaMidGunSpawns` | int / `0` (`FfaMidGunSpawns`) | `ffaMidGunSpawns` | `0..16` (ffa only) | Mid-tier gun pickups. `0` derives `max(2, numPlayers div 4)`; deterministic placements sit between the center cluster and spawn ring and use the offensive loot respawn cadence. |
+| `ffaHeavyGunSpawns` | int / `0` (`FfaHeavyGunSpawns`) | `ffaHeavyGunSpawns` | `0..16` (ffa only) | Heavy-tier gun pickups. `0` derives `max(1, numPlayers div 4)`; deterministic placements are center-cluster only and use the offensive loot respawn cadence. |
+
+The baseline FFA bot enables this late-close behavior by default: once three or
+fewer players remain, it closes on the nearest living enemy while retaining
+ring safety and normal aim/fire gates. Set `CTF_BOT_FFA_LATE_CLOSE=0` to
+disable it for comparison arms; `1` explicitly enables it.
 
 **Per-team handicap** ([sim_types.nim `handicaps`](../src/ctf/sim_types.nim), accessors
 `hitPointsFor`/`livesFor`/`maxSpeedFor`/`missPermilleFor`): a single `0.0..1.0`
@@ -204,11 +212,15 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 | `assistWindowTicks` | int / `240` (`FfaAssistWindowTicks`) | `assistWindowTicks` | `>=0` (ffa only) | How far back a damager still counts as an assister; also bounds the in-sim damage log. |
 | `podiumPoints` | `seq[int]` / `@[100, 40, 15]` (`FfaPodiumPoints`) | `podiumPoints` | each `>=0` (ffa only) | ffa reward by final placement, best first; places past the list pay nothing. |
 
-ffa consts: `FfaHitPoints`=20 (spawn pool), weapon band `FfaGunDamage`=2 /
-`FfaSprayDamage`=4 / `FfaGrenadeDamage`=4 / `FfaGrenadeTrenchSplashDamage`=1,
+ffa consts: `FfaHitPoints`=20 (spawn pool), weapon ladder
+`FfaFistDamage`=2 / `FfaLowGunDamage`=2 / `FfaMidGunDamage`=3 /
+`FfaHeavyGunDamage`=5 with cooldown percentages 200% / 150% / 100% / 60%,
+plus `FfaSprayDamage`=4 / `FfaGrenadeDamage`=4 /
+`FfaGrenadeTrenchSplashDamage`=1,
 `FfaMedKitSpawns`=2,
 `FfaSpawnRingPermille`=800 (spawn-ring radius as permille of the inscribed
-circle), `FfaMinPlayers`=2, `FfaMaxPlayers`=16. ffa win logic: the game ends
+circle; seed-derived rotation changes ownership, not the pad set),
+`FfaMinPlayers`=2, `FfaMaxPlayers`=16. ffa win logic: the game ends
 when at most one player is alive or the clock runs out, and the total
 placement order (alive > later death tick > kills > damage dealt > lower slot)
 always names a single winner — an ffa match is never a draw.

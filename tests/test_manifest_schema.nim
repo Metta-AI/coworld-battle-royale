@@ -117,12 +117,20 @@ const SampleJson = """{
                       "ringDamageTicks": 48},
   "ringRecoveryTicks": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
                         "ringRecoveryTicks": 2},
+  "ffaGunDamage": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                   "ffaGunDamage": 4},
   "ffaLootCount": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
                    "ffaLootCount": 8},
   "ffaLootRadius": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
                     "ffaLootRadius": 400},
   "ffaLootRespawnTicks": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
                           "ffaLootRespawnTicks": 480},
+  "ffaLowGunSpawns": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                      "ffaLowGunSpawns": 4},
+  "ffaMidGunSpawns": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                      "ffaMidGunSpawns": 2},
+  "ffaHeavyGunSpawns": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
+                        "ffaHeavyGunSpawns": 1},
   "mapSymmetry": {"mapSymmetry": "mirror", "mapPath": "gen"},
   "mapColumns": {"mapColumns": 18, "mapPath": "gen"},
   "mapWindows": {"mapWindows": 4, "mapPath": "gen"},
@@ -193,6 +201,10 @@ suite "league manifest config_schema vs GameConfig":
       let description = schema["properties"][key]["description"].getStr
       check "platform" in description
 
+  test "ffa seat schema documents seed-rotated spawn-pad ownership":
+    let description = schema["properties"]["numPlayers"]["description"].getStr
+    check "rotation" in description
+
   test "schema defaults match the engine defaults":
     let defaults = defaultGameConfig()
     check schema["properties"]["aimTurnRate"]["default"].getInt ==
@@ -203,10 +215,14 @@ suite "league manifest config_schema vs GameConfig":
       FfaRingShrinkSec
     check schema["properties"]["ringFloorAreaPct"]["default"].getInt ==
       FfaRingFloorAreaPct
+    check schema["properties"]["ringFloorAreaPct"]["minimum"].getInt == 1
+    check schema["properties"]["ringFloorAreaPct"]["maximum"].getInt == 100
     check schema["properties"]["ringDamageTicks"]["default"].getInt ==
       FfaRingDamageTicks
     check schema["properties"]["ringRecoveryTicks"]["default"].getInt ==
       FfaRingRecoveryTicks
+    check schema["properties"]["ffaGunDamage"]["default"].getInt ==
+      FfaGunDamage
     check schema["properties"]["ffaLootCount"]["default"].getInt ==
       FfaLootCount
     check schema["properties"]["ffaLootRadius"]["default"].getInt ==

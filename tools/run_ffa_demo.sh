@@ -3,13 +3,13 @@
 # Usage: tools/run_ffa_demo.sh [numPlayers] [seed] [arm]
 # Arms: A/B/C are the prior matrix; D1=huge, D2=large, D3=small, D4=small;
 # E1=control, E2=damage, E3=persistent hurt fire, E4=combined economy;
-# R35-150=ring control, R20-100=committed ring; DEFAULT uses committed config.
+# R35-150=ring control, R20-100=legacy comparison; DEFAULT uses shipped I.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 N="${1:-12}"
 SEED="${2:-42}"
-ARM="${3:-${DEMO_ARM:-C}}"
+ARM="${3:-${DEMO_ARM:-I}}"
 ARM="$(printf '%s' "$ARM" | tr '[:lower:]' '[:upper:]')"
 PORT="${PORT:-21500}"
 STAMP="$(date +%Y%m%d-%H%M%S)-${ARM}-${SEED}-${N}"
@@ -66,6 +66,7 @@ elif arm in ("E1", "E2", "E3", "E4"):
     cfg["ringRecoveryTicks"] = 2
 elif arm == "DEFAULT":
     cfg["mapSize"] = "huge"
+    cfg["ringFloorAreaPct"] = 3
     cfg["ringRecoveryTicks"] = 2
 elif arm == "R35-150":
     cfg["mapSize"] = "huge"
@@ -77,8 +78,13 @@ elif arm == "R20-100":
     cfg["ringShrinkSec"] = 100
     cfg["ringFloorAreaPct"] = 20
     cfg["ringRecoveryTicks"] = 2
+elif arm in ("H", "I"):
+    cfg["mapSize"] = "huge"
+    cfg["ringShrinkSec"] = 150
+    cfg["ringFloorAreaPct"] = 3
+    cfg["ringRecoveryTicks"] = 2
 else:
-    raise SystemExit("arm must be A, B, C, D1, D2, D3, D4, E1, E2, E3, E4, R35-150, R20-100, or DEFAULT")
+    raise SystemExit("arm must be A, B, C, D1, D2, D3, D4, E1, E2, E3, E4, H, I, R35-150, R20-100, or DEFAULT")
 if arm in ("E2", "E4"):
     cfg["ffaGunDamage"] = 4
 if arm == "E4":
@@ -154,6 +160,9 @@ case "$ARM" in
     ;;
   E3|E4)
     BOT_ENV+=(CTF_BOT_FFA_RETREAT_HP=6 CTF_BOT_FFA_FIRE_WHILE_HURT=1)
+    ;;
+  I)
+    BOT_ENV+=(CTF_BOT_FFA_LATE_CLOSE=1)
     ;;
 esac
 

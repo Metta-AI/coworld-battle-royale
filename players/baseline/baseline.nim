@@ -206,6 +206,8 @@ const
                               # the normal combat deadband.
   ArcReach = 130.0            # spray cone: sim reach 136px, small margin
   ArcConeBrads = 9            # cone half-width ~14deg at max reach
+  WeaponUpgradeDetour = 180.0 # armed bots take a nearby strictly better gun
+                              # without abandoning their current route
   CenterScanHalf = 280.0      # |x - CenterX| under this counts as the corridor
   TargetCallCooldown = 48     # min ticks between one bot's engage callouts
   ScanArc = 44                # scan sweeps this many brads each side of the
@@ -450,6 +452,7 @@ var
   FfaFireWhileHurt = true
   FfaTraceTickScale = 1
   FfaTraceMaxTick = 0
+  FfaLateClose = false
 
 proc parseEnvInt(name: string, fallback: int): int =
   let value = getEnv(name)
@@ -700,6 +703,19 @@ proc ffaActorsFor(client: ProtocolClient): seq[Actor] {.measure.} =
         best = i
     if best >= 0:
       result[best].hp = hp
+
+proc ffaLivingCount(client: ProtocolClient): int =
+  ## Reads the authoritative FFA alive count from the scoreboard header.
+  for o in client.spriteObjects():
+    if not o.label.startsWith("ALIVE "):
+      continue
+    let fields = o.label.splitWhitespace()
+    if fields.len >= 2:
+      try:
+        return parseInt(fields[1])
+      except ValueError:
+        discard
+  0
 
 proc actorsFor(client: ProtocolClient, color: string): seq[Actor] {.measure.} =
   ## Visible players of one color in map coordinates plus horizontal facing
@@ -1646,6 +1662,16 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   let statedAim = client.ownAimBrads()
   if statedAim >= 0:
     bot.estAim = statedAim
+  var weapon = LabelWeaponFist
+  for (_, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixWeapon):
+    weapon = label[LabelPrefixWeapon.len .. ^1]
+    break
+  let weaponTier =
+    if weapon == LabelWeaponHeavyGun: 3
+    elif weapon == LabelWeaponMidGun or weapon == LabelWeaponGun: 2
+    elif weapon == LabelWeaponLowGun: 1
+    else: 0
+  let unarmed = weaponTier == 0
 
   var hp = bot.hp
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
@@ -1660,6 +1686,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   bot.hp = hp
   let
     actors = client.ffaActorsFor()
+    livingCount = client.ffaLivingCount()
     ringRadius = ffaRingRadiusAt(max(0, bot.tick - bot.gameStart))
     ringDist = dist(me, center)
   updateTracks(bot, bot.ffaAimTracks, actors)
@@ -1699,6 +1726,60 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     moveTarget = center
     objective = "safe_zone"
     action = "retreat_ring"
+  elif FfaLateClose and livingCount > 0 and livingCount <= 3 and
+      targetIndex >= 0:
+    var
+      nearestGun = 1e18
+      nearestGunPos = me
+    if unarmed:
+      for label in [LabelWeaponLowGun, LabelWeaponMidGun, LabelWeaponHeavyGun,
+          LabelWeaponGun]:
+        for o in client.spriteObjectsWithLabel(label):
+          let gun = client.mapPos(o)
+          let d = dist(me, gun)
+          if d < nearestGun and dist(gun, center) <= float(max(1, ringRadius)):
+            nearestGun = d
+            nearestGunPos = gun
+    if unarmed and nearestGun < targetDist:
+      moveTarget = nearestGunPos
+      objective = "arm"
+      action = "move_gun"
+    else:
+      moveTarget = actors[targetIndex].pos
+      objective = "late_close"
+      action = "close_last_three"
+  elif unarmed:
+    var bestGun = 1e18
+    for label in [LabelWeaponLowGun, LabelWeaponMidGun, LabelWeaponHeavyGun,
+        LabelWeaponGun]:
+      for o in client.spriteObjectsWithLabel(label):
+        let gun = client.mapPos(o)
+        let d = dist(me, gun)
+        if d < bestGun and dist(gun, center) <= float(max(1, ringRadius)):
+          bestGun = d
+          moveTarget = gun
+    if bestGun == 1e18:
+      moveTarget = center
+    objective = "arm"
+    action = "move_gun"
+  elif weaponTier < 3:
+    var bestUpgrade = 1e18
+    for upgrade in [(FfaWeaponMid, LabelWeaponMidGun),
+        (FfaWeaponHeavy, LabelWeaponHeavyGun)]:
+      let tier = upgrade[0]
+      let label = upgrade[1]
+      if tier <= weaponTier:
+        continue
+      for o in client.spriteObjectsWithLabel(label):
+        let gun = client.mapPos(o)
+        let d = dist(me, gun)
+        if d < bestUpgrade and d <= WeaponUpgradeDetour and
+            dist(gun, center) <= float(max(1, ringRadius)):
+          bestUpgrade = d
+          moveTarget = gun
+    if bestUpgrade < 1e18:
+      objective = "upgrade"
+      action = "move_upgrade"
   elif hp < FfaRetreatHp:
     objective = "heal"
     action = "disengage"
@@ -1733,11 +1814,18 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         bestTrackD = d
         aimTarget = track.pos + track.vel * LeadTicks
     desiredAim = bradsOf(aimTarget - me)
-    if (engage or fireWhileHurt) and targetDist < 520.0:
+    let fireRange =
+      if unarmed: 70.0
+      elif weaponTier == 1: float(FfaLowGunRange)
+      else: 520.0
+    if (engage or fireWhileHurt) and targetDist < fireRange:
       rayClear = client.pixelRayClear(me, target.pos)
       wantFire = rayClear and
-        abs(bradsErr(desiredAim, bot.estAim)) <=
-          fireToleranceBrads(targetDist)
+        (if unarmed:
+          abs(bradsErr(desiredAim, bot.estAim)) <= FfaFistAimHalfBrads
+        else:
+          abs(bradsErr(desiredAim, bot.estAim)) <=
+            fireToleranceBrads(targetDist))
   let steer = bot.navSteer(client, me, moveTarget)
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
   if dist(me, bot.lastPos) < 0.8:
@@ -3471,6 +3559,7 @@ proc runBot(url: string) =
   var component = initBaselineComponent(slot)
   FfaRetreatHp = max(1, parseEnvInt("CTF_BOT_FFA_RETREAT_HP", 6))
   FfaFireWhileHurt = parseEnvBool("CTF_BOT_FFA_FIRE_WHILE_HURT", true)
+  FfaLateClose = parseEnvBool("CTF_BOT_FFA_LATE_CLOSE", true)
   FfaTraceTickScale = max(1, parseEnvInt("CTF_BOT_TRACE_TICK_SCALE", 1))
   FfaTraceMaxTick = max(0, parseEnvInt("CTF_BOT_TRACE_MAX_TICKS", 0))
   let
@@ -3486,7 +3575,8 @@ proc runBot(url: string) =
     # never set this env, so competitive builds do not send ready at all.
     fastReadyEnabled = getEnv("CTF_BOT_FAST_READY").len > 0
   startProfileTrace()
-  echo "baseline slot=", slot, " team=", bot.team, " role=", bot.role, " -> ", endpoint
+  echo "baseline slot=", slot, " team=", bot.team, " role=", bot.role,
+    " ffaLateClose=", FfaLateClose, " -> ", endpoint
   artInit(slot, $bot.team, $bot.role)
   when defined(taunt):
     startTaunts()                        # worker thread + bank prefetch

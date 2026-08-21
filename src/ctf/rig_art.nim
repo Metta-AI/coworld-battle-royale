@@ -622,7 +622,7 @@ proc rigGunPixels*(team: Team, aimStep: int, renderScale = 1): seq[uint8] =
   ## backlight glow is composited BEHIND the marker so the dark gun pops off the
   ## dark floor/legs. Team-independent shape, but cached per team for symmetry with
   ## the other rig segments. Emitted ABOVE the head z; gate the caller on a
-  ## `hasGun` flag to hide it when a cog is disarmed.
+  ## positive weapon tier to hide it when a cog is unarmed.
   ensureGunLoaded()
   rigHeldWeaponPixels(
     rigGunCache, team, aimStep, renderScale, gunMaster, gunScale, GunGripPx)

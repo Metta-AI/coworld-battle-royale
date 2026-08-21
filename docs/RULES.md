@@ -371,6 +371,50 @@ What that means in practice:
   freshly respawned player can shoot and be shot (and blocks bullets) from
   their first tick.
 
+### Battle Royale weapons
+
+FFA players spawn on an evenly spaced ring, but pad ownership is not tied to
+the platform seat: a deterministic offset derived from the match seed rotates
+which seat receives each existing pad on every episode. The ring radius,
+spacing, geometry, and nearest-walkable snapping are unchanged, and the
+assignment remains a one-to-one mapping. CTF keeps its original team spawn
+positions.
+
+Battle Royale starts every player unarmed. The fallback attack is a fist:
+it reaches 70 px, deals 2 damage, and has twice the normal fire cooldown. A
+punch has no windup, tracer, or stain; it hits the nearest living player in
+the ±48-brad aim cone. Fists are only available while the player has no gun
+or spray can.
+
+FFA gun pickups form a permanent upgrade ladder:
+
+- **Low** weapons deal 2 damage, have shorter range, and fire at roughly 1.5×
+  the normal cooldown. They are plentiful and spread outside the center.
+- **Mid** weapons deal 3 damage and use the normal gun range and cooldown. They
+  occupy a deterministic intermediate annulus between the center and outer
+  low-tier spread.
+- **Heavy** weapons deal 5 damage and fire at roughly 0.6× the normal
+  cooldown. They are scarce and only appear in the center cluster.
+
+Pickups only upgrade a carrier. A pickup at or below the current tier remains
+on the map; a higher-tier pickup is consumed and the new tier lasts for the
+episode. All three families are present from tick 0 and use the offensive FFA
+respawn cadence. The bands are anchored to the rectangular playable arena
+rather than the shrinking ring floor: the center cluster remains compact even
+at the 3% final floor, low-tier pickups use the full per-axis board extent, and
+mid-tier pickups offer an intermediate route. The center therefore offers the
+strongest weapon
+at the greatest contest risk, while low-tier pickups provide a safer but weaker
+alternative away from the opening fight.
+
+The own HUD and visible cogs identify `weapon fist`, `weapon low gun`,
+`weapon mid gun`, and `weapon heavy gun`; map pickups use `low gun`, `mid gun`,
+and `heavy gun`. CTF retains its armed start and ordinary `gun` behavior.
+
+The baseline FFA doctrine changes in the late game: when three or fewer players
+remain, bots close on the nearest living enemy instead of disengaging while
+hurt. They still respect safe-zone safety and the normal aim and fire gates.
+
 ## Grenades
 
 - **Four grenade pickups spawn in the arena corners** — two on each team's

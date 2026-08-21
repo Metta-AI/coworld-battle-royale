@@ -22,12 +22,21 @@ battle-royale match, used by the demo script.
 1. `mode: "ffa"`, `numPlayers` (2..16, validated; everything derives from it —
    no `array[16, ...]` state). Unknown-config-key warnings must still fire.
 2. Single life: `lives = 1`, no respawn (`respawnTimer` never rearms), spawn
-   `hitPoints = 20`, weapon hits deal 1..4 (gun 2, spray 4, grenade 4 — pick
-   from existing damage sites, keep integer and deterministic).
+   `hitPoints = 20`. Fists deal 2 damage at contact range; low/mid/heavy gun
+   tiers deal 2/3/5 damage with 150%/100%/60% cooldowns. Spray and grenade
+   hits remain 4 damage (cross-trench grenade splash remains 1).
 3. No hearts/flags in ffa: none spawned, no carry/capture/steal path reachable,
    no capture scoring. Endzone/pedestal geometry may remain as terrain.
 4. Spawn pads: procedurally spaced ring for any N — equal distance to center,
-   maximum pairwise spacing, snapped to reachable floor, never a fixed array.
+   with every FFA player starting unarmed. A seed-derived integer offset rotates
+   seat ownership of the unchanged pad set per episode; the mapping is
+   bijective and CTF spawn positions are untouched. Fists are the fallback
+   weapon, while rectangular-arena-anchored low/mid/heavy bands offer a broad
+   weak pickup across the board, an intermediate current-strength pickup, and
+   a scarce heavy weapon in the center risk/reward contest. The bands do not
+   collapse when the safe zone reaches its final floor. Pads use maximum
+   pairwise spacing, snapped to
+   reachable floor, never a fixed array.
    Teams are irrelevant in ffa: per-player identity comes from `color`/skin
    (distinct hue per slot), and no code path may branch on `team` for
    damage, vision, scoring, or win.
@@ -50,12 +59,16 @@ Environmental/ring deaths credit nobody.
 ## C. Ring — a fence, not a clock
 
 Circular safe zone, centered on the map center, radius shrinking **linearly**
-from "covers the whole arena" to a floor of ~40% of arena area, reached at
-`ringShrinkSec` (default 240 s) and then constant. Outside: 1 HP per
+from "covers the whole arena" to a floor of 3% of arena area, reached at
+`ringShrinkSec` (default 150 s) and then constant. Outside: 1 HP per
 `ringDamageTicks` (default 48 = one HP per 2 s), no scaling. Integer math only
 (compare squared distances; no floats anywhere in the sim).
 Schedule is fully described in `player_config` so policies can plan.
 Config: `ringEnabled`, `ringShrinkSec`, `ringFloorAreaPct`, `ringDamageTicks`.
+
+The shipped baseline doctrine closes on the nearest living enemy when three or
+fewer players remain, rather than disengaging while hurt; ring safety and
+normal aim/fire gating still apply.
 
 ## D. Proximity chat
 
@@ -79,8 +92,10 @@ report the largest that does and say so — do not silently ship a small map.
 Baseline doctrine (slice-level, in priority order): stay inside the ring →
 disengage and heal when hurt (break LOS first) → take fights only with an
 advantage (target is critical, or we outnumber) → otherwise roam/loot → hail
-agents that enter vision. It only has to make matches end decisively and read
-well on the broadcast; it does not have to be strong.
+agents that enter vision. With three or fewer players alive, it instead closes
+on the nearest enemy while retaining ring safety and normal aim/fire gates. It
+only has to make matches end decisively and read well on the broadcast; it
+does not have to be strong.
 
 Demo: one command that runs a full headless N-bot match (server + N baselines),
 prints the final ranking + scores, and writes a `.bitreplay` that plays in the
