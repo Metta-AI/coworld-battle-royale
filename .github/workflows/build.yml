@@ -65,6 +65,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: treeform/setup-nim-action@v6
+        with:
+          nim-version: 2.2.6
       - run: nimby sync nimby.lock -g
       - uses: actions/cache@v4
         with:
