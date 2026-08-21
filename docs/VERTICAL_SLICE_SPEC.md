@@ -56,12 +56,16 @@ Environmental/ring deaths credit nobody.
 ## C. Ring — a fence, not a clock
 
 Circular safe zone, centered on the map center, radius shrinking **linearly**
-from "covers the whole arena" to a floor of 35% of arena area, reached at
+from "covers the whole arena" to a floor of 3% of arena area, reached at
 `ringShrinkSec` (default 150 s) and then constant. Outside: 1 HP per
 `ringDamageTicks` (default 48 = one HP per 2 s), no scaling. Integer math only
 (compare squared distances; no floats anywhere in the sim).
 Schedule is fully described in `player_config` so policies can plan.
 Config: `ringEnabled`, `ringShrinkSec`, `ringFloorAreaPct`, `ringDamageTicks`.
+
+The shipped baseline doctrine closes on the nearest living enemy when three or
+fewer players remain, rather than disengaging while hurt; ring safety and
+normal aim/fire gating still apply.
 
 ## D. Proximity chat
 

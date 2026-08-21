@@ -18,14 +18,18 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "44"  ## GV44 (FFA ladder + rotated pads): FFA starts with fists,
-    ## upgrades through low, mid, and heavy weapons, and rotates deterministic
-    ## seed-derived ownership of the fixed spawn-pad ring each episode.
+  GameVersion* = "44"  ## GV44 (FFA ladder + 3% ring + rotated pads): FFA starts
+    ## with fists, upgrades through low, mid, and heavy weapons, shrinks to a
+    ## 3% final safe-zone floor, and rotates deterministic seed-derived
+    ## ownership of the fixed spawn-pad ring each episode. In the late game,
+    ## baseline bots close on the nearest enemy when three or fewer players
+    ## remain, while retaining ring safety and normal aim/fire gates.
     ## FFA adds a serialized weapon tier and deterministic low/mid/heavy
     ## pickups, so old replays cannot re-simulate under the new Player wire
     ## shape or combat rules: fixtures re-recorded. The shipped ladder floor is
     ## 2/2/3/5 damage for fist/low/mid/heavy, with 200%/150%/100%/60%
-    ## cooldowns; CTF remains on its armed mid-tier behavior.
+    ## cooldowns; the shipped FFA ring floor is 3% with late-game close
+    ## doctrine; CTF remains on its armed mid-tier behavior.
     ##
     ## Previously GV43 (puddle rule): PUDDLES BITE TWICE AS HARD.
     ## `DefaultPuddleDamagePct` goes 10 -> 20: a full second of continuous
@@ -547,10 +551,10 @@ const
                               ## schedule is LINEAR and then constant: a
                               ## fence that closes once, not a clock that
                               ## kills everyone.
-  FfaRingFloorAreaPct* = 35   ## The floor the ring stops at, as a percent of
-                              ## the arena's area. It never closes further,
-                              ## so the ring can crowd a match but can never
-                              ## decide it.
+  FfaRingFloorAreaPct* = 3    ## The floor the ring stops at, as a percent of
+                              ## the arena's area. It never closes further;
+                              ## outside damage is gradual, while the 3% floor
+                              ## herds late survivors into final engagements.
   FfaRingDamageTicks* = 48    ## Ticks of CONTINUOUS exposure outside the
                               ## ring that cost FfaRingDamage. Flat, never
                               ## scaling: at 20 hp an agent can walk the

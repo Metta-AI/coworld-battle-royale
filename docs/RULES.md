@@ -406,6 +406,10 @@ The own HUD and visible cogs identify `weapon fist`, `weapon low gun`,
 `weapon mid gun`, and `weapon heavy gun`; map pickups use `low gun`, `mid gun`,
 and `heavy gun`. CTF retains its armed start and ordinary `gun` behavior.
 
+The baseline FFA doctrine changes in the late game: when three or fewer players
+remain, bots close on the nearest living enemy instead of disengaging while
+hurt. They still respect safe-zone safety and the normal aim and fire gates.
+
 ## Grenades
 
 - **Four grenade pickups spawn in the arena corners** — two on each team's

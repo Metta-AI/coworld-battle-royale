@@ -605,12 +605,21 @@ suite "ffa elimination":
       second.midGunSpawns.mapIt((it.x, it.y))
     check first.heavyGunSpawns.mapIt((it.x, it.y)) ==
       second.heavyGunSpawns.mapIt((it.x, it.y))
-    check first.lowGunSpawns.allIt(
-      radiusSquared(it) > FfaLootRadius * FfaLootRadius)
     check first.heavyGunSpawns.allIt(
       radiusSquared(it) <= FfaLootRadius * FfaLootRadius)
-    check first.midGunSpawns.allIt(
-      radiusSquared(it) > FfaLootRadius * FfaLootRadius)
+    let floorRadius = ffaRingFloorRadius(first.config)
+    if floorRadius > FfaLootRadius:
+      check first.lowGunSpawns.allIt(
+        radiusSquared(it) > FfaLootRadius * FfaLootRadius)
+      check first.midGunSpawns.allIt(
+        radiusSquared(it) > FfaLootRadius * FfaLootRadius)
+    else:
+      # A tight final ring can be smaller than the center-cluster radius;
+      # low/mid families then clamp to that ring instead of escaping it.
+      check first.lowGunSpawns.allIt(
+        radiusSquared(it) <= floorRadius * floorRadius)
+      check first.midGunSpawns.allIt(
+        radiusSquared(it) <= floorRadius * floorRadius)
 
   test "an ffa gun hit takes 2 of the pool and books damage dealt":
     var game = ffaGame(2)

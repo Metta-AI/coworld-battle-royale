@@ -215,6 +215,8 @@ suite "league manifest config_schema vs GameConfig":
       FfaRingShrinkSec
     check schema["properties"]["ringFloorAreaPct"]["default"].getInt ==
       FfaRingFloorAreaPct
+    check schema["properties"]["ringFloorAreaPct"]["minimum"].getInt == 1
+    check schema["properties"]["ringFloorAreaPct"]["maximum"].getInt == 100
     check schema["properties"]["ringDamageTicks"]["default"].getInt ==
       FfaRingDamageTicks
     check schema["properties"]["ringRecoveryTicks"]["default"].getInt ==

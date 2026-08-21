@@ -104,7 +104,7 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `numPlayers` | int / `0` | `numPlayers` | `2..16` in ffa; must be `0` in ctf | ffa seat count N. Everything ffa derives from it — the fixed spawn-pad ring and its seed-derived per-episode rotation ([sim_state.nim `ffaSpawnPosition`](../src/ctf/sim_state.nim)), the lobby's `minPlayers` default, every per-player container. |
 | `ringEnabled` | bool / `false` | `ringEnabled` | ffa only | Enables the shrinking circular safe zone; omitted ffa configs enable it by default. |
 | `ringShrinkSec` | int / `150` (`FfaRingShrinkSec`) | `ringShrinkSec` | `>=1` (ffa only) | Linear safe-zone shrink duration from the arena-covering radius to the configured floor. |
-| `ringFloorAreaPct` | int / `35` (`FfaRingFloorAreaPct`) | `ringFloorAreaPct` | `1..100` (ffa only) | Safe-zone floor as a percentage of the arena area. |
+| `ringFloorAreaPct` | int / `3` (`FfaRingFloorAreaPct`) | `ringFloorAreaPct` | `1..100` (ffa only) | Safe-zone floor as a percentage of the arena area; the shipped 3% floor herds late survivors while gradual outside damage limits ring-only executions. |
 | `ringDamageTicks` | int / `48` (`FfaRingDamageTicks`) | `ringDamageTicks` | `>=1` (ffa only) | Cadence for one HP of outside-ring damage. |
 | `ringRecoveryTicks` | int / `2` (`FfaRingRecoveryTicks`) | `ringRecoveryTicks` | `>=0` (ffa only) | Exposure ticks drained per tick spent inside the safe zone; zero reproduces reset-on-entry behavior. |
 | `ffaGunDamage` | int / `3` (`FfaGunDamage`, mid-tier) | `ffaGunDamage` | `1..5` (ffa only) | Direct mid-tier gun damage per hit against the FFA hit-point pool; low and heavy tiers use their named ladder constants. |
@@ -118,6 +118,10 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `ffaLowGunSpawns` | int / `0` (`FfaLowGunSpawns`) | `ffaLowGunSpawns` | `0..16` (ffa only) | Low-tier gun pickups. `0` derives one per player; deterministic placements are outside the center cluster and use the offensive loot respawn cadence. |
 | `ffaMidGunSpawns` | int / `0` (`FfaMidGunSpawns`) | `ffaMidGunSpawns` | `0..16` (ffa only) | Mid-tier gun pickups. `0` derives `max(2, numPlayers div 4)`; deterministic placements sit between the center cluster and spawn ring and use the offensive loot respawn cadence. |
 | `ffaHeavyGunSpawns` | int / `0` (`FfaHeavyGunSpawns`) | `ffaHeavyGunSpawns` | `0..16` (ffa only) | Heavy-tier gun pickups. `0` derives `max(1, numPlayers div 4)`; deterministic placements are center-cluster only and use the offensive loot respawn cadence. |
+
+When `CTF_BOT_FFA_LATE_CLOSE=1`, the baseline FFA bot closes on the nearest
+living enemy once three or fewer players remain, while retaining ring safety
+and normal aim/fire gates.
 
 **Per-team handicap** ([sim_types.nim `handicaps`](../src/ctf/sim_types.nim), accessors
 `hitPointsFor`/`livesFor`/`maxSpeedFor`/`missPermilleFor`): a single `0.0..1.0`
