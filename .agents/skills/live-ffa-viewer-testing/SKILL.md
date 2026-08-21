@@ -23,6 +23,9 @@ server binary and attach baseline bots yourself:
 ```bash
 # Options use Nim colon syntax: --config-path:<path> --port:<port>
 # (also: --save-replay:<path> to record, --load-replay:<path> to replay).
+# `bin/ctf-server --help` prints the authoritative option list. Parsing lives in
+# readRuntimeConfig (bitworld/runtime, runtime.nim:291-397): it accepts CLI flags
+# AND COGAME_* env vars; CLI takes precedence when both are present.
 bin/ctf-server --config-path:config.br.json --port:9500 &   # FFA config (mode: "ffa")
 # Baseline bots read their connection from COWORLD_PLAYER_WS_URL; the binary is baseline.out.
 # Tokens must match the config's roster tokens (config.json / config.br.json use 0xBADA55_<slot>).
@@ -31,6 +34,19 @@ for i in $(seq 0 11); do
     players/baseline/baseline.out &
 done
 ```
+
+The repo's scripted convention is the env-var form instead (see
+`tools/run_ffa_demo.sh:105-111`, `README.md`):
+
+```bash
+COGAME_HOST=127.0.0.1 COGAME_PORT=9500 \
+COGAME_CONFIG_URI="file://$PWD/config.br.json" \
+COGAME_SAVE_REPLAY_URI="file:///tmp/match.bitreplay" \
+bin/ctf-server &
+```
+
+Note `--config-path` has no env twin: the env equivalent is `COGAME_CONFIG_URI`
+with a `file://` URI.
 
 Then open the spectator viewer at:
 
