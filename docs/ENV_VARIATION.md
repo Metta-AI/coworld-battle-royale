@@ -245,8 +245,7 @@ above has a `GameConfig` field — knobs proposed in
 https://github.com/Metta-AI/coworld-battle-royale/issues/18; the
 same-trench grenade gap is
 https://github.com/Metta-AI/coworld-battle-royale/issues/20. ffa win logic: the
-game ends
-when at most one player is alive or the clock runs out, and the total
+game ends when at most one player is alive or the clock runs out, and the total
 placement order (alive > later death tick > kills > damage dealt > lower slot)
 always names a single winner — an ffa match is never a draw.
 
