@@ -620,6 +620,7 @@ suite "ffa elimination":
         midMin = int.high
         midMax = 0
         lowMin = int.high
+        lowMaxX = 0
       for spawn in game.heavyGunSpawns:
         heavyMax = max(heavyMax, radiusSquared(spawn))
       for spawn in game.midGunSpawns:
@@ -628,9 +629,13 @@ suite "ffa elimination":
         midMax = max(midMax, radius)
       for spawn in game.lowGunSpawns:
         lowMin = min(lowMin, radiusSquared(spawn))
+        lowMaxX = max(lowMaxX, abs(spawn.x - center.x))
       check heavyMax < midMin
       check midMax < lowMin
       check lowMin > (FfaLootRadius + 40) * (FfaLootRadius + 40)
+      let shortAxisRadius =
+        min(center.x, center.y) - PlayerHalf - 4
+      check lowMaxX > shortAxisRadius
 
   test "an ffa gun hit takes 2 of the pool and books damage dealt":
     var game = ffaGame(2)

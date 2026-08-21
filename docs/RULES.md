@@ -399,10 +399,11 @@ FFA gun pickups form a permanent upgrade ladder:
 Pickups only upgrade a carrier. A pickup at or below the current tier remains
 on the map; a higher-tier pickup is consumed and the new tier lasts for the
 episode. All three families are present from tick 0 and use the offensive FFA
-respawn cadence. The bands are anchored to the playable arena rather than the
-shrinking ring floor: the center cluster remains compact even at the 3% final
-floor, low-tier pickups reach broadly across the board, and mid-tier pickups
-offer an intermediate route. The center therefore offers the strongest weapon
+respawn cadence. The bands are anchored to the rectangular playable arena
+rather than the shrinking ring floor: the center cluster remains compact even
+at the 3% final floor, low-tier pickups use the full per-axis board extent, and
+mid-tier pickups offer an intermediate route. The center therefore offers the
+strongest weapon
 at the greatest contest risk, while low-tier pickups provide a safer but weaker
 alternative away from the opening fight.
 

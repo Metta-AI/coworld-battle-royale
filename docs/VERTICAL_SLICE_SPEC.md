@@ -31,10 +31,11 @@ battle-royale match, used by the demo script.
    with every FFA player starting unarmed. A seed-derived integer offset rotates
    seat ownership of the unchanged pad set per episode; the mapping is
    bijective and CTF spawn positions are untouched. Fists are the fallback
-   weapon, while arena-anchored low/mid/heavy bands offer a broad weak pickup,
-   an intermediate current-strength pickup, and a scarce heavy weapon in the
-   center risk/reward contest. The bands do not collapse when the safe zone
-   reaches its final floor. Pads use maximum pairwise spacing, snapped to
+   weapon, while rectangular-arena-anchored low/mid/heavy bands offer a broad
+   weak pickup across the board, an intermediate current-strength pickup, and
+   a scarce heavy weapon in the center risk/reward contest. The bands do not
+   collapse when the safe zone reaches its final floor. Pads use maximum
+   pairwise spacing, snapped to
    reachable floor, never a fixed array.
    Teams are irrelevant in ffa: per-player identity comes from `color`/skin
    (distinct hue per slot), and no code path may branch on `team` for

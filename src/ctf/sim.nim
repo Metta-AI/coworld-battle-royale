@@ -188,7 +188,10 @@ proc ffaLootPoints(
   count: int,
   radiusOverride = -1,
   minRadiusOverride = -1,
-  phaseOffset = 0
+  phaseOffset = 0,
+  xRadiusOverride = -1,
+  yRadiusOverride = -1,
+  bandMinPct = 55
 ): seq[tuple[x, y: int]] =
   ## Returns deterministic, scattered center targets for FFA loot.
   ## The seed rotates the integer bands; CTF never calls this path.
@@ -196,14 +199,29 @@ proc ffaLootPoints(
     return
   let
     (cx, cy) = ffaRingCenter()
-    arenaRadius = max(1, min(cx, cy) - PlayerHalf - 4)
+    arenaXRadius = max(1, cx - PlayerHalf - 4)
+    arenaYRadius = max(1, cy - PlayerHalf - 4)
+    rectangular = xRadiusOverride > 0 or yRadiusOverride > 0
     radius = min(
       if radiusOverride > 0: radiusOverride else: sim.config.ffaLootRadius,
-      arenaRadius
+      if rectangular: max(arenaXRadius, arenaYRadius)
+      else: min(arenaXRadius, arenaYRadius)
     )
+    xRadius = min(
+      (if xRadiusOverride > 0: xRadiusOverride else: radius),
+      arenaXRadius
+    )
+    yRadius = min(
+      (if yRadiusOverride > 0: yRadiusOverride else: radius),
+      arenaYRadius
+    )
+    searchRadius = max(xRadius, yRadius)
+    radialMaxSq =
+      if rectangular: xRadius * xRadius + yRadius * yRadius
+      else: radius * radius
     minRadius = min(
       (if minRadiusOverride > 0: minRadiusOverride else: 1),
-      max(1, radius - PlayerHalf)
+      max(1, (if rectangular: min(xRadius, yRadius) else: radius) - PlayerHalf)
     )
     rawSeed = sim.ffaLootSeed()
     phase = ((rawSeed + (phaseOffset mod 1024)) mod 256 + 256) mod 256
@@ -211,35 +229,35 @@ proc ffaLootPoints(
   for i in 0 ..< count:
     let
       brads = phase + i * 256 div count + (i * 37 mod 23) - 11
-      bandRadius = max(minRadius, case i mod 4
-          of 0: max(1, radius * 55 div 100)
-          of 1: max(1, radius * 75 div 100)
-          of 2: max(1, radius * 90 div 100)
-          else: radius)
+      bandPct = max(bandMinPct, case i mod 4
+          of 0: 55
+          of 1: 75
+          of 2: 90
+          else: 100)
     let target = (
-      cx + bandRadius * ringCos(brads) div 1024,
-      cy - bandRadius * ringSin(brads) div 1024
+      cx + xRadius * bandPct * ringCos(brads) div (100 * 1024),
+      cy - yRadius * bandPct * ringSin(brads) div (100 * 1024)
     )
     var spot = sim.nearestWalkable(target[0], target[1])
     let spotRadiusSq = distSq(spot.x, spot.y, cx, cy)
     var separated = spotRadiusSq >= minRadius * minRadius and
-      spotRadiusSq <= radius * radius
+      spotRadiusSq <= radialMaxSq
     for point in result:
       if distSq(spot.x, spot.y, point.x, point.y) <= spacing * spacing:
         separated = false
         break
     if not separated:
       block search:
-        for r in 1 .. radius:
+        for r in 1 .. searchRadius:
           for dy in -r .. r:
             for dx in [-r, r]:
               let
                 x = target[0] + dx
                 y = target[1] + dy
-              if x < cx - radius or x > cx + radius or
-                  y < cy - radius or y > cy + radius or
+              if x < cx - xRadius or x > cx + xRadius or
+                  y < cy - yRadius or y > cy + yRadius or
                   distSq(x, y, cx, cy) < minRadius * minRadius or
-                  distSq(x, y, cx, cy) > radius * radius or
+                  distSq(x, y, cx, cy) > radialMaxSq or
                   not sim.canOccupy(x, y):
                 continue
               var clear = true
@@ -256,10 +274,10 @@ proc ffaLootPoints(
                 let
                   x = target[0] + dx
                   y = target[1] + dy
-                if x < cx - radius or x > cx + radius or
-                    y < cy - radius or y > cy + radius or
+                if x < cx - xRadius or x > cx + xRadius or
+                    y < cy - yRadius or y > cy + yRadius or
                     distSq(x, y, cx, cy) < minRadius * minRadius or
-                    distSq(x, y, cx, cy) > radius * radius or
+                    distSq(x, y, cx, cy) > radialMaxSq or
                     not sim.canOccupy(x, y):
                   continue
                 var clear = true
@@ -276,13 +294,15 @@ proc ffaLootPoints(
         let
           altBrads = (brads + turn) mod 256
           altTarget = (
-            cx + bandRadius * ringCos(altBrads) div 1024,
-            cy - bandRadius * ringSin(altBrads) div 1024
+            cx + xRadius * bandPct * ringCos(altBrads) div (100 * 1024),
+            cy - yRadius * bandPct * ringSin(altBrads) div (100 * 1024)
           )
           altSpot = sim.nearestWalkable(altTarget[0], altTarget[1])
           altRadiusSq = distSq(altSpot.x, altSpot.y, cx, cy)
-        if altRadiusSq < minRadius * minRadius or
-            altRadiusSq > radius * radius:
+        if altSpot.x < cx - xRadius or altSpot.x > cx + xRadius or
+            altSpot.y < cy - yRadius or altSpot.y > cy + yRadius or
+            altRadiusSq < minRadius * minRadius or
+            altRadiusSq > radialMaxSq:
           continue
         var clear = true
         for point in result:
@@ -350,17 +370,23 @@ proc ffaFamilyTargets(
   of 4:
     let
       (cx, cy) = ffaRingCenter()
-      arenaRadius = max(1, min(cx, cy) - PlayerHalf - 4)
-      centerRadius = min(sim.config.ffaLootRadius, arenaRadius)
+      arenaXRadius = max(1, cx - PlayerHalf - 4)
+      arenaYRadius = max(1, cy - PlayerHalf - 4)
+      centerRadius = min(
+        sim.config.ffaLootRadius,
+        min(arenaXRadius, arenaYRadius)
+      )
       lowMin = min(
-        arenaRadius,
-        max(centerRadius + 24, arenaRadius * 78 div 100)
+        arenaYRadius,
+        max(centerRadius + 24, arenaYRadius * 78 div 100)
       )
     return sim.ffaLootPoints(
       counts.lowGuns,
-      radiusOverride = arenaRadius,
       minRadiusOverride = lowMin,
-      phaseOffset = 173
+      phaseOffset = 173,
+      xRadiusOverride = arenaXRadius,
+      yRadiusOverride = arenaYRadius,
+      bandMinPct = 78
     )
   of 5:
     let
