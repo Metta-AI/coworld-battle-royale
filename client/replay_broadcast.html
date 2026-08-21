@@ -583,6 +583,13 @@ html, body {
 .banner-chip.steal { border-bottom-color: var(--amber); }
 .banner-chip.returned { border-bottom-color: var(--paper-dim); }
 .banner-chip.wipe { border-bottom-color: var(--tc, var(--red)); font-size: calc(15 * var(--u)); }
+.banner-chip.ffa-final2 {
+  border-bottom-color: var(--amber);
+  color: var(--amber);
+  font-size: calc(13 * var(--u));
+  box-shadow: 0 0 calc(9 * var(--u)) rgba(232, 163, 61, 0.3);
+}
+.banner-chip.ffa-winner { border-bottom-color: var(--tc, var(--amber)); }
 /* the acting team's tint rides as a left accent bar (any team color) */
 .banner-chip.accent { box-shadow: inset calc(4 * var(--u)) 0 0 var(--tc, var(--amber)); }
 .banner-chip.leaving { animation: chipfade 260ms ease-in forwards; }
@@ -1077,6 +1084,13 @@ html, body {
 /* kill ticks are short and colored by the KILLER's team (a red tick = red
    scored a kill); team-kills and unattributable pileups stay neutral. */
 .beat-marker.kill { background: var(--tc, var(--paper-dim)); height: calc(6 * var(--u)); }
+.beat-marker.ffa-kill { background: var(--paper-dim); height: calc(6 * var(--u)); }
+.beat-marker.ffa-final2 {
+  background: var(--amber);
+  width: calc(3 * var(--u));
+  height: calc(14 * var(--u));
+  box-shadow: 0 0 calc(5 * var(--u)) var(--amber);
+}
 /* flag beats are colored by the FLAG's team, matching the banners ("RED
    HEART TAKEN"): steal = full tick with a flag head, return = same tick
    dimmed (the heart snapped home), capture = the chunky match point in the
@@ -1349,7 +1363,8 @@ html, body {
 #endcard .ec-row.ffa-player .n { color: var(--row-color, var(--paper)); }
 #endcard .ec-team-ffa .ec-thead,
 #endcard .ec-team-ffa .ec-row {
-  grid-template-columns: 1fr calc(22 * var(--u)) calc(22 * var(--u));
+  grid-template-columns: calc(17 * var(--u)) 1fr calc(22 * var(--u))
+    calc(22 * var(--u)) calc(22 * var(--u)) calc(30 * var(--u));
 }
 /* name cell: name ellipsizes (but keeps a readable floor), the capture mark
    + honor badges ride after it; a pathological pileup clips inside the cell
@@ -1821,6 +1836,21 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   var renderMomentum = C.renderMomentum;
   var getSpoilers = C.getSpoilers, setSpoilers = C.setSpoilers;
 
+  function ffaSeatColor(s, slot) {
+    if (s.roster) {
+      for (var i = 0; i < s.roster.length; i++) {
+        if (s.roster[i].s === slot)
+          return identityTextColor(s.roster[i].colorName);
+      }
+    }
+    return PAPER;
+  }
+
+  function ffaName(s, slot) {
+    return '<span class="who" style="--tc:' + ffaSeatColor(s, slot) + '">' +
+      esc(shortName(rosterName(s, slot))) + '</span>';
+  }
+
   // ---- eye-level cog art for the EYES PiP billboards ----
   // The PiP is an eye-level raycaster, so its billboards need art drawn from a
   // HORIZONTAL camera: soldier_{red,blue}_front.png is the real cog standing on
@@ -2232,8 +2262,16 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     ingestBeats(s);
     ingestCapHearts(s);
     recordMomentum(s);
+    renderFfaTimelineMarkers(s);
 
-    if (s.ph === 'gameover') { renderEndcard(s); if (s.over) setVerdict(s.over, s); }
+    if (s.ph === 'gameover') {
+      renderEndcard(s);
+      if (s.over) {
+        setVerdict(s.over, s);
+        renderFfaVerdictChip(s);
+        renderFfaWinnerBanner(s);
+      }
+    }
     else { $('endcard').classList.remove('on'); }
 
     lastTick = s.t;
@@ -2241,6 +2279,58 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
 
   // (ingestLeadSeries / ingestLullSpans / ingestBeats / setVerdict live in the
   // shared chrome — chrome_common.js)
+
+  var ffaTimelineMarkers = [];
+  var ffaTimelineReady = false;
+  function renderFfaTimelineMarkers(s) {
+    if (!s.ffa || !s.lead || !s.lead.pts || !s.lead.pts.length) return;
+    if (!ffaTimelineReady) {
+      var pts = s.lead.pts;
+      var previous = Number(pts[0][1]);
+      var finalTwoTick = null;
+      for (var i = 1; i < pts.length; i++) {
+        var tick = Number(pts[i][0]);
+        var alive = Number(pts[i][1]);
+        if (alive < previous) {
+          for (var n = 0; n < previous - alive; n++)
+            ffaTimelineMarkers.push({ tick: tick, kind: 'kill' });
+        }
+        if (finalTwoTick == null && alive === 2) finalTwoTick = tick;
+        previous = alive;
+      }
+      if (finalTwoTick != null)
+        ffaTimelineMarkers.push({ tick: finalTwoTick, kind: 'final2' });
+      ffaTimelineReady = true;
+      for (var j = 0; j < ffaTimelineMarkers.length; j++) {
+        var marker = document.createElement('span');
+        marker.className = 'beat-marker ' +
+          (ffaTimelineMarkers[j].kind === 'final2'
+            ? 'ffa-final2' : 'ffa-kill');
+        marker.__tick = ffaTimelineMarkers[j].tick;
+        marker.dataset.ffaTick = String(marker.__tick);
+        $('scrub').appendChild(marker);
+        ffaTimelineMarkers[j].el = marker;
+      }
+    }
+    var st = Math.max(0, s.st || 0);
+    var mx = Math.max(st + 1, s.mx || 1);
+    var spoilers = getSpoilers();
+    for (var k = 0; k < ffaTimelineMarkers.length; k++) {
+      var item = ffaTimelineMarkers[k];
+      var frac = (item.tick - st) / (mx - st);
+      item.el.style.left = (Math.max(0, Math.min(1, frac)) * 100) + '%';
+      item.el.style.display = spoilers || item.tick <= s.t ? '' : 'none';
+    }
+  }
+
+  function renderFfaVerdictChip(s) {
+    if (!s.ffa || !s.over) return;
+    var chip = $('win-chip');
+    if (!chip || !chip.classList.contains('show')) return;
+    var slot = s.over.winnerSlot;
+    chip.textContent = shortName(rosterName(s, slot)) + ' WINS';
+    chip.style.setProperty('--tc', ffaSeatColor(s, slot));
+  }
 
   // The server ships the static minimap wall silhouette ONCE (RLE of a coarse
   // floor/stone/glass grid). Decode it into an offscreen canvas keyed to the
@@ -3751,12 +3841,17 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   // ============================================================
   function applyEvent(e, s) {
     switch (e.k) {
-      case 'kill': onKill(e, s); markBeat(e.t, 'kill', killMarkerTeam(e, s)); beatPulse(); break;
+      case 'kill':
+        onKill(e, s);
+        if (!s.ffa) markBeat(e.t, 'kill', killMarkerTeam(e, s));
+        beatPulse();
+        break;
       case 'steal': onSteal(e, s); markBeat(e.t, 'steal', e.flag); beatPulse(); break;
       case 'return': onReturn(e, s); markBeat(e.t, 'return', e.flag); beatPulse(); break;
       case 'capture': recordCapHeart(e); onCapture(e, s); markBeat(e.t, 'capture', captureTeam(s, e)); beatPulse(); break;
       case 'respawn': /* board rematerialize handles this visually */ break;
-      case 'gameover': /* end-card is state-driven */ break;
+      case 'final2': onFinalTwo(e, s); beatPulse(); break;
+      case 'gameover': if (s.ffa) onFfaWinner(e, s); break;
       case 'phase': /* clock caption handles phase */ break;
     }
   }
@@ -3769,7 +3864,9 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     var killer = e.killer, victim = e.victim;
     var victimTeam = teamOf(s, victim);
     var killerTeam = killer >= 0 ? teamOf(s, killer) : null;
-    var glyph = '▸';
+    var glyph = e.w === 'fist' ? '✦'
+      : e.w === 'spray' ? '≋'
+      : e.w === 'grenade' ? '✹' : '▸';
     var badge = '';
     if (e.trade !== undefined && e.trade >= 0) {
       // Provable mutual trade: the server proved these two killed each other
@@ -3779,9 +3876,12 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       tradeConsumed[e.t + ':' + e.trade] = true;
       var row = document.createElement('div');
       row.className = 'feed-row';
-      row.innerHTML = '<span class="who ' + (victimTeam || '') + '">' + esc(shortName(rosterName(s, victim))) + '</span>' +
-        '<span class="glyph">⇄</span>' +
-        '<span class="who ' + (teamOf(s, e.trade) || '') + '">' + esc(shortName(rosterName(s, e.trade))) + '</span>' +
+      row.innerHTML = s.ffa
+        ? ffaName(s, victim) + '<span class="glyph">⇄</span>' +
+          ffaName(s, e.trade)
+        : '<span class="who ' + (victimTeam || '') + '">' + esc(shortName(rosterName(s, victim))) + '</span>' +
+          '<span class="glyph">⇄</span>' +
+          '<span class="who ' + (teamOf(s, e.trade) || '') + '">' + esc(shortName(rosterName(s, e.trade))) + '</span>' +
         '<span class="badge">traded</span>';
       pushFeed(row);
       return;
@@ -3793,15 +3893,44 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       // independent kills). Attribution is honestly unknown (F7): show the
       // victim with a neutral marker, never a fabricated killer or "traded".
       badge = '<span class="badge">double KO</span>';
-      row.innerHTML = '<span class="who ' + (victimTeam || '') + '">' + esc(shortName(rosterName(s, victim))) + '</span>' + badge;
+      row.innerHTML = s.ffa ? ffaName(s, victim) + badge :
+        '<span class="who ' + (victimTeam || '') + '">' + esc(shortName(rosterName(s, victim))) + '</span>' + badge;
+    } else if (s.ffa && killer < 0) {
+      row.innerHTML = ffaName(s, victim) +
+        '<span class="glyph">✖</span>' +
+        '<span class="badge">' + esc(String(e.cause || 'unattributed').toUpperCase()) + '</span>';
     } else {
       if (e.tk) { badge = '<span class="badge tk">team kill</span>'; row.classList.add('flagkill'); }
       var killerName = killer >= 0 ? shortName(rosterName(s, killer)) : 'the arena';
-      row.innerHTML = '<span class="who ' + (killerTeam || '') + '">' + esc(killerName) + '</span>' +
+      row.innerHTML = (s.ffa ? ffaName(s, killer) :
+        '<span class="who ' + (killerTeam || '') + '">' + esc(killerName) + '</span>') +
         '<span class="glyph">' + glyph + '</span>' +
-        '<span class="who ' + (victimTeam || '') + '">' + esc(shortName(rosterName(s, victim))) + '</span>' + badge;
+        (s.ffa ? ffaName(s, victim) :
+          '<span class="who ' + (victimTeam || '') + '">' + esc(shortName(rosterName(s, victim))) + '</span>') + badge;
     }
     pushFeed(row);
+  }
+
+  function onFinalTwo(e, s) {
+    if (!s.ffa || !e.slots || e.slots.length < 2) return;
+    var names = e.slots.map(function (slot) {
+      return shortName(rosterName(s, slot));
+    });
+    banner('FINAL 2 · ' + names.join(' / '), 'ffa-final2 accent', AMBER,
+      Math.max(dwellFloor('banner'), 3000));
+  }
+
+  var ffaWinnerBannerTick = -1;
+  function onFfaWinner(e, s) {
+    if (!s.ffa || e.slot == null || e.t === ffaWinnerBannerTick) return;
+    ffaWinnerBannerTick = e.t;
+    banner(shortName(rosterName(s, e.slot)) + ' WINS', 'ffa-winner accent',
+      ffaSeatColor(s, e.slot), Math.max(dwellFloor('banner'), 2800));
+  }
+
+  function renderFfaWinnerBanner(s) {
+    if (!s.ffa || !s.over) return;
+    onFfaWinner({ t: s.t, slot: s.over.winnerSlot }, s);
   }
 
   function onSteal(e, s) {
@@ -3841,8 +3970,8 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   var bannerEl = $('bannerlane');
   var bannerQueue = [];
   var bannerBusy = false;
-  function banner(text, cls) {
-    bannerQueue.push({ text: text, cls: cls });
+  function banner(text, cls, color, hold) {
+    bannerQueue.push({ text: text, cls: cls, color: color, hold: hold });
     pumpBanner();
   }
   function pumpBanner() {
@@ -3851,12 +3980,13 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     var b = bannerQueue.shift();
     var chip = document.createElement('div');
     chip.className = 'banner-chip ' + b.cls;
+    if (b.color) chip.style.setProperty('--tc', b.color);
     chip.textContent = b.text;
     bannerEl.appendChild(chip);
     // lever 1 (animFactor cap): the pop-in never plays faster than 2x, so a
     // fast-forward scrub can't reduce a banner to a subliminal flash.
     chip.style.animationDuration = (300 / animFactor()) + 'ms';
-    var hold = dwellFloor('banner'); // lever 2: wall-clock dwell floor (~1.9s)
+    var hold = b.hold || dwellFloor('banner'); // lever 2: wall-clock dwell floor (~1.9s)
     setTimeout(function () {
       chip.classList.add('leaving');
       setTimeout(function () {
@@ -4027,7 +4157,8 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
           '<span class="fl-num ' + team + '" id="ec-' + team + '">0</span>' +
           '<span class="fl-cap" id="ec-ffa-label">Survivors</span>' +
           '</div>' +
-          '<div class="ec-thead"><span>Player</span><span>K</span><span>D</span></div>' +
+          '<div class="ec-thead"><span>#</span><span>Player</span><span>SV</span>' +
+          '<span>CB</span><span>PD</span><span>K/D</span></div>' +
           '<div id="ec-rows-' + team + '"></div>';
       } else {
         el.innerHTML =
@@ -4045,50 +4176,84 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
 
   function renderFfaEndcard(s, o, card) {
     ensureEndcardTeams(['ffa']);
-    var roster = (s.roster || []).slice().sort(endcardOrder);
+    var seats = ((s.ffaScore || {}).seats || []);
+    var scoreBySlot = {};
+    seats.forEach(function (seat) { scoreBySlot[seat.s] = seat; });
+    var roster = (s.roster || []).slice().sort(function (a, b) {
+      var ar = scoreBySlot[a.s] ? scoreBySlot[a.s].rank : 999;
+      var br = scoreBySlot[b.s] ? scoreBySlot[b.s].rank : 999;
+      return ar - br || a.s - b.s;
+    });
     var winnerSlot = o.winnerSlot != null ? o.winnerSlot : -1;
     var winner = roster.filter(function (p) { return p.s === winnerSlot; })[0];
-    var winnerName = winner ? shortName(rosterName(s, winner.s)) : 'the last player standing';
-    var winnerColor = o.winnerColor ? o.winnerColor.toUpperCase() : 'UNKNOWN';
-    var key = [s.mx, o.winnerSlot, o.winnerColor, o.draw, o.timeLimit,
-      (s.roster || []).length].join('|');
+    var winnerName = winner ? shortName(rosterName(s, winner.s)) : 'UNKNOWN';
+    var winnerColor = winner ? ffaSeatColor(s, winner.s) : AMBER;
+    var key = [s.mx, o.winnerSlot, o.timeLimit, JSON.stringify(seats)].join('|');
     if (card._key === key) return;
     card._key = key;
+    card._pdAnimated = false;
 
     $('ec-replay').innerHTML = s.lp && s.hold > 0
       ? 'Replaying in <b>' + s.hold + '</b>' : '';
-    $('ec-wincond').textContent = o.draw ? 'DRAW' : 'ELIMINATION';
+    $('ec-wincond').textContent = o.timeLimit ? 'TIME CAP' : 'LAST ALIVE';
     $('ec-tname-ffa').textContent = 'FREE-FOR-ALL';
-    var survivorCount = (s.roster || []).filter(function (p) { return !!p.alive; }).length;
+    var survivorCount = seats.filter(function (seat) { return !!seat.alive; }).length;
     $('ec-ffa').textContent = survivorCount;
     $('ec-ffa-label').textContent = survivorCount === 1 ? 'Survivor' : 'Survivors';
-    $('ec-team-ffa').classList.toggle('win', !o.draw);
+    $('ec-team-ffa').classList.add('win');
 
     var rows = roster.map(function (p) {
-      var mvp = !o.draw && p.s === winnerSlot;
-      var marks = endcardBadge('bs', p.tk, 'Backstab');
+      var seat = scoreBySlot[p.s] || {};
+      var rank = seat.rank != null ? seat.rank : 0;
+      var mvp = p.s === winnerSlot;
       var rowColor = identityTextColor(p.colorName);
       return '<div class="ec-row ffa-player' + (mvp ? ' mvp' : '') +
         '" style="--row-color:' + (rowColor || 'var(--paper)') + '">' +
+        '<span class="n">' + rank + '</span>' +
         '<span class="pcell"><span class="pname">' +
-        esc(shortName(rosterName(s, p.s))) + '</span>' + marks + '</span>' +
-        '<span class="n">' + (p.k || 0) + '</span>' +
-        '<span class="n">' + (p.d || 0) + '</span></div>';
+        esc(shortName(rosterName(s, p.s))) + '</span></span>' +
+        '<span class="n">' + (seat.sv || 0) + '</span>' +
+        '<span class="n">' + (seat.cb || 0) + '</span>' +
+        '<span class="n pd" data-pd="' + (seat.pd || 0) + '">0</span>' +
+        '<span class="n">' + (seat.k || 0) + '/' + (seat.d || 0) + '</span></div>';
     }).join('');
     $('ec-rows-ffa').innerHTML = rows;
+    animateFfaPodium(card);
 
     var head = $('ec-headline'), how = $('ec-how');
-    if (o.draw) {
-      head.className = 'headline draw';
-      head.textContent = 'DRAW — NO WINNER';
-      how.textContent = o.timeLimit
-        ? 'Time expired before one player eliminated every opponent.'
-        : 'The match ended without a surviving player.';
+    head.className = 'headline ffa-winner';
+    head.style.setProperty('--tc', winnerColor);
+    head.textContent = winnerName + ' WINS';
+    if (o.ffaEnd && o.ffaEnd.how === 'cap') {
+      var tiebreakWords = {
+        alive: 'more survivors',
+        death: 'later elimination',
+        kills: 'more kills',
+        dmg: 'more damage',
+        slot: 'join order'
+      };
+      how.textContent = 'Time expired — ' + winnerName + ' wins on ' +
+        (tiebreakWords[o.ffaEnd.tb] || 'the placement tiebreak');
     } else {
-      head.className = 'headline ffa-winner';
-      head.textContent = winnerColor + ' WINS';
       how.textContent = winnerName + ' was the last player standing.';
     }
+  }
+
+  function animateFfaPodium(card) {
+    if (card._pdAnimated) return;
+    card._pdAnimated = true;
+    var nodes = $('ec-rows-ffa').querySelectorAll('.pd');
+    var start = null;
+    function frame(now) {
+      if (start == null) start = now;
+      var frac = Math.min(1, (now - start) / 700);
+      for (var i = 0; i < nodes.length; i++) {
+        var target = Number(nodes[i].getAttribute('data-pd')) || 0;
+        nodes[i].textContent = String(Math.round(target * frac));
+      }
+      if (frac < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
   }
 
   function renderEndcard(s) {
