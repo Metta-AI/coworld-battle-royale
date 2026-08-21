@@ -7820,7 +7820,7 @@ proc rigSegLabel(seg: RigSeg, color: string): string =
   of rsLegFL, rsLegFR, rsLegRear: "cog leg " & color
   else: "cog wheel " & color
 
-proc addCogRigObjects(
+proc addCogRigObjectsImpl[ffaMode: static bool](
   sim: SimServer,
   spriteDefs: var seq[SpriteDefinition],
   currentIds: var seq[int],
@@ -7842,7 +7842,7 @@ proc addCogRigObjects(
   let
     ffaColorIndex = playerColorIndex(player.color)
     color =
-      if sim.config.isFfa(): playerColorName(ffaColorIndex)
+      if ffaMode: playerColorName(ffaColorIndex)
       else: teamText(player.team)
     aimStep = soldierRotIndex(player.aimBrads)
     # TRUE TANK: the leg base points exactly where the cog MOVES (fully decoupled
@@ -7860,13 +7860,13 @@ proc addCogRigObjects(
     let
       swing = rigLegSwingStep(seg, drive.turnAmt)
       shorten = rigLegShortenStep(seg, drive.turnAmt)
-    if sim.config.isFfa():
+    if ffaMode:
       rigLegSpriteId(ffaColorIndex, seg, headStep, swing, shorten)
     else:
       rigLegSpriteId(player.team, seg, headStep, swing, shorten)
   proc wheelSprite(seg: RigSeg, caster: int): int =
     let step = rigCasterStep(caster, baseHeading)
-    if sim.config.isFfa():
+    if ffaMode:
       rigWheelSpriteId(ffaColorIndex, seg, headStep, step)
     else:
       rigWheelSpriteId(player.team, seg, headStep, step)
@@ -7875,7 +7875,7 @@ proc addCogRigObjects(
   proc bakePixels(seg: RigSeg): seq[uint8] =
     case seg
     of rsHead:
-      if sim.config.isFfa():
+      if ffaMode:
         rigSegPixelsForColor(
           ffaColorIndex,
           rsHead,
@@ -7896,7 +7896,7 @@ proc addCogRigObjects(
           skin = player.skin
         )
     of rsArmL, rsArmR:
-      if sim.config.isFfa():
+      if ffaMode:
         rigSegPixelsForColor(ffaColorIndex, seg, aimStep, 0, 0, boardScale)
       else:
         rigSegPixels(player.team, seg, aimStep, 0, 0, boardScale)
@@ -7904,26 +7904,26 @@ proc addCogRigObjects(
       let
         swing = rigLegSwingStep(seg, drive.turnAmt)
         shorten = rigLegShortenStep(seg, drive.turnAmt)
-      if sim.config.isFfa():
+      if ffaMode:
         rigSegPixelsForColor(
           ffaColorIndex, seg, headStep, swing, shorten, boardScale)
       else:
         rigSegPixels(player.team, seg, headStep, swing, shorten, boardScale)
     of rsWheelL:
       let step = rigCasterStep(drive.casterFL, baseHeading)
-      if sim.config.isFfa():
+      if ffaMode:
         rigSegPixelsForColor(ffaColorIndex, rsWheelL, headStep, step, 0, boardScale)
       else:
         rigSegPixels(player.team, rsWheelL, headStep, step, 0, boardScale)
     of rsWheelR:
       let step = rigCasterStep(drive.casterFR, baseHeading)
-      if sim.config.isFfa():
+      if ffaMode:
         rigSegPixelsForColor(ffaColorIndex, rsWheelR, headStep, step, 0, boardScale)
       else:
         rigSegPixels(player.team, rsWheelR, headStep, step, 0, boardScale)
     of rsWheelRear:
       let step = rigCasterStep(drive.casterRear, baseHeading)
-      if sim.config.isFfa():
+      if ffaMode:
         rigSegPixelsForColor(
           ffaColorIndex, rsWheelRear, headStep, step, 0, boardScale)
       else:
@@ -7940,7 +7940,7 @@ proc addCogRigObjects(
     (rsLegFL, RigLegObjectBase + base*3 + 0, legSprite(rsLegFL), player.y - 1),
     (rsLegFR, RigLegObjectBase + base*3 + 1, legSprite(rsLegFR), player.y - 1),
     (rsHead, RigHeadObjectBase + base,
-      (if sim.config.isFfa():
+      (if ffaMode:
          rigHeadSpriteId(ffaColorIndex, player.skin, aimStep)
        else:
          rigHeadSpriteId(player.team, player.skin, aimStep)),
@@ -7955,12 +7955,12 @@ proc addCogRigObjects(
   # the face.
   let armZ = if carrying: player.y - 2 else: player.y - 1
   segs.add((rsArmL, RigArmObjectBase + base*2 + 0,
-    (if sim.config.isFfa():
+    (if ffaMode:
        rigArmSpriteId(ffaColorIndex, rsArmL, aimStep, 0)
      else:
        rigArmSpriteId(player.team, rsArmL, aimStep, 0)), armZ))
   segs.add((rsArmR, RigArmObjectBase + base*2 + 1,
-    (if sim.config.isFfa():
+    (if ffaMode:
        rigArmSpriteId(ffaColorIndex, rsArmR, aimStep, 0)
      else:
        rigArmSpriteId(player.team, rsArmR, aimStep, 0)), armZ))
@@ -7971,12 +7971,12 @@ proc addCogRigObjects(
   # always be drawable, including on a viewer's very first frame.
   proc canonicalSprite(seg: RigSeg): int =
     if rigSegIsLeg(seg):
-      if sim.config.isFfa():
+      if ffaMode:
         rigLegSpriteId(ffaColorIndex, seg, headStep, 0, 0)
       else:
         rigLegSpriteId(player.team, seg, headStep, 0, 0)
     else:
-      if sim.config.isFfa():
+      if ffaMode:
         rigWheelSpriteId(ffaColorIndex, seg, headStep, 0)
       else:
         rigWheelSpriteId(player.team, seg, headStep, 0)
@@ -7991,7 +7991,7 @@ proc addCogRigObjects(
         if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
           packet.addBoardSpriteChanged(
             spriteDefs, spriteId, RigCanvas, RigCanvas,
-            (if sim.config.isFfa():
+            (if ffaMode:
                rigSegPixelsForColor(
                  ffaColorIndex, s.seg, headStep, 0, 0, boardScale)
              else:
@@ -8017,12 +8017,12 @@ proc addCogRigObjects(
   if holdsSpray or holdsGun:
     let weaponSpriteId =
       if holdsSpray:
-        (if sim.config.isFfa():
+        (if ffaMode:
            rigSpraySpriteId(ffaColorIndex, aimStep)
          else:
            rigSpraySpriteId(player.team, aimStep))
       else:
-        (if sim.config.isFfa():
+        (if ffaMode:
            rigGunSpriteId(ffaColorIndex, aimStep)
          else:
            rigGunSpriteId(player.team, aimStep))
@@ -8030,22 +8030,38 @@ proc addCogRigObjects(
       packet.addBoardSpriteChanged(
         spriteDefs, weaponSpriteId, RigCanvas, RigCanvas,
         (if holdsSpray:
-           (if sim.config.isFfa():
+           (if ffaMode:
               rigSprayCanPixelsForColor(ffaColorIndex, aimStep, boardScale)
             else:
               rigSprayCanPixels(player.team, aimStep, boardScale))
          else:
-           (if sim.config.isFfa():
+           (if ffaMode:
               rigGunPixelsForColor(ffaColorIndex, aimStep, boardScale)
             else:
               rigGunPixels(player.team, aimStep, boardScale))),
         labelCogWeapon(color, spray = holdsSpray,
-          tier = player.weaponTier, ffa = sim.config.isFfa()),
+          tier = player.weaponTier, ffa = ffaMode),
         native = boardScale)
     let weaponObjectId = RigGunObjectBase + base
     currentIds.add(weaponObjectId)
     packet.addBoardObject(
       weaponObjectId, rigX, rigY, player.y + 1, MapLayerId, weaponSpriteId)
+
+proc addCogRigObjects(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  currentIds: var seq[int],
+  packet: var seq[uint8],
+  player: Player,
+  drive: CogDriveState,
+  carrying: bool
+) =
+  if sim.config.isFfa():
+    addCogRigObjectsImpl[true](
+      sim, spriteDefs, currentIds, packet, player, drive, carrying)
+  else:
+    addCogRigObjectsImpl[false](
+      sim, spriteDefs, currentIds, packet, player, drive, carrying)
 
 proc buildSpriteProtocolUpdates*(
   sim: var SimServer,
