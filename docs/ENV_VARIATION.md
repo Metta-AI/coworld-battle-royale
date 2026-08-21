@@ -181,10 +181,10 @@ for curved/organic terrain. Trenches are also `ArenaShape` (the generator emits
 | Item | Count | Key consts (sim_types.nim) |
 |---|---|---|
 | Flags/hearts | 1 per active team | `FlagPickupRange`=34 (GV42, covers the 60px drawn heart), `CaptureZoneWidth`=40, `PedestalCoverSize`=96 |
-| Grenades | exactly 4 corner pickups | `GrenadeRespawnTicks`=120, `GrenadeChargeTicks`=24, `GrenadeBlastRadius`=52, `GrenadeDamage`=2, `GrenadeTrenchDamage`=6, max throw = `MapWidth/5` |
+| Grenades | exactly 4 corner pickups | `GrenadeRespawnTicks`=120, `GrenadeChargeTicks`=24, `GrenadeBlastRadius`=52, `GrenadeDamage`=2, `GrenadeTrenchDamage`=6 (blast in the victim's OWN trench; ffa has no analog — see the ffa consts below), `GrenadeTrenchSplashDamage`=1 (victim in a DIFFERENT trench), max throw = `MapWidth/5` |
 | Med kits | 2 (sides) / up to 4 (4-team) | `MedKitPickupRange`=12, `MedKitRespawnTicks`=720 |
 | Shields | 1 per team endzone | `ShieldRespawnTicks`=720, `ShieldLayerHp`=3, `ShieldFireSlowdown`=3 |
-| Plasma arcs (spray) | 1 per team endzone | `PlasmaArcRespawnTicks`=720, `PlasmaArcReach`=5, `PlasmaArcDamage`=3 |
+| Plasma arcs (spray) | 1 per team endzone | `PlasmaArcRespawnTicks`=720 (`30 * ReplayFps`), `PlasmaArcPickupRange`=12, `PlasmaArcSpawnInset`=`GrenadeSpawnInset`, `PlasmaArcSquare`=`SoldierBodyPx`=34, `PlasmaArcReach`=170 (5 squares), `PlasmaArcMaxWidth`=85 (cone width at max reach), `PlasmaArcBodyRadius`=17, `PlasmaArcDamage`=3 (ffa: `ffaSprayDamage`=4), `PlasmaArcActiveTicks`=5 / `PlasmaArcResetTicks`=20 (one burst every 25 ticks; the can is never consumed), fx-only `PlasmaArcFxReach`=136 / `PlasmaArcFxMaxWidth`=68 / `PlasmaArcFxTicks`=4 |
 | Trenches | via `mapGen.pits`/`pitDensity` | `TrenchSize`=56, `TrenchSpeedDivisor`=5, `TrenchFireSlowdown`=3, `TrenchMissPct`=70 |
 | Paint puddles | via `mapGen.puddles` (`mapPuddles`) | `PuddleSize`=64, `PuddleRollTicks`=24, `DefaultPuddleDamagePct`=20 (config `puddleDamagePct`), `MaxPuddles`=64 |
 | Cardboard barriers | via `barrierPickups` (per team) | `BarrierHp`=10, `BarrierRadius`=24, `BarrierHalfThick`=2, `BarrierRespawnTicks`=720, `MaxBarriersPlaced`=16 ([sim_types.nim](../src/ctf/sim_types.nim)) |
@@ -214,14 +214,44 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 
 ffa consts: `FfaHitPoints`=20 (spawn pool), weapon ladder
 `FfaFistDamage`=2 / `FfaLowGunDamage`=2 / `FfaMidGunDamage`=3 /
-`FfaHeavyGunDamage`=5 with cooldown percentages 200% / 150% / 100% / 60%,
+`FfaHeavyGunDamage`=5 with cooldown percentages 200% / 150% / 100% / 60%
+(`FfaLowGunCooldownPct`=150, `FfaMidGunCooldownPct`=100,
+`FfaHeavyGunCooldownPct`=60 applied to `fireCooldownTicks` and floored at 1
+tick; the fist's 200% is the literal `2 *` in `tryFist`, and the declared
+`FfaFistCooldownTicks`=24 is not read on the fire path), tier ranges
+`FfaLowGunRange`=700 / `FfaMidGunRange`=`GunRange`=1050 /
+`FfaHeavyGunRange`=`GunRange`=1050 (only mid reads `config.gunRange` at runtime;
+low and heavy are consts, so retuning `gunRange` moves mid's range alone — while
+`aimJitterSigma` reads it for every tier, so the retune still shifts all three
+tiers' accuracy), tier ids
+`FfaWeaponUnarmed`=0 / `FfaWeaponLow`=1 / `FfaWeaponMid`=2 /
+`FfaWeaponHeavy`=3, fist geometry `FfaFistReach`=70 px center-to-center and
+`FfaFistAimHalfBrads`=48 (of the 256-brad turn, so ±67.5°),
 plus `FfaSprayDamage`=4 / `FfaGrenadeDamage`=4 /
-`FfaGrenadeTrenchSplashDamage`=1,
+`FfaGrenadeTrenchSplashDamage`=1 (there is no ffa analog of
+`GrenadeTrenchDamage`, so a blast in the victim's own trench deals the ordinary
+`ffaGrenadeDamage`),
+`FfaRingDamage`=1 (one hp per `ringDamageTicks` outside the safe zone),
 `FfaMedKitSpawns`=2,
 `FfaSpawnRingPermille`=800 (spawn-ring radius as permille of the inscribed
 circle; seed-derived rotation changes ownership, not the pad set),
-`FfaMinPlayers`=2, `FfaMaxPlayers`=16. ffa win logic: the game ends
-when at most one player is alive or the clock runs out, and the total
+`FfaMinPlayers`=2, `FfaMaxPlayers`=16. Weapon tiers carry **no ammo,
+durability, or magazine** and never expire: a tier is set at match start, raised
+only by a higher-tier pickup, and otherwise permanent (single life, so death
+ends it). Aim-jitter sigma is calibrated against `config.gunRange` alone and is
+NOT re-derived per tier, so the GV34 "80% at max range" figure holds for mid and
+heavy while low hits ~94.5% at its own 700 px maximum
+(https://github.com/Metta-AI/coworld-battle-royale/issues/19); the fist rolls no
+jitter and no trench duck at all, so a punch inside reach, cone, and line of
+sight is deterministic. No tier touches MOVEMENT — max speed, acceleration,
+friction, and the carrier/trench speed rules read `weaponTier` nowhere, so a
+heavy carrier moves exactly like an unarmed one. None of the
+low/heavy damage, tier range, cooldown-percentage, fist, or spray-cycle consts
+above has a `GameConfig` field — knobs proposed in
+https://github.com/Metta-AI/coworld-battle-royale/issues/18; the
+same-trench grenade gap is
+https://github.com/Metta-AI/coworld-battle-royale/issues/20. ffa win logic: the
+game ends when at most one player is alive or the clock runs out, and the total
 placement order (alive > later death tick > kills > damage dealt > lower slot)
 always names a single winner — an ffa match is never a draw.
 

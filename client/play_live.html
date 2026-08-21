@@ -1,0 +1,792 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Battle Royale — live play</title>
+<!--
+  The LIVE HUMAN SEAT client: one browser tab driving one `/player` websocket
+  with the SAME control surface a policy has (docs/PROTOCOL.md).
+
+  Two invariants this file must keep, because breaking either is silent:
+
+  1. It NEVER opens the spectator endpoint. The board stream is the spectator observation
+     (2x supersampled, no fog gating, opponent labels everywhere); rendering it
+     would hand a human vision no agent has. Everything on screen here is
+     decoded from the seat's own fog-gated player stream.
+  2. It sends the FULL 8-bit input mask. The shared bitworld player client
+     masks to seven bits, which silently drops bit 7 — the C button, i.e. this
+     game's whole grenade/barrier verb. Sending `mask & 255` is the reason
+     this client exists rather than reusing that one.
+
+  There is no engine change behind this page: it is a client of the wire
+  contract the baseline bot already speaks, so a human seat records into the
+  replay exactly like a policy seat (input mask changes + chat records).
+-->
+<style>
+:root{color-scheme:dark}
+html,body{margin:0;height:100%;overflow:hidden;background:#07080b;color:#e8ecf2;
+  font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#stage{position:fixed;inset:0}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;
+  image-rendering:pixelated;image-rendering:crisp-edges;background:#000}
+.panel{position:fixed;background:#0b0e14d9;border:1px solid #ffffff1f;
+  border-radius:6px;padding:8px 10px;backdrop-filter:blur(2px)}
+#hud{top:10px;left:10px;min-width:212px}
+#hud .row{display:flex;justify-content:space-between;gap:14px}
+#hud .k{color:#8b97a8}
+#hud .big{font-size:16px;font-weight:700;letter-spacing:.5px}
+#lat{top:10px;right:10px;min-width:250px}
+#lat table{border-collapse:collapse;width:100%}
+#lat td{padding:1px 0}
+#lat td+td{text-align:right;font-variant-numeric:tabular-nums}
+#lat .hdr{color:#8b97a8}
+#log{bottom:96px;left:10px;width:290px;max-height:168px;overflow:hidden}
+#log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#bar{bottom:10px;left:10px;right:10px;display:flex;gap:8px;align-items:center;
+  flex-wrap:wrap}
+#say{flex:0 0 130px;background:#000c;color:#fff;border:1px solid #ffffff33;
+  border-radius:4px;padding:6px 8px;font:13px ui-monospace,monospace;outline:0}
+#say:focus{border-color:#57c7ff}
+button{background:#161b25;color:#dfe6ef;border:1px solid #ffffff26;
+  border-radius:4px;padding:5px 8px;font:11px ui-monospace,monospace;
+  cursor:pointer}
+button:hover{background:#22293a}
+button.macro{color:#ffd479}
+#help{inset:0;position:fixed;display:none;align-items:center;
+  justify-content:center;background:#04060ae6;z-index:9}
+#help .card{max-width:640px;padding:18px 22px;background:#0b0e14;
+  border:1px solid #ffffff26;border-radius:8px}
+#help h2{margin:0 0 10px;font-size:14px}
+#help table{border-collapse:collapse;font-size:12px}
+#help td{padding:2px 12px 2px 0;vertical-align:top}
+#help .key{color:#57c7ff;white-space:nowrap}
+#note{position:fixed;left:50%;top:44%;transform:translateX(-50%);
+  font-size:14px;color:#cbd5e1;pointer-events:none;text-shadow:0 1px 3px #000}
+.dead #hud{border-color:#ff4d6d99}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+  vertical-align:-1px;margin-right:4px;background:#4b5563}
+.dot.on{background:#4ade80;box-shadow:0 0 6px #4ade80}
+.dot.hot{background:#ffb020;box-shadow:0 0 6px #ffb020}
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c" width="256" height="256"></canvas></div>
+
+<div class="panel" id="hud">
+  <div class="row"><span class="big" id="hpv">--</span><span class="big" id="wep">--</span></div>
+  <div class="row"><span class="k">aim</span><span id="aimv">--</span></div>
+  <div class="row"><span class="k">fire</span><span><i class="dot" id="fired"></i><span id="firev">--</span></span></div>
+  <div class="row"><span class="k">C hold</span><span><i class="dot" id="naded"></i><span id="nadev">idle</span></span></div>
+  <div class="row"><span class="k">aim mode</span><span id="modev">mouse</span></div>
+  <div class="row"><span class="k">mask</span><span id="maskv">00000000</span></div>
+</div>
+
+<div class="panel" id="lat">
+  <table>
+    <tr class="hdr"><td>measured</td><td>p50</td><td>p95</td><td>n</td></tr>
+    <tr><td>frame paint gap</td><td id="fp50">-</td><td id="fp95">-</td><td id="fpn">0</td></tr>
+    <tr><td>key&rarr;send</td><td id="ks50">-</td><td id="ks95">-</td><td id="ksn">0</td></tr>
+    <tr><td>key&rarr;aim on screen</td><td id="ae50">-</td><td id="ae95">-</td><td id="aen">0</td></tr>
+  </table>
+  <div style="margin-top:6px;display:flex;gap:6px">
+    <button id="latreset">reset</button><button id="latsave">save json</button>
+  </div>
+</div>
+
+<div class="panel" id="log"></div>
+
+<div class="panel" id="bar">
+  <input id="say" maxlength="10" placeholder="shout (10)" autocomplete="off"
+    autocapitalize="off" spellcheck="false">
+  <button id="sayb">send</button>
+  <span class="k" id="macros"></span>
+  <button id="helpb">controls (H)</button>
+</div>
+
+<div id="help"><div class="card">
+  <h2>Battle Royale — human seat</h2>
+  <table>
+    <tr><td class="key">W A S D / arrows</td><td>move (bits 1/2/4/8) — locomotion only, never turns your aim</td></tr>
+    <tr><td class="key">mouse</td><td>aim: the client presses the same rotate buttons a bot presses until your turret faces the cursor</td></tr>
+    <tr><td class="key">E / Q</td><td>rotate aim clockwise (Select, bit 16) / counter-clockwise (B, bit 64)</td></tr>
+    <tr><td class="key">left click / Space / J</td><td>fire, or spray while carrying a spray can (A, bit 32)</td></tr>
+    <tr><td class="key">right click / C / Shift</td><td>hold to charge a grenade (or place a barrier), release to throw (C, bit 128)</td></tr>
+    <tr><td class="key">Enter</td><td>shout — 10 characters, in-sim, heard by anyone nearby including enemies</td></tr>
+    <tr><td class="key">1 &hellip; 8</td><td>preset shouts (orders for your own policy)</td></tr>
+    <tr><td class="key">M</td><td>toggle mouse aim / keyboard-only aim</td></tr>
+    <tr><td class="key">H or Esc</td><td>close this</td></tr>
+  </table>
+  <p style="color:#8b97a8">Every one of those is a protocol input a policy also has,
+  and there is nothing here a policy does not have. The view is your seat's own
+  fog-gated stream — this page never connects to the spectator board.</p>
+</div></div>
+
+<div id="note">connecting&hellip;</div>
+
+<script src="/client/snappyjs.min.js"></script>
+<!-- WIRE_CONSTANTS -->
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Protocol constants (docs/PROTOCOL.md + bitworld/spriteprotocol.nim).
+// ---------------------------------------------------------------------------
+const IN_UP = 1, IN_DOWN = 2, IN_LEFT = 4, IN_RIGHT = 8,
+      IN_SELECT = 16, IN_A = 32, IN_B = 64, IN_C = 128;
+const CLIENT_INPUT = 0x84, CLIENT_CHAT = 0x81;
+const TICK_HZ = (window.CTF_WIRE && window.CTF_WIRE.fps) || 24;
+const TICK_MS = 1000 / TICK_HZ;
+const AIM_BRADS = 256;          // AimBradsTurn
+const AIM_TURN_RATE = 5;        // AimTurnRate: brads/tick a held rotate button turns
+const SHOUT_MAX = 10;           // FFA shout payload cap (docs/RULES.md)
+const DESIGN = 128;             // bitworld ScreenWidth/ScreenHeight: UI layer design box
+const LAYER_ZOOMABLE = 1, LAYER_UI = 2;
+
+const PALETTE = [
+  [0,0,0],[194,195,199],[255,241,232],[255,0,77],
+  [255,119,168],[95,87,79],[171,82,54],[255,163,0],
+  [255,236,39],[126,37,83],[0,135,81],[0,228,54],
+  [29,43,83],[131,118,156],[41,173,255],[255,204,170]
+];
+
+// Preset shouts. Each is an ordinary chat packet — the SAME 10-char in-sim
+// proximity shout a policy can send and hear, not a private side channel.
+const MACROS = ["PUSH","HOLD","FALLBACK","RING","HELP","LOOT","FOLLOW","SPLIT"];
+
+// ---------------------------------------------------------------------------
+// Wire / socket
+// ---------------------------------------------------------------------------
+const pageUrl = new URL(location.href);
+function socketUrl() {
+  const explicit = pageUrl.searchParams.get("address");
+  let url;
+  if (explicit) {
+    url = new URL(explicit, location.href);
+  } else {
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    url = new URL(scheme + "//" + (location.host || "localhost:8080") + "/player");
+  }
+  if (url.protocol === "http:") url.protocol = "ws:";
+  if (url.protocol === "https:") url.protocol = "wss:";
+  if (url.pathname === "/" || url.pathname === "") url.pathname = "/player";
+  // The lobby hands the human seat its credentials on the PAGE url
+  // (/client/player?slot=&token=&name=); forward them to the websocket.
+  for (const key of ["name", "token", "slot"]) {
+    const value = pageUrl.searchParams.get(key);
+    if (value !== null) url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const noteEl = document.getElementById("note");
+const sayEl = document.getElementById("say");
+const logEl = document.getElementById("log");
+
+let socket = null, sentMask = -1, typing = false, reconnectTimer = 0;
+const reconnectSec = Math.max(0, +pageUrl.searchParams.get("reconnect") || 0);
+
+function note(text) {
+  noteEl.textContent = text;
+  noteEl.style.display = text ? "block" : "none";
+}
+
+function sendMask(mask, at) {
+  if (!socket || socket.readyState !== 1) return;
+  if (mask === sentMask) return;
+  // Bit 7 included on purpose: `& 255`, never a seven-bit mask.
+  socket.send(new Uint8Array([CLIENT_INPUT, mask & 255]));
+  sentMask = mask;
+  maskEl.textContent = mask.toString(2).padStart(8, "0");
+  if (at !== undefined) latency.push("keySend", performance.now() - at);
+}
+
+function sendChat(text) {
+  const clean = (text || "").replace(/[^\x20-\x7e]/g, "").slice(0, SHOUT_MAX);
+  if (!clean || !socket || socket.readyState !== 1) return;
+  const bytes = new Uint8Array(clean.length + 3);
+  bytes[0] = CLIENT_CHAT;
+  bytes[1] = clean.length & 255;
+  bytes[2] = clean.length >> 8;
+  for (let i = 0; i < clean.length; i++) bytes[i + 3] = clean.charCodeAt(i);
+  socket.send(bytes);
+  addLog("you: " + clean, "#ffd479");
+}
+
+// ---------------------------------------------------------------------------
+// Sprite v1 decode
+// ---------------------------------------------------------------------------
+const sprites = new Map();   // spriteId -> {width,height,label,canvas}
+const objects = new Map();   // objectId -> {id,x,y,z,layer,spriteId}
+const layers = new Map();    // layerId  -> {id,type,flags,width,height}
+const textDecoder = new TextDecoder("utf-8");
+
+function readU16(b, o) { return b[o] | (b[o + 1] << 8); }
+function readI16(b, o) { const v = readU16(b, o); return v & 0x8000 ? v - 0x10000 : v; }
+function readU32(b, o) {
+  return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+}
+
+function spriteCanvas(width, height, rgba) {
+  const surface = document.createElement("canvas");
+  surface.width = width; surface.height = height;
+  const target = surface.getContext("2d");
+  const image = target.createImageData(width, height);
+  image.data.set(rgba);
+  target.putImageData(image, 0, 0);
+  return surface;
+}
+
+function decodeSnappy(compressed, width, height) {
+  const expected = width * height * 4;
+  const raw = window.SnappyJS.uncompress(compressed, expected);
+  const rgba = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+  if (rgba.length !== expected) throw new Error("bad sprite pixel length");
+  return rgba;
+}
+
+function trySnappySprite(bytes, offset, remaining, width, height) {
+  if (remaining < 6) return null;
+  const compressedLength = readU32(bytes, offset);
+  if (compressedLength > remaining - 6) return null;
+  const labelOffset = offset + 4 + compressedLength;
+  const labelLength = readU16(bytes, labelOffset);
+  if (labelLength > remaining - 4 - compressedLength - 2) return null;
+  let pixels;
+  try { pixels = decodeSnappy(bytes.slice(offset + 4, labelOffset), width, height); }
+  catch (err) { return null; }
+  const labelStart = labelOffset + 2, labelEnd = labelStart + labelLength;
+  return {
+    pixels,
+    label: textDecoder.decode(bytes.slice(labelStart, labelEnd)),
+    offset: labelEnd
+  };
+}
+
+function rawSprite(bytes, offset, width, height) {
+  const count = width * height, pixels = new Uint8Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    const index = bytes[offset + i];
+    if (index === 0) continue;
+    const rgb = PALETTE[(index - 1) & 15], out = i * 4;
+    pixels[out] = rgb[0]; pixels[out + 1] = rgb[1];
+    pixels[out + 2] = rgb[2]; pixels[out + 3] = 255;
+  }
+  return pixels;
+}
+
+function layerOf(id) {
+  let layer = layers.get(id);
+  if (!layer) {
+    layer = { id, type: 0, flags: LAYER_ZOOMABLE, width: 1, height: 1 };
+    layers.set(id, layer);
+  }
+  return layer;
+}
+
+function parseSpritePacket(bytes) {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const type = bytes[offset++];
+    if (type === 0x01) {
+      const id = readU16(bytes, offset),
+            width = readU16(bytes, offset + 2),
+            height = readU16(bytes, offset + 4);
+      offset += 6;
+      const snappy = trySnappySprite(bytes, offset, bytes.length - offset, width, height);
+      if (snappy) {
+        sprites.set(id, {
+          width, height, label: snappy.label,
+          canvas: spriteCanvas(width, height, snappy.pixels)
+        });
+        offset = snappy.offset;
+      } else {
+        sprites.set(id, {
+          width, height, label: "",
+          canvas: spriteCanvas(width, height, rawSprite(bytes, offset, width, height))
+        });
+        offset += width * height;
+      }
+    } else if (type === 0x02) {
+      const id = readU16(bytes, offset);
+      objects.set(id, {
+        id,
+        x: readI16(bytes, offset + 2),
+        y: readI16(bytes, offset + 4),
+        z: readI16(bytes, offset + 6),
+        layer: bytes[offset + 8],
+        spriteId: readU16(bytes, offset + 9)
+      });
+      offset += 11;
+    } else if (type === 0x03) {
+      objects.delete(readU16(bytes, offset)); offset += 2;
+    } else if (type === 0x04) {
+      objects.clear();
+    } else if (type === 0x05) {
+      const layer = layerOf(bytes[offset]);
+      layer.width = readU16(bytes, offset + 1);
+      layer.height = readU16(bytes, offset + 3);
+      offset += 5;
+    } else if (type === 0x06) {
+      const layer = layerOf(bytes[offset]);
+      layer.type = bytes[offset + 1];
+      layer.flags = bytes[offset + 2];
+      offset += 3;
+    } else if (type === 0x07) {
+      offset += 2;
+    } else {
+      throw new Error("unknown sprite message " + type);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Render: zoomable map layers scaled to fit, UI layers anchored by layer kind.
+// The shared client stacks every layer at the origin at 1x, which buries the
+// HUD in the corner of the arena; a play surface has to place them.
+// ---------------------------------------------------------------------------
+function uiAnchor(kind, width, height, viewWidth, viewHeight, scale) {
+  const w = width * scale, h = height * scale;
+  switch (kind) {
+    case 1: return [0, 0];
+    case 2: return [viewWidth - w, 0];
+    case 3: return [viewWidth - w, viewHeight - h];
+    case 4: return [0, viewHeight - h];
+    case 5: return [(viewWidth - w) / 2, 0];
+    case 6: return [viewWidth - w, (viewHeight - h) / 2];
+    case 7: return [0, (viewHeight - h) / 2];
+    case 8: return [(viewWidth - w) / 2, viewHeight - h];
+    default: return [(viewWidth - w) / 2, (viewHeight - h) / 2];
+  }
+}
+
+let worldRect = { x: 0, y: 0, scale: 1, width: 1, height: 1 };
+
+function render() {
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const viewWidth = Math.round(canvas.clientWidth * ratio);
+  const viewHeight = Math.round(canvas.clientHeight * ratio);
+  if (canvas.width !== viewWidth || canvas.height !== viewHeight) {
+    canvas.width = viewWidth; canvas.height = viewHeight;
+  }
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, viewWidth, viewHeight);
+
+  let worldWidth = 0, worldHeight = 0;
+  for (const layer of layers.values()) {
+    if (layer.flags & LAYER_ZOOMABLE) {
+      worldWidth = Math.max(worldWidth, layer.width);
+      worldHeight = Math.max(worldHeight, layer.height);
+    }
+  }
+  const worldScale = worldWidth && worldHeight
+    ? Math.min(viewWidth / worldWidth, viewHeight / worldHeight) : 1;
+  worldRect = {
+    x: (viewWidth - worldWidth * worldScale) / 2,
+    y: (viewHeight - worldHeight * worldScale) / 2,
+    scale: worldScale, width: worldWidth, height: worldHeight
+  };
+  const uiScale = Math.max(2, Math.min(6,
+    Math.floor(Math.min(viewWidth, viewHeight) / DESIGN)));
+
+  const byLayer = new Map();
+  for (const object of objects.values()) {
+    let bucket = byLayer.get(object.layer);
+    if (!bucket) { bucket = []; byLayer.set(object.layer, bucket); }
+    bucket.push(object);
+  }
+
+  const ordered = [...layers.values()].sort((a, b) => a.type - b.type || a.id - b.id);
+  for (const layer of ordered) {
+    const bucket = byLayer.get(layer.id);
+    if (!bucket || !bucket.length) continue;
+    bucket.sort((a, b) => a.z - b.z || a.y - b.y || a.id - b.id);
+    const ui = (layer.flags & LAYER_UI) !== 0;
+    const scale = ui ? uiScale : worldScale;
+    const origin = ui
+      ? uiAnchor(layer.type, layer.width, layer.height, viewWidth, viewHeight, uiScale)
+      : [worldRect.x, worldRect.y];
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(origin[0], origin[1], layer.width * scale, layer.height * scale);
+    ctx.clip();
+    for (const object of bucket) {
+      const sprite = sprites.get(object.spriteId);
+      if (!sprite) continue;
+      ctx.drawImage(
+        sprite.canvas,
+        origin[0] + object.x * scale, origin[1] + object.y * scale,
+        sprite.width * scale, sprite.height * scale
+      );
+    }
+    ctx.restore();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Observation readout: everything below comes from sprite LABELS on this
+// seat's own stream (src/ctf/labels.nim), i.e. exactly the channel a policy
+// reads. No engine-side extras were added for the human.
+// ---------------------------------------------------------------------------
+const state = {
+  alive: false, aim: null, aimAt: 0, hp: "", weapon: "", fireReady: null,
+  selfX: 0, selfY: 0, inGame: false
+};
+
+function labelOf(object) {
+  const sprite = sprites.get(object.spriteId);
+  return sprite ? sprite.label : "";
+}
+
+function readObservation() {
+  let alive = false, aim = null, hp = "", weapon = "", fireReady = null;
+  let selfX = state.selfX, selfY = state.selfY, inGame = false;
+  for (const object of objects.values()) {
+    const label = labelOf(object);
+    if (!label) {
+      if (object.id === 1 && object.spriteId === 1) inGame = true;
+      continue;
+    }
+    if (label.startsWith("own aim ")) {
+      aim = parseInt(label.slice(8), 10);
+    } else if (label.startsWith("self ")) {
+      alive = true;
+      const sprite = sprites.get(object.spriteId);
+      selfX = object.x + (sprite ? sprite.width / 2 : 0);
+      selfY = object.y + (sprite ? sprite.height / 2 : 0);
+    } else if (label.startsWith("lives ")) {
+      hp = label.slice(6);
+    } else if (label.startsWith("weapon ")) {
+      weapon = label.slice(7);
+    } else if (label === "fire icon") {
+      fireReady = true;
+    } else if (label === "fire icon cooldown") {
+      fireReady = false;
+    } else if (label.includes(" shout ")) {
+      noteShout(object.id, label);
+    }
+    if (object.id === 1 && object.spriteId === 1) inGame = true;
+  }
+  if (aim !== null && aim !== state.aim) { state.aim = aim; state.aimAt = performance.now(); }
+  else if (aim !== null) state.aimAt = performance.now();
+  state.alive = alive; state.hp = hp; state.weapon = weapon;
+  state.fireReady = fireReady; state.selfX = selfX; state.selfY = selfY;
+  state.inGame = inGame || state.inGame;
+}
+
+const seenShouts = new Map();
+function noteShout(objectId, label) {
+  if (seenShouts.get(objectId) === label) return;
+  seenShouts.set(objectId, label);
+  addLog(label);
+}
+function addLog(text, color) {
+  const line = document.createElement("div");
+  line.textContent = text;
+  if (color) line.style.color = color;
+  logEl.prepend(line);
+  while (logEl.childElementCount > 10) logEl.lastElementChild.remove();
+}
+
+// ---------------------------------------------------------------------------
+// Latency instrumentation.
+//
+// Three separate numbers, because they answer different questions and only
+// the third is end-to-end:
+//   frameGap  — ms between painted frames. The server streams one frame per
+//               sim tick, so this should sit at 1000/24 = 41.7ms; it measures
+//               stream cadence, NOT responsiveness.
+//   keySend   — keydown event timestamp -> the ws.send that carries the new
+//               mask. Purely this client's input path.
+//   aimEcho   — keydown of a rotate button -> the first PAINTED frame whose
+//               `own aim` readback differs from its value at press time. This
+//               is the honest input-to-render latency: client path + network
+//               RTT + up to one tick of server quantisation + paint. It is
+//               only sampled for aim, because aim is the one input whose
+//               effect the observation states as an exact number, so no
+//               guessing is involved in deciding which frame "shows" it.
+// ---------------------------------------------------------------------------
+const latency = {
+  frameGap: [], keySend: [], aimEcho: [],
+  push(kind, value) {
+    const bucket = this[kind];
+    bucket.push(value);
+    if (bucket.length > 600) bucket.shift();
+  },
+  reset() { this.frameGap = []; this.keySend = []; this.aimEcho = []; }
+};
+function percentile(values, fraction) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1,
+    Math.floor(fraction * (sorted.length - 1) + 0.5))];
+}
+let pendingAim = null;   // {at, aim} while a rotate press waits for its echo
+
+// ---------------------------------------------------------------------------
+// Input: the 8 protocol bits, and nothing else.
+// ---------------------------------------------------------------------------
+const keys = Object.create(null);
+const mouse = { x: 0, y: 0, inside: false, left: false, right: false };
+let mouseAim = true;
+let chargeStart = 0;
+
+const maskEl = document.getElementById("maskv");
+
+function desiredAimBrads() {
+  if (!mouseAim || !mouse.inside || !state.alive) return null;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const mapX = (mouse.x * ratio - worldRect.x) / worldRect.scale;
+  const mapY = (mouse.y * ratio - worldRect.y) / worldRect.scale;
+  const dx = mapX - state.selfX, dy = mapY - state.selfY;
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return null;
+  // brads: 0 = east, counter-clockwise, 256 per turn; screen y grows downward.
+  const brads = Math.atan2(-dy, dx) * AIM_BRADS / (2 * Math.PI);
+  return ((brads % AIM_BRADS) + AIM_BRADS) % AIM_BRADS;
+}
+
+function signedBradDelta(target, current) {
+  let delta = ((target - current) % AIM_BRADS + AIM_BRADS) % AIM_BRADS;
+  if (delta > AIM_BRADS / 2) delta -= AIM_BRADS;
+  return delta;   // >0 means counter-clockwise is the short way
+}
+
+// The rotate buttons are the ONLY aim authority — the same two buttons a bot
+// presses. This just decides which one to hold, from the `own aim` readback
+// dead-reckoned forward over the ticks the last frame is old, so the pointer
+// behaves like a turret rather than a teleport.
+let aimHold = 0;
+function aimBits() {
+  const target = desiredAimBrads();
+  if (target === null) return 0;
+  if (state.aim === null) return 0;
+  const ticksStale = Math.max(0, Math.round((performance.now() - state.aimAt) / TICK_MS));
+  const held = aimHold === IN_B ? 1 : (aimHold === IN_SELECT ? -1 : 0);
+  const predicted = ((state.aim + held * AIM_TURN_RATE * ticksStale) % AIM_BRADS
+    + AIM_BRADS) % AIM_BRADS;
+  const delta = signedBradDelta(target, predicted);
+  if (Math.abs(delta) <= AIM_TURN_RATE / 2) { aimHold = 0; return 0; }
+  aimHold = delta > 0 ? IN_B : IN_SELECT;
+  return aimHold;
+}
+
+function currentMask() {
+  if (typing) return 0;
+  let mask = 0;
+  if (keys.KeyW || keys.ArrowUp) mask |= IN_UP;
+  if (keys.KeyS || keys.ArrowDown) mask |= IN_DOWN;
+  if (keys.KeyA || keys.ArrowLeft) mask |= IN_LEFT;
+  if (keys.KeyD || keys.ArrowRight) mask |= IN_RIGHT;
+  if (keys.KeyE) mask |= IN_SELECT;
+  if (keys.KeyQ) mask |= IN_B;
+  if (keys.Space || keys.KeyJ || mouse.left) mask |= IN_A;
+  if (keys.KeyC || keys.ShiftLeft || keys.ShiftRight || mouse.right) mask |= IN_C;
+  if (!(mask & (IN_SELECT | IN_B))) mask |= aimBits();
+  return mask;
+}
+
+function pump(at) {
+  const mask = currentMask();
+  if ((mask & (IN_SELECT | IN_B)) && !pendingAim && state.aim !== null) {
+    pendingAim = { at: at !== undefined ? at : performance.now(), aim: state.aim };
+  }
+  const wasCharging = chargeStart !== 0;
+  if (mask & IN_C) { if (!wasCharging) chargeStart = performance.now(); }
+  else chargeStart = 0;
+  sendMask(mask, at);
+}
+
+document.addEventListener("keydown", event => {
+  if (event.code === "Enter") {
+    event.preventDefault();
+    if (typing) { sendChat(sayEl.value); sayEl.value = ""; stopTyping(); }
+    else startTyping();
+    return;
+  }
+  if (typing) {
+    if (event.code === "Escape") { sayEl.value = ""; stopTyping(); }
+    return;
+  }
+  if (event.code === "KeyH" || event.code === "Escape") {
+    event.preventDefault(); toggleHelp(); return;
+  }
+  if (event.code === "KeyM") { mouseAim = !mouseAim; aimHold = 0; return; }
+  if (event.code.startsWith("Digit")) {
+    const index = +event.code.slice(5) - 1;
+    if (index >= 0 && index < MACROS.length) { sendChat(MACROS[index]); return; }
+  }
+  if (event.code === "Space" || event.code.startsWith("Arrow")) event.preventDefault();
+  if (keys[event.code]) return;
+  keys[event.code] = 1;
+  pump(event.timeStamp);
+});
+document.addEventListener("keyup", event => {
+  if (!keys[event.code]) return;
+  keys[event.code] = 0;
+  pump(event.timeStamp);
+});
+canvas.addEventListener("mousemove", event => {
+  mouse.x = event.clientX; mouse.y = event.clientY; mouse.inside = true;
+});
+canvas.addEventListener("mouseleave", () => { mouse.inside = false; });
+canvas.addEventListener("mousedown", event => {
+  event.preventDefault();
+  if (event.button === 0) mouse.left = true;
+  if (event.button === 2) mouse.right = true;
+  pump(event.timeStamp);
+});
+window.addEventListener("mouseup", event => {
+  if (event.button === 0) mouse.left = false;
+  if (event.button === 2) mouse.right = false;
+  pump(event.timeStamp);
+});
+canvas.addEventListener("contextmenu", event => event.preventDefault());
+
+function release() {
+  for (const key in keys) keys[key] = 0;
+  mouse.left = mouse.right = false;
+  aimHold = 0;
+  sendMask(0);
+}
+window.addEventListener("blur", release);
+window.addEventListener("pagehide", release);
+document.addEventListener("visibilitychange", () => { if (document.hidden) release(); });
+
+function startTyping() {
+  typing = true; release();
+  sayEl.focus(); sayEl.select();
+}
+function stopTyping() { typing = false; sayEl.blur(); canvas.focus(); }
+sayEl.addEventListener("focus", () => { typing = true; release(); });
+sayEl.addEventListener("blur", () => { typing = false; });
+sayEl.addEventListener("input", () => {
+  sayEl.value = sayEl.value.replace(/[^\x20-\x7e]/g, "").slice(0, SHOUT_MAX);
+});
+document.getElementById("sayb").onclick = () => {
+  sendChat(sayEl.value); sayEl.value = ""; stopTyping();
+};
+
+const macroBar = document.getElementById("macros");
+MACROS.forEach((text, index) => {
+  const button = document.createElement("button");
+  button.className = "macro";
+  button.textContent = (index + 1) + ":" + text;
+  button.onclick = () => { sendChat(text); canvas.focus(); };
+  macroBar.appendChild(button);
+});
+
+const helpEl = document.getElementById("help");
+function toggleHelp() {
+  helpEl.style.display = helpEl.style.display === "flex" ? "none" : "flex";
+}
+document.getElementById("helpb").onclick = () => { toggleHelp(); canvas.focus(); };
+helpEl.onclick = () => { helpEl.style.display = "none"; };
+
+document.getElementById("latreset").onclick = () => { latency.reset(); canvas.focus(); };
+document.getElementById("latsave").onclick = () => {
+  const report = { tickHz: TICK_HZ, capturedAt: new Date().toISOString(), metrics: {} };
+  for (const kind of ["frameGap", "keySend", "aimEcho"]) {
+    const values = latency[kind];
+    report.metrics[kind] = {
+      n: values.length,
+      p50: percentile(values, 0.5), p95: percentile(values, 0.95),
+      min: values.length ? Math.min(...values) : null,
+      max: values.length ? Math.max(...values) : null,
+      samplesMs: values.map(value => Math.round(value * 100) / 100)
+    };
+  }
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "human-seat-latency.json";
+  link.click();
+};
+
+// ---------------------------------------------------------------------------
+// HUD refresh + frame loop
+// ---------------------------------------------------------------------------
+const hpEl = document.getElementById("hpv"), wepEl = document.getElementById("wep"),
+      aimEl = document.getElementById("aimv"), fireEl = document.getElementById("firev"),
+      fireDot = document.getElementById("fired"), nadeEl = document.getElementById("nadev"),
+      nadeDot = document.getElementById("naded"), modeEl = document.getElementById("modev");
+
+function fmt(value) { return value === null ? "-" : Math.round(value) + "ms"; }
+
+function refreshHud() {
+  document.body.classList.toggle("dead", state.inGame && !state.alive);
+  hpEl.textContent = state.hp || (state.alive ? "alive" : "down");
+  wepEl.textContent = state.weapon || "-";
+  aimEl.textContent = state.aim === null ? "-" : state.aim + " brads";
+  fireEl.textContent = state.fireReady === null ? "-"
+    : (state.fireReady ? "ready" : "cooldown");
+  fireDot.className = "dot" + (state.fireReady ? " on" : "");
+  const charging = chargeStart !== 0;
+  nadeEl.textContent = charging
+    ? ((performance.now() - chargeStart) / 1000).toFixed(1) + "s" : "idle";
+  nadeDot.className = "dot" + (charging ? " hot" : "");
+  modeEl.textContent = mouseAim ? "mouse" : "keys (Q/E)";
+  document.getElementById("fp50").textContent = fmt(percentile(latency.frameGap, .5));
+  document.getElementById("fp95").textContent = fmt(percentile(latency.frameGap, .95));
+  document.getElementById("fpn").textContent = latency.frameGap.length;
+  document.getElementById("ks50").textContent = fmt(percentile(latency.keySend, .5));
+  document.getElementById("ks95").textContent = fmt(percentile(latency.keySend, .95));
+  document.getElementById("ksn").textContent = latency.keySend.length;
+  document.getElementById("ae50").textContent = fmt(percentile(latency.aimEcho, .5));
+  document.getElementById("ae95").textContent = fmt(percentile(latency.aimEcho, .95));
+  document.getElementById("aen").textContent = latency.aimEcho.length;
+}
+setInterval(refreshHud, 100);
+
+let dirty = false, lastPaint = 0;
+function paint() {
+  if (dirty) {
+    dirty = false;
+    readObservation();
+    render();
+    const now = performance.now();
+    if (lastPaint) latency.push("frameGap", now - lastPaint);
+    lastPaint = now;
+    if (pendingAim && state.aim !== null && state.aim !== pendingAim.aim) {
+      latency.push("aimEcho", now - pendingAim.at);
+      pendingAim = null;
+    }
+    if (state.inGame) note("");
+  }
+  // Aim is a held-button controller, so it has to be re-evaluated between
+  // frames as well as on key events.
+  if (socket && socket.readyState === 1 && !typing) pump();
+  requestAnimationFrame(paint);
+}
+requestAnimationFrame(paint);
+
+(function connect() {
+  note("connecting\u2026");
+  socket = new WebSocket(socketUrl());
+  socket.binaryType = "arraybuffer";
+  sentMask = -1;
+  const own = socket;
+  socket.onopen = () => note("waiting for the game\u2026");
+  socket.onmessage = event => {
+    try { parseSpritePacket(new Uint8Array(event.data)); dirty = true; }
+    catch (err) { console.error(err); note("bad packet: " + err.message); }
+  };
+  socket.onclose = socket.onerror = () => {
+    if (socket !== own) return;
+    if (reconnectSec) {
+      note("reconnecting\u2026");
+      if (!reconnectTimer) {
+        reconnectTimer = setTimeout(() => { reconnectTimer = 0; connect(); },
+          reconnectSec * 1000);
+      }
+    } else note("disconnected");
+  };
+})();
+
+// Test/debug surface: the smoke test asserts against these rather than pixels.
+window.__humanSeat = { state, latency, currentMask, MACROS, sendChat };
+</script>
+</body>
+</html>
