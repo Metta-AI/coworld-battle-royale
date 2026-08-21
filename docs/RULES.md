@@ -430,9 +430,13 @@ differently and are the only "supply" in the mode:
 **Aim jitter is calibrated once, against `config.gunRange` — not per tier.**
 The GV34 contract ("a fully visible body at max range is hit exactly 80% of the
 time") is written for 1050 px, and sigma stays at 0.596° whatever tier fires.
+Sigma is `asin((PlayerHalf + BulletHalfWidth) / config.gunRange) /
+AimJitterCentralZ` — a ±14 px acceptance window at 1050 px over Φ⁻¹(0.90) —
+and the hit rate at any distance `d` is `2Φ(asin(14 / d) / sigma) − 1`.
 Mid and heavy therefore land on 80% at their own 1050 px edge, while low —
 whose envelope stops at 700 px — is *more* accurate than the contract at its
-own maximum, ~94.5%. Low's weakness is reach and cooldown, not precision.
+own maximum, ~94.5% (and every tier is ~99% at 525 px). Low's weakness is reach
+and cooldown, not precision.
 Whether that is intended is filed as
 https://github.com/Metta-AI/coworld-battle-royale/issues/19.
 
