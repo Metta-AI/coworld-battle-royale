@@ -220,8 +220,10 @@ ffa consts: `FfaHitPoints`=20 (spawn pool), weapon ladder
 tick; the fist's 200% is the literal `2 *` in `tryFist`, and the declared
 `FfaFistCooldownTicks`=24 is not read on the fire path), tier ranges
 `FfaLowGunRange`=700 / `FfaMidGunRange`=`GunRange`=1050 /
-`FfaHeavyGunRange`=`GunRange`=1050 (mid reads `config.gunRange` at runtime; low
-and heavy do not, so `gunRange` retunes two of the three tiers), tier ids
+`FfaHeavyGunRange`=`GunRange`=1050 (only mid reads `config.gunRange` at runtime;
+low and heavy are consts, so retuning `gunRange` moves mid's range alone — while
+`aimJitterSigma` reads it for every tier, so the retune still shifts all three
+tiers' accuracy), tier ids
 `FfaWeaponUnarmed`=0 / `FfaWeaponLow`=1 / `FfaWeaponMid`=2 /
 `FfaWeaponHeavy`=3, fist geometry `FfaFistReach`=70 px center-to-center and
 `FfaFistAimHalfBrads`=48 (of the 256-brad turn, so ±67.5°),
