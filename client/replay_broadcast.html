@@ -2289,8 +2289,11 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   var ffaTimelineMarkers = [];
   var ffaTimelineReady = false;
   function renderFfaTimelineMarkers(s) {
-    if (!s.ffa || !s.lead || !s.lead.pts || !s.lead.pts.length) return;
+    // The lead series ships on the first HUD frame only; build the markers
+    // from it once, but re-run the position/spoiler pass every frame.
+    if (!s.ffa) return;
     if (!ffaTimelineReady) {
+      if (!s.lead || !s.lead.pts || !s.lead.pts.length) return;
       var pts = s.lead.pts;
       var previous = Number(pts[0][1]);
       var finalTwoTick = null;
@@ -4003,6 +4006,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     }, hold);
   }
   function clearBanners() {
+    ffaWinnerBannerTick = -1;
     bannerQueue = [];
     bannerEl.innerHTML = '';
     bannerBusy = false;
