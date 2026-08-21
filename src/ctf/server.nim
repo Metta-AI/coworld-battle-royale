@@ -66,7 +66,8 @@ const
   # The designed broadcast replay client, embedded at compile time. Served for
   # the replay routes in place of bitworld's generic global client; a single
   # self-contained file (shared chrome + core JS inlined). Live/player/global
-  # paths are untouched and keep serving the bitworld client (§14 live column).
+  # paths keep serving their existing clients except for the human-seat page
+  # served below.
   # Final in-page script order: wire constants, shared chrome, core, page IIFE
   # (marker positions in the HTML fix that; the replace order here is free).
   EmbeddedBroadcastReplayHtml = staticRead("../../client/replay_broadcast.html").replace(
@@ -85,6 +86,14 @@ const
     "<!-- CHROME_COMMON -->",
     "<script>" & staticRead("../../client/chrome_common.js") & "</script>"
   ).spliceWireConstants()
+  EmbeddedHumanSeatHtml = staticRead("../../client/play_live.html")
+    .spliceWireConstants()
+  HumanSeatClientRoutes = [
+    bitworldClient.PlayerClientRoute,
+    bitworldClient.PlayerClientHtmlRoute,
+    "/client/player_client.html",
+    bitworldClient.CoworldPlayerClientRoute
+  ]
   # Dungeon-wall textures (nanobanana generations) served as static assets so the
   # shell HTML stays small and editable. Wide for top/bottom, tall for side walls.
   # Opaque stone, no alpha → JPEG (q82) keeps each well under any committed sprite.
@@ -654,6 +663,21 @@ proc replayRequestUriOrPending(request: Request): tuple[uri: string, loaded: boo
         else:
           result.uri = appState.currentReplayUri
 
+proc humanSeatClientBody(path, httpMethod: string): string =
+  if httpMethod != "GET" or path notin HumanSeatClientRoutes:
+    return ""
+  EmbeddedHumanSeatHtml
+
+proc serveHumanSeatClient(request: Request): bool =
+  let body = humanSeatClientBody(request.path, request.httpMethod)
+  if body.len == 0:
+    return false
+  var headers: HttpHeaders
+  headers["Content-Type"] = "text/html; charset=utf-8"
+  headers["Cache-Control"] = "no-cache"
+  request.respond(200, headers, body)
+  true
+
 proc httpHandler(request: Request) =
   if request.path == HealthPath and request.httpMethod == "GET":
     var headers: HttpHeaders
@@ -847,6 +871,8 @@ proc httpHandler(request: Request) =
       request.respond(200, replayHeaders, EmbeddedLeagueReplayerHtml)
     else:
       request.respond(200, replayHeaders, EmbeddedBroadcastReplayHtml)
+  elif request.serveHumanSeatClient():
+    discard
   elif bitworldClient.serveClientRoute(
     request,
     bitworldClient.GlobalClientRoute

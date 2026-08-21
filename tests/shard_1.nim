@@ -12,6 +12,7 @@ import
   test_lobby_join_timeout,
   test_manifest_schema,
   test_ffa_roster_seat_count,
+  test_human_seat_client,
   test_map_editor,
   test_map_editor_core,
   test_sym_none,
