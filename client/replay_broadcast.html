@@ -2493,7 +2493,12 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     // lead over rank 2 instead, so the top plate is never a blank column.
     var margin = '';
     if (seat.rank === 1) {
-      if (runnerUp) margin = '+' + (runnerUp.gap - seat.gap);
+      // Signed both ways: placement crowns a living seat over a dead one even
+      // when the dead seat banked more, so rank 1 can trail on points.
+      if (runnerUp) {
+        var lead = runnerUp.gap - seat.gap;
+        margin = lead < 0 ? '\u2212' + (-lead) : '+' + lead;
+      }
     } else if (seat.gap > 0) {
       margin = '\u2212' + seat.gap;
     } else if (seat.gap < 0) {
