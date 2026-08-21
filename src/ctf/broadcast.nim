@@ -304,6 +304,91 @@ proc rosterJson(sim: SimServer): JsonNode =
       item["pk"] = pk
     result.add(item)
 
+proc ffaPlayingTicks(sim: SimServer): int =
+  ## Ticks this game spent in `Playing`. During `GameOver` the game clock keeps
+  ## running but the sim stops paying survival, so the frozen value is the
+  ## elapsed count minus the ticks burned off the game-over timer.
+  if sim.phase == Lobby:
+    return 0
+  let elapsed = sim.gameTicksElapsed()
+  if sim.phase != GameOver:
+    return elapsed
+  max(0, elapsed - max(0, sim.config.gameOverTicks - sim.gameOverTimer))
+
+proc ffaSurvivalSeconds(sim: SimServer, player: Player): int =
+  ## Whole seconds of survival pay this seat has banked, on exactly the rule
+  ## `updateFfaSurvival` uses: it pays every seat still alive at each
+  ## whole-second boundary of the game clock, and it runs AFTER the tick's
+  ## deaths resolve — so a seat that dies on a boundary tick is not paid for it.
+  let playing = sim.ffaPlayingTicks()
+  if playing <= 0:
+    return 0
+  if player.alive:
+    return playing div TargetFps
+  if player.deathTick < 0:
+    return 0
+  let died = min(playing, max(0, player.deathTick - sim.gameStartTick))
+  if died <= 0: 0 else: (died - 1) div TargetFps
+
+proc ffaScoreJson(sim: SimServer): JsonNode =
+  ## Per-seat FFA scoring for the scorebug: the sim's own running reward, split
+  ## into the components that produced it, plus placement rank and the margin
+  ## to the leader. Every number here is server-side — the client only formats
+  ## them, so a displayed score can never drift from the sim.
+  ##
+  ## `sc` is `player.reward` verbatim (authoritative). `sv` and `pd` are
+  ## re-derived from the same inputs the sim paid on (whole-second boundaries,
+  ## placement), and `cb` is what remains: the combat money, i.e. credited
+  ## kills plus the assist split. So the components always sum to `sc` exactly,
+  ## and podium stays 0 until the game is over.
+  ##
+  ## Combat is ONE component rather than a kills/assists split on purpose. A
+  ## kills component would have to be `kills * killPoints`, and `player.kills`
+  ## is not reconcilable against `reward` today: a punch that finds no target
+  ## credits a kill against seat 0 without paying for it
+  ## (https://github.com/Metta-AI/coworld-battle-royale/issues/13), which drives
+  ## an assists-as-remainder NEGATIVE on the affected seat. `k` still ships as
+  ## the sim's raw counter, as a stat rather than as money.
+  var
+    seats = newJArray()
+    ranks = newSeq[int](sim.players.len)
+    podium = newSeq[int](sim.players.len)
+  let places = sim.ffaPlacements()
+  for place, index in places:
+    ranks[index] = place + 1
+    if sim.phase == GameOver and place < sim.config.podiumPoints.len:
+      podium[index] = sim.config.podiumPoints[place]
+  let leaderScore =
+    if places.len > 0: sim.players[places[0]].reward else: 0
+  for index, player in sim.players:
+    let
+      survival = sim.ffaSurvivalSeconds(player) * sim.config.survivalPointsPerSec
+      combat = player.reward - survival - podium[index]
+    seats.add(%*{
+      "s": player.joinOrder,
+      "sc": player.reward,
+      "sv": survival,
+      "cb": combat,
+      "pd": podium[index],
+      "alive": player.alive,
+      "k": player.kills,
+      "dmg": player.damageDealt,
+      "rank": ranks[index],
+      # Signed margin against the rank-1 seat's score (0 for rank 1 itself), so
+      # the plates show a margin without subtracting scores client-side. It can
+      # be negative: placement ranks a living seat above a dead one even when
+      # the dead seat banked more points.
+      "gap": leaderScore - player.reward
+    })
+  result = %*{
+    "seats": seats,
+    "rates": {
+      "sv": sim.config.survivalPointsPerSec,
+      "k": sim.config.killPoints,
+      "a": sim.config.assistPoints
+    }
+  }
+
 const
   FpColumns = 96              ## raycast columns per first-person frame.
   FpMarchStep = 2.0           ## px per wall-march step (fine enough at 1235px).
@@ -735,7 +820,12 @@ proc buildStateJson*(
       "radius": ffaRingRadiusAt(sim.config, sim.gameTicksElapsed()),
       "shrinkSec": sim.config.ringShrinkSec,
       "damageTicks": sim.config.ringDamageTicks,
-      "recoveryTicks": sim.config.ringRecoveryTicks
+      "recoveryTicks": sim.config.ringRecoveryTicks,
+      # Whole seconds until the ring reaches its floor (-1 before the game
+      # starts), from the SAME helper the server scoreboard's ZONE cue reads, so
+      # the replay top band states zone status without the client re-deriving
+      # the shrink schedule and without the two read-outs drifting.
+      "toFloorSec": sim.ffaZoneFloorSeconds()
     }
 
   # Resolved perk magnitudes for the scorebug icon tooltips (the sim is the
@@ -792,6 +882,7 @@ proc buildStateJson*(
       state["lead"] = %*{"teams": teamNames, "pts": pts}
   if sim.config.isFfa():
     state["ffa"] = %true
+    state["ffaScore"] = sim.ffaScoreJson()
 
   # Static minimap wall silhouette for the EYES tactical inset, sent ONCE per
   # viewer (like the lead series). Absent on every later frame — the client
