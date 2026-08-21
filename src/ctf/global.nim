@@ -65,6 +65,7 @@ const
   ScoreboardY = 2
   FfaScoreboardRowsY = ScoreboardY + 8
   FfaScoreboardHeaderRow = MaxPlayers
+  FfaZoneCueRow = MaxPlayers + 1  ## safe-zone cue row below the roster.
   ScoreboardRowHeight = 7
   ScoreboardPipX = 2
   ScoreboardPipY = 2
@@ -658,6 +659,30 @@ const
   FogObjectBase = 21000
   FogMaxRuns = 2048            ## fog object pool; overflow drops shortest runs.
   FogAlpha = 160'u8            ## fog dims unseen floor to ~37% brightness.
+  ## FFA safe-zone overlay (spectator BOARD stream only, never a player view):
+  ## a translucent warm-dark wash over the outside-zone floor, built from the
+  ## same lazy row-run sprites as the fog, plus a dotted amber boundary at the
+  ## current ring radius. Purely derived from tick + config via the sim's
+  ## ffaRingRadiusAt — no sim state, no RNG, no CTF emission.
+  SafeZoneRunSpriteBase = 33200 ## wash run sprites keyed by width in 8px
+                                ## cells: 33200..33439, in the gap between the
+                                ## FFA game-over icons and the paint stains.
+  SafeZoneRunPoolWidth = 240
+  SafeZoneEdgeSpriteBase = 33450 ## boundary dot sprites: pulse bright / pulse
+                                 ## dim (shrinking) / steady floor variant.
+  SafeZoneEdgeVariants = 3
+  SafeZoneWashObjectBase = 13000 ## wash run objects, chunked per 8px board
+                                 ## row, in the gap above the scoreboard pips.
+  SafeZoneWashMaxRuns = 2048     ## covers a colossal board: ~429 rows x up
+                                 ## to 4 pool-width chunks, capped like fog.
+  SafeZoneEdgeObjectBase = 15100 ## boundary dots along the ring circumference.
+  SafeZoneEdgeMaxDots = 1024
+  SafeZoneWashZ = low(int16) + 4 ## above the floor decals (stains at
+                                 ## low+2), below every actor.
+  SafeZoneEdgeZ = low(int16) + 5 ## the boundary draws over its own wash.
+  SafeZoneEdgeSize = 9           ## px dot canvas: 2-3px amber core + halo.
+  SafeZoneEdgeSpacingPx = 10     ## target arc length between dots.
+  SafeZonePulseTicks = 16        ## half-period of the shrinking-edge pulse.
   ## v7.0 sim renamed the top-left scoreboard layer consts; alias them back to
   ## the names this (v6.0) renderer uses, so the renderer stays byte-identical.
   TopLeftLayerId = ScoreboardLayerId
@@ -820,6 +845,8 @@ const
     ("rig guns", RigGunObjectBase, MaxPlayers),
     ("paint stains", StainObjectBase, StainMaxCount),
     ("barrage marker", BarrageMarkerObjectId, 1),
+    ("safe zone wash runs", SafeZoneWashObjectBase, SafeZoneWashMaxRuns),
+    ("safe zone edge dots", SafeZoneEdgeObjectBase, SafeZoneEdgeMaxDots),
   ]
 
 static:
@@ -945,6 +972,8 @@ const
     ("paint stains", StainSpriteBase, StainMaxCount),
     ("barrage marker", BarrageMarkerSpriteId, 1),
     ("diamond paint", DiamondPaintSpriteBase, 8 * 16),
+    ("safe zone wash runs", SafeZoneRunSpriteBase, SafeZoneRunPoolWidth),
+    ("safe zone edge dots", SafeZoneEdgeSpriteBase, SafeZoneEdgeVariants),
   ]
 
 static:
@@ -3838,6 +3867,170 @@ proc addFogRuns(
       spriteId
     )
 
+proc buildSafeZoneRunSprite(widthCells: int, atFloor: bool): seq[uint8] =
+  ## Builds one translucent warm-dark wash run sprite covering `widthCells`
+  ## horizontally-adjacent 8px cells of outside-zone floor. The floor state
+  ## reads warmer and heavier, so "no longer shrinking" is a steady, distinct
+  ## look rather than a frozen copy of the live wash.
+  let
+    width = widthCells * FovCellSize
+    height = FovCellSize
+  result = newSeq[uint8](width * height * 4)
+  let
+    r = if atFloor: 46'u8 else: 34'u8
+    g = if atFloor: 26'u8 else: 24'u8
+    b = if atFloor: 14'u8 else: 16'u8
+    a = if atFloor: 126'u8 else: 96'u8
+  for i in 0 ..< width * height:
+    result.putRawRgbaPixel(i, r, g, b, a)
+
+proc buildSafeZoneEdgeSprite(variant: int): seq[uint8] =
+  ## Builds one boundary dot: a drama-amber core over a warm-dark halo so the
+  ## ring line reads on both pale and dark floor art. Variants 0/1 are the
+  ## bright/dim halves of the shrinking pulse; variant 2 is the steady,
+  ## hotter floor state.
+  const Size = SafeZoneEdgeSize
+  result = newSeq[uint8](Size * Size * 4)
+  let center = Size div 2
+  for y in 0 ..< Size:
+    for x in 0 ..< Size:
+      let distSq = (x - center) * (x - center) + (y - center) * (y - center)
+      var (r, g, b, a) = (0'u8, 0'u8, 0'u8, 0'u8)
+      if distSq <= 4:
+        case variant
+        of 0: (r, g, b, a) = (232'u8, 163'u8, 61'u8, 255'u8)
+        of 1: (r, g, b, a) = (232'u8, 163'u8, 61'u8, 150'u8)
+        else: (r, g, b, a) = (244'u8, 202'u8, 120'u8, 255'u8)
+      elif distSq <= 9:
+        (r, g, b, a) =
+          (36'u8, 22'u8, 12'u8, if variant == 2: 230'u8 else: 190'u8)
+      result.putRawRgbaPixel(y * Size + x, r, g, b, a)
+
+proc addSafeZoneOverlay(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  currentIds: var seq[int],
+  packet: var seq[uint8]
+) {.measure.} =
+  ## Places the FFA safe-zone overlay on the spectator BOARD stream: a
+  ## warm-dark wash over every 8px floor cell fully outside the ring (lazy
+  ## row-run sprites, like the fog) plus a dotted amber boundary at the
+  ## current radius — pulsing while the ring shrinks, steady and hotter once
+  ## it sits at its floor. Everything derives from tick + config through the
+  ## sim's own ring schedule (ffaRingRadiusAt), so playback is replay-exact;
+  ## nothing here runs for CTF or reaches a player observation stream.
+  if not (sim.config.isFfa() and sim.config.ringEnabled):
+    return
+  if sim.phase == Lobby:
+    return
+  let
+    (centerX, centerY) = ffaRingCenter()
+    radius = ffaRingRadiusAt(sim.config, sim.gameTicksElapsed())
+    atFloor = radius <= ffaRingFloorRadius(sim.config)
+    stateTag = if atFloor: " floor" else: " live"
+    radiusSq = radius * radius
+    cols = (MapWidth + FovCellSize - 1) div FovCellSize
+    rows = (MapHeight + FovCellSize - 1) div FovCellSize
+  var runIndex = 0
+  template emitWashRun(runCellX, runCellY, runWidthCells: int) =
+    # Runs wider than the sprite pool are emitted in pool-width chunks so a
+    # full board row is always fully covered.
+    var
+      cellX = runCellX
+      remaining = runWidthCells
+    while remaining > 0 and runIndex < SafeZoneWashMaxRuns:
+      let
+        cellWidth = min(remaining, SafeZoneRunPoolWidth - 1)
+        runSpriteId = SafeZoneRunSpriteBase + cellWidth
+        runLabel = "safe zone wash " & $cellWidth & stateTag
+        defIndex = spriteDefs.spriteDefinitionIndex(runSpriteId)
+      # Building the pixel buffer is the expensive part: only do it when the
+      # width is first seen or the floor state flipped (the label changes).
+      if defIndex < 0 or spriteDefs[defIndex].label != runLabel:
+        packet.addBoardSpriteChanged(
+          spriteDefs,
+          runSpriteId,
+          cellWidth * FovCellSize,
+          FovCellSize,
+          buildSafeZoneRunSprite(cellWidth, atFloor),
+          runLabel
+        )
+      let objectId = SafeZoneWashObjectBase + runIndex
+      currentIds.add(objectId)
+      packet.addBoardObject(
+        objectId,
+        cellX * FovCellSize,
+        runCellY * FovCellSize,
+        SafeZoneWashZ,
+        MapLayerId,
+        runSpriteId
+      )
+      inc runIndex
+      cellX += cellWidth
+      remaining -= cellWidth
+  for row in 0 ..< rows:
+    # A cell is washed only when ENTIRELY outside the ring (its nearest point
+    # to the center is past the radius), so the wash never dims in-zone floor;
+    # the dotted boundary covers the sub-cell remainder.
+    let
+      rowTop = row * FovCellSize
+      rowBottom = min(rowTop + FovCellSize, MapHeight) - 1
+      dy =
+        if centerY < rowTop: rowTop - centerY
+        elif centerY > rowBottom: centerY - rowBottom
+        else: 0
+    if dy * dy > radiusSq:
+      emitWashRun(0, row, cols)
+      continue
+    let
+      halfWidth = intSqrt(radiusSq - dy * dy)
+      leftCells = clamp(centerX - halfWidth, 0, cols * FovCellSize) div
+        FovCellSize
+      rightStart = clamp((centerX + halfWidth) div FovCellSize + 1, 0, cols)
+    emitWashRun(0, row, leftCells)
+    emitWashRun(rightStart, row, cols - rightStart)
+  let
+    variant =
+      if atFloor: 2
+      elif (sim.tickCount div SafeZonePulseTicks) mod 2 == 0: 0
+      else: 1
+    dotSpriteId = SafeZoneEdgeSpriteBase + variant
+    dotLabel = [
+      "safe zone edge bright", "safe zone edge dim", "safe zone edge floor"
+    ][variant]
+  if spriteDefs.spriteDefinitionIndex(dotSpriteId) < 0:
+    packet.addBoardSpriteChanged(
+      spriteDefs,
+      dotSpriteId,
+      SafeZoneEdgeSize,
+      SafeZoneEdgeSize,
+      buildSafeZoneEdgeSprite(variant),
+      dotLabel
+    )
+  let dotCount = min(
+    SafeZoneEdgeMaxDots,
+    max(24, radius * 6283 div (SafeZoneEdgeSpacingPx * 1000))
+  )
+  var dotIndex = 0
+  for i in 0 ..< dotCount:
+    let
+      angle = TAU * float(i) / float(dotCount)
+      dotX = centerX + int(round(cos(angle) * float(radius)))
+      dotY = centerY + int(round(sin(angle) * float(radius)))
+    if dotX < 0 or dotY < 0 or dotX >= MapWidth or dotY >= MapHeight:
+      continue
+    let objectId = SafeZoneEdgeObjectBase + dotIndex
+    currentIds.add(objectId)
+    packet.addBoardObject(
+      objectId,
+      dotX - SafeZoneEdgeSize div 2,
+      dotY - SafeZoneEdgeSize div 2,
+      SafeZoneEdgeZ,
+      MapLayerId,
+      dotSpriteId
+    )
+    inc dotIndex
+
 proc putTextSpritePixel(
   pixels: var seq[uint8],
   width, height, x, y: int,
@@ -4226,6 +4419,24 @@ proc ffaScoreboardHeaderText*(sim: SimServer): string =
     secs = seconds mod 60
     timeText = $minutes & ":" & (if secs < 10: "0" else: "") & $secs
   "ALIVE " & $alive & "  TIME " & timeText
+
+proc ffaZoneCueText*(sim: SimServer): string =
+  ## Spectator-header safe-zone cue: the countdown until the ring reaches its
+  ## floor while shrinking, then a steady FLOOR state. Empty when the ring is
+  ## off or the game has not started; derived from tick + config only.
+  if not (sim.config.isFfa() and sim.config.ringEnabled) or
+      sim.phase == Lobby:
+    return ""
+  let
+    total = max(1, sim.config.ringShrinkSec * TargetFps)
+    remaining = max(0, total - sim.gameTicksElapsed())
+  if remaining == 0:
+    return "ZONE FLOOR"
+  let
+    seconds = (remaining + TargetFps - 1) div TargetFps
+    minutes = seconds div 60
+    secs = seconds mod 60
+  "ZONE " & $minutes & ":" & (if secs < 10: "0" else: "") & $secs
 
 proc interstitialTextItems(
   sim: SimServer,
@@ -4914,6 +5125,32 @@ proc addScoreboard(
       TopLeftLayerId,
       spriteId
     )
+    # The safe-zone cue gets its own roster row: the header row is already
+    # full at the 84px scoreboard viewport, so appending there just clips.
+    let zoneCue = sim.ffaZoneCueText()
+    if zoneCue.len > 0:
+      let
+        cueText = sim.buildSpriteProtocolTextSprite(
+          [zoneCue], ScoreboardTextColor)
+        cueSpriteId = scoreboardTextSpriteId(FfaZoneCueRow)
+        cueObjectId = scoreboardTextObjectId(FfaZoneCueRow)
+      currentIds.add(cueObjectId)
+      packet.addSpriteChanged(
+        spriteDefs,
+        cueSpriteId,
+        cueText.width,
+        cueText.height,
+        cueText.pixels,
+        "ffa zone cue " & zoneCue
+      )
+      packet.addBoardObject(
+        cueObjectId,
+        ScoreboardTextX,
+        FfaScoreboardRowsY + sim.players.len * ScoreboardRowHeight + 2,
+        0,
+        TopLeftLayerId,
+        cueSpriteId
+      )
   for i in 0 ..< sim.players.len:
     let
       player = sim.players[i]
@@ -7993,6 +8230,7 @@ proc buildSpriteProtocolUpdates*(
   # Permanent terrain paint: incremental (only stains this viewer lacks) and
   # intentionally NOT tracked in currentIds, so it persists like the map bands.
   sim.addPaintStains(nextState, result)
+  sim.addSafeZoneOverlay(nextState.spriteDefs, currentIds, result)
   sim.addBarrageMarker(nextState.spriteDefs, currentIds, result)
   sim.addSplatters(nextState.spriteDefs, currentIds, result)
   sim.addDamagePops(nextState.spriteDefs, currentIds, result)
