@@ -393,7 +393,6 @@ type
     sightingEpisodes: int     # ffa: empty-to-nonempty visible-opponent transitions
     hadVisibleOpponent: bool   # ffa: previous frame had a visible opponent
     gameStart: int            # tick of the last lobby-to-playing transition
-    ffaClockTicks: int        # real game ticks accumulated from frameAdvance
     firedLast: bool           # A was set on the previous sent mask
     estAim: int               # dead-reckoned own aim angle in brads
     rotSign: int              # rotation of the last sent mask: +1 B, -1 Select
@@ -1609,7 +1608,6 @@ proc resetTransient(bot: Bot) =
   bot.carrierSeen = -100_000
   bot.lastEnemySeen = bot.tick
   bot.gameStart = bot.tick
-  bot.ffaClockTicks = 0
   bot.firedLast = false
   bot.estAim = spawnAim(bot.team)
   bot.rotSign = 0
@@ -1839,9 +1837,9 @@ proc legacyFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     result.objective = "fight"
     result.action = "engage"
 
-proc rushFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
-    me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, engage: bool): FfaIntent =
+proc rushFfaIntent(client: ProtocolClient, actors: seq[Actor],
+    me, center: Vec, ringRadius: int, targetIndex: int, weaponTier: int,
+    engage: bool): FfaIntent =
   ## Aggressive center line: fight immediately, otherwise select the best gun.
   result.phase = "RUSH"
   result.bandFraction = FfaHoldBand
@@ -1869,7 +1867,7 @@ proc passiveFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
     ringRadius: int, targetIndex: int, engage: bool): FfaIntent =
   result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
     "PASSIVE", "passive_band", "hold_band")
-  if engage and targetIndex >= 0:
+  if engage:
     result.moveTarget = actors[targetIndex].pos
     result.objective = "fight"
     result.action = "engage"
@@ -1884,7 +1882,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
     let maxTripTicks = FfaLootTripMaxSec * TargetFps
     if bot.ffaLootTrip and bot.ffaLootTargetValid and
         (bot.ffaLootStartedTick <= 0 or
-          bot.ffaClockTicks - bot.ffaLootStartedTick <= maxTripTicks) and
+          bot.tick - bot.ffaLootStartedTick <= maxTripTicks) and
         ffaGunStillPresent(client, bot.ffaLootTarget, bot.ffaLootTargetTier):
       result = ffaBandIntent(bot, me, center, ringRadius, FfaLootBand,
         "LOOT", "loot_trip", "move_gun")
@@ -1900,7 +1898,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
       bot.ffaLootTarget = gun.pos
       bot.ffaLootTargetValid = true
       bot.ffaLootTargetTier = gun.tier
-      bot.ffaLootStartedTick = bot.ffaClockTicks
+      bot.ffaLootStartedTick = bot.tick
       result = ffaBandIntent(bot, me, center, ringRadius, FfaLootBand,
         "LOOT", "loot_trip", "move_gun")
       result.moveTarget = gun.pos
@@ -1931,8 +1929,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.wasDead = false
     bot.estAim = 0
     bot.gameStart = bot.tick
-    if FfaDoctrine == FfaLegacy:
-      bot.ffaClockTicks = 0
   let statedAim = client.ownAimBrads()
   if statedAim >= 0:
     bot.estAim = statedAim
@@ -1961,7 +1957,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   let
     actors = client.ffaActorsFor()
     livingCount = client.ffaLivingCount()
-    elapsedTicks = bot.ffaClockTicks
+    elapsedTicks = max(0, bot.tick - bot.gameStart)
     ringRadius = ffaRingRadiusAt(elapsedTicks)
     ringDist = dist(me, center)
     elapsedSec = elapsedTicks div TargetFps
@@ -1996,7 +1992,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       (healthy or targetCritical or localAdvantage) and targetDist < 520.0
     fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
       targetDist < 520.0
-  if FfaDoctrine == FfaHybrid and elapsedSec < FfaLootOpenSec:
+  if FfaDoctrine == FfaHybrid and not
+      (FfaLateClose and livingCount > 0 and livingCount <= 3):
     engage = targetIndex >= 0 and
       ((healthy and targetDist < FfaPerimeterEngageRange) or targetCritical)
     fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
@@ -2048,8 +2045,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       intent = legacyFfaIntent(bot, client, actors, me, center, ringRadius,
         targetIndex, targetDist, weaponTier, unarmed, hp, engage)
     of FfaRush:
-      intent = rushFfaIntent(bot, client, actors, me, center, ringRadius,
-        targetIndex, targetDist, weaponTier, engage)
+      intent = rushFfaIntent(client, actors, me, center, ringRadius,
+        targetIndex, weaponTier, engage)
     of FfaPassive:
       intent = passiveFfaIntent(bot, actors, me, center, ringRadius,
         targetIndex, engage)
@@ -3801,7 +3798,6 @@ proc initBaselineComponent*(slot: int): BaselineComponent =
 
 proc advancePolicy(component: var BaselineComponent, advance: int) =
   component.bot.tick += advance
-  component.bot.ffaClockTicks += advance
   component.bot.estAim = floorMod(
     component.bot.estAim + component.bot.rotSign * AimRate * advance,
     AimBrads
