@@ -386,6 +386,12 @@ punch has no windup, tracer, or stain; it hits the nearest living player in
 the ±48-brad aim cone. Fists are only available while the player has no gun
 or spray can.
 
+A landed punch does leave one mark, and only on the **spectator board**: a
+small knuckle spark (`fist contact stage <n>`) at the damage site, drawn from
+the contact the sim records where fist damage is applied. Player observation
+streams carry nothing for it — with no windup, tracer or projectile, a punch
+stays invisible to policies, which is deliberate.
+
 Punch geometry in detail: reach is measured **center to center** (70 px, so
 two bodies whose 34 px silhouettes touch are always inside it), the cone is
 ±48 brads of the 256-brad turn (**±67.5°**), and the target needs a clear line

@@ -569,6 +569,72 @@ suite "ffa elimination":
     miss.tryFire(0)
     check miss.players[1].hp == FfaHitPoints
 
+  test "a landed punch marks the board only, and never the hash or a player view":
+    ## The fist is the one weapon with no windup, tracer or projectile, so the
+    ## spectator board gets a contact mark derived from the DAMAGE — and only
+    ## the board: a punch that players could see coming would be a balance
+    ## change smuggled in as art. Three properties, all load-bearing:
+    ## the mark follows real damage, it stays out of gameHash, and it stays out
+    ## of every player stream.
+    var game = ffaGame(2)
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(350, MapHeight div 2)
+    game.players[0].aimBrads = 0
+    let before = game.gameHash()
+    game.tryFire(0)
+    check game.players[1].hp == FfaHitPoints - FfaFistDamage
+    check game.fistContacts.len == 1
+    check game.fistContacts[0].tick == game.tickCount
+    # The mark sits where the damage landed, not where the puncher stood.
+    check game.fistContacts[0].x == game.players[1].x + CollisionW div 2
+    check game.fistContacts[0].y == game.players[1].y + CollisionH div 2
+    # Cosmetic: hp moved, so the hash must have moved for THAT reason only —
+    # clearing the marks leaves the same hash the sim reports with them.
+    let withMark = game.gameHash()
+    check withMark != before
+    game.fistContacts = @[]
+    check game.gameHash() == withMark
+    # The mark tracks the DAMAGE the sim applied, never the button press: it
+    # lands on whoever actually lost hit points, at their center. (A punch into
+    # empty air still damages seat 0 today — the phantom-target bug,
+    # https://github.com/Metta-AI/coworld-battle-royale/issues/13, which is a
+    # sim fix behind a GameVersion bump and deliberately out of scope here. The
+    # invariant asserted is the FX one: one mark per damage application, at the
+    # victim the sim chose, so the board cannot show a hit the sim did not
+    # deal — nor hide one it did.)
+    var whiff = ffaGame(3)
+    whiff.players[0].placeAtCenter(300, MapHeight div 2)
+    whiff.players[1].placeAtCenter(900, MapHeight div 2)
+    whiff.players[2].placeAtCenter(900, MapHeight div 2 + 200)
+    whiff.players[1].aimBrads = 0
+    let hpBefore = whiff.players.mapIt(it.hp)
+    whiff.tryFire(1)
+    var damaged: seq[int] = @[]
+    for i in 0 ..< whiff.players.len:
+      if whiff.players[i].hp != hpBefore[i]:
+        damaged.add i
+    check whiff.fistContacts.len == damaged.len
+    for i in 0 ..< damaged.len:
+      check whiff.fistContacts[i].x ==
+        whiff.players[damaged[i]].x + CollisionW div 2
+    # Stream asymmetry: the board carries the mark's sprite, no player view does.
+    var contact = ffaGame(2)
+    contact.players[0].placeAtCenter(300, MapHeight div 2)
+    contact.players[1].placeAtCenter(350, MapHeight div 2)
+    contact.players[0].aimBrads = 0
+    contact.tryFire(0)
+    var boardState = initGlobalViewerState()
+    var contactLabels: seq[string] = @[]
+    for message in contact.buildGlobalMessages(boardState):
+      if message.kind == spkSprite:
+        contactLabels.add message.sprite.label
+    check contactLabels.anyIt(it.startsWith("fist contact "))
+    for seat in 0 ..< contact.players.len:
+      var viewer: PlayerViewerState
+      for message in contact.buildPlayerMessages(seat, viewer):
+        if message.kind == spkSprite:
+          check not message.sprite.label.startsWith("fist contact ")
+
   test "touching an ffa gun arms the player and enables gun fire":
     var game = ffaGame(2)
     let spawn = game.lowGunSpawns[0]

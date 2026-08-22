@@ -35,6 +35,7 @@ ffa zone cue ZONE <n>:<n>
 ffa zone cue ZONE FLOOR
 fire icon
 fire icon cooldown
+fist contact stage <n>
 fog
 game teams <n> map <n>x<n>
 grenade
