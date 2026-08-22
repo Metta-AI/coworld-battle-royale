@@ -3976,8 +3976,8 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       // independent kills). Attribution is honestly unknown (F7): show the
       // victim with a neutral marker, never a fabricated killer or "traded".
       badge = '<span class="badge">double KO</span>';
-      row.innerHTML = badge + (s.ffa ? ffaName(s, victim) :
-        '<span class="who ' + (victimTeam || '') + '">' + esc(shortName(rosterName(s, victim))) + '</span>');
+      row.innerHTML = s.ffa ? badge + ffaName(s, victim) :
+        '<span class="who ' + (victimTeam || '') + '">' + esc(shortName(rosterName(s, victim))) + '</span>' + badge;
     } else if (s.ffa && killer < 0) {
       // Environmental death — same grammar as a player kill: the agent of
       // death leads, the victim is always last. The cause word takes the
