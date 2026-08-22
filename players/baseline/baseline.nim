@@ -487,7 +487,7 @@ var
   FfaTraceTickScale = 1
   FfaTraceMaxTick = 0
   FfaLateClose = false
-  FfaDoctrine = FfaHybrid
+  FfaDoctrine = FfaPassive
   FfaPerimeterBand = FfaPerimeterBandDefault
   FfaLootBand = FfaLootBandDefault
   FfaHoldBand = FfaHoldBandDefault
@@ -3887,7 +3887,7 @@ proc runBot(url: string) =
   FfaTraceMaxTick = max(0, parseEnvInt("CTF_BOT_TRACE_MAX_TICKS", 0))
   let requestedDoctrine = getEnv("CTF_BOT_FFA_DOCTRINE").toLowerAscii()
   FfaDoctrine =
-    if requestedDoctrine.len == 0: FfaHybrid
+    if requestedDoctrine.len == 0: FfaPassive
     elif requestedDoctrine == "hybrid": FfaHybrid
     elif requestedDoctrine == "legacy": FfaLegacy
     elif requestedDoctrine == "passive": FfaPassive
