@@ -292,7 +292,8 @@ replays.
 
 Zip contents:
 
-- `meta.json` — slot, team, role, active compile defines, sample cadence.
+- `meta.json` — slot, team, role, active compile defines, sample cadence,
+  and the FFA doctrine when the episode is FFA (artifact schema 3).
 - `events.jsonl` — tick-stamped edges: `steal`/`carry_end`,
   `mate_carry`/`mate_carry_end`, `death`/`respawn`,
   `own_flag_stolen`/`own_flag_returned`, `thief_fix`,
@@ -301,8 +302,9 @@ Zip contents:
   range), `objective` (movement-branch switches), `push_out`, `stuck_jink`,
   `nade_flee`, `shout_tx`, `game_start`/`game_end`.
 - `ticks.jsonl` — a state row every 12 ticks (~0.5 s): position, hp, aim,
-  objective + action branch, movement target, visible enemies, engage
-  distance, input mask, and status flags (carry/shield/plasma/nade/pushOut).
+  objective + action branch, FFA phase/band/band radius/safe radius/weapon
+  tier, movement target, visible enemies, engage distance, input mask, and
+  status flags (carry/shield/plasma/nade/pushOut).
 - `summary.json` — event counters plus per-objective and per-action tick
   histograms; the first internal telemetry error, if any, is recorded here
   (telemetry disables itself rather than ever touching gameplay).
