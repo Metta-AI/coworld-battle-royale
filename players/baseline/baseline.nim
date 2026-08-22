@@ -481,6 +481,7 @@ var
   FfaRingDamageTicks = 0
   FfaRetreatHp = 6
   FfaFireWhileHurt = true
+  FfaGameTicksPerFrame = 1
   FfaTraceTickScale = 1
   FfaTraceMaxTick = 0
   FfaLateClose = false
@@ -503,6 +504,18 @@ proc parseEnvInt(name: string, fallback: int): int =
     parseInt(value)
   except ValueError:
     fallback
+
+proc parseEnvPositiveInt(name: string, fallback: int): int =
+  let value = getEnv(name)
+  if value.len == 0:
+    return fallback
+  try:
+    let parsed = parseInt(value)
+    if parsed > 0:
+      return parsed
+  except ValueError:
+    discard
+  raise newException(ValueError, name & " must be a positive integer")
 
 proc parseEnvFloat(name: string, fallback: float): float =
   let value = getEnv(name)
@@ -1719,6 +1732,12 @@ proc ffaRingRadiusAt(tick: int): int =
   FfaRingStartRadius -
     (FfaRingStartRadius - FfaRingFloorRadius) * step div total
 
+proc ffaGameTicksSince(nowTick, startTick: int): int =
+  max(0, nowTick - startTick) * FfaGameTicksPerFrame
+
+proc ffaElapsedGameTicks(bot: Bot): int =
+  ffaGameTicksSince(bot.tick, bot.gameStart)
+
 proc bestFfaGun(client: ProtocolClient, me, center: Vec,
     safeRadius: int, currentTier: int): tuple[
     found: bool, pos: Vec, tier: int] =
@@ -1882,7 +1901,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
     let maxTripTicks = FfaLootTripMaxSec * TargetFps
     if bot.ffaLootTrip and bot.ffaLootTargetValid and
         (bot.ffaLootStartedTick <= 0 or
-          bot.tick - bot.ffaLootStartedTick <= maxTripTicks) and
+          ffaGameTicksSince(bot.tick, bot.ffaLootStartedTick) <= maxTripTicks) and
         ffaGunStillPresent(client, bot.ffaLootTarget, bot.ffaLootTargetTier):
       result = ffaBandIntent(bot, me, center, ringRadius, FfaLootBand,
         "LOOT", "loot_trip", "move_gun")
@@ -1957,7 +1976,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   let
     actors = client.ffaActorsFor()
     livingCount = client.ffaLivingCount()
-    elapsedTicks = max(0, bot.tick - bot.gameStart)
+    elapsedTicks = ffaElapsedGameTicks(bot)
     ringRadius = ffaRingRadiusAt(elapsedTicks)
     ringDist = dist(me, center)
     elapsedSec = elapsedTicks div TargetFps
@@ -2109,7 +2128,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     if (mask and ButtonB) != 0: 1
     elif (mask and ButtonSelect) != 0: -1
     else: 0
-  if targetIndex >= 0 and bot.tick - bot.lastShoutTick >= 24:
+  if targetIndex >= 0 and
+      ffaGameTicksSince(bot.tick, bot.lastShoutTick) >= TargetFps:
     bot.shoutWant = "seen"
     bot.lastShoutTick = bot.tick
   if getEnv("CTF_BOT_TRACE").len > 0 and traceInMatch:
@@ -2168,13 +2188,14 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       " bandRadius=", int(round(bandRadius)),
       " safeRadius=", ringRadius,
       " weaponTier=", weaponTier,
+      " elapsedGameSec=", elapsedSec,
       " doctrine=", ffaDoctrineName(FfaDoctrine)
   artFrame(FrameSnap(tick: bot.tick, alive: true,
     x: int(me.x), y: int(me.y), hp: hp, aim: bot.estAim,
     objective: objective, action: action,
     phase: phase, bandFraction: bandFraction,
     bandRadius: int(round(bandRadius)), safeRadius: ringRadius,
-    weaponTier: weaponTier,
+    weaponTier: weaponTier, elapsedGameSec: elapsedSec,
     engageDist: if targetIndex >= 0: int(targetDist) else: -1))
   mask
 
@@ -3830,6 +3851,8 @@ proc runBot(url: string) =
   FfaRetreatHp = max(1, parseEnvInt("CTF_BOT_FFA_RETREAT_HP", 6))
   FfaFireWhileHurt = parseEnvBool("CTF_BOT_FFA_FIRE_WHILE_HURT", true)
   FfaLateClose = parseEnvBool("CTF_BOT_FFA_LATE_CLOSE", true)
+  FfaGameTicksPerFrame = parseEnvPositiveInt(
+    "CTF_BOT_GAME_TICKS_PER_FRAME", 1)
   FfaTraceTickScale = max(1, parseEnvInt("CTF_BOT_TRACE_TICK_SCALE", 1))
   FfaTraceMaxTick = max(0, parseEnvInt("CTF_BOT_TRACE_MAX_TICKS", 0))
   let requestedDoctrine = getEnv("CTF_BOT_FFA_DOCTRINE").toLowerAscii()
@@ -3884,8 +3907,9 @@ proc runBot(url: string) =
     " ffaLootTripMaxSec=", FfaLootTripMaxSec,
     " ffaPerimeterEngageRange=", FfaPerimeterEngageRange,
     " ffaPassiveEngageRange=", FfaPassiveEngageRange,
+    " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
-  artInit(slot, $bot.team, $bot.role)
+  artInit(slot, $bot.team, $bot.role, "", FfaGameTicksPerFrame)
   when defined(taunt):
     startTaunts()                        # worker thread + bank prefetch
   var everConnected = false

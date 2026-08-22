@@ -67,6 +67,7 @@ type
     bandRadius*: int           # FFA resolved radial band radius
     safeRadius*: int           # FFA current safe-zone radius
     weaponTier*: int           # FFA weapon tier, 0=unarmed
+    elapsedGameSec*: int       # FFA elapsed game seconds
     targetX*, targetY*: int   # movement target, map px
     iCarry*, mateCarry*, ownStolen*, sawThief*, pushOut*: bool
     hasShield*, hasPlasma*, carryNade*: bool
@@ -130,7 +131,8 @@ template guarded(body: untyped) =
     except CatchableError as e:
       artError(e.msg)
 
-proc artInit*(slot: int, team, role: string, doctrine = "") =
+proc artInit*(slot: int, team, role: string, doctrine = "",
+    gameTicksPerFrame = 1) =
   ## Arms the log. Called once at bot startup; cheap enough to be
   ## unconditional — whether the artifact can go anywhere is decided at
   ## flush time from the environment.
@@ -138,12 +140,13 @@ proc artInit*(slot: int, team, role: string, doctrine = "") =
   # lands a state row (episode-start position, spawn aim).
   art = ArtLog(active: true, lastSample: -SampleEvery)
   art.meta = %*{
-    "schema": 3,
+    "schema": 4,
     "slot": slot,
     "team": team,
     "role": role,
     "buildDefines": artBuildDefines(),
     "sampleEvery": SampleEvery,
+    "gameTicksPerFrame": gameTicksPerFrame,
   }
   if doctrine.len > 0:
     art.meta["doctrine"] = %doctrine
@@ -192,6 +195,7 @@ proc sample(snap: FrameSnap) =
     "bandR": snap.bandRadius,
     "safeR": snap.safeRadius,
     "tier": snap.weaponTier,
+    "elapsedGameSec": snap.elapsedGameSec,
     "tx": snap.targetX, "ty": snap.targetY,
     "vis": snap.enemiesVisible,
     "mask": int(snap.mask),
