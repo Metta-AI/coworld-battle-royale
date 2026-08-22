@@ -249,6 +249,7 @@ const
   FfaLootBandDefault = 0.60
   FfaHoldBandDefault = 0.50
   FfaPassiveBandDefault = 0.85
+  FfaShadeRingMarginDefault = 160.0  # one alarm width inside the ring-safety line
   FfaLootOpenSecDefault = 35
   FfaLootCloseSecDefault = 90
   FfaLootTripMaxSecDefault = 30
@@ -332,7 +333,7 @@ const TeamColorNames = ["red", "blue", "green", "yellow"]
 
 type
   FfaDoctrineKind = enum
-    FfaHybrid, FfaLegacy, FfaPassive, FfaRush
+    FfaHybrid, FfaLegacy, FfaPassive, FfaRush, FfaShade
 
   Team = enum
     Red, Blue
@@ -459,6 +460,7 @@ proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   of FfaLegacy: "legacy"
   of FfaPassive: "passive"
   of FfaRush: "rush"
+  of FfaShade: "shade"
 
 var
   SelfStrategyTeam = Red
@@ -490,6 +492,7 @@ var
   FfaLootBand = FfaLootBandDefault
   FfaHoldBand = FfaHoldBandDefault
   FfaPassiveBand = FfaPassiveBandDefault
+  FfaShadeRingMargin = FfaShadeRingMarginDefault
   FfaLootOpenSec = FfaLootOpenSecDefault
   FfaLootCloseSec = FfaLootCloseSecDefault
   FfaLootTripMaxSec = FfaLootTripMaxSecDefault
@@ -517,13 +520,15 @@ proc parseEnvPositiveInt(name: string, fallback: int): int =
     discard
   raise newException(ValueError, name & " must be a positive integer")
 
-proc parseEnvFloat(name: string, fallback: float): float =
+proc parseEnvFloat(name: string, fallback: float, strict = false): float =
   let value = getEnv(name)
   if value.len == 0:
     return fallback
   try:
     parseFloat(value)
   except ValueError:
+    if strict:
+      raise newException(ValueError, name & " must be a number")
     fallback
 
 proc parseEnvBool(name: string, fallback: bool): bool =
@@ -632,6 +637,15 @@ proc ffaBandTarget(bot: Bot, me, center: Vec, safeRadius: int,
       if fromCenter.len() >= FfaBearingEpsilon: norm(fromCenter)
       else: norm(ffaSeatBearing(bot.slot))
     radius = float(max(1, safeRadius)) * fraction
+  center + bearing * radius
+
+proc ffaBandTargetAtRadius(bot: Bot, me, center: Vec,
+    radius: float): Vec =
+  let
+    fromCenter = me - center
+    bearing =
+      if fromCenter.len() >= FfaBearingEpsilon: norm(fromCenter)
+      else: norm(ffaSeatBearing(bot.slot))
   center + bearing * radius
 
 proc dot(a, b: Vec): float =
@@ -1891,6 +1905,19 @@ proc passiveFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
     result.objective = "fight"
     result.action = "engage"
 
+proc shadeFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
+    ringRadius: int, targetIndex: int, engage: bool): FfaIntent =
+  result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
+    "SHADE", "shade_band", "hold_band")
+  result.bandRadius = min(result.bandRadius,
+    max(1.0, float(max(1, ringRadius)) - FfaShadeRingMargin))
+  result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
+    result.bandRadius)
+  if engage:
+    result.moveTarget = actors[targetIndex].pos
+    result.objective = "fight"
+    result.action = "engage"
+
 proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
     ringRadius, elapsedSec, nearby, weaponTier: int, healthy: bool): FfaIntent =
   if elapsedSec < FfaLootOpenSec:
@@ -2017,7 +2044,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       ((healthy and targetDist < FfaPerimeterEngageRange) or targetCritical)
     fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
       targetDist < FfaPerimeterEngageRange
-  elif FfaDoctrine == FfaPassive:
+  elif FfaDoctrine == FfaPassive or FfaDoctrine == FfaShade:
     engage = targetIndex >= 0 and targetDist < FfaPassiveEngageRange
     fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
       targetDist < FfaPassiveEngageRange
@@ -2068,6 +2095,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         targetIndex, weaponTier, engage)
     of FfaPassive:
       intent = passiveFfaIntent(bot, actors, me, center, ringRadius,
+        targetIndex, engage)
+    of FfaShade:
+      intent = shadeFfaIntent(bot, actors, me, center, ringRadius,
         targetIndex, engage)
     of FfaHybrid:
       intent = hybridFfaIntent(bot, client, me, center, ringRadius,
@@ -3861,10 +3891,11 @@ proc runBot(url: string) =
     elif requestedDoctrine == "hybrid": FfaHybrid
     elif requestedDoctrine == "legacy": FfaLegacy
     elif requestedDoctrine == "passive": FfaPassive
+    elif requestedDoctrine == "shade": FfaShade
     elif requestedDoctrine == "rush": FfaRush
     else:
       raise newException(ValueError,
-        "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, or rush")
+        "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, or shade")
   FfaPerimeterBand = clamp(parseEnvFloat("CTF_BOT_FFA_PERIMETER_BAND",
     FfaPerimeterBandDefault), 0.0, 1.0)
   FfaLootBand = clamp(parseEnvFloat("CTF_BOT_FFA_LOOT_BAND",
@@ -3873,6 +3904,8 @@ proc runBot(url: string) =
     FfaHoldBandDefault), 0.0, 1.0)
   FfaPassiveBand = clamp(parseEnvFloat("CTF_BOT_FFA_PASSIVE_BAND",
     FfaPassiveBandDefault), 0.0, 1.0)
+  FfaShadeRingMargin = max(0.0, parseEnvFloat(
+    "CTF_BOT_FFA_SHADE_MARGIN", FfaShadeRingMarginDefault, strict = true))
   FfaLootOpenSec = max(0, parseEnvInt("CTF_BOT_FFA_LOOT_OPEN_SEC",
     FfaLootOpenSecDefault))
   FfaLootCloseSec = max(FfaLootOpenSec, parseEnvInt(
@@ -3902,7 +3935,8 @@ proc runBot(url: string) =
     " ffaDoctrine=", ffaDoctrineName(FfaDoctrine),
     " ffaPerimeterBand=", FfaPerimeterBand,
     " ffaLootBand=", FfaLootBand, " ffaHoldBand=", FfaHoldBand,
-    " ffaPassiveBand=", FfaPassiveBand, " ffaLootWindow=",
+    " ffaPassiveBand=", FfaPassiveBand, " ffaShadeRingMargin=",
+    FfaShadeRingMargin, " ffaLootWindow=",
     FfaLootOpenSec, "-", FfaLootCloseSec,
     " ffaLootTripMaxSec=", FfaLootTripMaxSec,
     " ffaPerimeterEngageRange=", FfaPerimeterEngageRange,
