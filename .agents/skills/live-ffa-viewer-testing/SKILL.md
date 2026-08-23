@@ -184,6 +184,38 @@ diff the PNGs; an "unchanged pixels" mask is a good way to prove walls/pits/wind
 were untouched. Rendering a CTF config through the same tool on both builds and comparing
 md5 proves CTF parity.
 
+### Reproducing the EXACT same framing on two builds (for A/B screenshots)
+
+Mouse zoom/pan is not reproducible; keyboard is. Load the same
+`?t=<simTick>` URL on both ports, click once into the page (canvas focus), then drive
+the camera with the SAME keystroke sequence on each build: `]` / `[` step the follow
+camera, `z` / `x` zoom one step. The zoom readout (`7.3×`, `24.1×`) and the
+`FOLLOW <name> S<seat>` chip confirm the two tabs match before you diff. Crops taken
+this way diff cleanly; everything that differs is then a real build difference.
+
+Screenshots are captured at the display's native resolution while the computer-tool
+coordinates are 1024-wide, so multiply screen coordinates by `nativeWidth/1024`
+(1.5625 on a 1600px display) before cropping with Pillow. **numpy is not installed** —
+plain Pillow `load()` loops are fast enough for these crops.
+
+### Board overlays are world-anchored, so high zoom exposes misplacement
+
+Nameplates, HP bars, and tier/loadout marks are world-space sprites drawn at a fixed
+tile offset above the cog. At 20×+ zoom that offset becomes hundreds of screen pixels,
+which is exactly how a marker that is supposed to sit *on* a held gun becomes visibly
+detached. So: judge "is this marker attached to the thing it annotates" at high zoom
+(20×+) on an armed seat, not at fit/4×, where everything looks plausibly adjacent.
+
+### Live CTF bots must use the CONFIGURED slot names
+
+`config.json` (CTF) names its seats `player1`…`player16`, and
+`validatePlayerSlot` (`src/ctf/roster.nim`) rejects a join whose `name` differs from the
+configured slot name with `403 Player credentials do not match configured roster.` The
+`Bot_<slot>` convention only works for configs (like `config.br.json`) that leave slot
+names blank. For a CTF *regression* check it is usually faster to skip live bots entirely
+and serve the committed fixture on two ports:
+`bin/ctf-server --load-replay:tests/replays/ctf.bitreplay --port:9603`.
+
 ## Devin Secrets Needed
 
 None — the server and viewer run locally with no auth.
