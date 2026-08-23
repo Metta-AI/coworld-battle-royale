@@ -331,8 +331,8 @@ proc episodeIndex(log: Ledger, options: Options, files: Table[int, string]): str
       "no same-tick `death` row for their victim, so they are duplicate " &
       "credit, not kills, and are excluded from every count above.\n\n")
     for row in unmatched:
-      result.add(&"- {clock(row.tick)}: seat {row.source} credited a " &
-        &"{row.weapon} kill on seat {row.target} at " &
+      result.add(&"- {clock(row.tick)}: {log.seatLabel(row.source)} credited " &
+        &"a {row.weapon} kill on {log.seatLabel(row.target)} at " &
         &"{at(row.x, row.y)}\n")
     result.add("\n")
 
