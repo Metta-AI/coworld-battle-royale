@@ -106,7 +106,7 @@ proc killerThisStep(
     (-1, false)
 
 proc stepEvents*(
-  sim: SimServer,
+  sim: var SimServer,
   tracker: var BroadcastTracker,
   events: JsonNode
 ) =
@@ -116,10 +116,30 @@ proc stepEvents*(
   ## after a seek. Each event carries the tick it fired on so the client can
   ## place scrubber markers and honour per-beat read-holds.
   if not tracker.initialized:
+    if sim.collectEvents:
+      sim.events.setLen(0)
     tracker.snapshot(sim)
     return
 
   let tick = sim.tickCount
+
+  # Replay playback arms the tier-2 sink so damage cues can carry the
+  # first-hand attacker/victim attribution. Only FFA exposes these cues in
+  # chrome; CTF still drains the sink so a replay cannot grow it forever.
+  if sim.collectEvents:
+    if sim.config.isFfa():
+      for event in sim.events:
+        if event.kind == Damage and event.source >= 0 and event.target >= 0:
+          events.add(%*{
+            "t": event.tick,
+            "k": "damage",
+            "damager": event.source,
+            "victim": event.target,
+            "amount": event.amount,
+            "x": event.x,
+            "y": event.y
+          })
+    sim.events.setLen(0)
 
   # Phase transitions (and the terminal game-over verdict).
   if sim.phase != tracker.prevPhase:
@@ -811,13 +831,23 @@ proc buildStateJson*(
     "roster": sim.rosterJson(),
     "events": (if events.isNil: newJArray() else: events)
   }
+  if sim.config.isFfa():
+    state["seed"] = %sim.config.seed
   if sim.config.isFfa() and sim.config.ringEnabled:
     let (ringX, ringY) = ffaRingCenter()
+    let currentRadius = ffaRingRadiusAt(sim.config, sim.gameTicksElapsed())
+    let forecastLeadSec = 30
+    let forecastRadius = ffaRingRadiusAt(
+      sim.config,
+      sim.gameTicksElapsed() + forecastLeadSec * TargetFps
+    )
     state["ring"] = %*{
       "center": [ringX, ringY],
       "startRadius": ffaRingStartRadius(),
       "floorRadius": ffaRingFloorRadius(sim.config),
-      "radius": ffaRingRadiusAt(sim.config, sim.gameTicksElapsed()),
+      "radius": currentRadius,
+      "forecastRadius": forecastRadius,
+      "forecastLeadSec": (if forecastRadius == currentRadius: 0 else: forecastLeadSec),
       "shrinkSec": sim.config.ringShrinkSec,
       "damageTicks": sim.config.ringDamageTicks,
       "recoveryTicks": sim.config.ringRecoveryTicks,

@@ -1341,7 +1341,9 @@ proc runServerLoop*(
       else: initSimServer(config)
     lastTick = getMonoTime()
     collectedEvents: seq[SimEvent] = @[]
-  sim.collectEvents = eventsPath.len > 0
+  # Replay playback needs the analysis sink for broadcast-only damage cues.
+  # Live servers keep the historical opt-in events file behaviour.
+  sim.collectEvents = eventsPath.len > 0 or replayLoaded
   block:
     # Bake the supersampled spectator render caches (map, endzone fades,
     # soldier rotations) BEFORE the listener opens: a viewer's first-message
@@ -1436,6 +1438,7 @@ proc runServerLoop*(
         )
         config = move(initializedReplay.config)
         sim = move(initializedReplay.sim)
+        sim.collectEvents = true
         replayPlayer = move(initializedReplay.player)
         broadcastTracker = move(initializedReplay.tracker)
         replayLoaded = true
@@ -1708,7 +1711,7 @@ proc runServerLoop*(
       let rewardAccounts = sim.rewardAccounts
       inc config.seed
       sim = initSimServer(config)
-      sim.collectEvents = eventsPath.len > 0
+      sim.collectEvents = eventsPath.len > 0 or replayLoaded
       # One file describes ONE match. A reset that kept the previous match's
       # events would concatenate two games under a single episode id.
       collectedEvents.setLen(0)

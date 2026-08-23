@@ -257,7 +257,9 @@
     let lastBoardW = 0, lastBoardH = 0;  // last REAL board size; see updateNativeSize
     let scale = 1, offsetX = 0, offsetY = 0;
     let ringBoard = null;             // ffa safe zone in BOARD px:
-                                      // {cx, cy, r, atFloor}
+                                      // {cx, cy, r, forecastR, atFloor}
+    let ffaMode = false;
+    const seatColors = new Map();
     let fitScale = 1;                 // scale that fits the whole board (zoom 1).
     let zoom = 1;                     // multiplier over the fit, >= 1.
     let focusX = 0, focusY = 0;       // map px held at the viewport center.
@@ -844,7 +846,7 @@
       // hidden (fitted board — the common case), and once it IS up, refresh the
       // board picture at ~12fps rather than the board's 24. A view change still
       // redraws immediately, because THAT is the frame the eye is waiting on.
-      if (zoom <= minZoom) { minimapDrawnAt = 0; return; }
+      if (!ffaMode && zoom <= minZoom) { minimapDrawnAt = 0; return; }
       const now = performance.now();
       const moved = zoom !== minimapDrawnZoom ||
         focusX !== minimapDrawnX || focusY !== minimapDrawnY;
@@ -874,11 +876,46 @@
           : 'rgba(232, 163, 61, 0.9)';
         minimapCtx.lineWidth = 2;
         minimapCtx.stroke();
+        if (ringBoard.forecastR > 0 && ringBoard.forecastR < ringBoard.r) {
+          minimapCtx.beginPath();
+          minimapCtx.arc(
+            ringBoard.cx * mk, ringBoard.cy * mk, ringBoard.forecastR * mk,
+            0, Math.PI * 2
+          );
+          minimapCtx.setLineDash([5, 4]);
+          minimapCtx.strokeStyle = 'rgba(244, 202, 120, 0.48)';
+          minimapCtx.lineWidth = 1.5;
+          minimapCtx.stroke();
+          minimapCtx.setLineDash([]);
+        }
       }
 
       const size = canvasCssSize();
       const visW = Math.min(nativeW, size.w / scale);
       const visH = Math.min(nativeH, size.h / scale);
+      const cropped = visW < nativeW - 1 || visH < nativeH - 1;
+      const seats = ffaMode ? followLiveSeats() : [];
+      for (const seat of seats) {
+        const x = seat.x * (w / nativeW);
+        const y = seat.y * (h / nativeH);
+        const color = seatColors.get(seat.slot) || 'rgba(242, 232, 216, 0.85)';
+        const followed = seat.slot === followSlot;
+        minimapCtx.beginPath();
+        minimapCtx.arc(x, y, followed ? 4 : 3, 0, Math.PI * 2);
+        minimapCtx.fillStyle = color;
+        minimapCtx.fill();
+        minimapCtx.strokeStyle = followed ? '#ffffff' : 'rgba(8, 5, 3, 0.9)';
+        minimapCtx.lineWidth = followed ? 2 : 1;
+        minimapCtx.stroke();
+        if (followed) {
+          minimapCtx.beginPath();
+          minimapCtx.arc(x, y, 6, 0, Math.PI * 2);
+          minimapCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+          minimapCtx.lineWidth = 1;
+          minimapCtx.stroke();
+        }
+      }
+      if (!cropped) return;
       // A 4992px board at 12x holds ~1/40th of its width, which is 6 minimap
       // pixels: below a floor the box stops being a shape you can find. Grow it
       // around the same center instead of letting it vanish.
@@ -1632,10 +1669,12 @@
         cx: ring.center[0] * k,
         cy: ring.center[1] * k,
         r: ring.radius * k,
+        forecastR: Number(ring.forecastRadius || 0) * k,
         atFloor: ring.floorRadius > 0 && ring.radius <= ring.floorRadius
       };
       if (ringBoard && ringBoard.cx === next.cx && ringBoard.cy === next.cy &&
-          ringBoard.r === next.r && ringBoard.atFloor === next.atFloor) {
+          ringBoard.r === next.r && ringBoard.forecastR === next.forecastR &&
+          ringBoard.atFloor === next.atFloor) {
         return;
       }
       ringBoard = next;
@@ -1655,6 +1694,17 @@
       const cy = ringBoard.cy * drawScale;
       const r = ringBoard.r * drawScale;
       targetCtx.save();
+      if (ringBoard.forecastR > 0 && ringBoard.forecastR < ringBoard.r) {
+        targetCtx.beginPath();
+        targetCtx.arc(
+          cx, cy, ringBoard.forecastR * drawScale, 0, Math.PI * 2
+        );
+        targetCtx.setLineDash([10, 8]);
+        targetCtx.strokeStyle = 'rgba(244, 202, 120, 0.48)';
+        targetCtx.lineWidth = 3;
+        targetCtx.stroke();
+        targetCtx.setLineDash([]);
+      }
       targetCtx.beginPath();
       targetCtx.arc(cx, cy, r, 0, Math.PI * 2);
       targetCtx.strokeStyle = 'rgba(38, 24, 12, 0.85)';
@@ -1666,6 +1716,25 @@
       targetCtx.lineWidth = ringBoard.atFloor ? 3 : 2;
       targetCtx.stroke();
       targetCtx.restore();
+    }
+
+    function setSeatColors(colors, ffa) {
+      ffaMode = !!ffa;
+      seatColors.clear();
+      if (colors && typeof colors === 'object') {
+        for (const key of Object.keys(colors)) {
+          const color = colors[key];
+          if (typeof color === 'string' && color) {
+            seatColors.set(Number(key), color);
+          }
+        }
+      }
+      minimapDrawnAt = 0;
+      scheduleDraw();
+    }
+
+    function liveSeatPositions() {
+      return followLiveSeats();
     }
 
     function getTransform() {
@@ -1743,6 +1812,8 @@
       setViewportSize,
       getPaceStats,
       setRing,
+      setSeatColors,
+      liveSeatPositions,
       zoomAt,
       setZoom,
       panBy,
