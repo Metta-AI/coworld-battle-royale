@@ -30,6 +30,9 @@ block artifact_round_trip:
   f2.objective = "carry"
   f2.fired = true
   f2.engageDist = 150
+  f2.weaponTier = 1
+  f2.engageReason = "fire_range"
+  f2.lootTripStarted = true
   artFrame(f2)
   # Frame 20: carry ends, hp drops, still alive.
   var f3 = snapAt(20)
@@ -52,6 +55,7 @@ block artifact_round_trip:
     doAssert name in files, name & " missing from artifact"
 
   let meta = parseJson(files["meta.json"])
+  doAssert meta["schema"].getInt == 5
   doAssert meta["slot"].getInt == 3
   doAssert meta["team"].getStr == "Blue"
   doAssert meta["role"].getStr == "MidTop"
@@ -92,6 +96,10 @@ block artifact_round_trip:
     summary["lastTick"].getInt == 60    # explicit artEvent does not move prev
   doAssert summary["events"]["steal"].getInt == 1
   doAssert summary["objectiveTicks"]["carry"].getInt == 1
+  doAssert summary["armedFrac"].getFloat == 0.25
+  doAssert summary["lootTrips"].getInt == 1
+  let firstSample = parseJson(files["ticks.jsonl"].splitLines[0])
+  doAssert firstSample["engageReason"].getStr == "hold"
   doAssert summary["truncated"].getBool == false
 
   # A second flush is a no-op (one artifact per episode).
