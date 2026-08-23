@@ -62,6 +62,12 @@ type
     aim*: int                 # dead-reckoned aim, brads
     objective*: string        # movement-target branch, e.g. "carry"
     action*: string           # turret/act branch, e.g. "fire"
+    phase*: string             # FFA strategic phase, empty for CTF
+    bandFraction*: float       # FFA radial band fraction
+    bandRadius*: int           # FFA resolved radial band radius
+    safeRadius*: int           # FFA current safe-zone radius
+    weaponTier*: int           # FFA weapon tier, 0=unarmed
+    elapsedGameSec*: int       # FFA elapsed game seconds
     targetX*, targetY*: int   # movement target, map px
     iCarry*, mateCarry*, ownStolen*, sawThief*, pushOut*: bool
     hasShield*, hasPlasma*, carryNade*: bool
@@ -125,7 +131,8 @@ template guarded(body: untyped) =
     except CatchableError as e:
       artError(e.msg)
 
-proc artInit*(slot: int, team, role: string) =
+proc artInit*(slot: int, team, role: string, doctrine = "",
+    gameTicksPerFrame = 1) =
   ## Arms the log. Called once at bot startup; cheap enough to be
   ## unconditional — whether the artifact can go anywhere is decided at
   ## flush time from the environment.
@@ -133,13 +140,22 @@ proc artInit*(slot: int, team, role: string) =
   # lands a state row (episode-start position, spawn aim).
   art = ArtLog(active: true, lastSample: -SampleEvery)
   art.meta = %*{
-    "schema": 2,
+    "schema": 4,
     "slot": slot,
     "team": team,
     "role": role,
     "buildDefines": artBuildDefines(),
     "sampleEvery": SampleEvery,
+    "gameTicksPerFrame": gameTicksPerFrame,
   }
+  if doctrine.len > 0:
+    art.meta["doctrine"] = %doctrine
+
+proc artSetDoctrine*(doctrine: string) =
+  ## Records the FFA doctrine after the game init marker identifies FFA.
+  guarded:
+    if doctrine.len > 0:
+      art.meta["doctrine"] = %doctrine
 
 proc artEvent*(tick: int, kind: string, fields: JsonNode = nil) =
   ## Appends one event row and bumps its counter. `fields` merges into the
@@ -174,6 +190,12 @@ proc sample(snap: FrameSnap) =
     "aim": snap.aim,
     "obj": snap.objective,
     "act": snap.action,
+    "phase": snap.phase,
+    "band": formatFloat(snap.bandFraction, ffDecimal, 3),
+    "bandR": snap.bandRadius,
+    "safeR": snap.safeRadius,
+    "tier": snap.weaponTier,
+    "elapsedGameSec": snap.elapsedGameSec,
     "tx": snap.targetX, "ty": snap.targetY,
     "vis": snap.enemiesVisible,
     "mask": int(snap.mask),

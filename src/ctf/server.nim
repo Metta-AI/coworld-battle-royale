@@ -1341,7 +1341,10 @@ proc runServerLoop*(
       else: initSimServer(config)
     lastTick = getMonoTime()
     collectedEvents: seq[SimEvent] = @[]
-  sim.collectEvents = eventsPath.len > 0
+  if replayLoaded and sim.config.isFfa():
+    sim.collectEvents = true
+  else:
+    sim.collectEvents = eventsPath.len > 0
   block:
     # Bake the supersampled spectator render caches (map, endzone fades,
     # soldier rotations) BEFORE the listener opens: a viewer's first-message
@@ -1436,6 +1439,8 @@ proc runServerLoop*(
         )
         config = move(initializedReplay.config)
         sim = move(initializedReplay.sim)
+        if sim.config.isFfa():
+          sim.collectEvents = true
         replayPlayer = move(initializedReplay.player)
         broadcastTracker = move(initializedReplay.tracker)
         replayLoaded = true
@@ -1708,7 +1713,7 @@ proc runServerLoop*(
       let rewardAccounts = sim.rewardAccounts
       inc config.seed
       sim = initSimServer(config)
-      sim.collectEvents = eventsPath.len > 0
+      sim.collectEvents = eventsPath.len > 0 or replayLoaded
       # One file describes ONE match. A reset that kept the previous match's
       # events would concatenate two games under a single episode id.
       collectedEvents.setLen(0)
@@ -1820,12 +1825,18 @@ proc runServerLoop*(
 
     var frameEvents = newJArray()
     if replayLoaded:
+      if sim.config.isFfa():
+        sim.collectEvents = true
       frameEvents = replayPlayer.advanceReplayFrame(
         sim,
         broadcastTracker,
         replaySeekTicks,
         replayCommands
       )
+      # Keyframes serialize the whole SimServer, including collectEvents=false
+      # from the precompute scan, so re-arm the replay sink after every frame.
+      if sim.config.isFfa():
+        sim.collectEvents = true
     elif not holdFfaStartup:
       for command in replayCommands:
         liveSpeedIndex.applySpeedCommand(command)

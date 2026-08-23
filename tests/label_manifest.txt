@@ -19,6 +19,7 @@ barrier up <n>,<n> f<n> hp <n>
 blast stage <n>
 cog arm <color>
 cog gun <color>
+cog heavy gun <color>
 cog leg <color>
 cog low gun <color>
 cog mid gun <color>
@@ -35,6 +36,7 @@ ffa zone cue ZONE <n>:<n>
 ffa zone cue ZONE FLOOR
 fire icon
 fire icon cooldown
+fist contact stage <n>
 fog
 game teams <n> map <n>x<n>
 grenade
@@ -63,7 +65,8 @@ map band <n>
 med kit
 mid gun
 muzzle bloom stage <n>
-name ffa<n>
+name ffa<n> color <color> identity <name> tier <n>
+name ffa<n> color <color> identity <name> tier <n> arc
 name p<n>
 name p<n> flag <n>
 own aim <n>
@@ -75,6 +78,8 @@ player <color>
 player <color> <side>
 puddle <n>,<n> <n>,<n>
 ring center <n>,<n> start <n> floor <n> shrink <n> damage <n>
+roster arc
+roster tier <n>
 safe zone edge bright
 safe zone edge dim
 safe zone edge floor

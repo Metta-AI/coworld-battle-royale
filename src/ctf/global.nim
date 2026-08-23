@@ -75,6 +75,8 @@ const
   ScoreboardTextObjectBase = 12100
   ScoreboardPipSpriteBase = 12200
   ScoreboardPipObjectBase = 12300
+  FfaRosterTierSpriteBase = 12400
+  FfaRosterTierObjectBase = 12400
   ScoreboardTextColor = 2'u8
   ScoreboardSelectedTextColor = 10'u8
   InterstitialLayerId = 2
@@ -91,6 +93,19 @@ const
   HpPipW = 3                   ## px width of one hit-point pip.
   HpPipGap = 1                 ## px gap between pips.
   HpBarH = 2                   ## px height of the health bar.
+  FfaTerrainGradeCurveStrength = 0.18
+  FfaTerrainGradeSaturationLift = 0.15
+  FfaTerrainGradePivot = 0.45
+  FfaNameplatePad = 2
+  FfaNameplateChipW = 9
+  FfaNameplateChipH = 9
+  FfaNameplateGap = 2
+  FfaNameplateTierGap = 2
+  FfaTierPipSize = 3
+  FfaTierPipGap = 1
+  FfaRigGunTierKeyBase = 76620
+    ## FFA-only rig key range: four tiers × RigSteps aim poses, namespaced
+    ## through rigFfaKey and clear of the historical gun/spray keys.
   HpBarAnchorWidth = 14        ## the FIXED span the overhead carry icons flank
                                ## (the old 3-segment bar's width). The bar
                                ## itself is now one pip per hit point — a
@@ -460,6 +475,36 @@ const
                                ## tracer heads.
   HitFlashMaxCount = MaxPlayers  ## most flash rings drawn at once (hits within
                                ## HitFlashTicks are bounded by the shooters).
+  ## --- Landed-punch mark (SPECTATOR/BOARD ONLY) ---
+  ## A fist has no windup, no tracer and no projectile, so on the broadcast a
+  ## swing that connected and a swing that hit air look identical. This mark is
+  ## drawn from the sim's recorded CONTACT (sim.fistContacts, written only where
+  ## fist damage is actually applied), never from a button press, so it cannot
+  ## claim a hit that did not happen. Player views never carry it.
+  FistContactSpriteBase = 1370 ## per-stage knuckle-impact bursts: 1370..1373.
+  FistContactStages = 4        ## expanding/fading steps over FistContactDrawTicks.
+  FistContactDrawTicks = 4     ## ticks the mark is drawn for — SHORTER than the
+                               ## sim's FistContactTicks retention on purpose.
+                               ## The record carries a contact POINT, not a
+                               ## victim index, so the mark is world-anchored and
+                               ## a victim who drives off would leave it behind
+                               ## as a decal. At MaxSpeed (704 / MotionScale =
+                               ## 2.75px per tick) a victim covers at most 8.25px
+                               ## in the mark's last drawn frame, well inside the
+                               ## 17px body radius: it cannot visibly detach.
+  FistContactSize = 19         ## px canvas: a knuckle spark, smaller than the
+                               ## 34px struck-target ring a bullet rings with.
+  FistContactObjectBase = 16920  ## landed-punch mark pool: 16920..16951, in the
+                               ## gap between the hit flashes and the splatters.
+  FistContactMaxCount = MaxPlayers  ## most marks drawn at once (one landed
+                               ## punch per puncher within FistContactTicks:
+                               ## the fist cooldown is longer than the mark).
+  FistContactOffset = PlasmaArcBodyRadius + 3  ## px the mark is pushed back from
+                               ## the victim's center toward the puncher: past
+                               ## the 17px body radius, onto the contact RIM in
+                               ## the gap between the two cogs, so the burst
+                               ## never sits on the victim's visor or recolors
+                               ## the body a viewer reads identity from.
   MuzzleBloomSize = 7          ## a small colorless flash marking the shooter.
   TracerHeadSpriteBase = 1300  ## per color-and-fade-stage leading heads: 1300..1363.
   TracerHeadObjectBase = 16840  ## one leading head per drawn shot: 16840..16871.
@@ -810,9 +855,11 @@ const
     ("game-over icons", ProtocolGameOverIconObjectBase, 100),
     ("scoreboard text", ScoreboardTextObjectBase, MaxPlayers + 8),
     ("scoreboard pips", ScoreboardPipObjectBase, MaxPlayers + 8),
+    ("FFA roster tier pips", FfaRosterTierObjectBase, MaxPlayers),
     ("muzzle blooms", MuzzleBloomObjectBase, TracerMaxShots),
     ("tracer heads", TracerHeadObjectBase, TracerMaxShots),
     ("hit flashes", HitFlashObjectBase, HitFlashMaxCount),
+    ("fist contacts", FistContactObjectBase, FistContactMaxCount),
     ("splatters", SplatterObjectBase, SplatterMaxCount),
     ("hp pips", HpPipObjectBase, MaxPlayers),
     ("identity badges", IdentityBadgeObjectBase, MaxPlayers),
@@ -941,6 +988,7 @@ const
     ("tracer dots", TracerDotSpriteBase, 384),
     ("muzzle blooms", MuzzleBloomSpriteBase, 4),
     ("hit flashes", HitFlashSpriteBase, 4),
+    ("fist contacts", FistContactSpriteBase, FistContactStages),
     ("tracer heads", TracerHeadSpriteBase, 64),
     ("med kit", MedKitSpriteId, 1),
     ("rot diamonds", RotDiamondSpriteBase, 16),
@@ -963,6 +1011,7 @@ const
     ("scoreboard text", ScoreboardTextSpriteBase, MaxPlayers + 8),
     ("team scores", TeamScoreSpriteBase, 4),
     ("scoreboard pips", ScoreboardPipSpriteBase, MaxPlayers + 8),
+    ("FFA roster tier pips", FfaRosterTierSpriteBase, MaxPlayers),
     ("splatters", SplatterSpriteBase, 64),
     ("hit splats", HitSpriteBase, 64),
     ("map markers", MapMarkerSpriteBase, 1000),
@@ -1249,6 +1298,30 @@ var
     ## arena is fixed per process, so one native bake serves every connection —
     ## same pattern as EndzoneStripCache.
 
+proc applyFfaTerrainGrade(pixels: var seq[uint8]) =
+  ## Adds a deterministic contrast and saturation lift to the supersampled FFA
+  ## board bake. Alpha and geometry stay untouched.
+  for offset in countup(0, pixels.len - 4, 4):
+    let
+      r = float32(pixels[offset]) / 255
+      g = float32(pixels[offset + 1]) / 255
+      b = float32(pixels[offset + 2]) / 255
+      luminance = r * 0.299'f32 + g * 0.587'f32 + b * 0.114'f32
+      curveT = clamp(0.5'f32 + luminance - FfaTerrainGradePivot,
+        0'f32, 1'f32)
+      curveTarget = curveT * curveT * (3'f32 - 2'f32 * curveT)
+      curved = clamp(
+        luminance * (1'f32 - FfaTerrainGradeCurveStrength) +
+          curveTarget * FfaTerrainGradeCurveStrength,
+        0'f32, 1'f32)
+      lift = 1'f32 + FfaTerrainGradeSaturationLift
+    pixels[offset] = uint8(clamp(
+      int(round((curved + (r - luminance) * lift) * 255)), 0, 255))
+    pixels[offset + 1] = uint8(clamp(
+      int(round((curved + (g - luminance) * lift) * 255)), 0, 255))
+    pixels[offset + 2] = uint8(clamp(
+      int(round((curved + (b - luminance) * lift) * 255)), 0, 255))
+
 proc ensureBoardMaps(sim: SimServer) =
   ## Fills both native boardScale× arena bakes (hot + cold share one geometry
   ## mask and floor pass — see renderArenaRgbaPair). boardScale > 1 only.
@@ -1263,6 +1336,9 @@ proc ensureBoardMaps(sim: SimServer) =
     )
     boardMapCache = pair.hot
     boardColdMapCache = pair.cold
+    if sim.config.isFfa() and boardScale > 1:
+      applyFfaTerrainGrade(boardMapCache)
+      applyFfaTerrainGrade(boardColdMapCache)
     boardMapCacheFfa = sim.config.isFfa()
 
 proc boardScaledMapPixels(sim: SimServer): seq[uint8] =
@@ -1681,6 +1757,12 @@ proc rigGunSpriteId*(colorIndex, aimStep: int): int =
   ## aim pose instead of baking 16 byte-identical color variants.
   wireSpriteId(rigFfaKey(RigGunSpriteBase + aimStep, 0))
 
+proc ffaRigGunTierSpriteId*(tier, aimStep: int): int =
+  ## FFA board gun art is keyed by tier so its loadout pips can be baked into
+  ## the definition without changing the shared rig_art implementation.
+  wireSpriteId(rigFfaKey(
+    FfaRigGunTierKeyBase + clamp(tier, 0, 3) * RigSteps + aimStep, 0))
+
 proc rigSpraySpriteId*(colorIndex, aimStep: int): int =
   ## FFA held-spray art is neutral, so every identity shares one definition per
   ## aim pose instead of baking 16 byte-identical color variants.
@@ -2085,11 +2167,11 @@ proc buildIndexedSpritePixels(
         fallback
     result.putRgbaPixel(i, color)
 
-proc hpBarWidth(pips: int): int =
+proc hpBarWidth*(pips: int): int =
   ## The bar's px width for one seat's pip count (base max hp + shield hp).
   pips * HpPipW + (pips - 1) * HpPipGap
 
-proc buildHpBarSprite(hp, maxHp, shieldHp: int): seq[uint8] {.measure.} =
+proc buildHpBarSprite*(hp, maxHp, shieldHp: int): seq[uint8] {.measure.} =
   ## Builds the overhead health bar as TRUE hit points, one pip each: the
   ## seat's remaining base hp as lit sage-green pips, its missing hp as dim
   ## sockets (the green section is always maxHp wide, so an armored seat
@@ -2128,6 +2210,166 @@ const IdentityGlyphs: array[8, array[IdentityGlyphH, uint8]] = [
   [0b10001'u8, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001], # Η
   [0b01110'u8, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b01110], # Θ
 ]
+
+proc buildFfaHpBarSprite*(hp, maxHp, shieldHp: int): seq[uint8] {.measure.} =
+  ## Builds the board-only continuous health bar while retaining the existing
+  ## per-hit-point dimensions and appended shield layer.
+  let
+    safeMaxHp = max(1, maxHp)
+    safeHp = clamp(hp, 0, safeMaxHp)
+    safeShieldHp = max(0, shieldHp)
+    pips = safeMaxHp + safeShieldHp
+    width = hpBarWidth(pips)
+    baseWidth = safeMaxHp * HpPipW + (safeMaxHp - 1) * HpPipGap
+    shieldStart = safeMaxHp * (HpPipW + HpPipGap)
+    fillWidth = safeHp * baseWidth div safeMaxHp
+    fillColor =
+      if safeHp * 2 > safeMaxHp: 11'u8
+      elif safeHp * 5 > safeMaxHp: 7'u8
+      else: 3'u8
+  result = newRgbaPixels(width, HpBarH)
+  for y in 0 ..< HpBarH:
+    for x in 0 ..< width:
+      let pixel = y * width + x
+      if x >= shieldStart and x < width:
+        result.putRgbaPixel(pixel, 14)
+      elif x < fillWidth:
+        result.putRgbaPixel(pixel, fillColor)
+      else:
+        result.putRawRgbaPixel(pixel, 44, 40, 34, 170)
+
+proc buildFfaTierSprite*(tier: int, arc: bool): tuple[
+    width, height: int, pixels: seq[uint8]] =
+  ## Builds a compact roster/nameplate tier marker at native 1× scale.
+  let
+    safeTier = clamp(tier, 0, 3)
+    width =
+      if arc: 5
+      elif safeTier > 0: safeTier * (FfaTierPipSize + FfaTierPipGap) -
+        FfaTierPipGap
+      else: 1
+  result.width = width
+  result.height = FfaTierPipSize
+  result.pixels = newRgbaPixels(width, result.height)
+  if arc:
+    result.pixels.putRgbaPixel(2, 8)
+    result.pixels.putRgbaPixel(width + 1, 8)
+    result.pixels.putRgbaPixel(width + 2, 8)
+    result.pixels.putRgbaPixel(width + 3, 8)
+    result.pixels.putRgbaPixel(width * 2 + 2, 8)
+  else:
+    for pip in 0 ..< safeTier:
+      let x0 = pip * (FfaTierPipSize + FfaTierPipGap)
+      for y in 0 ..< FfaTierPipSize:
+        for x in 0 ..< FfaTierPipSize:
+          result.pixels.putRgbaPixel(y * width + x0 + x, 8)
+
+proc playerLabelText(player: Player): string
+
+proc smoothTextSprite(
+  lines: openArray[string],
+  r, g, b: uint8,
+  scale: int,
+  lineHeightPx: int,
+  struck = false
+): tuple[width, height: int, pixels: seq[uint8]]
+
+proc blitRgbaBuffer(
+  dst: var seq[uint8],
+  dstW, dstH: int,
+  src: openArray[uint8],
+  srcW, srcH, atX, atY: int
+)
+
+proc fillFfaNameplateRect(
+  pixels: var seq[uint8],
+  canvasW, k, x, y, w, h: int,
+  r, g, b, a: uint8
+) =
+  for py in y ..< y + h:
+    for px in x ..< x + w:
+      for sy in 0 ..< k:
+        for sx in 0 ..< k:
+          pixels.putRawRgbaPixel(
+            (py * k + sy) * canvasW + px * k + sx, r, g, b, a)
+
+proc fillFfaNameplatePaletteRect(
+  pixels: var seq[uint8],
+  canvasW, k, x, y, w, h: int,
+  color: uint8
+) =
+  for py in y ..< y + h:
+    for px in x ..< x + w:
+      for sy in 0 ..< k:
+        for sx in 0 ..< k:
+          pixels.putRgbaPixel(
+            (py * k + sy) * canvasW + px * k + sx, color)
+
+proc buildFfaNameplateSprite*(
+  sim: SimServer,
+  player: Player,
+  identityIndex: int
+): tuple[width, height: int, pixels: seq[uint8]] =
+  ## Composes the board-only FFA identity chip, smooth name, and loadout mark.
+  let
+    k = max(1, boardScale)
+    name = playerLabelText(player)
+    nameColor = Palette[PlayerNameColor and 0x0f]
+    nameSpr = smoothTextSprite(
+      [name], nameColor.r, nameColor.g, nameColor.b, k, TextLineHeight)
+    tierSpr = buildFfaTierSprite(player.weaponTier, player.hasPlasmaArc)
+    tierWidth = if player.weaponTier > FfaWeaponUnarmed or
+        player.hasPlasmaArc: tierSpr.width else: 0
+    contentWidth = FfaNameplateChipW + FfaNameplateGap + nameSpr.width +
+      (if tierWidth > 0: FfaNameplateTierGap + tierWidth else: 0)
+    contentHeight = max(FfaNameplateChipH, nameSpr.height)
+    width = contentWidth + FfaNameplatePad * 2 + 2
+    height = contentHeight + FfaNameplatePad * 2
+    chipX = FfaNameplatePad + 1
+    chipY = FfaNameplatePad + (contentHeight - FfaNameplateChipH) div 2
+    nameX = chipX + FfaNameplateChipW + FfaNameplateGap
+    nameY = FfaNameplatePad + (contentHeight - nameSpr.height) div 2
+    tierX = nameX + nameSpr.width + FfaNameplateTierGap
+    chipColor = Palette[player.color and 0x0f]
+    glyphColor =
+      if (int(chipColor.r) + int(chipColor.g) + int(chipColor.b)) > 390:
+        12'u8
+      else:
+        2'u8
+  result.width = width
+  result.height = height
+  result.pixels = newRgbaPixels(width * k, height * k)
+  fillFfaNameplateRect(result.pixels, width * k, k,
+    0, 0, width, height, 8, 8, 8, 225)
+  for x in 1 ..< width - 1:
+    fillFfaNameplateRect(result.pixels, width * k, k,
+      x, 0, 1, 1, 0, 0, 0, 245)
+    fillFfaNameplateRect(result.pixels, width * k, k,
+      x, height - 1, 1, 1, 0, 0, 0, 245)
+  for y in 1 ..< height - 1:
+    fillFfaNameplateRect(result.pixels, width * k, k,
+      0, y, 1, 1, 0, 0, 0, 245)
+    fillFfaNameplateRect(result.pixels, width * k, k,
+      width - 1, y, 1, 1, 0, 0, 0, 245)
+  fillFfaNameplateRect(result.pixels, width * k, k,
+    chipX, chipY, FfaNameplateChipW, FfaNameplateChipH,
+    0, 0, 0, 245)
+  fillFfaNameplatePaletteRect(result.pixels, width * k, k,
+    chipX + 1, chipY + 1, FfaNameplateChipW - 2,
+    FfaNameplateChipH - 2, player.color)
+  let glyph = IdentityGlyphs[identityIndex mod IdentityGlyphs.len]
+  for gy in 0 ..< IdentityGlyphH:
+    for gx in 0 ..< IdentityGlyphW:
+      if (glyph[gy] and (1'u8 shl (IdentityGlyphW - 1 - gx))) != 0:
+        fillFfaNameplatePaletteRect(result.pixels, width * k, k,
+          chipX + 2 + gx, chipY + 1 + gy, 1, 1, glyphColor)
+  result.pixels.blitRgbaBuffer(width * k, height * k, nameSpr.pixels,
+    nameSpr.width * k, nameSpr.height * k, nameX * k, nameY * k)
+  if tierWidth > 0:
+    result.pixels.blitRgbaBuffer(width * k, height * k,
+      scaleSpritePixels(tierSpr.pixels, tierSpr.width, tierSpr.height, k),
+      tierSpr.width * k, tierSpr.height * k, tierX * k,
+      (FfaNameplatePad + (contentHeight - tierSpr.height) div 2) * k)
 
 proc identityBadgeSpriteId(team: Team, identityIndex, rot: int): int =
   ## Sprite id for one identity badge baked at aim step `rot`.
@@ -2431,10 +2673,33 @@ const
     ## stays inside when r <= slope * f / this. Dividing the local half-width by
     ## it is the whole difference between a plume that hugs the cone and one
     ## that leans a few px over its edge.
-  SprayPuffMinRadius = 3
-    ## Floor for the puff at the nozzle, where the cone is only a few px wide;
-    ## the cone's body allowance (PlasmaArcBodyRadius) covers this stub many
-    ## times over, so it cannot paint anything the cone does not hit.
+  SprayPuffMinRadius = min(
+    SprayNozzleFwd,
+    int((float(PlasmaArcBodyRadius) + SprayConeSlope * float(SprayNozzleFwd)) /
+      SprayConeNorm)
+  )
+    ## Floor for the puff at the nozzle, where the CENTERLINE cone is only ~4px
+    ## wide. The centerline is not the envelope that damages: a victim is a
+    ## PlasmaArcBodyRadius disc, so the region a painted pixel can honestly
+    ## cover is the cone widened by that radius, and near the nozzle that
+    ## allowance dwarfs the wedge itself. A 3px stub therefore drew a mist far
+    ## THINNER than what the spray already hits — dishonest in the other
+    ## direction, and it read as a hairline dribble at the can rather than an
+    ## atomized burst.
+    ##
+    ## The floor is the largest radius that stays inside that envelope, and it
+    ## is DERIVED from the two limits that bind at the nozzle rather than
+    ## picked:
+    ##   sideways — the widened cone's perpendicular clearance,
+    ##              (PlasmaArcBodyRadius + slope * f) / norm, ~20px at f = 16;
+    ##   backwards — the nozzle distance itself, because selectArcVictims takes
+    ##              only forward > 0: nothing behind the sprayer's own center
+    ##              takes damage, so no puff may reach past the cone's apex.
+    ## The backward limit is the tighter of the two, so the floor is exactly
+    ## SprayNozzleFwd (16px): the near puff grows until it just touches the
+    ## apex. The static below re-checks both limits for every puff of every
+    ## stage, so re-posing the can or re-angling the cone cannot quietly push
+    ## the mist past the damage.
 
 static:
   ## The plume is placed and sized against the FX span (PlasmaArcFxReach /
@@ -2504,6 +2769,27 @@ proc plasmaPulseDiameter*(pulse, stage: int): int =
     forward = plasmaPulseForward(pulse, stage)
     halfWidth = SprayConeSlope * float(forward) / SprayConeNorm
   2 * max(SprayPuffMinRadius, int(halfWidth))
+
+static:
+  ## Containment, puff by puff: no drawn puff may leave the DAMAGE ENVELOPE —
+  ## the centerline cone widened by the PlasmaArcBodyRadius victim disc, which
+  ## is the region where a body centered on a painted pixel does take damage.
+  ## The floor above is the only place the drawn radius exceeds the bare cone,
+  ## and this is what bounds it.
+  for stage in 0 ..< PlasmaArcFxStages:
+    for pulse in 0 ..< PlasmaArcFxPulses:
+      let
+        forward = plasmaPulseForward(pulse, stage)
+        radius = plasmaPulseDiameter(pulse, stage) div 2
+        where = " (pulse " & $pulse & " stage " & $stage & ", forward " &
+          $forward & ", radius " & $radius & ")"
+      doAssert radius <= forward,
+        "a puff reaches behind the cone's apex, where nothing takes damage" &
+        where
+      doAssert float(radius) * SprayConeNorm - SprayConeSlope * float(forward) <=
+          float(PlasmaArcBodyRadius),
+        "a puff leans outside the cone widened by the victim-body radius" &
+        where
 
 ## --- Team-colored PAINT art: always tint from teamPaintRgba ---
 ## Every paint visual below (spray mist, grenade blast, paintball tracer + head,
@@ -2782,6 +3068,96 @@ proc addHitFlashes(
       objectId,
       victim.x + CollisionW div 2 - HitFlashSize div 2,
       victim.y + CollisionH div 2 - HitFlashSize div 2,
+      30007,
+      MapLayerId,
+      spriteId
+    )
+
+proc buildFistContactSprite(stage: int): seq[uint8] {.measure.} =
+  ## Builds one stage of the landed-punch mark: a compact IMPACT BURST — a hot
+  ## core with six uneven rays, pitched off the axes — that snaps out and fades.
+  ## The shape is chosen against the pickups: a med kit and a heart are upright,
+  ## axis-aligned, boxy glyphs that sit still, so an off-axis asymmetric burst in
+  ## amber cannot be misread as something to walk onto at 640x360. Kept dimmer
+  ## and smaller than the bullet hit flash so a punch never out-shouts a shot.
+  result = newRgbaPixels(FistContactSize, FistContactSize)
+  let
+    c = float(FistContactSize - 1) / 2
+    t = stage.float / float(max(1, FistContactStages - 1))  ## 0 fresh → 1 dying.
+    reach = 6.5 + 2.5 * t                    ## rays shoot outward.
+    core = 2.6 * (1.0 - 0.55 * t)            ## the hot center shrinks away.
+    alphaTop = 230.0 * (1.0 - 0.62 * t)      ## fades out.
+  for y in 0 ..< FistContactSize:
+    for x in 0 ..< FistContactSize:
+      let
+        dx = float(x) - c
+        dy = float(y) - c
+        dist = sqrt(dx * dx + dy * dy)
+        ang = arctan2(dy, dx)
+        # Six rays, tilted 0.27rad off the axes so nothing in the mark is
+        # horizontal or vertical: alternating lobes make three long and three
+        # short, which is what makes it read as a burst rather than a symbol.
+        lobe = cos(3.0 * (ang - 0.27))
+        ray = pow(abs(lobe), 4.0)
+        span = reach * (if lobe > 0: 1.0 else: 0.62)
+        along = clamp((span - dist) / 1.5, 0.0, 1.0)
+        hot = clamp(core - dist + 0.5, 0.0, 1.0)
+        edge = max(hot, ray * along)
+      if edge > 0:
+        # Amber, hottest at the core: an ember, not the pale wash a pickup
+        # glyph wears.
+        let
+          g = 150.0 + 90.0 * hot
+          b = 40.0 + 130.0 * hot
+        result.putRawRgbaPixel(
+          y * FistContactSize + x,
+          255, uint8(clamp(int(g), 0, 255)), uint8(clamp(int(b), 0, 255)),
+          uint8(clamp(int(alphaTop * edge), 0, 255))
+        )
+
+proc addFistContacts(
+  sim: SimServer,
+  spriteDefs: var seq[SpriteDefinition],
+  currentIds: var seq[int],
+  packet: var seq[uint8]
+) {.measure.} =
+  ## Sparks every recently landed punch on the spectator board, on the contact
+  ## RIM between the two cogs — backed off past the victim's body radius along
+  ## the punch's own direction, so knuckles read where they hit without painting
+  ## over the face. Drawn for FistContactDrawTicks only, short enough that a
+  ## world-anchored mark cannot visibly separate from the victim.
+  ## BOARD/SPECTATOR ONLY — this is never called from a player view, so no
+  ## observation stream carries it and bots learn nothing.
+  for i in 0 ..< min(sim.fistContacts.len, FistContactMaxCount):
+    let
+      contact = sim.fistContacts[i]
+      age = sim.tickCount - contact.tick
+    if age < 0 or age >= FistContactDrawTicks:
+      continue
+    let
+      stage = clamp(
+        age * FistContactStages div FistContactDrawTicks,
+        0, FistContactStages - 1)
+      spriteId = FistContactSpriteBase + stage
+    packet.addBoardSpriteChanged(
+      spriteDefs,
+      spriteId,
+      FistContactSize,
+      FistContactSize,
+      buildFistContactSprite(stage),
+      "fist contact stage " & $stage
+    )
+    let
+      # Back off along the punch's own travel direction (puncher -> victim).
+      punch = aimVector(contact.angleBrads)
+      backX = int(-punch.x * float(FistContactOffset))
+      backY = int(-punch.y * float(FistContactOffset))
+      objectId = FistContactObjectBase + i
+    currentIds.add(objectId)
+    packet.addBoardObject(
+      objectId,
+      contact.x + backX - FistContactSize div 2,
+      contact.y + backY - FistContactSize div 2,
       30007,
       MapLayerId,
       spriteId
@@ -5154,7 +5530,8 @@ proc addScoreboard(
   spriteDefs: var seq[SpriteDefinition],
   currentIds: var seq[int],
   packet: var seq[uint8],
-  selectedJoinOrder: int
+  selectedJoinOrder: int,
+  viewerIndex = -1
 ) {.measure.} =
   ## Adds the top-left player roster and mode-appropriate match header.
   packet.addLayer(TopLeftLayerId, TopLeftLayerType, UiLayerFlag)
@@ -5263,6 +5640,33 @@ proc addScoreboard(
       TopLeftLayerId,
       textSpriteId
     )
+    if sim.config.isFfa() and viewerIndex < 0:
+      let
+        tierSpriteId = FfaRosterTierSpriteBase + i
+        tierObjectId = FfaRosterTierObjectBase + i
+        tier = buildFfaTierSprite(player.weaponTier, player.hasPlasmaArc)
+        tierLabel =
+          if player.hasPlasmaArc:
+            "roster arc"
+          else:
+            "roster tier " & $clamp(player.weaponTier, 0, 3)
+      currentIds.add(tierObjectId)
+      packet.addSpriteChanged(
+        spriteDefs,
+        tierSpriteId,
+        tier.width,
+        tier.height,
+        tier.pixels,
+        tierLabel
+      )
+      packet.addBoardObject(
+        tierObjectId,
+        ScoreboardTextX + text.width + FfaNameplateGap,
+        rowY + 2,
+        0,
+        TopLeftLayerId,
+        tierSpriteId
+      )
 
 proc playerLabelLines(
   sim: SimServer,
@@ -6738,7 +7142,10 @@ proc addHpPips(
       spriteId,
       width,
       HpBarH,
-      buildHpBarSprite(hp, maxHp, shieldHp),
+      if viewerIndex < 0 and sim.config.isFfa():
+        buildFfaHpBarSprite(hp, maxHp, shieldHp)
+      else:
+        buildHpBarSprite(hp, maxHp, shieldHp),
       labelHp(hp, maxHp, shieldHp)
     )
     let objectId = HpPipObjectBase + i
@@ -7877,6 +8284,38 @@ proc rigSegLabel(seg: RigSeg, color: string): string =
   of rsLegFL, rsLegFR, rsLegRear: "cog leg " & color
   else: "cog wheel " & color
 
+proc buildFfaGunTierPixels(
+  base: seq[uint8],
+  tier, aimStep, renderScale: int
+): seq[uint8] =
+  ## Paints tier markers onto the neutral FFA gun at its native board scale.
+  result = base
+  let
+    k = max(1, renderScale)
+    center = RigCanvas * k div 2
+    angle = float(aimStep) / float(RigSteps) * 2.0 * PI
+    ca = cos(angle)
+    sa = sin(angle)
+    safeTier = clamp(tier, 0, 3)
+    side = max(1, k * 2)
+  for pip in 0 ..< safeTier:
+    let
+      localX = 6 + (pip - (safeTier - 1) div 2) * 5
+      localY = GunRightPx
+      x = center + int(round((float(localX) * ca + float(localY) * sa) *
+        float(k))) - side div 2
+      y = center + int(round((-float(localX) * sa + float(localY) * ca) *
+        float(k))) - side div 2
+    for py in 0 ..< side:
+      for px in 0 ..< side:
+        let
+          tx = x + px
+          ty = y + py
+        if tx >= 0 and tx < RigCanvas * k and ty >= 0 and
+            ty < RigCanvas * k:
+          result.putRawRgbaPixel(ty * RigCanvas * k + tx,
+            255, 236, 39, 255)
+
 proc addCogRigObjectsImpl[ffaMode: static bool](
   sim: SimServer,
   spriteDefs: var seq[SpriteDefinition],
@@ -8080,7 +8519,7 @@ proc addCogRigObjectsImpl[ffaMode: static bool](
            rigSpraySpriteId(player.team, aimStep))
       else:
         (if ffaMode:
-           rigGunSpriteId(ffaColorIndex, aimStep)
+           ffaRigGunTierSpriteId(player.weaponTier, aimStep)
          else:
            rigGunSpriteId(player.team, aimStep))
     if spriteDefs.spriteDefinitionIndex(weaponSpriteId) < 0:
@@ -8093,7 +8532,9 @@ proc addCogRigObjectsImpl[ffaMode: static bool](
               rigSprayCanPixels(player.team, aimStep, boardScale))
          else:
            (if ffaMode:
-              rigGunPixelsForColor(ffaColorIndex, aimStep, boardScale)
+              buildFfaGunTierPixels(
+                rigGunPixelsForColor(ffaColorIndex, aimStep, boardScale),
+                player.weaponTier, aimStep, boardScale)
             else:
               rigGunPixels(player.team, aimStep, boardScale))),
         labelCogWeapon(color, spray = holdsSpray,
@@ -8238,7 +8679,8 @@ proc buildSpriteProtocolUpdates*(
       nextState.spriteDefs,
       currentIds,
       result,
-      nextState.selectedJoinOrder
+      nextState.selectedJoinOrder,
+      viewerIndex = playerIndex
     )
     if playerIndex < overlays.len:
       result.addDebugOverlay(
@@ -8309,6 +8751,8 @@ proc buildSpriteProtocolUpdates*(
   sim.addDamagePops(nextState.spriteDefs, currentIds, result)
   sim.addShotTracers(nextState.spriteDefs, currentIds, result)
   sim.addHitFlashes(nextState.spriteDefs, currentIds, result)
+  # Board only, on purpose: the fist stays silent in every player view.
+  sim.addFistContacts(nextState.spriteDefs, currentIds, result)
   sim.addRotatingDiamonds(nextState.spriteDefs, currentIds, result)
   sim.addMedKits(nextState.spriteDefs, currentIds, result)
   sim.addShields(nextState.spriteDefs, currentIds, result)
@@ -8363,10 +8807,17 @@ proc buildSpriteProtocolUpdates*(
       let
         labelSpriteId = player.spritePlayerNameSpriteId()
         labelObjectId = player.spritePlayerNameObjectId()
-        # Stable content key: name art only changes when the name or carried
-        # flag marker changes. Skip rebuild + wire when the key already matches.
+        ffaNameplate = sim.config.isFfa() and boardScale > 1
+        identityIndex = sim.slotIdentityIndex(player.joinOrder)
+        # Stable content key includes every state that changes this sprite.
+        # Skip rebuild + wire when the key already matches.
         labelKey =
-          if flagTeamOrd >= 0:
+          if ffaNameplate:
+            "name " & playerLabelText(player) & " color " &
+              playerColorName(playerColorIndex(player.color)) & " identity " &
+              IdentityNames[identityIndex] & " tier " & $player.weaponTier &
+              (if player.hasPlasmaArc: " arc" else: "")
+          elif flagTeamOrd >= 0:
             "name " & playerLabelText(player) & " flag " & $flagTeamOrd
           else:
             "name " & playerLabelText(player)
@@ -8380,7 +8831,9 @@ proc buildSpriteProtocolUpdates*(
         labelH = nextState.spriteDefs[defIndex].height div max(1, boardScale)
       else:
         let label =
-          if flagTeamOrd >= 0:
+          if ffaNameplate:
+            sim.buildFfaNameplateSprite(player, identityIndex)
+          elif flagTeamOrd >= 0:
             sim.buildCarrierNameSprite(player, flagTeamOrd,
               smooth = boardScale > 1)
           else:

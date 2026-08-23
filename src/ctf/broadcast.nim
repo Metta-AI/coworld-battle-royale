@@ -35,6 +35,7 @@ type
     captures: seq[int]
     carriers: array[Team, int]
     captured: array[Team, bool]
+    eventCursor: int
 
 proc initBroadcastTracker*(): BroadcastTracker =
   ## Returns a fresh, unsynced broadcast tracker.
@@ -61,6 +62,24 @@ proc firstPersonShotTeamToken*(sim: SimServer, color: uint8): string =
       return teamText(team)
   ""
 
+proc ffaCapTiebreak(sim: SimServer): string =
+  ## Returns the placement key that separates first and second at the cap.
+  let placements = sim.ffaPlacements()
+  if placements.len < 2:
+    return "alive"
+  let
+    first = sim.players[placements[0]]
+    second = sim.players[placements[1]]
+  if first.alive != second.alive:
+    return "alive"
+  if first.deathTick != second.deathTick:
+    return "death"
+  if first.kills != second.kills:
+    return "kills"
+  if first.damageDealt != second.damageDealt:
+    return "dmg"
+  "slot"
+
 proc snapshot(tracker: var BroadcastTracker, sim: SimServer) =
   ## Copies the current sim state into the tracker without emitting events.
   tracker.alive.setLen(sim.players.len)
@@ -77,6 +96,7 @@ proc snapshot(tracker: var BroadcastTracker, sim: SimServer) =
     tracker.captured[team] = sim.flags[team].captured
   tracker.prevTick = sim.tickCount
   tracker.prevPhase = sim.phase
+  tracker.eventCursor = sim.events.len
   tracker.initialized = true
 
 proc resync*(tracker: var BroadcastTracker, sim: SimServer) =
@@ -105,8 +125,49 @@ proc killerThisStep(
   else:
     (-1, false)
 
-proc stepEvents*(
+proc ffaDeathAttribution(
   sim: SimServer,
+  tracker: BroadcastTracker,
+  victimSlot: int,
+  deathTick: int
+): tuple[killer: int, weapon: string, cause: string] =
+  ## Joins a deaths-diff row to the authoritative tier-2 event sink.
+  result.killer = -1
+  let start = min(max(0, tracker.eventCursor), sim.events.len)
+  if start >= sim.events.len:
+    result.cause = "hazard"
+    return
+  for i in start ..< sim.events.len:
+    let event = sim.events[i]
+    if event.tick <= tracker.prevTick or event.tick > deathTick:
+      continue
+    if event.kind == Kill and event.target == victimSlot:
+      result.killer = event.source
+      result.weapon = event.weapon
+      return
+  for i in start ..< sim.events.len:
+    let event = sim.events[i]
+    if event.tick <= tracker.prevTick or event.tick > deathTick:
+      continue
+    if event.kind == Death and event.source == victimSlot and
+        event.weapon == "ring":
+      result.cause = "ring"
+      return
+  for i in start ..< sim.events.len:
+    let event = sim.events[i]
+    if event.tick != deathTick or event.target != victimSlot:
+      continue
+    if event.kind == Damage and event.weapon == "puddle":
+      result.cause = "puddle"
+      return
+    if event.kind == Damage and event.source < 0 and
+        event.weapon == "grenade":
+      result.cause = "barrage"
+      return
+  result.cause = "hazard"
+
+proc stepEvents*(
+  sim: var SimServer,
   tracker: var BroadcastTracker,
   events: JsonNode
 ) =
@@ -116,6 +177,8 @@ proc stepEvents*(
   ## after a seek. Each event carries the tick it fired on so the client can
   ## place scrubber markers and honour per-beat read-holds.
   if not tracker.initialized:
+    if sim.collectEvents:
+      sim.events.setLen(0)
     tracker.snapshot(sim)
     return
 
@@ -164,22 +227,55 @@ proc stepEvents*(
     killers[0] in victims and killers[1] in victims
   for i, p in sim.players:
     if i < tracker.deaths.len and p.deaths > tracker.deaths[i]:
-      let tk = killer.index >= 0 and sim.players[killer.index].team == p.team
-      var event = %*{
-        "t": tick,
-        "k": "kill",
-        "killer": (if killer.index >= 0: sim.slotOf(killer.index) else: -1),
-        "victim": sim.slotOf(i),
-        "tk": tk,
-        "amb": killer.ambiguous
-      }
+      var event: JsonNode
+      if sim.config.isFfa():
+        let attribution = sim.ffaDeathAttribution(
+          tracker, sim.slotOf(i), tick)
+        event = %*{
+          "t": tick,
+          "k": "kill",
+          "killer": attribution.killer,
+          "victim": sim.slotOf(i),
+          "tk": false,
+          "amb": false
+        }
+        if attribution.killer >= 0:
+          event["w"] = %attribution.weapon
+        else:
+          event["cause"] = %attribution.cause
+      else:
+        let tk = killer.index >= 0 and sim.players[killer.index].team == p.team
+        event = %*{
+          "t": tick,
+          "k": "kill",
+          "killer": (if killer.index >= 0: sim.slotOf(killer.index) else: -1),
+          "victim": sim.slotOf(i),
+          "tk": tk,
+          "amb": killer.ambiguous
+        }
       if tradePair:
         # The partner is the other victim; each is the other's provable killer.
         let partner = if victims[0] == i: victims[1] else: victims[0]
         event["trade"] = %sim.slotOf(partner)
       events.add(event)
-    elif i < tracker.alive.len and p.alive and not tracker.alive[i]:
+    elif i < tracker.alive.len and p.alive and not tracker.alive[i] and
+        not sim.config.isFfa():
       events.add(%*{"t": tick, "k": "respawn", "who": sim.slotOf(i)})
+
+  if sim.config.isFfa():
+    var wasAlive = 0
+    var nowAlive = 0
+    for i, p in sim.players:
+      if i < tracker.alive.len and tracker.alive[i]:
+        inc wasAlive
+      if p.alive:
+        inc nowAlive
+    if wasAlive > 2 and nowAlive == 2:
+      var slots = newJArray()
+      for p in sim.players:
+        if p.alive:
+          slots.add(%p.joinOrder)
+      events.add(%*{"t": tick, "k": "final2", "slots": slots})
 
   # Flag steals and returns, diffed per team like expand_replay. A carrier
   # losing a flag for any reason but capture returns it home instantly; a
@@ -218,6 +314,25 @@ proc stepEvents*(
         "by": sim.slotOf(i),
         "flag": captured
       })
+
+  # Replay playback arms the tier-2 sink so damage cues can carry the
+  # first-hand attacker/victim attribution. Only FFA exposes these cues in
+  # chrome; CTF still drains the sink so a replay cannot grow it forever.
+  # Keep the sink until after kill attribution above has consumed it.
+  if sim.collectEvents:
+    if sim.config.isFfa():
+      for event in sim.events:
+        if event.kind == Damage and event.source >= 0 and event.target >= 0:
+          events.add(%*{
+            "t": event.tick,
+            "k": "damage",
+            "damager": event.source,
+            "victim": event.target,
+            "amount": event.amount,
+            "x": event.x,
+            "y": event.y
+          })
+    sim.events.setLen(0)
 
   tracker.snapshot(sim)
 
@@ -811,13 +926,23 @@ proc buildStateJson*(
     "roster": sim.rosterJson(),
     "events": (if events.isNil: newJArray() else: events)
   }
+  if sim.config.isFfa():
+    state["seed"] = %sim.config.seed
   if sim.config.isFfa() and sim.config.ringEnabled:
     let (ringX, ringY) = ffaRingCenter()
+    let currentRadius = ffaRingRadiusAt(sim.config, sim.gameTicksElapsed())
+    let forecastLeadSec = 30
+    let forecastRadius = ffaRingRadiusAt(
+      sim.config,
+      sim.gameTicksElapsed() + forecastLeadSec * TargetFps
+    )
     state["ring"] = %*{
       "center": [ringX, ringY],
       "startRadius": ffaRingStartRadius(),
       "floorRadius": ffaRingFloorRadius(sim.config),
-      "radius": ffaRingRadiusAt(sim.config, sim.gameTicksElapsed()),
+      "radius": currentRadius,
+      "forecastRadius": forecastRadius,
+      "forecastLeadSec": (if forecastRadius == currentRadius: 0 else: forecastLeadSec),
       "shrinkSec": sim.config.ringShrinkSec,
       "damageTicks": sim.config.ringDamageTicks,
       "recoveryTicks": sim.config.ringRecoveryTicks,
@@ -932,6 +1057,10 @@ proc buildStateJson*(
     }
     if sim.config.isFfa():
       state["over"]["winnerSlot"] = %sim.ffaWinnerSlot
+      state["over"]["ffaEnd"] = %*{
+        "how": (if sim.timeLimitReached: "cap" else: "lastalive"),
+        "tb": (if sim.timeLimitReached: sim.ffaCapTiebreak() else: "alive")
+      }
       for player in sim.players:
         if player.joinOrder == sim.ffaWinnerSlot:
           state["over"]["winnerColor"] =

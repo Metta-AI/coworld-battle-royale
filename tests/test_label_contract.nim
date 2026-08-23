@@ -392,6 +392,13 @@ proc collectFfaWeaponLabels(sim: var SimServer): HashSet[string] =
   for message in sim.buildGlobalMessages(globalState):
     if message.kind == spkSprite:
       result.incl(message.sprite.label.normalizeLabel())
+  # Rebuild the board once with the arc equipped so the FFA-only nameplate,
+  # roster, and held-weapon families all remain represented in the manifest.
+  sim.players[0].hasPlasmaArc = true
+  for message in sim.buildGlobalMessages(globalState):
+    if message.kind == spkSprite:
+      result.incl(message.sprite.label.normalizeLabel())
+  sim.players[0].hasPlasmaArc = false
   for spawn in sim.lowGunSpawns:
     sim.players[0].x = spawn.x + 50
     sim.players[0].y = spawn.y
@@ -521,6 +528,35 @@ suite "sprite label contract":
           if normalized.startsWith("safe zone ") or
               normalized.startsWith("ffa zone cue "):
             emitted.incl(normalized)
+    # The landed-punch mark (`fist contact stage <n>`) is BOARD-only and needs
+    # a punch to have actually connected — no posed frame above throws one, and
+    # the fixtures above are CTF, where fists do not exist at all. So it gets
+    # its own minimal FFA fixture: two unarmed seats a body apart, one aiming
+    # at the other, one real tryFist call, and only the `fist contact ` family
+    # merged in (this 2-seat FFA roster's HUD/score shapes are noise the golden
+    # has no business absorbing).
+    var fistConfig = defaultFfaConfig(2)
+    var fistGame = initCtfForTest(fistConfig)
+    discard fistGame.addPlayer("ffa0")
+    discard fistGame.addPlayer("ffa1")
+    fistGame.startGame()
+    let fistCenter = fistGame.gameMap.center
+    fistGame.players[0].x = fistCenter.x
+    fistGame.players[0].y = fistCenter.y
+    fistGame.players[0].aimBrads = 0
+    fistGame.players[0].weaponTier = FfaWeaponUnarmed
+    fistGame.players[0].fireCooldown = 0
+    fistGame.players[1].x = fistCenter.x + 30
+    fistGame.players[1].y = fistCenter.y
+    fistGame.tryFist(0)
+    doAssert fistGame.fistContacts.len == 1,
+      "fist label fixture landed no punch — recheck the pose"
+    var fistViewer = initGlobalViewerState()
+    for message in fistGame.buildGlobalMessages(fistViewer):
+      if message.kind == spkSprite:
+        let normalized = message.sprite.label.normalizeLabel()
+        if normalized.startsWith("fist contact "):
+          emitted.incl(normalized)
     # Regenerating: `nim r -d:writeLabelManifest tests/test_label_contract.nim`
     # rewrites the golden from what the engine emits NOW, and the resulting git
     # diff is the artifact to review. Deliberately opt-in — if the test could
