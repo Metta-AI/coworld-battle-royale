@@ -1341,9 +1341,10 @@ proc runServerLoop*(
       else: initSimServer(config)
     lastTick = getMonoTime()
     collectedEvents: seq[SimEvent] = @[]
-  # Replay playback needs the analysis sink for broadcast-only damage cues.
-  # Live servers keep the historical opt-in events file behaviour.
-  sim.collectEvents = eventsPath.len > 0 or replayLoaded
+  if replayLoaded and sim.config.isFfa():
+    sim.collectEvents = true
+  else:
+    sim.collectEvents = eventsPath.len > 0
   block:
     # Bake the supersampled spectator render caches (map, endzone fades,
     # soldier rotations) BEFORE the listener opens: a viewer's first-message
@@ -1438,7 +1439,8 @@ proc runServerLoop*(
         )
         config = move(initializedReplay.config)
         sim = move(initializedReplay.sim)
-        sim.collectEvents = true
+        if sim.config.isFfa():
+          sim.collectEvents = true
         replayPlayer = move(initializedReplay.player)
         broadcastTracker = move(initializedReplay.tracker)
         replayLoaded = true
@@ -1823,6 +1825,8 @@ proc runServerLoop*(
 
     var frameEvents = newJArray()
     if replayLoaded:
+      if sim.config.isFfa():
+        sim.collectEvents = true
       frameEvents = replayPlayer.advanceReplayFrame(
         sim,
         broadcastTracker,
@@ -1831,7 +1835,8 @@ proc runServerLoop*(
       )
       # Keyframes serialize the whole SimServer, including collectEvents=false
       # from the precompute scan, so re-arm the replay sink after every frame.
-      sim.collectEvents = true
+      if sim.config.isFfa():
+        sim.collectEvents = true
     elif not holdFfaStartup:
       for command in replayCommands:
         liveSpeedIndex.applySpeedCommand(command)
