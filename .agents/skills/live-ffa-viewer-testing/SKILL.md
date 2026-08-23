@@ -89,6 +89,36 @@ Default FFA configs finish fast. Copy the config and relax it, e.g.:
 
 `fastMode: false` is what makes the server run in realtime so the browser view is watchable.
 
+### Make bots actually FIRE the weapon you want to look at (spray cans etc.)
+
+A default FFA match is mostly gun fire: spray cans are a fraction of the FFA loot
+cluster (`ffaFamilyTargets` / `resetPlasmaArcs` in `sim.nim`), so a scan of a default
+replay's events can show zero spray pickups. Flood the board with loot and keep every
+bot alive so bursts keep coming:
+
+```json
+{ "mode": "ffa", "seed": 42, "mapSeed": 42, "fastMode": false,
+  "hitPoints": 2000, "ffaGunDamage": 1, "ffaSprayDamage": 1, "ffaGrenadeDamage": 1,
+  "ffaLootCount": 64, "ffaLootRespawnTicks": 48,
+  "ringShrinkSec": 3000, "ringDamageTicks": 480, "maxTicks": 100000 }
+```
+
+With that config a handful of rapid `screenshot` calls in a row reliably lands on a
+burst mid-flight, so the replay/`extract_events` route below is optional for
+"is the FX shaped right" questions. Note that with low damage the match still thins
+out over ~10 minutes — if `ALIVE` drops to 2-3, restart the server and re-attach bots
+rather than hunting for fights.
+
+### Another session on the same box can kill your server
+
+`pkill -f ctf-server` / `pkill -f baseline.out` (common in other agents' test scripts)
+will take down YOUR live match too — the symptom is the viewer going
+`disconnected…`/`WAITING NEED MORE!` with **no error in the server log**. Defend by
+running from uniquely named copies, e.g. `cp bin/ctf-server /tmp/myviewsrv;
+cp players/baseline/baseline.out /tmp/mybot.out`, and start them with `setsid nohup`.
+Also avoid `pkill -f` yourself: patterns like `ctf-server` match the shell running the
+command and kill your own tool session.
+
 ## Viewer quirks (cost real debugging time)
 
 - The 2D canvas only repaints while the Chrome window/tab has focus. After switching
@@ -153,6 +183,58 @@ Two gotchas when translating those ticks into the viewer:
 - The FX belongs to the *sprayer*, who is usually off-screen: use the `◂`/`▸` follow
   chips until the label reads the seat from the frame dump (`FOLLOW <name> S<seat>`),
   then `zoom` into the nozzle region for the close-up.
+- **Faster than cycling follow chips: click the MINIMAP.** A single click on the minimap
+  switches the camera to `FREE VIEW` and centres it on that map point, so an event's map
+  coordinates (from `extract_events.nim`) translate directly:
+  `click_x = minimapLeft + x/MapWidth * minimapW`, same for y. Two or three clicks of
+  refinement land the contact near the view centre. This never touches a cog, so it cannot
+  trip the POV/fog mode. Re-navigating to `?t=<tick>` resets the camera, so re-click the
+  same minimap point for each tick to keep an identical crop across a fade sequence.
+- Resizing the window or clicking chrome can resume playback (and Chrome may re-maximize
+  the window): re-load `?t=<tick>` after any resize, and verify the frame counter is the
+  same on both builds before treating two screenshots as the same frame.
+
+## Impact/contact FX: expect the victim sprite to occlude it sometimes
+
+A mark drawn at a victim's body centre (even offset back toward the attacker) is only
+visible when the offset direction points away from the victim's chassis art; on other
+angles the cog sprite covers most of it and only a sliver shows a tick or two later, when
+the later stages have expanded. Judge such FX on several contacts with different attack
+directions before calling it invisible.
+
+## Pixel-exact FX evidence offline (`renderBoardFrame`)
+
+For a deterministic, zoom-free ground truth of what the spectator board draws at an exact
+tick, write a throwaway tool (delete it afterwards — do not commit) that steps a replay
+and composites the global packet:
+
+```nim
+import std/[os, strformat, strutils], pixie, ../src/ctf/[sim, global], toolutil
+# ... openReplay(path); while sim.tickCount < t: replay.stepReplay(sim)
+# let bs = boardRenderScaleFor(MapWidth, MapHeight)   # 2 on normal maps, 1 on huge ones
+# var canvas = sim.renderBoardFrame()                 # canvas is MapW*bs x MapH*bs
+# crop around (mapX*bs, mapY*bs) and upscale for review
+```
+
+Two traps: `boardRenderScaleFor` lives in `ctf/global`, not in the `ctf/sim` re-export
+(import both, or you get `undeclared identifier`), and **sim coordinates must be multiplied
+by that board scale** — cropping with unscaled coords (or passing `scale = 1` to
+`renderBoardFrame`) yields an all-black tile and looks exactly like "the FX never rendered".
+
+## Live matches make short FX hard to catch; prefer a replay
+
+On a huge/standard generated map the viewer's wheel zoom caps out with cogs ~10-30px, and a
+mark that lives ~8 ticks (1/3 s) is very easy to miss between screenshots; bots also bunch
+into a stack that hides ground marks. For contact/impact FX, record a match once
+(`--save-replay:`) and do all judging through `--load-replay` + `?t=<tick>`, which is the
+same `buildSpriteProtocolUpdates` spectator path as live play.
+
+## Unarmed FFA punch-fest config
+
+`ffaLootCount: 0` keeps every FFA bot at `FfaWeaponUnarmed`, and the step loop auto-calls
+`tryFist` for unarmed FFA players, so punches keep landing for the whole match instead of
+only the opening scramble. Keep `hitPoints` low (e.g. 40) if you want punch kills quickly —
+fist damage is 2/hit with a 24-tick cooldown, so 2000 hp means nobody ever dies.
 
 ## Proving no new sprite family/label reached the streams
 
@@ -184,6 +266,91 @@ diff the PNGs; an "unchanged pixels" mask is a good way to prove walls/pits/wind
 were untouched. Rendering a CTF config through the same tool on both builds and comparing
 md5 proves CTF parity.
 
+### Reproducing the EXACT same framing on two builds (for A/B screenshots)
+
+Mouse zoom/pan is not reproducible; keyboard is. Load the same
+`?t=<simTick>` URL on both ports, click once into the page (canvas focus), then drive
+the camera with the SAME keystroke sequence on each build: `]` / `[` step the follow
+camera, `z` / `x` zoom one step. The zoom readout (`7.3×`, `24.1×`) and the
+`FOLLOW <name> S<seat>` chip confirm the two tabs match before you diff. Crops taken
+this way diff cleanly; everything that differs is then a real build difference.
+
+Screenshots are captured at the display's native resolution while the computer-tool
+coordinates are 1024-wide, so multiply screen coordinates by `nativeWidth/1024`
+(1.5625 on a 1600px display) before cropping with Pillow. **numpy is not installed** —
+plain Pillow `load()` loops are fast enough for these crops.
+
+### Board overlays are world-anchored, so high zoom exposes misplacement
+
+Nameplates, HP bars, and tier/loadout marks are world-space sprites drawn at a fixed
+tile offset above the cog. At 20×+ zoom that offset becomes hundreds of screen pixels,
+which is exactly how a marker that is supposed to sit *on* a held gun becomes visibly
+detached. So: judge "is this marker attached to the thing it annotates" at high zoom
+(20×+) on an armed seat, not at fit/4×, where everything looks plausibly adjacent.
+
+### Live CTF bots must use the CONFIGURED slot names
+
+`config.json` (CTF) names its seats `player1`…`player16`, and
+`validatePlayerSlot` (`src/ctf/roster.nim`) rejects a join whose `name` differs from the
+configured slot name with `403 Player credentials do not match configured roster.` The
+`Bot_<slot>` convention only works for configs (like `config.br.json`) that leave slot
+names blank. For a CTF *regression* check it is usually faster to skip live bots entirely
+and serve the committed fixture on two ports:
+`bin/ctf-server --load-replay:tests/replays/ctf.bitreplay --port:9603`.
+
 ## Devin Secrets Needed
 
 None — the server and viewer run locally with no auth.
+
+## Exact-viewport (e.g. 640x360) full-frame captures — use CDP, not window resizing
+
+Resizing the Chrome window can never give an exact page viewport (chrome/decoration eats
+pixels), and cropping is routinely rejected as evidence. Drive your own Chrome over CDP
+instead:
+
+```bash
+google-chrome --remote-debugging-port=9333 --remote-allow-origins='*' &   # both flags:
+# without --remote-allow-origins the websocket handshake fails with HTTP 403
+```
+
+Then `Emulation.setDeviceMetricsOverride {width:640,height:360,deviceScaleFactor:1}` +
+`Page.captureScreenshot {captureBeyondViewport:false}` yields a PNG that is exactly
+640x360 and contains the WHOLE page (HUD row, board, minimap, replay bar). Verify with
+`Runtime.evaluate "[innerWidth,innerHeight].join('x')"` and with PIL `Image.open(p).size`,
+and quote both in the report. `Emulation.clearDeviceMetricsOverride` returns to desktop
+width (a maximized 1600px window gives a 1600x1017 page).
+
+## Deterministic, build-to-build identical camera for A/B panels
+
+Both viewer camera controls are reachable as viewport-space clicks, and — verified — they
+do NOT resume playback after a `?t=<simTick>` seek (the frame counter stays put):
+
+- At a 640x360 viewport: zoom `-`/`+` at (450,127)/(530,127) (1.9x -> 6.3x in 4 clicks),
+  follow `◀`/`▶` at (452,148)/(552,148), minimap area ~x448..557, y50..97.
+  At a 1600x1017 page: follow `▶` (1526,316), `◀` (1290,316), zoom `+` (1474,262).
+- **Prefer a minimap click over the follow chip** when you know the event's map
+  coordinates: `page_x = 440 + mapx/mapW*132`, `page_y = 39 + mapy/mapH*68` at 640x360
+  puts the free camera on that spot ("FREE VIEW" chip) — identical on both builds, whereas
+  follow-chip click counts do not always land on the seat you expect.
+- Get event coordinates from `tools/extract_events.nim` (`CTFFRM01` frame dump: seats' x/y,
+  aim, flags; flag bit 64 = spray cone active, bit 1 = alive).
+
+## Prove transient FX presence/absence numerically, not by eyeballing
+
+Screenshot the same camera at consecutive `?t=` ticks and count FX-coloured pixels inside a
+crop that excludes HUD chrome (HUD has its own amber/orange, which will otherwise swamp a
+whole-frame scan and make every frame look identical). Example that produced clean evidence
+for a 4-tick amber impact burst: crop below the victim body, accept
+`r>140 and r-b>55 and r-g>25 and g>60` -> 0/95/116/104/7/0/0 across ages -1..5, i.e.
+present ages 0..3, gone at age 4. Do the same for spray pink
+(`r>165 and r-g>55 and b>95`) sampled row by row to compare nozzle width between builds
+(near-nozzle rows differ, far rows must match for a nozzle-only change).
+
+## Fixture re-simulation with --mismatch-quit is REALTIME
+
+`readRuntimeConfig` has no speed/fast flag, so `--load-replay:<fixture> --mismatch-quit`
+plays back at 1x: a 7200-tick fixture needs ~5 min, and the server does NOT exit at the end
+(maxGames=infinite -> it goes back to "waiting for players"). Poll the log for
+`wins|game over|draw` (success), or `mismatch|unhandled exception` (failure), then kill the
+pid yourself. Budget ~8 min per fixture and report honestly which runs reached an ending
+and which merely ran clean up to your timeout.
