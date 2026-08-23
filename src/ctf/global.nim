@@ -8126,7 +8126,7 @@ proc buildFfaGunTierPixels(
   result = base
   let
     k = max(1, renderScale)
-    center = RigCanvas div 2
+    center = RigCanvas * k div 2
     angle = float(aimStep) / float(RigSteps) * 2.0 * PI
     ca = cos(angle)
     sa = sin(angle)
