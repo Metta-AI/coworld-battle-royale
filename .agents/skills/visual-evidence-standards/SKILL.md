@@ -52,8 +52,9 @@ black frame** — a fixed sleep silently captures the lobby/countdown and exits 
 which is how a session ends up submitting worthless PNGs.
 
 Useful flags: `--viewports 1440x900,640x360,1024x576`, `--settle` (paint delay),
-`--ready-timeout` (how long to wait for a painted board), `--tick N` (seek a
-replay page before the shutter), `--port` (Chrome's CDP port).
+`--ready-timeout` (how long to wait for a painted board), `--tick N` (seek via
+the page's ?t= deep link; works only on the replay viewer (/client/replay), not
+the live board), `--port` (Chrome's CDP port).
 
 Broadcast chrome (scorebug, timeline, HUD state) is more reliable off a recorded
 replay than a live match:

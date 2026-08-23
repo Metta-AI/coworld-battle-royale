@@ -13,7 +13,9 @@ frame and never a relabeled canvas dump.
 Default viewports are the two the reviewer looks at: desktop 1440x900 and the
 small-embed 640x360. The shutter waits for the board to actually paint and FAILS
 rather than writing an all-black lobby/countdown frame (the one way this script
-can silently produce worthless evidence). Pass --tick to seek a replay page.
+can silently produce worthless evidence). Pass --tick to seek a replay page via
+its ?t=<tick> deep link; on a page with no transport that is an error, not a
+quietly-wrong-tick screenshot.
 
 Pair captures by running the same command against the base build's port with
 --label before; identical --viewports and --settle keep the pair zoom-matched.
@@ -91,6 +93,46 @@ def wait_for_painted_frame(cdp, timeout, poll=3.0):
                  expression=f"new Promise(r=>setTimeout(r,{int(poll * 1000)}))")
 
 
+def tick_url(url, tick):
+    """Add the replay page's ?t=<tick> deep link, which seeks on the first frame.
+
+    This is the ONLY seek hook the pages expose: `replay_broadcast.html` reads
+    `?t=` and issues the same `s:<tick>` command the scrubber uses. There is no
+    scriptable viewer object to poke, so a clever in-page seek call is a silent
+    no-op that captures whatever tick happened to be on screen.
+
+    `?t=` is an ABSOLUTE sim tick. The scrubber readout is play-relative (it
+    subtracts the lobby ticks, `s.t - startTick`), so a `--tick 1200` capture
+    legitimately shows "1080 / 4052" on a replay with a 120-tick lobby.
+    """
+    if not tick:
+        return url
+    base, _, query = url.partition("?")
+    params = [p for p in query.split("&") if p and not p.startswith("t=")]
+    params.append(f"t={tick}")
+    return f"{base}?{'&'.join(params)}"
+
+
+def read_clock(cdp):
+    """Return the replay page's match clock, or raise if the page has no transport.
+
+    A `--tick` capture is only evidence if the seek landed, so refuse to write a
+    PNG from a page that cannot honor the deep link (the live `/client/global`
+    board has no scrubber and ignores `?t=`).
+    """
+    res = cdp.send("Runtime.evaluate", returnByValue=True, expression=(
+        "(()=>{const e=document.getElementById('clock');"
+        "return e?e.textContent.trim().split('\\n')[0].trim():null;})()"))
+    clock = res.get("result", {}).get("value")
+    if not clock:
+        raise RuntimeError(
+            "--tick was requested but this page has no replay transport (no #clock "
+            "element), so the ?t= seek cannot have landed. Point --tick at the replay "
+            "viewer (/client/replay on a server started with --load-replay); the live "
+            "board has no seek.")
+    return clock
+
+
 def parse_viewport(text):
     w, _, h = text.lower().partition("x")
     return int(w), int(h)
@@ -109,7 +151,7 @@ def main():
     ap.add_argument("--ready-timeout", type=float, default=90.0,
                     help="extra seconds to wait for a painted board (lobby countdown)")
     ap.add_argument("--tick", type=int, default=0,
-                    help="for replay pages: seek to this tick via the page's viewer hook")
+                    help="replay pages only: seek here via the page's ?t=<tick> deep link")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -123,27 +165,23 @@ def main():
             # Render AT the target size: this is what makes 640x360 a real frame.
             cdp.send("Emulation.setDeviceMetricsOverride",
                      width=w, height=h, deviceScaleFactor=1, mobile=False)
-            cdp.send("Page.navigate", url=args.url)
+            cdp.send("Page.navigate", url=tick_url(args.url, args.tick))
             cdp.send("Runtime.evaluate", expression=f"new Promise(r=>setTimeout(r,{int(args.settle*1000)}))",
                      awaitPromise=True, returnByValue=True)
-            if args.tick:
-                cdp.send("Runtime.evaluate", awaitPromise=True, returnByValue=True, expression=(
-                    f"(async()=>{{const t={args.tick};"
-                    "if(window.__viewer&&window.__viewer.seek){window.__viewer.seek(t);}"
-                    "await new Promise(r=>setTimeout(r,1500));"
-                    "return document.title;})()"))
             data = wait_for_painted_frame(cdp, args.ready_timeout)
+            clock = read_clock(cdp) if args.tick else None
             path = os.path.join(args.out, f"{args.label}-{w}x{h}.png")
             with open(path, "wb") as f:
                 f.write(data)
-            written.append((path, w, h))
+            written.append((path, w, h, clock))
         cdp.send("Emulation.clearDeviceMetricsOverride")
     finally:
         cdp.close()
 
-    for path, w, h in written:
+    for path, w, h, clock in written:
         size = os.path.getsize(path)
-        print(f"{path}  ({w}x{h}, {size} bytes)")
+        at = f", clock {clock}" if clock else ""
+        print(f"{path}  ({w}x{h}, {size} bytes{at})")
     print("Check each PNG's pixel dimensions match its filename before using it as evidence.")
 
 
