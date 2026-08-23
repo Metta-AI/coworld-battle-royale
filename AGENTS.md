@@ -147,6 +147,82 @@ instead of blending in.
 - Dependencies come from nimby (`nimby --global sync nimby.lock`; the
   Dockerfile is the canonical build recipe).
 
+## File ownership: which files belong to which kind of work
+
+Several agents work this repo in parallel, so a diff that strays outside its
+kind of work is not just scope creep — it is a merge conflict somebody else
+pays for, and (in the sim layer) a silent contract change. Before you edit,
+find your row; before you open the PR, check `git diff --merge-base origin/main
+--stat` against it.
+
+| Kind of work | Owns | Must not touch |
+|---|---|---|
+| **Board render / presentation** (map art, palettes, sprites, FX, HUD on the board) | `src/ctf/global.nim`, `src/ctf/map_art.nim`, `src/ctf/rig_art.nim`, `client/art/` | The sim layer, `labels.nim`, `GameVersion`, `/player` emit paths |
+| **Broadcast chrome** (scorebug, timeline, minimap, feed, replay transport) | `src/ctf/broadcast.nim`, `src/ctf/events.nim`, `src/ctf/server.nim` (replay-serving plumbing only), `client/replay_broadcast.html`, `client/league_replayer.html`, `client/chrome_common.js`, `client/broadcast_core.js` | `global.nim` board drawing, the sim layer. Chrome is a spectator surface: nothing here may become an observation a policy can read |
+| **Simulation / rules** (gameplay, scoring, combat, movement) | `src/ctf/sim.nim`, `sim_state.nim`, `sim_config.nim`, `sim_types.nim`, `roster.nim` | Nothing is off-limits by definition, but every edit here carries the version/fixture/hash consequences (see the `GameVersion` and replay-fixture sections). A presentation task should not be in this column at all |
+| **Map geometry / generation** | `src/ctf/arena.nim`, `mapgen_styles.nim`, `tools/mapkit.nim`, `tools/map_render.nim`, `tools/gen_map_pool.nim`, `tools/render_map_pool.nim`, `tools/map_editor.nim` | `src/ctf/map_pool.nim` by hand (generated), `docs/pool-review.html` by hand (generated) |
+| **Wire / protocol** (`/global`, `/player`, spriteprotocol, replay format) | `src/ctf/server.nim`, `wire_constants.nim`, `replays.nim`, `replay_runtime.nim`, `docs/PROTOCOL.md` | Field ORDER in existing flatty types — the format is positional |
+| **Policy contract** | `src/ctf/labels.nim`, `tests/label_manifest.txt`, `docs/RULES.md`, `players/baseline/` | A change to `labels.nim` itself moves all four together or none: the vocabulary, the manifest, the rules doc, and the reference consumer. The standing exception is a **spectator-board-only manifest addition with sweep coverage** — a new chrome label family that no policy reads may land as a manifest regeneration plus its sweep test, touching neither `labels.nim` nor `players/baseline/` |
+| **Tooling / probes / QA** | `tools/**` | `src/ctf/**` and `client/**`. If a tool needs an engine change to work, that is a separate PR with its own justification |
+| **Docs / plans** | `docs/**`, `README.md`, `AGENTS.md`, `.agents/skills/**` | Code. A docs PR with a code hunk in it will be asked to split |
+| **Tests** | `tests/**` | Production code, and existing assertions. Never relax or delete an assertion to make your change pass — several tests exist specifically to prevent a bug from being silently restored |
+
+Two rules of thumb the table encodes:
+
+- **Visual bug ⇒ the fix is above the sim.** `global.nim` / `broadcast.nim` /
+  `client/`. A one-line sim tweak that makes a visual artifact go away changes
+  gameplay for every policy.
+- **A file in two columns is a warning, not a permission.** `global.nim` owns
+  board art AND produces labels; `arena.nim` owns geometry AND is read by the
+  sim; `server.nim` owns the wire routes AND the replay-serving plumbing that
+  broadcast-chrome work legitimately edits. Edits to any of the three need the
+  preflight in `.agents/skills/change-safety-preflight/SKILL.md`.
+
+## Verification: what each check costs
+
+Measured 2026-08-22 on a Devin snapshot (Nim 2.2.6, release builds, idle
+machine). Knowing the price up front is the difference between running the right
+check and skipping verification because "the suite takes forever".
+
+**A new test module goes in a shard file, not in `tests/tests.nim`.** Pick the
+currently fastest shard; `tests.nim` imports all four shards, so shard
+membership is what puts a module in BOTH the CI route and the full local run.
+Adding it to `tests.nim` directly is the one way to get a module that the local
+monolith runs and CI never does.
+
+| Check | Command (from the repo ROOT) | Cost |
+|---|---|---|
+| Server build | `nim c -d:release -o:bin/ctf-server src/ctf.nim` | ~11s |
+| Baseline bot build | `nim c -d:release players/baseline/baseline.nim` | ~5s |
+| Full suite, one binary | `nim c -r -d:release tests/tests.nim` | ~4m45s, 653 tests |
+| CI's four-shard route (what `.github/workflows/build.yml` runs) | compile `shard_1..4` in parallel, then run all four in parallel | ~2m51s wall (~40% faster); shard 1 dominates at ~2m13s |
+| One focused test | e.g. `nim c -r -d:release -o:/tmp/t tests/test_broadcast_state.nim` | ~11s for the 9 broadcast-state tests |
+| Label contract | `nim c -r -d:release tests/test_label_contract.nim` | seconds |
+| Regenerate the label manifest | `nim r -d:writeLabelManifest tests/test_label_contract.nim` | seconds; the manifest diff is the artifact to review |
+
+Debug builds are 10-50x slower through the per-pixel map code — always
+`-d:release` for anything heavy. The shard route is the CI contract:
+`.github/workflows/build.yml` runs the four shards and never `tests/tests.nim`.
+
+**Fixture re-simulation.** `tests/fixtures/*.bitreplay` are re-simulated
+tick-by-tick by `test_broadcast_state.nim` (each replay is loaded, stepped with
+`stepReplay` + `stepEvents`, and its beats compared against `expand_replay`
+timelines) and scanned/seeked by `test_replay_scan.nim`. Current fixtures:
+
+| Fixture | Ticks | Size |
+|---|---:|---:|
+| `wipe-lives1.bitreplay` | 10,001 | 152 KB |
+| `ffa-scorebug.bitreplay` | 4,172 | 70 KB |
+| `gen-small-pits.bitreplay` | 2,506 | 47 KB |
+| `capture-seed1.bitreplay` | 2,256 | 45 KB |
+| `draw-nokill.bitreplay` | 1,700 | 34 KB |
+| `gen-colossal-4team.bitreplay` | 516 | 24 KB |
+
+Re-simulating all six is ~11s, so fixture-touching work should run
+`test_broadcast_state.nim` directly rather than the whole suite. Re-RECORDING
+them (required on every `GameVersion` bump) is the expensive path with its own
+gotchas — see the replay-fixture section below.
+
 ## Interaction radii must be derived from the art (learned 3x on the heart)
 
 An interactable's SIM radius and its DRAWN size are two numbers in two
