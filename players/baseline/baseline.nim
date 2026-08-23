@@ -250,6 +250,7 @@ const
   FfaHoldBandDefault = 0.50
   FfaPassiveBandDefault = 0.85
   FfaShadeRingMarginDefault = 160.0  # one alarm width inside the ring-safety line
+  FfaHunterRingMarginDefault = 0.0   # opt-in; preserve hunter v1 by default
   FfaLootOpenSecDefault = 35
   FfaLootCloseSecDefault = 90
   FfaLootTripMaxSecDefault = 30
@@ -505,6 +506,7 @@ var
   FfaHoldBand = FfaHoldBandDefault
   FfaPassiveBand = FfaPassiveBandDefault
   FfaShadeRingMargin = FfaShadeRingMarginDefault
+  FfaHunterRingMargin = FfaHunterRingMarginDefault
   FfaLootOpenSec = FfaLootOpenSecDefault
   FfaLootCloseSec = FfaLootCloseSecDefault
   FfaLootTripMaxSec = FfaLootTripMaxSecDefault
@@ -667,6 +669,10 @@ proc ffaBandTargetAtRadius(bot: Bot, me, center: Vec,
       if fromCenter.len() >= FfaBearingEpsilon: norm(fromCenter)
       else: norm(ffaSeatBearing(bot.slot))
   center + bearing * radius
+
+proc ffaBandRadiusWithRingMargin(bandRadius: float, ringRadius: int,
+    margin: float): float =
+  min(bandRadius, max(1.0, float(max(1, ringRadius)) - margin))
 
 proc dot(a, b: Vec): float =
   a.x * b.x + a.y * b.y
@@ -2012,8 +2018,8 @@ proc shadeFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
     ringRadius: int, targetIndex: int, engage: bool): FfaIntent =
   result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
     "SHADE", "shade_band", "hold_band")
-  result.bandRadius = min(result.bandRadius,
-    max(1.0, float(max(1, ringRadius)) - FfaShadeRingMargin))
+  result.bandRadius = ffaBandRadiusWithRingMargin(result.bandRadius,
+    ringRadius, FfaShadeRingMargin)
   result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
     result.bandRadius)
   if engage:
@@ -2026,6 +2032,11 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     weaponTier: int, unarmed: bool, pursue: bool): FfaIntent =
   result = passiveFfaIntent(bot, actors, me, center, ringRadius, targetIndex,
     false)
+  if FfaHunterRingMargin > 0.0:
+    result.bandRadius = ffaBandRadiusWithRingMargin(result.bandRadius,
+      ringRadius, FfaHunterRingMargin)
+    result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
+      result.bandRadius)
   if pursue:
     result.moveTarget = actors[targetIndex].pos
     result.objective = "fight"
@@ -4091,6 +4102,9 @@ proc runBot(url: string) =
     FfaPassiveBandDefault), 0.0, 1.0)
   FfaShadeRingMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_SHADE_MARGIN", FfaShadeRingMarginDefault, strict = true))
+  FfaHunterRingMargin = max(0.0, parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_RING_MARGIN", FfaHunterRingMarginDefault,
+    strict = true))
   FfaLootOpenSec = max(0, parseEnvInt("CTF_BOT_FFA_LOOT_OPEN_SEC",
     FfaLootOpenSecDefault))
   FfaLootCloseSec = max(FfaLootOpenSec, parseEnvInt(
@@ -4154,6 +4168,7 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
+    " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
   artInit(slot, $bot.team, $bot.role, "", FfaGameTicksPerFrame)
