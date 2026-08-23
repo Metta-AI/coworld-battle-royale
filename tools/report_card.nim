@@ -47,7 +47,7 @@ type
     damageDealt, damageTaken, blockedDealt, blockedTaken: int
     hitsDealt, hitsTaken: int
     kills, unmatchedKillRows, deaths: int
-    heals, healed: int
+    heals, healedHp: int
     shotsFired, shotsHit: int
 
 proc parseOptions(): Options =
@@ -119,8 +119,11 @@ proc statsFor(log: Ledger, seat: int): SeatStats =
     of "death":
       if row.source == seat: inc result.deaths
     of "heal":
-      if row.source == seat: inc result.heals
-      if row.target == seat: inc result.healed
+      # A heal names only its beneficiary, in `source`: there is no target to
+      # credit, so "heals received" is not a thing this ledger can report.
+      if row.source == seat:
+        inc result.heals
+        result.healedHp += row.amount
     else: discard
   for entry in log.killRows():
     if entry.row.source != seat:
@@ -286,8 +289,8 @@ proc reportCard(log: Ledger, options: Options, seat: int): string =
   result.add(&"| Damage taken | {stats.damageTaken} over {stats.hitsTaken} " &
     &"hits ({stats.blockedTaken} blocked) |\n")
   result.add(&"| Shot accuracy | {stats.accuracy()} |\n")
-  if stats.heals > 0 or stats.healed > 0:
-    result.add(&"| Heals | {stats.heals} used, {stats.healed} received |\n")
+  if stats.heals > 0:
+    result.add(&"| Heals | {stats.heals} for {stats.healedHp} hp |\n")
   result.add(&"| Gun tiers taken | {log.tierPickups(seat).len} |\n\n")
   result.add(log.killSection(seat))
   result.add(log.deathSection(seat))
