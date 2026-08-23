@@ -1829,6 +1829,9 @@ proc runServerLoop*(
         replaySeekTicks,
         replayCommands
       )
+      # Keyframes serialize the whole SimServer, including collectEvents=false
+      # from the precompute scan, so re-arm the replay sink after every frame.
+      sim.collectEvents = true
     elif not holdFfaStartup:
       for command in replayCommands:
         liveSpeedIndex.applySpeedCommand(command)
