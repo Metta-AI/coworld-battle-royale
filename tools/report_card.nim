@@ -71,7 +71,10 @@ proc parseOptions(): Options =
       case arg
       of "--out": result.outDir = value
       of "--episode": result.episode = value
-      of "--seat": result.seat = parseInt(value)
+      of "--seat":
+        result.seat = parseInt(value)
+        if result.seat < 0:
+          fail("--seat must not be negative; omit it for every seat.")
       else: fail("Unknown option: " & arg & "\n" & UsageText)
     else:
       positional.add(arg)

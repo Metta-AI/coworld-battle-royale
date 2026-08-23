@@ -281,8 +281,12 @@ proc cutsJson(log: Ledger, options: Options, cuts: seq[Cut]): JsonNode =
   }
 
 proc run(options: Options) =
+  let log = loadLedger(options.ledgerPath)
+  if log.rows.len == 0 and not log.summary.present:
+    # An empty file is a truncated extraction, not an episode with no beats:
+    # emitting an empty cut list would read as "nothing happened here".
+    fail("ledger holds neither events nor a summary row: " & options.ledgerPath)
   let
-    log = loadLedger(options.ledgerPath)
     cuts = buildCuts(log, options)
     document = cutsJson(log, options, cuts)
   if options.outPath.len > 0:
