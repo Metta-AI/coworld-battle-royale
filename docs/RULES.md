@@ -560,12 +560,16 @@ hurt. They still respect safe-zone safety and the normal aim and fire gates.
   covers (±10 px at 40 px out, against a ±17 px body). Spraying **backwards**
   still hits nobody: the can points forward, so a cog behind the sprayer is
   out regardless of its body.
-- **What the mist draws is not exactly what the cone covers.** The plume is a
-  chain of round puffs drawn oversize so they merge into one jet, so it spills
-  past the shape that sizes it. The reach is set to swallow that spill
-  lengthwise — nothing the paint **engulfs** survives — but the mist still
-  runs about **15 px wider** than the cone, so a cog can catch paint on its
-  **edge** without taking damage. Closing that too would need a 31° cone.
+- **The mist is inscribed in the damage it depicts.** The plume is a chain of
+  round puffs, each riding the cone's own centerline and sized to the clearance
+  the cone allows at its distance, so no puff is drawn outside the region a
+  touch actually hits — the centerline cone plus the same 17 px victim disc the
+  sim tests against. Lengthwise the chain stops **short** of the reach rather
+  than overhanging it, and nothing is painted behind the nozzle, where a spray
+  hits nobody at all. So paint on a cog means the cog took the hit, edge
+  included; the fix was to stop drawing the puffs oversize and off-axis, not to
+  widen the cone — `PlasmaArcReach`, `PlasmaArcMaxWidth` and the 14° half-angle
+  are unchanged.
 - **The cone stays on for 5 ticks**, riding the attacker's position but
   **holding the aim it was fired at** (GameVersion 38): one press is one
   directional shot, so turning the cog mid-spray no longer sweeps the cone
@@ -933,7 +937,7 @@ These are starting values, exposed in the game config and tuned in self-play.
 | Vision bubble (`visionBubble`) | 90px | Omnidirectional close-range vision regardless of aim |
 | Spray cone reach (`PlasmaArcReach`) | 170px (5 squares) | Forward cone reach along the centerline; one square = one 34px cog body |
 | Spray cone max width (`PlasmaArcMaxWidth`) | 85px (2.5 squares) | Centerline cone width at max reach; widens linearly (half-angle atan(1/4) ≈ 14°) |
-| Drawn plume span (`PlasmaArcFxReach` / `PlasmaArcFxMaxWidth`) | 136px / 68px | Art geometry the mist puffs are placed and sized against — deliberately shorter than the cone, because the puffs are drawn oversize and spill past it |
+| Drawn plume span (`PlasmaArcFxReach` / `PlasmaArcFxMaxWidth`) | 136px / 68px | Art geometry the mist puffs are placed and sized against — the same 14° half-angle as the damage cone, held deliberately shorter so the inscribed chain stops before the cone's tip instead of overhanging it |
 | Spray body radius (`PlasmaArcBodyRadius`) | 17px (half a cog) | The victim is a disc, not a point: added to the cone's reach and to its half-width at every distance |
 | Spray damage (`PlasmaArcDamage`) | 3 hp | One touch per victim per burst; lethal to a bare cog, survivable by a shield carrier |
 | Spray active window (`PlasmaArcActiveTicks`) | 5 ticks | The sprayed cone stays on, tracking its owner's position and aim |

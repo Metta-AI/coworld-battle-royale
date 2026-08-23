@@ -174,7 +174,7 @@ always-decisive fallback.
 Intention-level in v1 (numbers tuned in playtest; determinism and legibility are the specs):
 
 - Single life, HP-based elimination with a **deep pool: 20 HP at spawn** (owner directive).
-  Weapon hits deal 1–4 — first blood never decides a fight. The intended rhythm: take a
+  Weapon hits deal 1–5 — first blood never decides a fight. The intended rhythm: take a
   hit, learn who is shooting, choose fight / flee / negotiate. Time-to-kill is long enough
   that a 2v1 is decisively better than a 1v1 — which is exactly what makes teaming (§9)
   rational.
@@ -187,6 +187,11 @@ Intention-level in v1 (numbers tuned in playtest; determinism and legibility are
   heal-denies are watchable beats.
 - Ammo/durability scarcity keeps fights a spend, not a default.
 - Kill credit: last damager. Environmental deaths credit nobody.
+- **The top of the band is 5, ruled 2026-08-21.** The implemented heavy gun deals 5
+  (`FfaHeavyGunDamage`), one above the 1–4 originally recorded here; the league owner
+  blessed the shipped number rather than re-cutting it, so D11's band reads 1–5. The
+  intent behind the band is untouched: against a full 20 HP pool a heavy still needs
+  **four** hits to kill, so first blood decides nothing.
 
 ## 7. The ring — a fence, not a clock
 
@@ -367,7 +372,7 @@ leagues.
 | D8 | Territory/"presence" as cap-tiebreak feeder | deferred — only if playtests show passivity |
 | D9 | Coworld canonical name (supersede uploaded `battle-royal` 0.2.0 vs fresh name) | open (owner) |
 | D10 | Map ~5× ctf area; head-count size banding on top of that | LOCKED scale (owner); banding open |
-| D11 | 20 HP spawn pool; hits deal 1–4; disengage-and-heal is a supported playbook | LOCKED shape (owner); numbers tunable |
+| D11 | 20 HP spawn pool; hits deal 1–5; disengage-and-heal is a supported playbook | LOCKED shape (owner); numbers tunable — band amended 1–4 → 1–5 on the 2026-08-21 owner ruling (below) |
 | D12 | Survival credit accrues at 1 pt per second alive (not a 30 s bucket) | LOCKED rate (owner); podium/kill magnitudes scale with the meter |
 | D13 | Assists share kill credit so emergent teaming pays; no mechanical teams ever | LOCKED intent (owner); window/split tunable |
 | D14 | Chat (`broadcast` + `dm`) is proximity-bounded to current vision/LOS; no arena-wide radio | LOCKED (owner) |
