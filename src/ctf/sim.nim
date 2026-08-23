@@ -563,6 +563,7 @@ proc startGame*(sim: var SimServer) =
   sim.logGameEvent("game started: players=" & $sim.players.len)
   sim.recentShots = @[]
   sim.hitFlashes = @[]
+  sim.fistContacts = @[]
   sim.bubbleImpacts = @[]
   sim.splatters = @[]
   sim.paintStains = @[]        ## each match starts on a clean arena.
@@ -1367,6 +1368,15 @@ proc tryFist*(sim: var SimServer, shooterIndex: int) =
   sim.damagePops.add DamageFx(
     x: tx, y: ty, tick: sim.tickCount, amount: damage,
     color: sim.players[targetIndex].color
+  )
+  # A spectator-board-only knuckle mark where the punch connected: the fist has
+  # no windup, tracer or projectile, so a swing and a landed hit are otherwise
+  # indistinguishable on the broadcast. WRITE-ONLY — nothing in the sim reads
+  # this back, it never enters gameHash, and no player view carries it.
+  sim.fistContacts.add FistContactFx(
+    x: tx, y: ty, tick: sim.tickCount,
+    angleBrads: bradsOfVector(
+      tx - (shooter.x + CollisionW div 2), ty - (shooter.y + CollisionH div 2))
   )
   if sim.players[targetIndex].hp <= 0:
     sim.killPlayer(targetIndex, shooterIndex)
@@ -4003,6 +4013,7 @@ proc resetToLobby*(sim: var SimServer) =
   sim.recentShouts = @[]
   sim.recentShots = @[]
   sim.hitFlashes = @[]
+  sim.fistContacts = @[]
   sim.bubbleImpacts = @[]
   sim.splatters = @[]
   sim.paintStains = @[]
@@ -4186,6 +4197,7 @@ proc step*(
   # gameHash).
   sim.pruneAgedFx(recentShots, firedTick, ShotFxTicks)
   sim.pruneAgedFx(hitFlashes, tick, HitFlashTicks)
+  sim.pruneAgedFx(fistContacts, tick, FistContactTicks)
   sim.pruneAgedFx(bubbleImpacts, tick, BubbleImpactTicks)
   sim.pruneAgedFx(recentBlasts, tick, BlastFxTicks)
   sim.pruneAgedFx(plasmaArcFlashes, tick, PlasmaArcFxTicks)
