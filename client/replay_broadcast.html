@@ -2698,12 +2698,16 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     if (secs < 0) { el.style.display = 'none'; return; }
     el.style.display = '';
     el.classList.toggle('floor', secs === 0);
+    el.textContent = secs === 0 ? 'Zone floor' : 'Zone ' + fmt(secs);
+    // The shrink is a continuous ramp, so the only real countdown is the one to
+    // the floor. The dashed board circle is where the ring will be in
+    // forecastLeadSec seconds; name it here rather than inventing a second clock.
     var forecast = s.ring && typeof s.ring.forecastLeadSec === 'number'
       ? s.ring.forecastLeadSec : 0;
-    var tightening = s.ring && s.ring.forecastRadius < s.ring.radius;
-    el.textContent = tightening && forecast > 0
-      ? 'Zone tightens in ' + fmt(forecast)
-      : (secs === 0 ? 'Zone floor' : 'Zone floor in ' + fmt(secs));
+    el.title = forecast > 0
+      ? 'Zone floor in ' + fmt(secs) + ' · dashed ring: safe zone in ' +
+        forecast + 's'
+      : 'Zone at its floor radius';
   }
 
   function renderFfaScorebug(s) {
