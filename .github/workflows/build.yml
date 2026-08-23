@@ -31,7 +31,8 @@ jobs:
           test -n "$nim_version"
           "$RUNNER_TEMP/nimby" use "$nim_version"
           echo "$HOME/.nimby/nim/bin" >> "$GITHUB_PATH"
-      - run: "$RUNNER_TEMP/nimby" --global sync nimby.lock
+      - run: |
+          "$RUNNER_TEMP/nimby" --global sync nimby.lock
       # Reuse compiled C objects across runs: the release build of the deps
       # (pixie et al.) dominates the compile step and rarely changes. The key
       # includes the commit so every run saves a fresh cache; restore falls
@@ -89,7 +90,8 @@ jobs:
           test -n "$nim_version"
           "$RUNNER_TEMP/nimby" use "$nim_version"
           echo "$HOME/.nimby/nim/bin" >> "$GITHUB_PATH"
-      - run: "$RUNNER_TEMP/nimby" --global sync nimby.lock
+      - run: |
+          "$RUNNER_TEMP/nimby" --global sync nimby.lock
       - uses: actions/cache@v4
         with:
           path: |
