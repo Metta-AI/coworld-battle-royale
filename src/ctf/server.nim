@@ -1713,7 +1713,7 @@ proc runServerLoop*(
       let rewardAccounts = sim.rewardAccounts
       inc config.seed
       sim = initSimServer(config)
-      sim.collectEvents = eventsPath.len > 0
+      sim.collectEvents = eventsPath.len > 0 or replayLoaded
       # One file describes ONE match. A reset that kept the previous match's
       # events would concatenate two games under a single episode id.
       collectedEvents.setLen(0)
@@ -1833,6 +1833,10 @@ proc runServerLoop*(
         replaySeekTicks,
         replayCommands
       )
+      # Keyframes serialize the whole SimServer, including collectEvents=false
+      # from the precompute scan, so re-arm the replay sink after every frame.
+      if sim.config.isFfa():
+        sim.collectEvents = true
     elif not holdFfaStartup:
       for command in replayCommands:
         liveSpeedIndex.applySpeedCommand(command)

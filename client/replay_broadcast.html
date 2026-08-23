@@ -481,6 +481,26 @@ html, body {
   opacity: 0.26;
 }
 .ffa-lamp.pov { box-shadow: 0 0 0 calc(1.5 * var(--u)) var(--paper); }
+.ffa-lamp.hit::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-left: calc(4 * var(--u)) solid transparent;
+  border-right: calc(4 * var(--u)) solid transparent;
+  border-bottom: calc(8 * var(--u)) solid var(--paper);
+  filter: drop-shadow(0 0 calc(3 * var(--u)) var(--amber));
+  transform: translate(-50%, -50%) rotate(var(--hit-angle, 0deg));
+  transform-origin: 50% 50%;
+  pointer-events: none;
+  animation: hitcue 360ms ease-out both;
+}
+@keyframes hitcue {
+  0% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--hit-angle, 0deg)) scale(1.6); }
+}
 
 /* Leader plate: rank, name, score, margin. Fixed row height and tabular numerals
    so a ticking score never reflows the band. */
@@ -1268,6 +1288,64 @@ body.ffa .feed-row { animation-name: feedin-l, feedflash; }
 }
 #endcard.on { display: flex; animation: cardfade 420ms ease-out; }
 @keyframes cardfade { from { opacity: 0; } to { opacity: 1; } }
+
+#introcard {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--topband, 0px);
+  bottom: var(--band, 0px);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(10 * var(--u));
+  padding: calc(20 * var(--u));
+  background: radial-gradient(70% 65% at 50% 45%, rgba(35, 23, 12, 0.9), rgba(9, 6, 3, 0.97));
+  z-index: 28;
+  cursor: pointer;
+  text-align: center;
+}
+#introcard.on { display: flex; animation: cardfade 360ms ease-out; }
+#introcard .intro-kicker {
+  color: var(--amber);
+  font-family: var(--finefont);
+  font-size: calc(9 * var(--u));
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+#introcard .intro-title {
+  color: var(--paper);
+  font-family: var(--pixfont);
+  font-size: calc(30 * var(--u));
+  line-height: 1;
+  text-shadow: 0 calc(3 * var(--u)) 0 var(--ink);
+}
+#introcard .intro-seed {
+  color: var(--paper-dim);
+  font-family: var(--finefont);
+  font-size: calc(9 * var(--u));
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+#introcard .intro-roster {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: calc(5 * var(--u)) calc(12 * var(--u));
+  max-width: 80%;
+  color: var(--paper-dim);
+  font-family: var(--pixfont);
+  font-size: calc(10 * var(--u));
+}
+#introcard .intro-player { color: var(--row-color, var(--paper)); }
+#introcard .intro-skip {
+  color: var(--ghost);
+  font-family: var(--finefont);
+  font-size: calc(8 * var(--u));
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
 #endcard .headline { color: var(--tc, var(--ghost)); }
 #endcard .headline {
   font-family: var(--pixfont);
@@ -1744,6 +1822,13 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     <div class="lk-bar" aria-hidden="true"><i></i></div>
     <div class="lk-sub">Bot locker room &middot; Loading replay</div>
   </div>
+  <div id="introcard" role="button" tabindex="0" aria-label="Enter free-for-all match">
+    <div class="intro-kicker">Broadcast briefing</div>
+    <div class="intro-title">FREE-FOR-ALL</div>
+    <div class="intro-seed" id="intro-seed"></div>
+    <div class="intro-roster" id="intro-roster"></div>
+    <div class="intro-skip">Click to enter the arena</div>
+  </div>
 
   <div id="chrome">
     <!-- Plates are generated per active team (2-4) by ensureScorebug(): one
@@ -2153,6 +2238,46 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     }, wait);
   }
 
+  // Replays begin at the first Playing tick, so the briefing is keyed to the
+  // first FFA state rather than a lobby phase that is never streamed.
+  var introEl = $('introcard');
+  var introRequested = false, introShown = false, introTimer = null;
+  function dismissIntro() {
+    if (!introShown) return;
+    introShown = false;
+    if (introTimer) { clearTimeout(introTimer); introTimer = null; }
+    introEl.classList.remove('on');
+    introEl.setAttribute('aria-hidden', 'true');
+  }
+  function showFfaIntro(s) {
+    if (EMBED || !s.ffa || introRequested || !s.roster || !s.roster.length) return;
+    introRequested = true;
+    var delay = Math.max(0, LOCKER_MIN_DWELL_MS + 650 -
+      (Date.now() - lockerShownAt));
+    setTimeout(function () {
+      if (!lastState || !lastState.ffa) return;
+      var roster = lastState.roster || [];
+      $('intro-seed').textContent = lastState.seed != null
+        ? 'Arena seed ' + lastState.seed : 'Arena briefing';
+      $('intro-roster').innerHTML = roster.map(function (p) {
+        var color = p.colorName ? identityTextColor(p.colorName) : 'var(--paper)';
+        return '<span class="intro-player" style="--row-color:' + color + '">' +
+          esc(shortName(rosterName(lastState, p.s))) + '</span>';
+      }).join('');
+      introShown = true;
+      introEl.classList.add('on');
+      introEl.setAttribute('aria-hidden', 'false');
+      introTimer = setTimeout(dismissIntro, 3500);
+    }, delay);
+  }
+  introEl.addEventListener('click', dismissIntro);
+  introEl.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      dismissIntro();
+    }
+  });
+
   // ---- embed mode (League Replayer) ----------------------------------------
   // When loaded inside the League Replayer shell (?embed=1), this client renders
   // ONLY the board (its own scorebug/transport/feed chrome is hidden by CSS via
@@ -2271,6 +2396,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   var lastTick = -1;
   var lastFf = false;   // previous frame's fast-forward flag (jump detection)
   var lastPovSlot = -1; // previous frame's POV seat (camera follows the lens)
+  var lastSeatPositions = {};
   // (beat markers, lull spans, beats timeline and momentum state live in the
   // shared chrome closure — see chrome_common.js)
 
@@ -2279,6 +2405,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     try { s = JSON.parse(txt); } catch (e) { return; }
     lastState = s;
     dismissLockerRoom();  // the board is live — fade the pre-load curtain
+    showFfaIntro(s);
 
     if (SEEK_T != null) { send('s:' + SEEK_T); SEEK_T = null; }
 
@@ -2289,13 +2416,26 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     // the wall-mounted scorebug + KDA tables in lockstep with the board — and
     // tracks the same aspect with its own syncBoardAspect.
     if (core) {
+      if (core.setSeatColors) {
+        var colors = {};
+        (s.roster || []).forEach(function (p) {
+          if (p.colorName) colors[p.s] = identityColor(p.colorName);
+        });
+        core.setSeatColors(colors, !!s.ffa);
+      }
       var bt = core.getTransform();
       if (bt.nativeW > 1 && bt.nativeH > 1) { s.boardW = bt.nativeW; s.boardH = bt.nativeH; }
       // The ffa safe zone rides every state frame ("ring", logical map px at
       // the frame's board scale); the core overlays it on the board so the
       // circle spectators see IS the circle the sim damages outside of.
       if (core.setRing) core.setRing(s.ring || null, s.bs || 1);
+      if (core.liveSeatPositions) {
+        core.liveSeatPositions().forEach(function (p) {
+          lastSeatPositions[p.slot] = { x: p.x, y: p.y };
+        });
+      }
     }
+    syncViewUi();
     syncBoardAspect(s);
     postToShell('frame', s);
 
@@ -2306,7 +2446,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     // the boost as a seek.
     var stride = (s.ff || lastFf) ? Math.min((s.sp || 1) * 8, 64) : (s.sp || 1);
     var jumped = (s.t < lastTick) || (lastTick >= 0 && s.t - lastTick > stride * 4 + 2);
-    if (jumped) { clearFeed(); clearBanners(); }
+    if (jumped) { clearFeed(); clearBanners(); lastSeatPositions = {}; }
     lastFf = !!s.ff;
 
     // The follow readout names a seat from the roster, which only this frame
@@ -2640,6 +2780,36 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     });
   }
 
+  function renderFfaDamageCue(e, s) {
+    if (!s.ffa || e.victim == null || e.damager == null ||
+        !core.liveSeatPositions) return;
+    var lamps = $('ffa-lamps')._lamps || {};
+    var lamp = lamps[e.victim];
+    if (!lamp) return;
+    var positions = core.liveSeatPositions();
+    var victim = null, damager = null;
+    positions.forEach(function (p) {
+      if (p.slot === e.victim) victim = p;
+      if (p.slot === e.damager) damager = p;
+    });
+    victim = victim || lastSeatPositions[e.victim] ||
+      (typeof e.x === 'number' && typeof e.y === 'number'
+        ? { x: e.x * (s.bs || 1), y: e.y * (s.bs || 1) } : null);
+    damager = damager || lastSeatPositions[e.damager];
+    if (!victim || !damager) return;
+    var angle = Math.atan2(victim.y - damager.y, victim.x - damager.x) *
+      180 / Math.PI + 90;
+    lamp.style.setProperty('--hit-angle', angle + 'deg');
+    lamp.classList.remove('hit');
+    void lamp.offsetWidth;
+    lamp.classList.add('hit');
+    var token = (lamp._hitToken || 0) + 1;
+    lamp._hitToken = token;
+    setTimeout(function () {
+      if (lamp._hitToken === token) lamp.classList.remove('hit');
+    }, 380);
+  }
+
   function renderFfaLead(s, row, seat, runnerUp) {
     row.style.display = '';
     var roster = seatOf(s, seat.s);
@@ -2700,6 +2870,15 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     el.style.display = '';
     el.classList.toggle('floor', secs === 0);
     el.textContent = secs === 0 ? 'Zone floor' : 'Zone ' + fmt(secs);
+    // The shrink is a continuous ramp, so the only real countdown is the one to
+    // the floor. The dashed board circle is where the ring will be in
+    // forecastLeadSec seconds; name it here rather than inventing a second clock.
+    var forecast = s.ring && typeof s.ring.forecastLeadSec === 'number'
+      ? s.ring.forecastLeadSec : 0;
+    el.title = forecast > 0
+      ? 'Zone floor in ' + fmt(secs) + ' · dashed ring: safe zone in ' +
+        forecast + 's'
+      : 'Zone at its floor radius';
   }
 
   function renderFfaScorebug(s) {
@@ -3929,6 +4108,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
         if (!s.ffa) markBeat(e.t, 'kill', killMarkerTeam(e, s));
         beatPulse();
         break;
+      case 'damage': renderFfaDamageCue(e, s); break;
       case 'steal': onSteal(e, s); markBeat(e.t, 'steal', e.flag); beatPulse(); break;
       case 'return': onReturn(e, s); markBeat(e.t, 'return', e.flag); beatPulse(); break;
       case 'capture': recordCapHeart(e); onCapture(e, s); markBeat(e.t, 'capture', captureTeam(s, e)); beatPulse(); break;
@@ -4758,7 +4938,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     btnZoomOut.disabled = !zoomed;
     // The minimap is the answer to "which part am I holding" — a question that
     // only exists once part of the board is off-screen.
-    minimapBox.classList.toggle('on', zoomed);
+    minimapBox.classList.toggle('on', zoomed || !!(lastState && lastState.ffa));
     if (t.nativeW > 0 && t.nativeH > 0) {
       var aspect = t.nativeW + ' / ' + t.nativeH;
       if (aspect !== lastMiniAspect) {
