@@ -90,9 +90,11 @@ proc parseOptions(): Options =
 proc clock(tick: int): string =
   ## `t641 (0:26.7)` — the tick is what the tooling needs, the clock is what a
   ## reviewer watching the replay needs.
-  let seconds = tick / TicksPerSecond
-  &"t{tick} ({int(seconds) div 60}:" & formatFloat(
-    seconds mod 60.0, ffDecimal, 1).align(4, '0') & ")"
+  ## Both fields come off ONE rounded quantity: rounding the seconds
+  ## independently prints `0:60.0` on the last tick of a minute.
+  let tenths = (tick * 10 + TicksPerSecond div 2) div TicksPerSecond
+  &"t{tick} ({tenths div 600}:" &
+    &"{(tenths mod 600) div 10:02}.{tenths mod 10})"
 
 proc at(x, y: float): string =
   ## Board coordinates are whole pixels in practice; print them that way.
@@ -323,8 +325,12 @@ proc episodeIndex(log: Ledger, options: Options, files: Table[int, string]): str
     result.add(&"| " & (if placement == 0: "survivor" else: $placement) &
       &" | {log.seatLabel(seat)} | {stats.kills} | {stats.deaths} | " &
       &"{stats.damageDealt} | {stats.damageTaken} | " &
-      &"{log.tierPickups(seat).len} | [card](" &
-      files.getOrDefault(seat, "") & ") |\n")
+      &"{log.tierPickups(seat).len} | " &
+      # A `--seat` run writes one card, so every other row has nothing to link
+      # to; an empty `[card]()` would look like a broken link rather than a
+      # seat this run did not render.
+      (if seat in files: "[card](" & files[seat] & ")" else: "not rendered") &
+      " |\n")
   result.add("\n")
   let unmatched = log.unmatchedKills()
   if unmatched.len > 0:
