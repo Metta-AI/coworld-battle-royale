@@ -145,6 +145,31 @@ cp players/baseline/baseline.out /tmp/mybot.out`, and start them with `setsid no
 Also avoid `pkill -f` yourself: patterns like `ctf-server` match the shell running the
 command and kill your own tool session.
 
+## Testing bot POLICY/doctrine (not rendering): logs + two live boards
+
+For behavior changes (e.g. `CTF_BOT_FFA_DOCTRINE` defaults) the proof is in the bot
+process logs, and the viewer supplies the "and the bots actually behave" half:
+
+```bash
+# unset-env run must really be unset: use `env -u`, the shell may export it
+env -u CTF_BOT_FFA_DOCTRINE CTF_BOT_TRACE=1 \
+  COWORLD_PLAYER_WS_URL="ws://127.0.0.1:9500/player?name=Bot_0&slot=0&token=0xBADA55_0" \
+  players/baseline/baseline.out > /tmp/legacy/bot_0.log 2>&1 &
+```
+
+- The startup line (`baseline slot=… ffaDoctrine=<name> …`, baseline.nim ~3934) names the
+  resolved doctrine; `CTF_BOT_TRACE=1` adds per-frame lines carrying
+  `phase=… objective=… action=… doctrine=…`.
+- Doctrines are separable by trace phase: `LEGACY` (converge/`move_center`, `engage`),
+  `PASSIVE`/`SHADE` (`hold_band`), `PERIMETER`/`LOOT` (hybrid), `RUSH`. Asserting
+  `grep -c phase=PASSIVE == 0` etc. is what makes a default-flip test falsifiable.
+- **Bot and server stdout are BLOCK-buffered when redirected to a file.** A log that
+  only shows the startup lines for the first ~60s is not a hang — it is a partly-filled
+  4KB buffer. Wait (or wrap with `stdbuf -oL`) before concluding traces are missing.
+- Running two servers on two ports with the SAME config but different doctrine envs and
+  screenshotting both at a similar match clock gives a clean visual contrast: legacy piles
+  bots into the ring center, passive leaves the center empty with bots on the outer band.
+
 ## Viewer quirks (cost real debugging time)
 
 - The 2D canvas only repaints while the Chrome window/tab has focus. After switching
