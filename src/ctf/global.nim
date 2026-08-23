@@ -8122,7 +8122,7 @@ proc buildFfaGunTierPixels(
   base: seq[uint8],
   tier, aimStep, renderScale: int
 ): seq[uint8] =
-  ## Paints the tier marker onto the neutral FFA gun at its native board scale.
+  ## Paints tier markers onto the neutral FFA gun at its native board scale.
   result = base
   let
     k = max(1, renderScale)
@@ -8134,11 +8134,11 @@ proc buildFfaGunTierPixels(
     side = max(1, k * 2)
   for pip in 0 ..< safeTier:
     let
-      localX = 13
-      localY = (pip - (safeTier - 1) div 2) * 4
-      x = center + int(round((float(localX) * ca - float(localY) * sa) *
+      localX = 6 + (pip - (safeTier - 1) div 2) * 5
+      localY = GunRightPx
+      x = center + int(round((float(localX) * ca + float(localY) * sa) *
         float(k))) - side div 2
-      y = center + int(round((float(localX) * sa + float(localY) * ca) *
+      y = center + int(round((-float(localX) * sa + float(localY) * ca) *
         float(k))) - side div 2
     for py in 0 ..< side:
       for px in 0 ..< side:
