@@ -1719,14 +1719,29 @@
     }
 
     function setSeatColors(colors, ffa) {
-      ffaMode = !!ffa;
+      const nextFfa = !!ffa;
+      let changed = nextFfa !== ffaMode;
+      let colorCount = 0;
+      const keys = colors && typeof colors === 'object'
+        ? Object.keys(colors)
+        : [];
+      for (const key of keys) {
+        const color = colors[key];
+        if (typeof color === 'string' && color) {
+          colorCount++;
+          const slot = Number(key);
+          if (seatColors.get(slot) !== color) changed = true;
+        }
+      }
+      if (colorCount !== seatColors.size) changed = true;
+      if (!changed) return;
+
+      ffaMode = nextFfa;
       seatColors.clear();
-      if (colors && typeof colors === 'object') {
-        for (const key of Object.keys(colors)) {
-          const color = colors[key];
-          if (typeof color === 'string' && color) {
-            seatColors.set(Number(key), color);
-          }
+      for (const key of keys) {
+        const color = colors[key];
+        if (typeof color === 'string' && color) {
+          seatColors.set(Number(key), color);
         }
       }
       minimapDrawnAt = 0;
