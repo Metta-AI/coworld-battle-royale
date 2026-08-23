@@ -1341,7 +1341,10 @@ proc runServerLoop*(
       else: initSimServer(config)
     lastTick = getMonoTime()
     collectedEvents: seq[SimEvent] = @[]
-  sim.collectEvents = eventsPath.len > 0
+  if replayLoaded and sim.config.isFfa():
+    sim.collectEvents = true
+  else:
+    sim.collectEvents = eventsPath.len > 0
   block:
     # Bake the supersampled spectator render caches (map, endzone fades,
     # soldier rotations) BEFORE the listener opens: a viewer's first-message
@@ -1436,6 +1439,8 @@ proc runServerLoop*(
         )
         config = move(initializedReplay.config)
         sim = move(initializedReplay.sim)
+        if sim.config.isFfa():
+          sim.collectEvents = true
         replayPlayer = move(initializedReplay.player)
         broadcastTracker = move(initializedReplay.tracker)
         replayLoaded = true
@@ -1820,6 +1825,8 @@ proc runServerLoop*(
 
     var frameEvents = newJArray()
     if replayLoaded:
+      if sim.config.isFfa():
+        sim.collectEvents = true
       frameEvents = replayPlayer.advanceReplayFrame(
         sim,
         broadcastTracker,
