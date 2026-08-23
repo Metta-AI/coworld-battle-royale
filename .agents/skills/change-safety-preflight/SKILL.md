@@ -70,7 +70,7 @@ number, and record in the PR what you saw claimed. Then re-record fixtures.
 
 ## PART 2 — Pre-merge self-check
 
-Run these four before opening the PR. Each mirrors a spot-check the reviewer
+Run these five before opening the PR. Each mirrors a spot-check the reviewer
 performs, and each is cheaper to run than to be told about.
 
 **1. Determinism scan.** Look at your own diff, not the test output:
