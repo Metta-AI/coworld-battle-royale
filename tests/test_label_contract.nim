@@ -392,6 +392,13 @@ proc collectFfaWeaponLabels(sim: var SimServer): HashSet[string] =
   for message in sim.buildGlobalMessages(globalState):
     if message.kind == spkSprite:
       result.incl(message.sprite.label.normalizeLabel())
+  # Rebuild the board once with the arc equipped so the FFA-only nameplate,
+  # roster, and held-weapon families all remain represented in the manifest.
+  sim.players[0].hasPlasmaArc = true
+  for message in sim.buildGlobalMessages(globalState):
+    if message.kind == spkSprite:
+      result.incl(message.sprite.label.normalizeLabel())
+  sim.players[0].hasPlasmaArc = false
   for spawn in sim.lowGunSpawns:
     sim.players[0].x = spawn.x + 50
     sim.players[0].y = spawn.y
