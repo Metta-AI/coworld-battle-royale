@@ -561,9 +561,12 @@ html, body {
   min-width: calc(26 * var(--u));
   text-align: right;
 }
+/* The marker digit has to survive a 640x360 stream, where `--u` shrinks past the
+   point a pixel font keeps its glyph shapes — hence the floor. Legibility comes
+   from size only: the colour and dotted border stay in the inference register. */
 .ffa-lead .pact-chip {
   font-family: var(--finefont);
-  font-size: calc(7 * var(--u));
+  font-size: max(9px, calc(7 * var(--u)));
   letter-spacing: 0.08em;
   color: var(--ghost);
   border: calc(1 * var(--u)) dotted var(--ghost);
@@ -2822,9 +2825,14 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       var chip = row.querySelector('.pact-chip');
       if (!chip) continue;
       var pacts = pactEntriesForSlot(seat);
-      chip.textContent = pacts.map(function (pact) {
-        return 'P' + pact.marker;
-      }).join(' ');
+      // A seat can sit in several pacts at once. Naming them all turns the chip
+      // into an unreadable smear at stream size, so only the two newest are
+      // named and the rest are counted; the tooltip still lists every pair.
+      var markers = pacts.map(function (pact) { return pact.marker; });
+      markers.sort(function (a, b) { return b - a; });
+      chip.textContent = markers.length > 2
+        ? 'P' + markers[0] + ' +' + (markers.length - 1)
+        : markers.map(function (m) { return 'P' + m; }).join(' ');
       chip.style.display = pacts.length ? '' : 'none';
       chip.title = pacts.length
         ? pacts.map(function (pact) { return pactTitle(pact, s); }).join(' · ')
