@@ -74,7 +74,9 @@ suite "baseline FFA doctrine":
     check baseline.contains(
       "let doctrineSlots = getEnv(\"CTF_BOT_FFA_DOCTRINE_SLOTS\")")
     check baseline.contains("if doctrineSlots.len > 0:")
-    check baseline.contains("if parseInt(fields[0].strip()) == slot:")
+    check baseline.contains("slotNumber = parseInt(fields[0].strip())")
+    check baseline.contains(
+      "except ValueError:\n        continue\n      if slotNumber == slot:\n        FfaDoctrine = ffaDoctrineFor")
 
   test "hunter ring margin is opt-in and isolated":
     check baseline.count("if FfaHunterRingMargin > 0.0:") == 1

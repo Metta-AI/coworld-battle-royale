@@ -4276,12 +4276,14 @@ proc runBot(url: string) =
       let fields = pair.split('=', maxsplit = 1)
       if fields.len != 2:
         continue
+      var slotNumber: int
       try:
-        if parseInt(fields[0].strip()) == slot:
-          FfaDoctrine = ffaDoctrineFor(fields[1].strip().toLowerAscii())
-          break
+        slotNumber = parseInt(fields[0].strip())
       except ValueError:
-        discard
+        continue
+      if slotNumber == slot:
+        FfaDoctrine = ffaDoctrineFor(fields[1].strip().toLowerAscii())
+        break
   FfaPerimeterBand = clamp(parseEnvFloat("CTF_BOT_FFA_PERIMETER_BAND",
     FfaPerimeterBandDefault), 0.0, 1.0)
   FfaLootBand = clamp(parseEnvFloat("CTF_BOT_FFA_LOOT_BAND",
