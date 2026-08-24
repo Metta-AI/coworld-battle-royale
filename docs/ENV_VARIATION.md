@@ -255,6 +255,12 @@ game ends when at most one player is alive or the clock runs out, and the total
 placement order (alive > later death tick > kills > damage dealt > lower slot)
 always names a single winner — an ffa match is never a draw.
 
+Kill credit is applied inside `killPlayer` only after its alive guard, so a
+valid non-self combat killer receives one kill counter increment and the
+victim's recent damage can feed the assist split; environmental and
+elimination deaths remain uncredited. `recordFfaDamage` ignores posthumous
+victims, preserving damage dealt as the placement tiebreak under kills.
+
 Reward consts: `WinReward`=+1, `LossReward`=−1, `TimeoutReward`=−1 (draw penalty).
 GV41 removed the action-floor overtime: the clock never extends, and a game with
 the barrage configured ignores `maxTicks` entirely (it ends only on capture/wipe). Win logic:

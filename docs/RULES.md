@@ -468,19 +468,13 @@ carrier; the only speed modifiers in FFA are the ones every mode has (trench
 climb-out, paint puddles, thruster perk). Carrying the heavy costs nothing in
 mobility.
 
-Known deviations, filed rather than worked around (the fixes change `gameHash`
-and need their own `GameVersion` bump, so this docs pass only records them):
+GV45 fixes two fist-targeting deviations and makes kill credit follow the
+actual death transition:
 
-- A punch that finds **no** target in its cone still resolves against **seat 0**
-  — at any distance, through walls — because target selection returns Nim's
-  default `result = 0` instead of `-1`
-  (https://github.com/Metta-AI/coworld-battle-royale/issues/13).
-- The cone's wrap-around fold is computed on a 1024-brad turn while brads are
-  256 to the turn, so the fold never fires and punches whose aim straddles the
-  0-brad seam are rejected even a few brads off target
-  (https://github.com/Metta-AI/coworld-battle-royale/issues/17). The ±67.5°
-  cone above is therefore the *intended* shape; the shipped cone is one-sided
-  for aim directions near 0.
+The ±67.5° cone folds on the 256-brad turn at the 0-brad seam, and a kill
+counter is credited only when `killPlayer` applies a previously alive victim's
+death. A whiffed punch has no target; environmental and elimination deaths
+remain uncredited.
 
 Pickups only upgrade a carrier. A pickup at or below the current tier remains
 on the map; a higher-tier pickup is consumed and the new tier lasts for the

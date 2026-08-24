@@ -18,7 +18,9 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "44"  ## GV44 (FFA ladder + 3% ring + rotated pads): FFA starts
+  ## GV45 (phantom fist and kill credit): FIST TARGETS FOLD AT THE AIM TURN,
+  ## AND ONLY APPLIED DEATHS RECEIVE KILL CREDIT.
+  GameVersion* = "45"  ## GV44 (FFA ladder + 3% ring + rotated pads): FFA starts
     ## with fists, upgrades through low, mid, and heavy weapons, shrinks to a
     ## 3% final safe-zone floor, and rotates deterministic seed-derived
     ## ownership of the fixed spawn-pad ring each episode. In the late game,

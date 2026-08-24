@@ -21,7 +21,7 @@ const
   #
   # The recipe is not just "an ffa match": this fixture has to CONTAIN the
   # awards it is here to check, and the scarce one is a SHARED assist. Seed 7
-  # ends on a wipe after 12 credited kills whose assist pools run 0..4
+  # ends on a wipe after 10 credited kills whose assist pools run 0..4
   # damagers, so the +4 pot is split 2, 3 and 4 ways as well as taken whole —
   # an integer-division bug in the split cannot pass here. A seed whose kills
   # are all solo (seed 42 at 8 players was one) passes a weaker test silently,
@@ -81,17 +81,14 @@ proc ledgerScores(
     of Kill:
       # The raw credited-kill COUNTER only: `kills` is a stat here, not money.
       # It is deliberately counted off Kill (which is what the sim's own
-      # counter follows, phantom kills included — issue 13 below) so the
+      # counter follows, because only real deaths emit these events, so the
       # placement keys derived here match the sim's.
       if event.source >= 0 and event.source < seats:
         inc result[event.source].kills
     of Death:
       # Kill MONEY and the assist pot are both paid on the DEATH (the sim pays
-      # them inside killPlayer), not on the Kill event: the two are not 1:1
-      # today, because a punch that finds no target still credits a "kill"
-      # against seat 0 without paying for it —
-      # https://github.com/Metta-AI/coworld-battle-royale/issues/13. Paying off
-      # Death keeps this test measuring the scoring rules, not that bug.
+      # them inside killPlayer), not on the Kill event. Paying off Death keeps
+      # this test measuring the scoring rules rather than event ordering.
       if event.source >= 0 and event.source < seats:
         result[event.source].deathTick = event.tick
       if event.target < 0 or event.target == event.source:

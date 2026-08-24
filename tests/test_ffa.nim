@@ -569,6 +569,162 @@ suite "ffa elimination":
     miss.tryFire(0)
     check miss.players[1].hp == FfaHitPoints
 
+  test "a punch whiff leaves every seat and reward account untouched":
+    var game = ffaGame(3)
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(900, MapHeight div 2)
+    game.players[2].placeAtCenter(900, MapHeight div 2 + 200)
+    game.players[0].aimBrads = 0
+    let
+      account = game.rewardAccountForPlayer(0)
+      beforeHp = game.players[0].hp
+      beforeKills = game.players[0].kills
+      beforeDeaths = game.players[0].deaths
+      beforeDamage = game.players[0].damageDealt
+      beforeAccountKills = game.rewardAccounts[account].kills
+    game.tryFire(0)
+    check game.players[0].hp == beforeHp
+    check game.players[0].kills == beforeKills
+    check game.players[0].deaths == beforeDeaths
+    check game.players[0].damageDealt == beforeDamage
+    check game.rewardAccounts[account].kills == beforeAccountKills
+
+  test "fist cone folds across the zero-brad seam":
+    var game = ffaGame(3)
+    let
+      sx = 300
+      sy = MapHeight div 2
+    game.players[0].placeAtCenter(sx, sy)
+    game.players[0].aimBrads = 0
+    game.players[1].placeAtCenter(sx + 50, sy + 1)
+    game.players[2].placeAtCenter(sx + 15, sy - 50)
+    game.tryFire(0)
+    check game.players[1].hp == FfaHitPoints - FfaFistDamage
+    check game.players[2].hp == FfaHitPoints
+
+  test "killPlayer guards credit and posthumous damage":
+    var game = ffaGame(2)
+    check game.killPlayer(0, -1)
+    let
+      account = game.rewardAccountForPlayer(1)
+      beforeKills = game.players[1].kills
+      beforeAccountKills = game.rewardAccounts[account].kills
+      beforeDamage = game.players[1].damageDealt
+    check not game.killPlayer(0, 1)
+    game.recordFfaDamage(1, 0, 4)
+    check game.players[1].kills == beforeKills
+    check game.rewardAccounts[account].kills == beforeAccountKills
+    check game.players[1].damageDealt == beforeDamage
+
+  test "all weapon kill sites credit one true killer":
+    proc checkKill(game: var SimServer, killer, victim, account: int,
+        weapon: string) =
+      check not game.players[victim].alive
+      check game.players[killer].kills == 1
+      check game.rewardAccounts[account].kills == 1
+      check game.players[killer].damageDealt > 0
+      var kills = 0
+      for event in game.events:
+        if event.kind == Kill:
+          inc kills
+          check event.source == game.players[killer].joinOrder
+          check event.target == game.players[victim].joinOrder
+          check event.weapon == weapon
+      check kills == 1
+
+    var fist = ffaGame(2)
+    fist.collectEvents = true
+    fist.players[0].placeAtCenter(300, MapHeight div 2)
+    fist.players[1].placeAtCenter(350, MapHeight div 2)
+    fist.players[0].aimBrads = 0
+    fist.players[1].hp = FfaFistDamage
+    let fistAccount = fist.rewardAccountForPlayer(0)
+    fist.tryFire(0)
+    checkKill(fist, 0, 1, fistAccount, "fist")
+
+    var gun = ffaGame(2)
+    gun.collectEvents = true
+    gun.players[0].placeAtCenter(300, MapHeight div 2)
+    gun.players[1].placeAtCenter(340, MapHeight div 2)
+    gun.players[0].aimBrads = 0
+    gun.players[0].weaponTier = FfaWeaponMid
+    gun.players[1].hp = FfaGunDamage
+    let gunAccount = gun.rewardAccountForPlayer(0)
+    gun.armToFire(0)
+    gun.tryFire(0)
+    checkKill(gun, 0, 1, gunAccount, "mid gun")
+
+    var spray = ffaGame(2)
+    spray.collectEvents = true
+    spray.players[0].hasPlasmaArc = true
+    spray.players[0].aimBrads = 0
+    spray.players[0].placeAtCenter(60, MapHeight div 2)
+    let sprayX = spray.players[0].x + CollisionW div 2
+    let sprayY = spray.players[0].y + CollisionH div 2
+    spray.players[1].placeAtCenter(
+      sprayX + PlasmaArcReach - 2, sprayY)
+    spray.players[1].hp = FfaSprayDamage
+    let sprayAccount = spray.rewardAccountForPlayer(0)
+    spray.tryFireArc(0)
+    checkKill(spray, 0, 1, sprayAccount, "spray")
+
+    var grenade = ffaGame(2)
+    grenade.collectEvents = true
+    grenade.players[0].placeAtCenter(300, MapHeight div 2)
+    grenade.players[0].aimBrads = 0
+    grenade.players[0].hasGrenade = true
+    grenade.players[0].throwCharge = 1
+    let landing = grenade.players[0].throwTarget(
+      grenade.config.grenadeRangeFor(
+        GrenadeMaxRange, grenade.players[0].perks))
+    grenade.players[1].placeAtCenter(landing.x, landing.y)
+    grenade.players[1].hp = FfaGrenadeDamage
+    grenade.players[0].throwCharge = 0
+    let grenadeAccount = grenade.rewardAccountForPlayer(0)
+    grenade.chargeAndThrow(0, 1)
+    grenade.stepNone(
+      GrenadeFlightMultiple * grenade.config.fireWindupTicks + 1)
+    checkKill(grenade, 0, 1, grenadeAccount, "grenade")
+
+  test "credited kills pair with exactly one death in the event ledger":
+    var game = ffaGame(4)
+    game.collectEvents = true
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(350, MapHeight div 2)
+    game.players[2].placeAtCenter(600, MapHeight div 2)
+    game.players[3].placeAtCenter(650, MapHeight div 2)
+    game.players[0].aimBrads = 0
+    game.players[2].aimBrads = 0
+    game.players[1].hp = FfaFistDamage
+    game.players[3].hp = FfaFistDamage
+    game.tryFire(0)
+    game.tryFire(2)
+    var
+      credited = 0
+      deathsByPair: seq[(int, int, int)]
+    for event in game.events:
+      if event.kind == Kill:
+        inc credited
+        var matches = 0
+        for death in game.events:
+          if death.kind == Death and death.tick == event.tick and
+              death.source == event.target and death.target == event.source:
+            inc matches
+        check matches == 1
+      elif event.kind == Death:
+        deathsByPair.add((event.tick, event.source, event.target))
+    check credited == deathsByPair.len
+
+  test "ffa damage accounting is unreachable from ctf":
+    var game = initCtfForTest(defaultGameConfig())
+    discard game.addPlayer("ctf0")
+    discard game.addPlayer("ctf1")
+    game.startGame()
+    check not game.config.isFfa()
+    check game.players[0].weaponTier != FfaWeaponUnarmed
+    game.recordFfaDamage(0, 1, 4)
+    check game.players[0].damageDealt == 0
+
   test "a landed punch marks the board only, and never the hash or a player view":
     ## The fist is the one weapon with no windup, tracer or projectile, so the
     ## spectator board gets a contact mark derived from the DAMAGE — and only
@@ -595,13 +751,10 @@ suite "ffa elimination":
     game.fistContacts = @[]
     check game.gameHash() == withMark
     # The mark tracks the DAMAGE the sim applied, never the button press: it
-    # lands on whoever actually lost hit points, at their center. (A punch into
-    # empty air still damages seat 0 today — the phantom-target bug,
-    # https://github.com/Metta-AI/coworld-battle-royale/issues/13, which is a
-    # sim fix behind a GameVersion bump and deliberately out of scope here. The
+    # lands on whoever actually lost hit points, at their center. The
     # invariant asserted is the FX one: one mark per damage application, at the
-    # victim the sim chose, so the board cannot show a hit the sim did not
-    # deal — nor hide one it did.)
+    # victim the sim chose, so the board cannot show a hit the sim did not deal
+    # — nor hide one it did.
     var whiff = ffaGame(3)
     whiff.players[0].placeAtCenter(300, MapHeight div 2)
     whiff.players[1].placeAtCenter(900, MapHeight div 2)
