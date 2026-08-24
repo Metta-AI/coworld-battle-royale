@@ -385,7 +385,7 @@ they do NOT resume playback after a `?t=<simTick>` seek (the frame counter stays
   coordinates: `page_x = 440 + mapx/mapW*132`, `page_y = 39 + mapy/mapH*68` at 640x360
   puts the free camera on that spot ("FREE VIEW" chip) — identical on both builds, whereas
   follow-chip click counts do not always land on the seat you expect.
-- Get event coordinates from `tools/extract_events.nim` (`CTFFRM01` frame dump: seats' x/y,
+- Get event coordinates from `tools/extract_events.nim` (`CTFFRM02` frame dump: seats' x/y,
   aim, flags; flag bit 64 = spray cone active, bit 1 = alive).
 
 ## Verifying broadcast-chrome EVENT LIFECYCLES (feed rows, lamps, chips)

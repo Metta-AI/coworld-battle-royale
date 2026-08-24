@@ -197,9 +197,8 @@ proc rowsOf*(ledger: Ledger, kind: string): seq[LedgerRow] =
       result.add(row)
 
 proc seatCount*(ledger: Ledger): int =
-  ## Seats the episode dealt. The summary's roster is authoritative; a ledger
-  ## without one (a truncated file, or the live server's stream) falls back to
-  ## the highest seat any row mentions.
+  ## Seats the episode dealt. Use the larger of the summary roster and the
+  ## highest seat any row mentions because live summaries may omit the roster.
   result = ledger.summary.slotAddress.len
   for row in ledger.rows:
     result = max(result, max(row.source, row.target) + 1)
@@ -343,14 +342,7 @@ proc tierTimeline*(ledger: Ledger): Table[int, seq[TierTransition]] =
   ## Returns each seat's FFA weapon-tier history, seeded unarmed at tick 0.
   ## `start` is the seeded state and `spawn` is a gun pickup.
   result = initTable[int, seq[TierTransition]]()
-  var seats = ledger.summary.slotAddress.len
-  if not ledger.summary.present:
-    seats = 0
-    for row in ledger.rows:
-      if row.source >= 0:
-        seats = max(seats, row.source + 1)
-      if row.target >= 0:
-        seats = max(seats, row.target + 1)
+  let seats = ledger.seatCount()
   for seat in 0 ..< seats:
     result[seat] = @[
       TierTransition(tick: 0, tier: 0, origin: "start")

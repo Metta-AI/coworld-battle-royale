@@ -23,6 +23,8 @@
 ##   0..255 brad value, so there is no free sentinel for "not armed").
 ##   The magic is bumped because a stale reader would otherwise silently read
 ##   shifted columns after the appended byte.
+##   weaponTier is meaningful only for FFA during the playing phase; elsewhere
+##   it is a default, not a reading.
 ## Seats are written by joinOrder, so column `s` is the same seat for the whole
 ## episode even though players join during the lobby. `carrier` is a SEAT in
 ## that same space (-1 when the flag is home), not a sim player index.
