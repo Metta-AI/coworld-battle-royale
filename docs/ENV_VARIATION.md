@@ -295,6 +295,22 @@ keeps an unset `CTF_BOT_FFA_DOCTRINE` at `legacy`; the defaults and bounds for
 the doctrine controls are declared at
 [`baseline.nim:267`](../players/baseline/baseline.nim#L267).
 
+**Pact needs encounter density, and degrades silently without it.** A pact seat
+can only form a pact from what it can see: it needs a second and a third living
+player visible at once (a target plus the co-attacker already fighting it). On a
+sparse map that configuration never occurs, every tick falls through to the
+hunter path, and the arm looks identical to `hunter` — no error, no warning, and
+nothing in the metrics says the doctrine never engaged. Measured on the default
+huge-map demo arm (`tools/run_ffa_demo.sh 12 42`, 12 bots): mean visible actors
+per tick **0.32**, and **zero** `phase=PACT` trace ticks across the whole match,
+i.e. the pact branch never ran once. The working configuration is the small-map
+arm — `DEMO_DIR=... tools/run_ffa_demo.sh 12 <seed> D3` with
+`CTF_BOT_FFA_PACT_WINDOW_SEC=25` — where three-way encounters happen inside the
+window and both the co-attack and the post-window turn on the partner are
+visible in the extracted damage rows. When evaluating pact, check for
+`phase=PACT` ticks in the bot log before reading anything into the result: an
+arm with none of them measured hunter, not pact.
+
 Reward consts: `WinReward`=+1, `LossReward`=−1, `TimeoutReward`=−1 (draw penalty).
 GV41 removed the action-floor overtime: the clock never extends, and a game with
 the barrage configured ignores `maxTicks` entirely (it ends only on capture/wipe). Win logic:
