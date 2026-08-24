@@ -427,15 +427,15 @@ damage. There is nothing to reload and nothing to run out of, so the only way
 to lose a gun is to die — and FFA is single-life. The two consumables behave
 differently and are the only "supply" in the mode:
 
-The FFA `dropWeaponOnDeath` rule is currently dormant and off. While it remains
-off, the game is exactly as documented here: a death removes the player's gun
-without leaving a pickup. A future activation will be a GameVersion change.
-
 - **Grenade** — at most one carried, thrown to use, and **lost on death**
   (nothing drops for a scavenger).
 - **Spray can** — at most one carried, kept across bursts, and lost on death.
   It is not consumed by spraying: each burst runs 5 active ticks and then
   repressurizes for 20, i.e. one burst every 25 ticks, indefinitely.
+
+The FFA `dropWeaponOnDeath` rule is currently dormant and off. While it remains
+off, the game is exactly as documented here: a death removes the player's gun
+without leaving a pickup. A future activation will be a GameVersion change.
 
 **Aim jitter is calibrated once, against `config.gunRange` — not per tier.**
 The GV34 contract ("a fully visible body at max range is hit exactly 80% of the
