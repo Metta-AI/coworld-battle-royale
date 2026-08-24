@@ -250,11 +250,20 @@ const
   FfaHoldBandDefault = 0.50
   FfaPassiveBandDefault = 0.85
   FfaShadeRingMarginDefault = 160.0  # one alarm width inside the ring-safety line
+  FfaHunterRingMarginDefault = 0.0   # opt-in; preserve hunter v1 by default
   FfaLootOpenSecDefault = 35
   FfaLootCloseSecDefault = 90
   FfaLootTripMaxSecDefault = 30
   FfaPerimeterEngageRangeDefault = 220.0
   FfaPassiveEngageRangeDefault = 120.0
+  FfaHunterArmDefault = true
+  FfaHunterFireRangeDefault = true
+  FfaHunterPursuitDefault = true
+  FfaHunterPursuitMinHpDefault = 6
+  FfaHunterSupportRadiusDefault = 300.0
+  FfaHunterArmTripMaxSecDefault = 30
+  FfaHunterArmTripMaxDetourRadiusDefault = 240.0
+  FfaHunterArmSafeMarginDefault = 80.0
   FfaBearingEpsilon = 12.0
 
   CoverShieldDist = 42.0      # an obstacle this close blocks a threat direction
@@ -333,7 +342,7 @@ const TeamColorNames = ["red", "blue", "green", "yellow"]
 
 type
   FfaDoctrineKind = enum
-    FfaHybrid, FfaLegacy, FfaPassive, FfaRush, FfaShade
+    FfaHybrid, FfaLegacy, FfaPassive, FfaRush, FfaShade, FfaHunter
 
   Team = enum
     Red, Blue
@@ -349,11 +358,14 @@ type
     pos: Vec
     facingRight: bool
     hp: int                   # from the overhead pip bar; 0 = not read
+    weaponTier: int           # visible FFA held-weapon rig; 0 = unarmed/unknown
 
   FfaIntent = object
     moveTarget: Vec
     objective, action, phase: string
     bandFraction, bandRadius: float
+    engageReason: string
+    lootTripStarted: bool
 
   Track = object              # a remembered player
     pos, vel: Vec
@@ -461,6 +473,7 @@ proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   of FfaPassive: "passive"
   of FfaRush: "rush"
   of FfaShade: "shade"
+  of FfaHunter: "hunter"
 
 var
   SelfStrategyTeam = Red
@@ -493,11 +506,20 @@ var
   FfaHoldBand = FfaHoldBandDefault
   FfaPassiveBand = FfaPassiveBandDefault
   FfaShadeRingMargin = FfaShadeRingMarginDefault
+  FfaHunterRingMargin = FfaHunterRingMarginDefault
   FfaLootOpenSec = FfaLootOpenSecDefault
   FfaLootCloseSec = FfaLootCloseSecDefault
   FfaLootTripMaxSec = FfaLootTripMaxSecDefault
   FfaPerimeterEngageRange = FfaPerimeterEngageRangeDefault
   FfaPassiveEngageRange = FfaPassiveEngageRangeDefault
+  FfaHunterArm = FfaHunterArmDefault
+  FfaHunterFireRange = FfaHunterFireRangeDefault
+  FfaHunterPursuit = FfaHunterPursuitDefault
+  FfaHunterPursuitMinHp = FfaHunterPursuitMinHpDefault
+  FfaHunterSupportRadius = FfaHunterSupportRadiusDefault
+  FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
+  FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
+  FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
 
 proc parseEnvInt(name: string, fallback: int): int =
   let value = getEnv(name)
@@ -648,6 +670,10 @@ proc ffaBandTargetAtRadius(bot: Bot, me, center: Vec,
       else: norm(ffaSeatBearing(bot.slot))
   center + bearing * radius
 
+proc ffaBandRadiusWithRingMargin(bandRadius: float, ringRadius: int,
+    margin: float): float =
+  min(bandRadius, max(1.0, float(max(1, ringRadius)) - margin))
+
 proc dot(a, b: Vec): float =
   a.x * b.x + a.y * b.y
 
@@ -782,6 +808,48 @@ proc ffaActorsFor(client: ProtocolClient): seq[Actor] {.measure.} =
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixPlayer):
     discard label
     result.add(Actor(pos: client.mapPos(o)))
+  for (objectId, x, y, width, height, label) in client.spriteObjects():
+    let tier =
+      if label.startsWith(LabelPrefixCogHeavyGun): FfaWeaponHeavy
+      elif label.startsWith(LabelPrefixCogMidGun): FfaWeaponMid
+      elif label.startsWith(LabelPrefixCogLowGun): FfaWeaponLow
+      elif label.startsWith(LabelPrefixCogGun): FfaWeaponMid
+      elif label.startsWith(LabelPrefixCogSprayCan): FfaWeaponHeavy
+      else: -1
+    if tier < 0:
+      continue
+    let o = (objectId: objectId, x: x, y: y, width: width, height: height,
+      label: label)
+    let p = client.mapPos(o)
+    var best = -1
+    var bestD = HpPipRadius
+    for i in 0 ..< result.len:
+      let d = dist(result[i].pos, p)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      result[best].weaponTier = tier
+  for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixIdentity):
+    let tier =
+      if label.endsWith(" spray"): FfaWeaponHeavy
+      elif label.endsWith(" heavy gun"): FfaWeaponHeavy
+      elif label.endsWith(" mid gun"): FfaWeaponMid
+      elif label.endsWith(" low gun"): FfaWeaponLow
+      elif label.endsWith(" fist"): 0
+      else: -1
+    if tier < 0:
+      continue
+    let p = client.mapPos(o)
+    var best = -1
+    var bestD = HpPipRadius
+    for i in 0 ..< result.len:
+      let d = dist(result[i].pos, p)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      result[best].weaponTier = tier
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
     let tail = label[LabelPrefixHp.len .. ^1]
     let slash = tail.find('/')
@@ -1753,12 +1821,14 @@ proc ffaElapsedGameTicks(bot: Bot): int =
   ffaGameTicksSince(bot.tick, bot.gameStart)
 
 proc bestFfaGun(client: ProtocolClient, me, center: Vec,
-    safeRadius: int, currentTier: int): tuple[
+    safeRadius: int, currentTier: int, safeMargin = 0.0,
+    maxDistance = 1e18, avoidActors: seq[Actor] = @[]): tuple[
     found: bool, pos: Vec, tier: int] =
   ## Selects the highest tier in the safe zone, then the nearest one.
   ## Position breaks exact-distance ties so protocol object order is irrelevant.
   result = (false, me, currentTier)
   var bestDist = 1e18
+  let safeLimit = max(0.0, float(max(1, safeRadius)) - safeMargin)
   for label in [LabelWeaponHeavyGun, LabelWeaponMidGun, LabelWeaponGun,
       LabelWeaponLowGun]:
     let tier =
@@ -1772,6 +1842,15 @@ proc bestFfaGun(client: ProtocolClient, me, center: Vec,
         gun = client.mapPos(o)
         d = dist(me, gun)
       if dist(gun, center) > float(max(1, safeRadius)):
+        continue
+      if dist(gun, center) > safeLimit or d > maxDistance:
+        continue
+      var opponentCloser = false
+      for actor in avoidActors:
+        if dist(actor.pos, gun) < d:
+          opponentCloser = true
+          break
+      if opponentCloser:
         continue
       let sameDistance = abs(d - bestDist) < 1e-6
       if not result.found or tier > result.tier or
@@ -1803,6 +1882,36 @@ proc ffaGunStillPresent(client: ProtocolClient, target: Vec,
       if dist(client.mapPos(o), target) <= FfaLootTargetRadius:
         return true
   false
+
+proc ffaWeaponFireRange(weaponTier: int): float =
+  if weaponTier <= 0:
+    70.0
+  elif weaponTier == FfaWeaponLow:
+    float(FfaLowGunRange)
+  else:
+    520.0
+
+proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
+    actors: seq[Actor], me, center: Vec, ringRadius: int): bool =
+  if not bot.ffaLootTrip or not bot.ffaLootTargetValid:
+    return false
+  let
+    target = bot.ffaLootTarget
+    d = dist(me, target)
+    safeLimit = max(0.0, float(max(1, ringRadius)) -
+      FfaHunterArmSafeMargin)
+  if bot.ffaLootStartedTick > 0 and
+      ffaGameTicksSince(bot.tick, bot.ffaLootStartedTick) >
+        FfaHunterArmTripMaxSec * TargetFps:
+    return false
+  if d > FfaHunterArmTripMaxDetourRadius or
+      dist(target, center) > safeLimit or
+      not ffaGunStillPresent(client, target, bot.ffaLootTargetTier):
+    return false
+  for actor in actors:
+    if dist(actor.pos, target) < d:
+      return false
+  true
 
 proc ffaBandIntent(bot: Bot, me, center: Vec, ringRadius: int,
     fraction: float, phase, objective, action: string): FfaIntent =
@@ -1909,14 +2018,68 @@ proc shadeFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
     ringRadius: int, targetIndex: int, engage: bool): FfaIntent =
   result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
     "SHADE", "shade_band", "hold_band")
-  result.bandRadius = min(result.bandRadius,
-    max(1.0, float(max(1, ringRadius)) - FfaShadeRingMargin))
+  result.bandRadius = ffaBandRadiusWithRingMargin(result.bandRadius,
+    ringRadius, FfaShadeRingMargin)
   result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
     result.bandRadius)
   if engage:
     result.moveTarget = actors[targetIndex].pos
     result.objective = "fight"
     result.action = "engage"
+
+proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
+    me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
+    weaponTier: int, unarmed: bool, pursue: bool): FfaIntent =
+  result = passiveFfaIntent(bot, actors, me, center, ringRadius, targetIndex,
+    false)
+  if FfaHunterRingMargin > 0.0:
+    result.bandRadius = ffaBandRadiusWithRingMargin(result.bandRadius,
+      ringRadius, FfaHunterRingMargin)
+    result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
+      result.bandRadius)
+  if pursue:
+    result.moveTarget = actors[targetIndex].pos
+    result.objective = "fight"
+    result.action = "engage"
+    result.engageReason = "pursue_weak"
+    return
+  if not unarmed:
+    bot.ffaLootTrip = false
+    bot.ffaLootTargetValid = false
+    bot.ffaLootTargetTier = 0
+    bot.ffaLootStartedTick = 0
+    if targetIndex >= 0 and
+        targetDist < (if FfaHunterFireRange:
+          ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
+      result.engageReason = "fire_range"
+    return
+  if not FfaHunterArm:
+    bot.ffaLootTrip = false
+    bot.ffaLootTargetValid = false
+    bot.ffaLootTargetTier = 0
+    bot.ffaLootStartedTick = 0
+    return
+  if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):
+    result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
+      "LOOT", "loot_trip", "move_gun")
+    result.moveTarget = bot.ffaLootTarget
+    return
+  bot.ffaLootTrip = false
+  bot.ffaLootTargetValid = false
+  bot.ffaLootTargetTier = 0
+  bot.ffaLootStartedTick = 0
+  let gun = bestFfaGun(client, me, center, ringRadius, weaponTier,
+    FfaHunterArmSafeMargin, FfaHunterArmTripMaxDetourRadius, actors)
+  if gun.found:
+    bot.ffaLootTrip = true
+    bot.ffaLootTarget = gun.pos
+    bot.ffaLootTargetValid = true
+    bot.ffaLootTargetTier = gun.tier
+    bot.ffaLootStartedTick = bot.tick
+    result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
+      "LOOT", "loot_trip", "move_gun")
+    result.moveTarget = gun.pos
+    result.lootTripStarted = true
 
 proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
     ringRadius, elapsedSec, nearby, weaponTier: int, healthy: bool): FfaIntent =
@@ -2033,6 +2196,20 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       actors[targetIndex].hp <= 4
     localAdvantage = nearby >= 2
     healthy = hp >= FfaRetreatHp
+  var hunterSupported = false
+  if targetIndex >= 0:
+    for i, actor in actors:
+      if i != targetIndex and
+          dist(actor.pos, actors[targetIndex].pos) <= FfaHunterSupportRadius:
+        hunterSupported = true
+        break
+  let hunterTargetWeaker = targetIndex >= 0 and
+    (actors[targetIndex].weaponTier == 0 or
+      (actors[targetIndex].hp > 0 and actors[targetIndex].hp < hp))
+  let hunterPursue = FfaDoctrine == FfaHunter and FfaHunterPursuit and
+    not unarmed and hp >= FfaHunterPursuitMinHp and hunterTargetWeaker and
+    not hunterSupported and
+    dist(actors[targetIndex].pos, center) <= float(max(1, ringRadius))
   var
     engage = targetIndex >= 0 and
       (healthy or targetCritical or localAdvantage) and targetDist < 520.0
@@ -2048,6 +2225,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     engage = targetIndex >= 0 and targetDist < FfaPassiveEngageRange
     fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
       targetDist < FfaPassiveEngageRange
+  elif FfaDoctrine == FfaHunter:
+    engage = hunterPursue
+    fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
+      targetDist < FfaPassiveEngageRange
   elif FfaDoctrine == FfaRush:
     engage = targetIndex >= 0 and targetDist < 520.0
   var intent = FfaIntent(moveTarget: center, objective: "ring",
@@ -2055,14 +2236,22 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bandFraction: FfaHoldBand,
     bandRadius: float(max(1, ringRadius)) * FfaHoldBand)
   if ringDist > float(max(1, ringRadius - 80)):
+    if FfaDoctrine == FfaHunter:
+      bot.ffaLootTrip = false
+      bot.ffaLootTargetValid = false
+      bot.ffaLootTargetTier = 0
+      bot.ffaLootStartedTick = 0
     intent.phase = "RING_SAFETY"
     intent.bandFraction = 0.0
     intent.bandRadius = 0.0
     intent.objective = "safe_zone"
     intent.action = "retreat_ring"
-  elif FfaLateClose and livingCount > 0 and livingCount <= 3 and
+    intent.engageReason = "ring"
+  elif FfaLateClose and livingCount > 0 and
+      livingCount <= (if FfaDoctrine == FfaHunter: 4 else: 3) and
       targetIndex >= 0:
     intent.phase = "ENDGAME"
+    intent.engageReason = "endgame"
     intent.bandFraction = FfaHoldBand
     intent.bandRadius = float(max(1, ringRadius)) * FfaHoldBand
     var
@@ -2099,6 +2288,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     of FfaShade:
       intent = shadeFfaIntent(bot, actors, me, center, ringRadius,
         targetIndex, engage)
+    of FfaHunter:
+      intent = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
+        targetIndex, targetDist, weaponTier, unarmed, hunterPursue)
     of FfaHybrid:
       intent = hybridFfaIntent(bot, client, me, center, ringRadius,
         elapsedSec, nearby, weaponTier, healthy)
@@ -2110,6 +2302,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     phase = intent.phase
     bandFraction = intent.bandFraction
     bandRadius = intent.bandRadius
+    engageReason = intent.engageReason
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
@@ -2124,11 +2317,11 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         bestTrackD = d
         aimTarget = track.pos + track.vel * LeadTicks
     desiredAim = bradsOf(aimTarget - me)
-    let fireRange =
-      if unarmed: 70.0
-      elif weaponTier == 1: float(FfaLowGunRange)
-      else: 520.0
-    if (engage or fireWhileHurt) and targetDist < fireRange:
+    let
+      fireRange = ffaWeaponFireRange(weaponTier)
+      hunterRangeGate = FfaDoctrine == FfaHunter and FfaHunterFireRange and
+        not unarmed and targetDist < fireRange
+    if (engage or fireWhileHurt or hunterRangeGate) and targetDist < fireRange:
       rayClear = client.pixelRayClear(me, target.pos)
       wantFire = rayClear and
         (if unarmed:
@@ -2226,7 +2419,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     phase: phase, bandFraction: bandFraction,
     bandRadius: int(round(bandRadius)), safeRadius: ringRadius,
     weaponTier: weaponTier, elapsedGameSec: elapsedSec,
-    engageDist: if targetIndex >= 0: int(targetDist) else: -1))
+    engageDist: if targetIndex >= 0: int(targetDist) else: -1,
+    engageReason: engageReason,
+    lootTripStarted: intent.lootTripStarted))
   mask
 
 proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
@@ -3893,9 +4088,10 @@ proc runBot(url: string) =
     elif requestedDoctrine == "passive": FfaPassive
     elif requestedDoctrine == "shade": FfaShade
     elif requestedDoctrine == "rush": FfaRush
+    elif requestedDoctrine == "hunter": FfaHunter
     else:
       raise newException(ValueError,
-        "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, or shade")
+        "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, or hunter")
   FfaPerimeterBand = clamp(parseEnvFloat("CTF_BOT_FFA_PERIMETER_BAND",
     FfaPerimeterBandDefault), 0.0, 1.0)
   FfaLootBand = clamp(parseEnvFloat("CTF_BOT_FFA_LOOT_BAND",
@@ -3906,6 +4102,9 @@ proc runBot(url: string) =
     FfaPassiveBandDefault), 0.0, 1.0)
   FfaShadeRingMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_SHADE_MARGIN", FfaShadeRingMarginDefault, strict = true))
+  FfaHunterRingMargin = max(0.0, parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_RING_MARGIN", FfaHunterRingMarginDefault,
+    strict = true))
   FfaLootOpenSec = max(0, parseEnvInt("CTF_BOT_FFA_LOOT_OPEN_SEC",
     FfaLootOpenSecDefault))
   FfaLootCloseSec = max(FfaLootOpenSec, parseEnvInt(
@@ -3918,6 +4117,26 @@ proc runBot(url: string) =
   FfaPassiveEngageRange = max(1.0, parseEnvFloat(
     "CTF_BOT_FFA_PASSIVE_ENGAGE_RANGE",
     FfaPassiveEngageRangeDefault))
+  FfaHunterArm = parseEnvBool("CTF_BOT_FFA_HUNTER_ARM",
+    FfaHunterArmDefault)
+  FfaHunterFireRange = parseEnvBool("CTF_BOT_FFA_HUNTER_FIRE_RANGE",
+    FfaHunterFireRangeDefault)
+  FfaHunterPursuit = parseEnvBool("CTF_BOT_FFA_HUNTER_PURSUIT",
+    FfaHunterPursuitDefault)
+  FfaHunterPursuitMinHp = max(1, parseEnvInt(
+    "CTF_BOT_FFA_HUNTER_PURSUIT_MIN_HP", FfaHunterPursuitMinHpDefault))
+  FfaHunterSupportRadius = max(1.0, parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_SUPPORT_RADIUS",
+    FfaHunterSupportRadiusDefault))
+  FfaHunterArmTripMaxSec = max(1, parseEnvInt(
+    "CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC",
+    FfaHunterArmTripMaxSecDefault))
+  FfaHunterArmTripMaxDetourRadius = max(1.0, parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS",
+    FfaHunterArmTripMaxDetourRadiusDefault))
+  FfaHunterArmSafeMargin = max(0.0, parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN",
+    FfaHunterArmSafeMarginDefault, strict = true))
   let
     bot = component.bot
     client = component.client
@@ -3941,6 +4160,15 @@ proc runBot(url: string) =
     " ffaLootTripMaxSec=", FfaLootTripMaxSec,
     " ffaPerimeterEngageRange=", FfaPerimeterEngageRange,
     " ffaPassiveEngageRange=", FfaPassiveEngageRange,
+    " ffaHunterArm=", FfaHunterArm,
+    " ffaHunterFireRange=", FfaHunterFireRange,
+    " ffaHunterPursuit=", FfaHunterPursuit,
+    " ffaHunterPursuitMinHp=", FfaHunterPursuitMinHp,
+    " ffaHunterSupportRadius=", FfaHunterSupportRadius,
+    " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
+    " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
+    " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
+    " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
   artInit(slot, $bot.team, $bot.role, "", FfaGameTicksPerFrame)

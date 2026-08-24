@@ -76,6 +76,8 @@ type
     nadeDanger*: bool
     enemiesVisible*: int      # streamed into vision this frame
     engageDist*: int          # px to the live engage target, -1 = none
+    engageReason*: string     # hold/fire_range/pursue_weak/endgame/ring
+    lootTripStarted*: bool    # edge: a bounded FFA arm trip began
     mask*: uint8              # the input mask decide returned
     fired*: bool              # a fresh A press went out this frame
 
@@ -87,6 +89,9 @@ type
     counters: CountTable[string]
     objTicks: CountTable[string]   # ticks spent per objective mode
     actTicks: CountTable[string]   # ticks spent per action mode
+    aliveFrames: int
+    armedFrames: int
+    lootTrips: int
     havePrev: bool
     prev: FrameSnap
     lastSample: int
@@ -140,7 +145,7 @@ proc artInit*(slot: int, team, role: string, doctrine = "",
   # lands a state row (episode-start position, spawn aim).
   art = ArtLog(active: true, lastSample: -SampleEvery)
   art.meta = %*{
-    "schema": 4,
+    "schema": 5,
     "slot": slot,
     "team": team,
     "role": role,
@@ -198,6 +203,8 @@ proc sample(snap: FrameSnap) =
     "elapsedGameSec": snap.elapsedGameSec,
     "tx": snap.targetX, "ty": snap.targetY,
     "vis": snap.enemiesVisible,
+    "engageReason": (if snap.engageReason.len > 0:
+      snap.engageReason else: "hold"),
     "mask": int(snap.mask),
   }
   if not snap.alive:
@@ -258,9 +265,15 @@ proc artFrame*(snap: FrameSnap) =
       if snap.engageDist >= 0:
         shot["eng"] = %snap.engageDist
       artEvent(snap.tick, "shot", shot)
+    if snap.lootTripStarted:
+      inc art.lootTrips
+      artEvent(snap.tick, "loot_trip")
     if snap.jinked:
       artEvent(snap.tick, "stuck_jink", at)
     if snap.alive:
+      inc art.aliveFrames
+      if snap.weaponTier >= 1:
+        inc art.armedFrames
       art.objTicks.inc(snap.objective)
       art.actTicks.inc(snap.action)
     else:
@@ -282,6 +295,9 @@ proc buildZip(): string =
     "events": countsToJson(art.counters),
     "objectiveTicks": countsToJson(art.objTicks),
     "actionTicks": countsToJson(art.actTicks),
+    "armedFrac": (if art.aliveFrames > 0:
+      float(art.armedFrames) / float(art.aliveFrames) else: 0.0),
+    "lootTrips": art.lootTrips,
     "truncated": art.events.len >= MaxEventLines or
       art.ticks.len >= MaxTickLines,
   }
