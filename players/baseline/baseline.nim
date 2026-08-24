@@ -267,6 +267,7 @@ const
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
+  FfaPactMinBrawlSeparationDefault = 8.0
   FfaPactConvergeRangeDefault = 520.0
   FfaPactEngageRangeDefault = 220.0
   FfaPactMemorySecDefault = 3
@@ -1856,7 +1857,7 @@ proc ffaGameTicksSince(nowTick, startTick: int): int =
 proc ffaElapsedGameTicks(bot: Bot): int =
   ffaGameTicksSince(bot.tick, bot.gameStart)
 
-proc ffaPactWindowSec(): int =
+proc ffaPactWindowSeconds(): int =
   if FfaPactWindowSec > 0:
     return FfaPactWindowSec
   if FfaRingShrinkSec > 0:
@@ -1886,7 +1887,8 @@ proc ffaPactBrawl(actors: seq[Actor], me, center: Vec,
       if actorIndex == targetIndex:
         continue
       let d = dist(target.pos, actor.pos)
-      if d <= FfaPactBrawlRadius and
+      if d >= FfaPactMinBrawlSeparationDefault and
+          d <= FfaPactBrawlRadius and
           (partnerIndex < 0 or d < partnerDist or
             (abs(d - partnerDist) < 1e-6 and
               ffaPactPositionBefore(actor.pos, partnerPos))):
@@ -2183,6 +2185,8 @@ proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     targetIndex, targetDist, weaponTier, unarmed, pursue)
   if not pactActive or not pactMemoryFresh:
     return
+  if unarmed and (result.lootTripStarted or result.objective == "loot_trip"):
+    return
   result.phase = "PACT"
   result.objective = "pact_converge"
   result.action = "engage"
@@ -2294,7 +2298,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     ringDist = dist(me, center)
     elapsedSec = elapsedTicks div TargetFps
   let pactActive = FfaDoctrine == FfaPact and
-    elapsedSec < ffaPactWindowSec()
+    elapsedSec < ffaPactWindowSeconds()
   updateTracks(bot, bot.ffaAimTracks, actors)
   let visibleOpponent = actors.len > 0
   let traceTick = bot.tick * FfaTraceTickScale

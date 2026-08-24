@@ -55,6 +55,9 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaPactWindowFractionDefault = 0.35")
     check baseline.contains("FfaPactWindowSecDefault = 0")
     check baseline.contains("FfaPactBrawlRadiusDefault = 220.0")
+    check baseline.contains("FfaPactMinBrawlSeparationDefault = 8.0")
+    check baseline.contains(
+      "d >= FfaPactMinBrawlSeparationDefault and")
     check baseline.contains("FfaPactConvergeRangeDefault = 520.0")
     check baseline.contains("FfaPactEngageRangeDefault = 220.0")
     check baseline.contains("FfaPactMemorySecDefault = 3")
