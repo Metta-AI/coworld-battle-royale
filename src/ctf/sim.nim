@@ -3465,6 +3465,7 @@ proc updateFfaPassivity*(sim: var SimServer) =
       let otherY = sim.players[j].y + CollisionH div 2
       nearestSq = min(nearestSq, distSq(centerX, centerY, otherX, otherY))
     if not hasOther:
+      # An empty field is not isolation pressure; the match is already over.
       continue
     if nearestSq <= radiusSq:
       sim.players[i].passivityTicks = max(
@@ -3476,14 +3477,17 @@ proc updateFfaPassivity*(sim: var SimServer) =
     if overGrace <= 0 or
         overGrace mod sim.config.passivityDamageTicks != 0:
       continue
-    let
-      px = centerX
-      py = centerY
-      blocked = sim.absorbDamage(i, 1)
+    let blocked = sim.absorbDamage(i, 1)
     sim.emitEvent(
-      Damage, source = -1, target = i, weapon = "isolation",
-      amount = 1, hp = max(0, sim.players[i].hp), blocked = blocked,
-      x = float(px), y = float(py)
+      Damage,
+      source = -1,
+      target = i,
+      weapon = "isolation",
+      amount = 1,
+      hp = sim.players[i].hp,
+      blocked = blocked,
+      x = float(centerX),
+      y = float(centerY)
     )
     if sim.players[i].hp > 0:
       sim.players[i].paintHitTick = sim.tickCount

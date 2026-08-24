@@ -566,7 +566,11 @@ const
                               ## outside damage is gradual, while the 3% floor
                               ## herds late survivors into final engagements.
   FfaRingDamageTicks* = 48    ## Ticks of CONTINUOUS exposure outside the
-                              ## ring that cost FfaRingDamage.
+                              ## ring that cost FfaRingDamage. At the shipped
+                              ## defaults, damage is flat and never scales, so
+                              ## at 20 hp an agent can walk the whole board
+                              ## through the fire and live; setting
+                              ## ringDamageRampTicks opts into escalation.
   FfaRingDamage* = 1          ## hp per exposure tick-count outside the ring.
   FfaRingRecoveryTicks* = 2   ## Exposure ticks drained per safe-zone tick.
   FfaRingDamageRampTicks* = 0 ## Exposure ticks per extra hp of ring damage;
