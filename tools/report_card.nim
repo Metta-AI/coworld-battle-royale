@@ -208,9 +208,9 @@ proc killSection(log: Ledger, seat: int): string =
     any = true
     let
       row = entry.row
-      # An unmatched kill row is a sim-side artefact, not a kill: `recordKill`
-      # sits outside `killPlayer`'s alive guard, so hitting a corpse credits
-      # another kill row with no second death row behind it. Shown, flagged,
+      # An unmatched kill row is not a kill: GV45's weapon sites emit rows
+      # only after `killPlayer` applies a real death. A ledger from <= GV44
+      # can still contain the old duplicate-credit artefact. Shown, flagged,
       # and excluded from the count.
       flag =
         if entry.matched: ""
@@ -282,7 +282,7 @@ proc reportCard(log: Ledger, options: Options, seat: int): string =
   result.add(&"| Kills (death-corroborated) | {stats.kills} |\n")
   if stats.unmatchedKillRows > 0:
     result.add(&"| Unmatched kill rows | {stats.unmatchedKillRows} " &
-      "(sim-side duplicate credit, see below) |\n")
+      "(pre-GV45 duplicate-credit row, see below) |\n")
   result.add(&"| Deaths | {stats.deaths} |\n")
   result.add(&"| Damage dealt | {stats.damageDealt} over {stats.hitsDealt} " &
     &"hits ({stats.blockedDealt} blocked) |\n")

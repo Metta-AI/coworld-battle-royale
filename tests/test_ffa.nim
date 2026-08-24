@@ -589,6 +589,26 @@ suite "ffa elimination":
     check game.players[0].damageDealt == beforeDamage
     check game.rewardAccounts[account].kills == beforeAccountKills
 
+  test "a non-zero shooter cannot phantom-hit seat zero":
+    var game = ffaGame(3)
+    game.players[0].placeAtCenter(900, MapHeight div 2)
+    game.players[1].placeAtCenter(300, MapHeight div 2)
+    game.players[2].placeAtCenter(900, MapHeight div 2 + 200)
+    game.players[1].aimBrads = 0
+    let
+      account = game.rewardAccountForPlayer(1)
+      beforeHp = game.players[0].hp
+      beforeDeaths = game.players[0].deaths
+      beforeKills = game.players[1].kills
+      beforeDamage = game.players[1].damageDealt
+      beforeAccountKills = game.rewardAccounts[account].kills
+    game.tryFire(1)
+    check game.players[0].hp == beforeHp
+    check game.players[0].deaths == beforeDeaths
+    check game.players[1].kills == beforeKills
+    check game.players[1].damageDealt == beforeDamage
+    check game.rewardAccounts[account].kills == beforeAccountKills
+
   test "fist cone folds across the zero-brad seam":
     var game = ffaGame(3)
     let

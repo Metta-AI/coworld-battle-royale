@@ -468,13 +468,10 @@ carrier; the only speed modifiers in FFA are the ones every mode has (trench
 climb-out, paint puddles, thruster perk). Carrying the heavy costs nothing in
 mobility.
 
-GV45 fixes two fist-targeting deviations and makes kill credit follow the
-actual death transition:
-
-The ±67.5° cone folds on the 256-brad turn at the 0-brad seam, and a kill
-counter is credited only when `killPlayer` applies a previously alive victim's
-death. A whiffed punch has no target; environmental and elimination deaths
-remain uncredited.
+The fist's aim cone is symmetric at ±67.5°, including across the 0-brad seam.
+A punch with no living target in that cone hits nothing. A kill counter is
+credited only when a hit ends a living player; environmental and elimination
+deaths do not award a kill.
 
 Pickups only upgrade a carrier. A pickup at or below the current tier remains
 on the map; a higher-tier pickup is consumed and the new tier lasts for the

@@ -1175,7 +1175,6 @@ proc killPlayer*(
       let accountIndex = sim.rewardAccountIndexForSlot(killerSlot)
       if accountIndex >= 0:
         inc sim.rewardAccounts[accountIndex].kills
-  if not elimination:
     # An environmental death (cause text, no killer) logs its own line; a
     # combat death keeps the classic "killed by" attribution.
     if cause.len > 0:
