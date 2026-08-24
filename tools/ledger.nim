@@ -16,13 +16,11 @@
 ## Deliberately NOT trusted:
 ##
 ## - `kind == "kill"` rows as an elimination count. A kill row is emitted at
-##   each weapon's damage site whenever the victim's hp reaches 0, which is
-##   OUTSIDE `killPlayer`'s "already dead" guard (`src/ctf/sim.nim`, the
-##   `if sim.players[targetIndex].hp <= 0` blocks). Repeated fist hits on a
-##   corpse therefore emit repeated kill rows with no second `death` row.
-##   `tests/fixtures/ffa-scorebug.bitreplay` has 12 kill rows against 11
-##   death rows for this reason. Death rows are the elimination record;
-##   unmatched kill rows are reported, never counted.
+##   each weapon's damage site only after `killPlayer` applies a real death.
+##   GV45 fixed the sim-side duplicate-credit path; an unmatched kill row now
+##   indicates a replay recorded under <= GV44 (or a malformed ledger), not
+##   current behavior. Death rows remain the elimination record; unmatched
+##   kill rows are reported, never counted.
 ## - a seat's `lives` budget. It is not in the ledger, so "gone for good" is
 ##   derived from a `death` row with no later `respawn` row for that seat,
 ##   which is true for any lives count.

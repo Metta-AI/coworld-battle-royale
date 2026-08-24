@@ -18,12 +18,20 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "44"  ## GV44 (FFA ladder + 3% ring + rotated pads): FFA starts
-    ## with fists, upgrades through low, mid, and heavy weapons, shrinks to a
-    ## 3% final safe-zone floor, and rotates deterministic seed-derived
-    ## ownership of the fixed spawn-pad ring each episode. In the late game,
-    ## baseline bots close on the nearest enemy when three or fewer players
-    ## remain, while retaining ring safety and normal aim/fire gates.
+  GameVersion* = "45"  ## GV45 (fist sentinel, cone fold, death credit):
+    ## FIST MISSES ARE EMPTY, THE AIM CONE FOLDS AT 256 BRADS, AND ONLY
+    ## APPLIED DEATHS RECEIVE KILL CREDIT. A fist with no living opponent in
+    ## its cone does nothing, including across the 0-brad seam. Kill counters
+    ## and reward-account credit are applied inside the alive guard, while
+    ## environmental and elimination deaths remain uncredited. Fixtures
+    ## re-recorded.
+    ##
+    ## Previously GV44 (FFA ladder + 3% ring + rotated pads): FFA STARTS WITH
+    ## FISTS, UPGRADES THROUGH LOW, MID, AND HEAVY WEAPONS, SHRINKS TO A 3%
+    ## FINAL SAFE-ZONE FLOOR, AND ROTATES DETERMINISTIC SEED-DERIVED OWNERSHIP
+    ## OF THE FIXED SPAWN-PAD RING EACH EPISODE. In the late game, baseline
+    ## bots close on the nearest enemy when three or fewer players remain,
+    ## while retaining ring safety and normal aim/fire gates.
     ## FFA adds a serialized weapon tier and deterministic low/mid/heavy
     ## pickups, so old replays cannot re-simulate under the new Player wire
     ## shape or combat rules: fixtures re-recorded. The shipped ladder floor is

@@ -425,17 +425,6 @@ proc playerIndexForSlot*(sim: SimServer, slotIndex: int): int =
       return i
   -1
 
-proc legacyGrenadeThrowerIndex*(
-  sim: SimServer,
-  grenade: AirborneGrenade
-): int {.inline.} =
-  ## Retains GV24's mutable-index kill counter solely because player.kills is
-  ## hashed. Attribution and results use throwerSlot/throwerAccount instead.
-  if grenade.thrower >= 0 and grenade.thrower < sim.players.len:
-    grenade.thrower
-  else:
-    -1
-
 proc playerResultSlotCount(sim: SimServer): int =
   ## Returns the number of player slots represented in final results.
   result = sim.config.slots.len
