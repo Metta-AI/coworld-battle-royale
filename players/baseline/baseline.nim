@@ -264,6 +264,13 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
+  FfaPactWindowFractionDefault = 0.35
+  FfaPactWindowSecDefault = 0
+  FfaPactBrawlRadiusDefault = 220.0
+  FfaPactConvergeRangeDefault = 520.0
+  FfaPactEngageRangeDefault = 220.0
+  FfaPactMemorySecDefault = 3
+  FfaPactPartnerMatchRadiusDefault = 60.0
   FfaBearingEpsilon = 12.0
 
   CoverShieldDist = 42.0      # an obstacle this close blocks a threat direction
@@ -342,7 +349,7 @@ const TeamColorNames = ["red", "blue", "green", "yellow"]
 
 type
   FfaDoctrineKind = enum
-    FfaHybrid, FfaLegacy, FfaPassive, FfaRush, FfaShade, FfaHunter
+    FfaHybrid, FfaLegacy, FfaPassive, FfaRush, FfaShade, FfaHunter, FfaPact
 
   Team = enum
     Red, Blue
@@ -465,6 +472,10 @@ type
     ffaLootTargetValid: bool
     ffaLootTargetTier: int
     ffaLootStartedTick: int
+    ffaPactTargetPos: Vec
+    ffaPactTargetSeen: int
+    ffaPactPartnerPos: Vec
+    ffaPactPartnerSeen: int
 
 proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   case doctrine
@@ -474,6 +485,20 @@ proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   of FfaRush: "rush"
   of FfaShade: "shade"
   of FfaHunter: "hunter"
+  of FfaPact: "pact"
+
+proc ffaDoctrineFor(requestedDoctrine: string): FfaDoctrineKind =
+  if requestedDoctrine.len == 0: FfaLegacy
+  elif requestedDoctrine == "hybrid": FfaHybrid
+  elif requestedDoctrine == "legacy": FfaLegacy
+  elif requestedDoctrine == "passive": FfaPassive
+  elif requestedDoctrine == "shade": FfaShade
+  elif requestedDoctrine == "rush": FfaRush
+  elif requestedDoctrine == "hunter": FfaHunter
+  elif requestedDoctrine == "pact": FfaPact
+  else:
+    raise newException(ValueError,
+      "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
 
 var
   SelfStrategyTeam = Red
@@ -520,6 +545,13 @@ var
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
+  FfaPactWindowFraction = FfaPactWindowFractionDefault
+  FfaPactWindowSec = FfaPactWindowSecDefault
+  FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
+  FfaPactConvergeRange = FfaPactConvergeRangeDefault
+  FfaPactEngageRange = FfaPactEngageRangeDefault
+  FfaPactMemorySec = FfaPactMemorySecDefault
+  FfaPactPartnerMatchRadius = FfaPactPartnerMatchRadiusDefault
 
 proc parseEnvInt(name: string, fallback: int): int =
   let value = getEnv(name)
@@ -1700,6 +1732,10 @@ proc resetTransient(bot: Bot) =
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
+  bot.ffaPactTargetPos = vec(0, 0)
+  bot.ffaPactTargetSeen = -1
+  bot.ffaPactPartnerPos = vec(0, 0)
+  bot.ffaPactPartnerSeen = -1
   bot.carrierSeen = -100_000
   bot.lastEnemySeen = bot.tick
   bot.gameStart = bot.tick
@@ -1819,6 +1855,64 @@ proc ffaGameTicksSince(nowTick, startTick: int): int =
 
 proc ffaElapsedGameTicks(bot: Bot): int =
   ffaGameTicksSince(bot.tick, bot.gameStart)
+
+proc ffaPactWindowSec(): int =
+  if FfaPactWindowSec > 0:
+    return FfaPactWindowSec
+  if FfaRingShrinkSec > 0:
+    return int(FfaPactWindowFraction * float(FfaRingShrinkSec))
+  45
+
+proc ffaPactPositionBefore(a, b: Vec): bool =
+  a.x < b.x - 1e-6 or
+    (abs(a.x - b.x) < 1e-6 and a.y < b.y - 1e-6)
+
+proc ffaPactBrawl(actors: seq[Actor], me, center: Vec,
+    ringRadius: int): tuple[found: bool, targetIndex, partnerIndex: int] =
+  result = (false, -1, -1)
+  var
+    bestHp = high(int)
+    bestDist = 1e18
+    bestTarget = me
+  for targetIndex, target in actors:
+    if dist(target.pos, center) > float(max(1, ringRadius)) or
+        dist(me, target.pos) > FfaPactConvergeRange:
+      continue
+    var
+      partnerIndex = -1
+      partnerDist = 1e18
+      partnerPos = me
+    for actorIndex, actor in actors:
+      if actorIndex == targetIndex:
+        continue
+      let d = dist(target.pos, actor.pos)
+      if d <= FfaPactBrawlRadius and
+          (partnerIndex < 0 or d < partnerDist or
+            (abs(d - partnerDist) < 1e-6 and
+              ffaPactPositionBefore(actor.pos, partnerPos))):
+        partnerIndex = actorIndex
+        partnerDist = d
+        partnerPos = actor.pos
+    if partnerIndex < 0:
+      continue
+    let
+      hp = if target.hp > 0: target.hp else: high(int)
+      d = dist(me, target.pos)
+    if not result.found or hp < bestHp or
+        (hp == bestHp and
+          (d < bestDist or
+            (abs(d - bestDist) < 1e-6 and
+              ffaPactPositionBefore(target.pos, bestTarget)))):
+      result = (true, targetIndex, partnerIndex)
+      bestHp = hp
+      bestDist = d
+      bestTarget = target.pos
+
+proc ffaPactMemoryFresh(bot: Bot): bool =
+  let maxAge = FfaPactMemorySec * TargetFps
+  bot.ffaPactTargetSeen >= 0 and bot.ffaPactPartnerSeen >= 0 and
+    ffaGameTicksSince(bot.tick, bot.ffaPactTargetSeen) <= maxAge and
+    ffaGameTicksSince(bot.tick, bot.ffaPactPartnerSeen) <= maxAge
 
 proc bestFfaGun(client: ProtocolClient, me, center: Vec,
     safeRadius: int, currentTier: int, safeMargin = 0.0,
@@ -2081,6 +2175,27 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     result.moveTarget = gun.pos
     result.lootTripStarted = true
 
+proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
+    me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
+    weaponTier: int, unarmed: bool, pursue, pactActive,
+    pactMemoryFresh: bool): FfaIntent =
+  result = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
+    targetIndex, targetDist, weaponTier, unarmed, pursue)
+  if not pactActive or not pactMemoryFresh:
+    return
+  result.phase = "PACT"
+  result.objective = "pact_converge"
+  result.action = "engage"
+  if targetIndex >= 0:
+    result.moveTarget = actors[targetIndex].pos
+    result.engageReason = "pact_converge"
+  else:
+    result.moveTarget = bot.ffaBandTarget(me, center, ringRadius,
+      FfaPassiveBand)
+    result.bandFraction = FfaPassiveBand
+    result.bandRadius = float(max(1, ringRadius)) * FfaPassiveBand
+    result.engageReason = "pact_truce"
+
 proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
     ringRadius, elapsedSec, nearby, weaponTier: int, healthy: bool): FfaIntent =
   if elapsedSec < FfaLootOpenSec:
@@ -2130,6 +2245,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.firedLast = false
     bot.rotSign = 0
     bot.wasDead = true
+    bot.ffaPactTargetPos = vec(0, 0)
+    bot.ffaPactTargetSeen = -1
+    bot.ffaPactPartnerPos = vec(0, 0)
+    bot.ffaPactPartnerSeen = -1
     artFrame(FrameSnap(tick: bot.tick, alive: false,
       x: int(bot.lastPos.x), y: int(bot.lastPos.y), hp: 0,
       objective: "dead", action: "dead", engageDist: -1))
@@ -2138,6 +2257,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.wasDead = false
     bot.estAim = 0
     bot.gameStart = bot.tick
+    bot.ffaPactTargetPos = vec(0, 0)
+    bot.ffaPactTargetSeen = -1
+    bot.ffaPactPartnerPos = vec(0, 0)
+    bot.ffaPactPartnerSeen = -1
   let statedAim = client.ownAimBrads()
   if statedAim >= 0:
     bot.estAim = statedAim
@@ -2170,6 +2293,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     ringRadius = ffaRingRadiusAt(elapsedTicks)
     ringDist = dist(me, center)
     elapsedSec = elapsedTicks div TargetFps
+  let pactActive = FfaDoctrine == FfaPact and
+    elapsedSec < ffaPactWindowSec()
   updateTracks(bot, bot.ffaAimTracks, actors)
   let visibleOpponent = actors.len > 0
   let traceTick = bot.tick * FfaTraceTickScale
@@ -2191,6 +2316,49 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     if d < targetDist:
       targetDist = d
       targetIndex = i
+  var pactMemoryFresh = false
+  if pactActive:
+    let brawl = ffaPactBrawl(actors, me, center, ringRadius)
+    if brawl.found:
+      bot.ffaPactTargetPos = actors[brawl.targetIndex].pos
+      bot.ffaPactTargetSeen = bot.tick
+      bot.ffaPactPartnerPos = actors[brawl.partnerIndex].pos
+      bot.ffaPactPartnerSeen = bot.tick
+    pactMemoryFresh = ffaPactMemoryFresh(bot)
+    if pactMemoryFresh:
+      var rememberedTarget = -1
+      var rememberedTargetDist = 1e18
+      for i, actor in actors:
+        if dist(actor.pos, bot.ffaPactPartnerPos) <=
+            FfaPactPartnerMatchRadius:
+          continue
+        let d = dist(actor.pos, bot.ffaPactTargetPos)
+        if d <= FfaPactPartnerMatchRadius and
+            (rememberedTarget < 0 or d < rememberedTargetDist or
+              (abs(d - rememberedTargetDist) < 1e-6 and
+                ffaPactPositionBefore(actor.pos,
+                  actors[rememberedTarget].pos))):
+          rememberedTarget = i
+          rememberedTargetDist = d
+      if rememberedTarget >= 0:
+        targetIndex = rememberedTarget
+        targetDist = dist(me, actors[targetIndex].pos)
+      else:
+        var nearestOther = -1
+        var nearestOtherDist = 1e18
+        for i, actor in actors:
+          if dist(actor.pos, bot.ffaPactPartnerPos) <=
+              FfaPactPartnerMatchRadius:
+            continue
+          let d = dist(me, actor.pos)
+          if nearestOther < 0 or d < nearestOtherDist or
+              (abs(d - nearestOtherDist) < 1e-6 and
+                ffaPactPositionBefore(actor.pos,
+                  actors[nearestOther].pos)):
+            nearestOther = i
+            nearestOtherDist = d
+        targetIndex = nearestOther
+        targetDist = if targetIndex >= 0: nearestOtherDist else: 1e18
   let
     targetCritical = targetIndex >= 0 and actors[targetIndex].hp > 0 and
       actors[targetIndex].hp <= 4
@@ -2206,7 +2374,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   let hunterTargetWeaker = targetIndex >= 0 and
     (actors[targetIndex].weaponTier == 0 or
       (actors[targetIndex].hp > 0 and actors[targetIndex].hp < hp))
-  let hunterPursue = FfaDoctrine == FfaHunter and FfaHunterPursuit and
+  let hunterPursue = FfaDoctrine in {FfaHunter, FfaPact} and
+    FfaHunterPursuit and
     not unarmed and hp >= FfaHunterPursuitMinHp and hunterTargetWeaker and
     not hunterSupported and
     dist(actors[targetIndex].pos, center) <= float(max(1, ringRadius))
@@ -2229,6 +2398,16 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     engage = hunterPursue
     fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
       targetDist < FfaPassiveEngageRange
+  elif FfaDoctrine == FfaPact:
+    if pactActive:
+      engage = hunterPursue or
+        (targetIndex >= 0 and targetDist < FfaPactEngageRange)
+      fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
+        targetDist < FfaPactEngageRange
+    else:
+      engage = hunterPursue
+      fireWhileHurt = FfaFireWhileHurt and targetIndex >= 0 and
+        targetDist < FfaPassiveEngageRange
   elif FfaDoctrine == FfaRush:
     engage = targetIndex >= 0 and targetDist < 520.0
   var intent = FfaIntent(moveTarget: center, objective: "ring",
@@ -2236,7 +2415,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bandFraction: FfaHoldBand,
     bandRadius: float(max(1, ringRadius)) * FfaHoldBand)
   if ringDist > float(max(1, ringRadius - 80)):
-    if FfaDoctrine == FfaHunter:
+    if FfaDoctrine in {FfaHunter, FfaPact}:
       bot.ffaLootTrip = false
       bot.ffaLootTargetValid = false
       bot.ffaLootTargetTier = 0
@@ -2248,7 +2427,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     intent.action = "retreat_ring"
     intent.engageReason = "ring"
   elif FfaLateClose and livingCount > 0 and
-      livingCount <= (if FfaDoctrine == FfaHunter: 4 else: 3) and
+      livingCount <= (if FfaDoctrine in {FfaHunter, FfaPact}: 4 else: 3) and
       targetIndex >= 0:
     intent.phase = "ENDGAME"
     intent.engageReason = "endgame"
@@ -2291,6 +2470,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     of FfaHunter:
       intent = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
         targetIndex, targetDist, weaponTier, unarmed, hunterPursue)
+    of FfaPact:
+      intent = pactFfaIntent(bot, client, actors, me, center, ringRadius,
+        targetIndex, targetDist, weaponTier, unarmed, hunterPursue,
+        pactActive, pactMemoryFresh)
     of FfaHybrid:
       intent = hybridFfaIntent(bot, client, me, center, ringRadius,
         elapsedSec, nearby, weaponTier, healthy)
@@ -2319,7 +2502,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     desiredAim = bradsOf(aimTarget - me)
     let
       fireRange = ffaWeaponFireRange(weaponTier)
-      hunterRangeGate = FfaDoctrine == FfaHunter and FfaHunterFireRange and
+      hunterRangeGate = FfaDoctrine in {FfaHunter, FfaPact} and
+        FfaHunterFireRange and
         not unarmed and targetDist < fireRange
     if (engage or fireWhileHurt or hunterRangeGate) and targetDist < fireRange:
       rayClear = client.pixelRayClear(me, target.pos)
@@ -4081,17 +4265,19 @@ proc runBot(url: string) =
   FfaTraceTickScale = max(1, parseEnvInt("CTF_BOT_TRACE_TICK_SCALE", 1))
   FfaTraceMaxTick = max(0, parseEnvInt("CTF_BOT_TRACE_MAX_TICKS", 0))
   let requestedDoctrine = getEnv("CTF_BOT_FFA_DOCTRINE").toLowerAscii()
-  FfaDoctrine =
-    if requestedDoctrine.len == 0: FfaLegacy
-    elif requestedDoctrine == "hybrid": FfaHybrid
-    elif requestedDoctrine == "legacy": FfaLegacy
-    elif requestedDoctrine == "passive": FfaPassive
-    elif requestedDoctrine == "shade": FfaShade
-    elif requestedDoctrine == "rush": FfaRush
-    elif requestedDoctrine == "hunter": FfaHunter
-    else:
-      raise newException(ValueError,
-        "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, or hunter")
+  FfaDoctrine = ffaDoctrineFor(requestedDoctrine)
+  let doctrineSlots = getEnv("CTF_BOT_FFA_DOCTRINE_SLOTS")
+  if doctrineSlots.len > 0:
+    for pair in doctrineSlots.split(','):
+      let fields = pair.split('=', maxsplit = 1)
+      if fields.len != 2:
+        continue
+      try:
+        if parseInt(fields[0].strip()) == slot:
+          FfaDoctrine = ffaDoctrineFor(fields[1].strip().toLowerAscii())
+          break
+      except ValueError:
+        discard
   FfaPerimeterBand = clamp(parseEnvFloat("CTF_BOT_FFA_PERIMETER_BAND",
     FfaPerimeterBandDefault), 0.0, 1.0)
   FfaLootBand = clamp(parseEnvFloat("CTF_BOT_FFA_LOOT_BAND",
@@ -4137,6 +4323,21 @@ proc runBot(url: string) =
   FfaHunterArmSafeMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN",
     FfaHunterArmSafeMarginDefault, strict = true))
+  FfaPactWindowFraction = max(0.0, parseEnvFloat(
+    "CTF_BOT_FFA_PACT_WINDOW_FRACTION", FfaPactWindowFractionDefault))
+  FfaPactWindowSec = max(0, parseEnvInt(
+    "CTF_BOT_FFA_PACT_WINDOW_SEC", FfaPactWindowSecDefault))
+  FfaPactBrawlRadius = max(1.0, parseEnvFloat(
+    "CTF_BOT_FFA_PACT_BRAWL_RADIUS", FfaPactBrawlRadiusDefault))
+  FfaPactConvergeRange = max(1.0, parseEnvFloat(
+    "CTF_BOT_FFA_PACT_CONVERGE_RANGE", FfaPactConvergeRangeDefault))
+  FfaPactEngageRange = max(1.0, parseEnvFloat(
+    "CTF_BOT_FFA_PACT_ENGAGE_RANGE", FfaPactEngageRangeDefault))
+  FfaPactMemorySec = max(1, parseEnvInt(
+    "CTF_BOT_FFA_PACT_MEMORY_SEC", FfaPactMemorySecDefault))
+  FfaPactPartnerMatchRadius = max(1.0, parseEnvFloat(
+    "CTF_BOT_FFA_PACT_PARTNER_MATCH_RADIUS",
+    FfaPactPartnerMatchRadiusDefault))
   let
     bot = component.bot
     client = component.client
