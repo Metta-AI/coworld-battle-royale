@@ -11,15 +11,18 @@
 ## existing re-simulation, so it costs no extra walk.
 ##
 ## frames layout, little-endian:
-##   header: "CTFFRM01" | u16 slots | u16 mapW | u16 mapH | u16 teams
+##   header: "CTFFRM02" | u16 slots | u16 mapW | u16 mapH | u16 teams
 ##   then one fixed-width record per simulated tick:
 ##     u32 tick | u8 phase | u8 pad
-##     slots x { i16 x, i16 y, u8 aim, u8 hp, u8 lives, u8 flags, u8 fw, u8 wb }
+##     slots x { i16 x, i16 y, u8 aim, u8 hp, u8 lives, u8 flags, u8 fw,
+##               u8 wb, u8 weaponTier }
 ##     teams x { i16 x, i16 y, i8 carrier }
 ##   flags bits: 1 alive, 2 carryingFlag, 4 hasShield, 8 hasGrenade,
 ##               16 hasPlasmaArc, 32 shieldHp>0, 64 spray cone active
 ##   fw = fireWindup; wb = windupBrads, meaningful only where fw > 0 (a full
 ##   0..255 brad value, so there is no free sentinel for "not armed").
+##   The magic is bumped because a stale reader would otherwise silently read
+##   shifted columns after the appended byte.
 ## Seats are written by joinOrder, so column `s` is the same seat for the whole
 ## episode even though players join during the lobby. `carrier` is a SEAT in
 ## that same space (-1 when the flag is home), not a sim player index.
@@ -45,8 +48,8 @@ const
   UsageText =
     "Usage: nim r tools/extract_events.nim [replay-path] [--out <path>] " &
       "[--frames <path>]"
-  FramesMagic = "CTFFRM01"
-  SeatRecordBytes = 10
+  FramesMagic = "CTFFRM02"
+  SeatRecordBytes = 11
   DefaultReplayPath = GameDir / "tests" / "replays" / "ctf.bitreplay"
 
 proc fail(message: string) =
@@ -120,6 +123,7 @@ type
     aimBrads*, hp*, lives*, flags*: int
     fireWindup*: int
     windupBrads*: int          ## meaningful only where fireWindup > 0.
+    weaponTier*: int
 
   FrameFlag* = object
     ## One team's flag on one tick, decoded from an ExtractResult's frames.
@@ -210,6 +214,7 @@ proc appendFrame*(buffer: var string, sim: SimServer, slotCount: int) =
     # windupBrads spans the full 0..255 brad range, so "not armed" has no
     # spare value to claim; fireWindup > 0 is what makes it meaningful.
     buffer.addByte(if player.windupBrads < 0: 0 else: player.windupBrads)
+    buffer.addByte(player.weaponTier)
   for team in activeTeams(sim.config.teams):
     let flag = sim.flags[team]
     buffer.addI16(flag.x)
@@ -259,7 +264,8 @@ proc frameSeat*(extraction: ExtractResult, index, seat: int): FrameSeat =
     lives: extraction.frames.u8At(base + 6),
     flags: extraction.frames.u8At(base + 7),
     fireWindup: extraction.frames.u8At(base + 8),
-    windupBrads: extraction.frames.u8At(base + 9)
+    windupBrads: extraction.frames.u8At(base + 9),
+    weaponTier: extraction.frames.u8At(base + 10)
   )
 
 proc extractEvents*(data: ReplayData, captureFrames = false): ExtractResult =
