@@ -29,8 +29,8 @@ const
   # ending a seed produces is a property of the rules it was recorded under.
   # GV30 moved the pickups, and seed 7 — which captured under GV29 — now
   # runs to a time-limit draw, so the capture fixture moved to seed 1.
-  # Under GV38 (locked spray cone) seed 1 still ends on a capture (Blue
-  # captures the red heart, eliminating Red). The recording must ALSO keep
+  # Under the current rules seed 1 ends on a capture (Red captures the blue
+  # heart, eliminating Blue). The recording must ALSO keep
   # only one flag out from the last steal to the capture: the endzone fade
   # ramp test (test_replay_scan) watches this fixture just past the last
   # steal and its per-frame band allowance assumes a single powered-down
@@ -159,16 +159,16 @@ suite "broadcast state channel":
       check not state.hasKey("ffa")
       check state.hasKey("over")
       # A capture win is not a draw and not a time-limit tiebreak. The winner
-      # is pinned to the current recording of the fixture (GameVersion 41,
-      # seed 1: Blue captures the red heart, eliminating Red).
+      # is pinned to the current recording of the fixture (GameVersion 45,
+      # seed 1: Red captures the blue heart, eliminating Blue).
       check state["over"]["draw"].getBool == false
       check state["over"]["timeLimit"].getBool == false
-      check state["over"]["winner"].getStr == "blue"
+      check state["over"]["winner"].getStr == "red"
       # The scorebug axis is lives + flag state, never a kill score.
       check state["teams"]["red"].hasKey("lives")
       # GV32: the captured heart ends the game in the "captured" state.
-      check state["teams"]["red"]["flag"].getStr == "captured"
-      check state["teams"]["blue"]["flag"].getStr in ["home", "taken"]
+      check state["teams"]["blue"]["flag"].getStr == "captured"
+      check state["teams"]["red"]["flag"].getStr in ["home", "taken"]
       # The verdict carries a team-keyed map (any team count) that agrees with
       # the legacy red/blue scalars.
       for team in ["red", "blue"]:
@@ -255,7 +255,7 @@ suite "broadcast state channel":
       let verdicts = replay.beatEvents.elems.filterIt(it["k"].getStr == "gameover")
       check verdicts.len == 1
       check verdicts[0]["draw"].getBool == false
-      check verdicts[0]["winner"].getStr == "blue"
+      check verdicts[0]["winner"].getStr == "red"
       # The chrome frame ships the timeline when (and only when) asked.
       let withBeats = parseJson(sim.buildStateJson(
         newJArray(), false, 1, replay.replayMaxTick(), false, true, -1, -1,

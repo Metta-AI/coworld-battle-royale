@@ -1073,7 +1073,9 @@ proc weaponDamage*(sim: SimServer, ctfAmount, ffaAmount: int): int {.inline.} =
 proc recordFfaDamage*(sim: var SimServer, attackerIndex, victimIndex,
     amount: int) =
   ## Books one ffa hit: the attacker's running damageDealt (the placement
-  ## tiebreak under kills) and a windowed credit entry (the assist split).
+  ## tiebreak under kills, which reaches Elo) and a windowed credit entry
+  ## (the assist split). A posthumous victim is an invariant violation:
+  ## corpses must never receive damage credit.
   ## Self-damage and environmental damage credit nobody. ctf never calls
   ## this, so nothing here can move a ctf game's hash.
   if not sim.config.isFfa() or amount <= 0:
@@ -1081,6 +1083,8 @@ proc recordFfaDamage*(sim: var SimServer, attackerIndex, victimIndex,
   if attackerIndex < 0 or attackerIndex >= sim.players.len:
     return
   if victimIndex < 0 or victimIndex >= sim.players.len:
+    return
+  if not sim.players[victimIndex].alive:
     return
   if attackerIndex == victimIndex:
     return
@@ -1148,7 +1152,7 @@ proc killPlayer*(
   killerSlot = -1,
   elimination = false,
   cause = ""
-) =
+): bool {.discardable.} =
   ## Applies a fatal hit: return any carried flag to its pedestal, decrement
   ## lives, start respawn. GV35: an `elimination` death (the team's heart was
   ## captured, so everyone folds with it) is a mechanical death only — no
@@ -1156,10 +1160,21 @@ proc killPlayer*(
   ## shot these players; the team lost. The endscreen's D column stays a
   ## record of combat deaths.
   if targetIndex < 0 or targetIndex >= sim.players.len:
-    return
+    return false
   if not sim.players[targetIndex].alive:
-    return
+    return false
   if not elimination:
+    if killerIndex >= 0 and killerIndex < sim.players.len and
+        killerIndex != targetIndex:
+      sim.recordKill(killerIndex)
+      sim.recordTeamKill(killerIndex, targetIndex)
+    elif killerSlot >= 0 and killerSlot != sim.eventSlot(targetIndex):
+      # A thrower may disconnect before an airborne grenade lands. Keep the
+      # stable reward-account kill without touching a different live player's
+      # hashed counter after roster compaction.
+      let accountIndex = sim.rewardAccountIndexForSlot(killerSlot)
+      if accountIndex >= 0:
+        inc sim.rewardAccounts[accountIndex].kills
     # An environmental death (cause text, no killer) logs its own line; a
     # combat death keeps the classic "killed by" attribution.
     if cause.len > 0:
@@ -1242,6 +1257,7 @@ proc killPlayer*(
       max(1, sim.config.respawnTicks)
     else:
       0
+  true
 
 proc absorbDamage*(sim: var SimServer, targetIndex: int, amount: int): int {.discardable.} =
   ## Applies damage to a player: the shield layer soaks hits before base hp.
@@ -1308,6 +1324,7 @@ proc weaponEventToken(sim: SimServer, tier: int): string =
 
 proc selectFistTarget(sim: SimServer, shooterIndex: int): int =
   ## Selects the nearest living opponent in the punch's short aim cone.
+  result = -1
   let shooter = sim.players[shooterIndex]
   let
     sx = shooter.x + CollisionW div 2
@@ -1324,9 +1341,12 @@ proc selectFistTarget(sim: SimServer, shooterIndex: int): int =
       distance = dx * dx + dy * dy
     if distance > FfaFistReach * FfaFistReach or distance >= bestDist:
       continue
-    let aimError = abs(
-      ((bradsOfVector(dx, dy) - shooter.aimBrads + 512) mod 1024) - 512
-    )
+    let
+      rawAimError = bradsOfVector(dx, dy) - shooter.aimBrads
+      normalizedAimError =
+        ((rawAimError mod AimBradsTurn) + AimBradsTurn) mod AimBradsTurn
+      aimError = min(
+        normalizedAimError, AimBradsTurn - normalizedAimError)
     if aimError >
         FfaFistAimHalfBrads:
       continue
@@ -1379,13 +1399,11 @@ proc tryFist*(sim: var SimServer, shooterIndex: int) =
       tx - (shooter.x + CollisionW div 2), ty - (shooter.y + CollisionH div 2))
   )
   if sim.players[targetIndex].hp <= 0:
-    sim.killPlayer(targetIndex, shooterIndex)
-    sim.recordKill(shooterIndex)
-    sim.recordTeamKill(shooterIndex, targetIndex)
-    sim.emitEvent(
-      Kill, source = shooterIndex, target = targetIndex, weapon = "fist",
-      amount = damage, x = float(tx), y = float(ty)
-    )
+    if sim.killPlayer(targetIndex, shooterIndex):
+      sim.emitEvent(
+        Kill, source = shooterIndex, target = targetIndex, weapon = "fist",
+        amount = damage, x = float(tx), y = float(ty)
+      )
 
 proc canFireArc*(sim: SimServer, attackerIndex: int): bool =
   ## Returns whether one player can fire an immediate spray burst.
@@ -1565,10 +1583,7 @@ proc resolveActiveArcCones*(sim: var SimServer) =
         amount: sprayDamage, color: sim.players[victimIndex].color
       )
       if sim.players[victimIndex].hp <= 0:
-        sim.killPlayer(victimIndex, arcFire.attacker)
-        if victimIndex != arcFire.attacker:
-          sim.recordKill(arcFire.attacker)
-          sim.recordTeamKill(arcFire.attacker, victimIndex)
+        if sim.killPlayer(victimIndex, arcFire.attacker):
           sim.emitEvent(
             Kill, source = arcFire.attacker, target = victimIndex,
             weapon = "spray", amount = sprayDamage, x = vx, y = vy
@@ -1924,16 +1939,14 @@ proc applyFire(sim: var SimServer, shot: PendingGunShot) =
       color: sim.players[targetIndex].color
     )
     if sim.players[targetIndex].hp <= 0:
-      sim.killPlayer(targetIndex, shooterIndex)
-      sim.recordKill(shooterIndex)
-      sim.recordTeamKill(shooterIndex, targetIndex)
-      sim.emitEvent(
-        Kill, source = shooterIndex, target = targetIndex,
-        weapon = sim.weaponEventToken(shot.weaponTier),
-        amount = damage,
-        x = float(sim.players[targetIndex].x + CollisionW div 2),
-        y = float(sim.players[targetIndex].y + CollisionH div 2)
-      )
+      if sim.killPlayer(targetIndex, shooterIndex):
+        sim.emitEvent(
+          Kill, source = shooterIndex, target = targetIndex,
+          weapon = sim.weaponEventToken(shot.weaponTier),
+          amount = damage,
+          x = float(sim.players[targetIndex].x + CollisionW div 2),
+          y = float(sim.players[targetIndex].y + CollisionH div 2)
+        )
     else:
       if not bubbleUp:
         # A non-fatal hit leaves a small, short-lived paint spark in the
@@ -2174,7 +2187,6 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
   # In FFA the splat belongs to the thrower, while CTF retains its historical
   # team-colored blast pool.
   let
-    legacyThrowerIndex = sim.legacyGrenadeThrowerIndex(grenade)
     throwerSlot = sim.grenadeThrowerSlot(grenade)
     throwerIndex = sim.playerIndexForSlot(throwerSlot)
     # An environment shell (grenade barrage, throwerSlot -1) has no owning
@@ -2287,21 +2299,14 @@ proc explodeGrenade(sim: var SimServer, grenade: AirborneGrenade) =
     if sim.players[i].hp <= 0:
       # An environment shell logs its own death line instead of the combat
       # "killed by" attribution (there is nobody to credit).
-      sim.killPlayer(
+      let killed = sim.killPlayer(
         i, throwerIndex, throwerSlot,
         cause = (if throwerSlot < 0: "shelled by the grenade barrage" else: "")
       )
-      if throwerSlot >= 0 and throwerSlot != sim.eventSlot(i):
-        if grenade.throwerAccount >= 0 and
-            grenade.throwerAccount < sim.rewardAccounts.len:
-          inc sim.rewardAccounts[grenade.throwerAccount].kills
-        if legacyThrowerIndex >= 0 and legacyThrowerIndex != i:
-          # Preserve the exact GV24 hash even if compaction made this legacy
-          # live index point at a different player. Results and events above
-          # use the immutable thrower identity.
-          inc sim.players[legacyThrowerIndex].kills
-        if throwerIndex >= 0 and throwerIndex != i:
-          sim.recordTeamKill(throwerIndex, i)
+      if killed and throwerSlot >= 0 and throwerSlot != sim.eventSlot(i):
+        # Kill credit follows the immutable thrower slot through killPlayer,
+        # rather than the legacy live index, so compaction cannot misattribute
+        # the reward account or player counter.
         sim.emitEvent(
           Kill, source = throwerIndex, target = i, weapon = "grenade",
           amount = dmg, x = float(px), y = float(py),
@@ -3250,7 +3255,7 @@ proc eliminateTeam(sim: var SimServer, team: Team, killerIndex: int) =
     sim.players[i].lives = 0
     sim.players[i].respawnTimer = 0
     if sim.players[i].alive:
-      sim.killPlayer(i, killerIndex, elimination = true)
+      discard sim.killPlayer(i, killerIndex, elimination = true)
 
 proc updatePuddles*(sim: var SimServer) =
   ## One tick of the paint-puddle hazard: every full second (PuddleRollTicks
@@ -3299,7 +3304,7 @@ proc updatePuddles*(sim: var SimServer) =
       color: sim.players[i].color
     )
     if sim.players[i].hp <= 0:
-      sim.killPlayer(i, -1, cause = "dissolved in a paint puddle")
+      discard sim.killPlayer(i, -1, cause = "dissolved in a paint puddle")
 
 proc launchBarrageShell(sim: var SimServer) =
   ## Launches one environment grenade: the landing point is drawn from the
@@ -3418,7 +3423,7 @@ proc updateFfaRing*(sim: var SimServer) =
     if sim.players[i].hp > 0:
       sim.players[i].paintHitTick = sim.tickCount
     else:
-      sim.killPlayer(i, -1, cause = "left the safe zone")
+      discard sim.killPlayer(i, -1, cause = "left the safe zone")
 
 proc ffaPlacements*(sim: SimServer): seq[int] =
   ## The ffa finishing order, best first, as player indices. A TOTAL order by

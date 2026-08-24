@@ -457,13 +457,11 @@ proc ffaScoreJson(sim: SimServer): JsonNode =
   ## kills plus the assist split. So the components always sum to `sc` exactly,
   ## and podium stays 0 until the game is over.
   ##
-  ## Combat is ONE component rather than a kills/assists split on purpose. A
-  ## kills component would have to be `kills * killPoints`, and `player.kills`
-  ## is not reconcilable against `reward` today: a punch that finds no target
-  ## credits a kill against seat 0 without paying for it
-  ## (https://github.com/Metta-AI/coworld-battle-royale/issues/13), which drives
-  ## an assists-as-remainder NEGATIVE on the affected seat. `k` still ships as
-  ## the sim's raw counter, as a stat rather than as money.
+  ## Combat is ONE component rather than a kills/assists split on purpose.
+  ## Kill points and the assist split are both paid on death, and integer
+  ## division in the assist split can leave a remainder; a raw split would
+  ## therefore not be a faithful accounting of `cb`. `k` still ships as the
+  ## sim's raw counter, as a stat rather than as money.
   var
     seats = newJArray()
     ranks = newSeq[int](sim.players.len)
