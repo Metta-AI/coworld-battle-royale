@@ -29,8 +29,13 @@
 ## episode even though players join during the lobby. `carrier` is a SEAT in
 ## that same space (-1 when the flag is home), not a sim player index.
 ##
+## `--results <path>` writes the final `playerResultsJson` (names, scores,
+## kills, survivalTicks, placementSlots, winnerSlot) as one JSON object. The
+## summary row cannot carry it: that row comes from the serializer the live
+## server shares, and results are a tier-1 snapshot, not an event.
+##
 ## Usage: nim r tools/extract_events.nim [replay-path] [--out <path>]
-##                                       [--frames <path>]
+##                                       [--frames <path>] [--results <path>]
 
 import
   std/[json, os, strutils],
@@ -49,7 +54,7 @@ type
 const
   UsageText =
     "Usage: nim r tools/extract_events.nim [replay-path] [--out <path>] " &
-      "[--frames <path>]"
+      "[--frames <path>] [--results <path>]"
   FramesMagic = "CTFFRM02"
   SeatRecordBytes = 11
   DefaultReplayPath = GameDir / "tests" / "replays" / "ctf.bitreplay"
@@ -58,10 +63,12 @@ proc fail(message: string) =
   ## Raises one extraction failure.
   raise newException(ExtractEventsError, message)
 
-proc parseArgs(): tuple[replayPath, outPath, framesPath: string] {.used.} =
-  ## Returns the replay path and the --out / --frames paths.
+proc parseArgs(): tuple[
+    replayPath, outPath, framesPath, resultsPath: string] {.used.} =
+  ## Returns the replay path and the --out / --frames / --results paths.
   result.outPath = ""
   result.framesPath = ""
+  result.resultsPath = ""
   var
     paths: seq[string]
     params = commandLineParams()
@@ -73,15 +80,15 @@ proc parseArgs(): tuple[replayPath, outPath, framesPath: string] {.used.} =
     elif arg in ["--help", "-h"]:
       echo UsageText
       quit(0)
-    elif arg in ["--out", "--frames"]:
+    elif arg in ["--out", "--frames", "--results"]:
       if i + 1 >= params.len:
         fail(arg & " requires a path.\n" & UsageText)
       let flag = arg
       inc i
-      if flag == "--out":
-        result.outPath = params[i].absolutePath()
-      else:
-        result.framesPath = params[i].absolutePath()
+      case flag
+      of "--out": result.outPath = params[i].absolutePath()
+      of "--frames": result.framesPath = params[i].absolutePath()
+      else: result.resultsPath = params[i].absolutePath()
     elif arg.startsWith("--"):
       fail("Unknown option: " & arg & "\n" & UsageText)
     else:
@@ -327,10 +334,13 @@ proc extractEvents*(data: ReplayData, captureFrames = false): ExtractResult =
     setCurrentDir(previousDir)
 
 proc extractEventsJsonl*(
-    data: ReplayData, framesOut: var string, captureFrames = false
+    data: ReplayData, framesOut, resultsOut: var string, captureFrames = false
 ): string =
   ## Returns the full JSON-lines extraction: one row per event plus a final
-  ## summary object. Captured frames, if any, come back through `framesOut`.
+  ## summary object. Captured frames, if any, come back through `framesOut`,
+  ## and the final `playerResultsJson` through `resultsOut` — the placement,
+  ## kills and survival ticks a loot-economy read needs, which the summary row
+  ## deliberately does not carry (it is the live server's shared serializer).
   ##
   ## The summary carries the ROSTER and the OUTCOME on top of the shared four
   ## keys, so a scan of the JSONL alone can attribute every event to a league
@@ -338,6 +348,7 @@ proc extractEventsJsonl*(
   ## inferring an entrant from its seat index.
   let extraction = extractEvents(data, captureFrames)
   framesOut = extraction.frames
+  resultsOut = extraction.resultsJson
   var roster = newJObject()
   roster["finished"] = %extraction.finished
   roster["draw"] = %extraction.isDraw
@@ -348,30 +359,44 @@ proc extractEventsJsonl*(
   roster["slot_shots_hit"] = %extraction.slotShotsHit
   extraction.events.eventsJsonl(extraction.ticks, roster)
 
+proc extractEventsJsonl*(
+    data: ReplayData, framesOut: var string, captureFrames = false
+): string =
+  ## Frames overload: the shape callers that do not read results use.
+  var discardedResults: string
+  extractEventsJsonl(data, framesOut, discardedResults, captureFrames)
+
 proc extractEventsJsonl*(data: ReplayData): string =
   ## Event-stream-only overload: the shape every existing caller uses.
   var discarded: string
   extractEventsJsonl(data, discarded)
 
-proc runExtract(replayPath, outPath, framesPath: string) {.used.} =
-  ## Extracts one replay's event stream to stdout or --out, and its per-tick
-  ## seat state to --frames when asked.
+proc runExtract(
+    replayPath, outPath, framesPath, resultsPath: string
+) {.used.} =
+  ## Extracts one replay's event stream to stdout or --out, its per-tick seat
+  ## state to --frames, and the final results payload to --results when asked.
   if not fileExists(replayPath):
     fail("Replay file does not exist: " & replayPath)
-  var frames: string
-  let output =
-    extractEventsJsonl(loadReplay(replayPath), frames, framesPath.len > 0)
+  var
+    frames: string
+    results: string
+  let output = extractEventsJsonl(
+    loadReplay(replayPath), frames, results, framesPath.len > 0)
   if outPath.len > 0:
     writeFile(outPath, output)
   else:
     stdout.write(output)
   if framesPath.len > 0:
     writeFile(framesPath, frames)
+  if resultsPath.len > 0:
+    writeFile(resultsPath, results & "\n")
 
 when isMainModule:
   try:
-    let (replayPath, outPath, framesPath) = parseArgs()
-    runExtract(replayPath, outPath, framesPath)
+    let args = parseArgs()
+    runExtract(
+      args.replayPath, args.outPath, args.framesPath, args.resultsPath)
   except ExtractEventsError as e:
     stderr.writeLine("extract_events failed: " & e.msg)
     quit(1)

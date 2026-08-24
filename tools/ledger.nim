@@ -66,6 +66,7 @@ type
     hp*: int
     blocked*: int
     x*, y*: float
+    distance*: float           ## shot_impact: pixels the shot travelled.
     item*: string
     content*: string
 
@@ -135,6 +136,7 @@ proc readRow(node: JsonNode): LedgerRow =
     blocked: num("blocked"),
     x: real("x"),
     y: real("y"),
+    distance: real("distance"),
     item: text("item"),
     content: text("content")
   )

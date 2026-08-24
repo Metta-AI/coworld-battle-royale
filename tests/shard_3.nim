@@ -9,6 +9,7 @@ import
   test_fast_mode,
   test_ffa,
   test_first_person_pip,
+  test_loot_economy,
   test_lull_spans,
   test_mapgen,
   test_player_collision,
