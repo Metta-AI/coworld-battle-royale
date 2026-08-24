@@ -52,6 +52,7 @@ type
     tierGain*: bool
     gainTick*: int
     gainDistPx*: float
+    gainAtCorpse*: bool
     gainOrigin*: string
 
   LedgerRow* = object
@@ -418,7 +419,6 @@ proc lootOutcomes*(
             gainDist = hypot(dx, dy)
             break
         break
-    discard radiusPx
     result.add(LootOutcome(
       tick: kill.tick,
       killer: kill.source,
@@ -430,5 +430,6 @@ proc lootOutcomes*(
       tierGain: after > before,
       gainTick: gainTick,
       gainDistPx: gainDist,
+      gainAtCorpse: gainDist >= 0.0 and gainDist <= radiusPx,
       gainOrigin: gainOrigin
     ))
