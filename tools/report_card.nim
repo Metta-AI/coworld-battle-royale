@@ -174,7 +174,7 @@ proc deathSection(log: Ledger, seat: int): string =
     let
       cause =
         if row.target >= 0: &"killed by {log.seatLabel(row.target)}"
-        else: "killed by the environment (ring / out of bounds)"
+        else: "killed by the environment (ring / isolation / other hazard)"
       withWeapon = if weapon.len > 0: &" with **{weapon}**" else: ""
       holding = log.weaponAt(seat, row.tick)
       note =

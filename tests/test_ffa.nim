@@ -48,6 +48,12 @@ suite "ffa config":
     check config.assistPoints == FfaAssistPoints
     check config.assistWindowTicks == FfaAssistWindowTicks
     check config.podiumPoints == @FfaPodiumPoints
+    check config.ringDamageRampTicks == FfaRingDamageRampTicks
+    check config.ringDamageMax == FfaRingDamageMax
+    check config.passivityRadius == FfaPassivityRadius
+    check config.passivityGraceTicks == FfaPassivityGraceTicks
+    check config.passivityDamageTicks == FfaPassivityDamageTicks
+    check config.passivityRecoveryTicks == FfaPassivityRecoveryTicks
     check config.ringShrinkSec == FfaRingShrinkSec
     check config.ringFloorAreaPct == FfaRingFloorAreaPct
     check config.ringRecoveryTicks == FfaRingRecoveryTicks
@@ -89,7 +95,10 @@ suite "ffa config":
         "ffaSprayDamage", "ffaGrenadeDamage",
         "ffaGrenadeTrenchSplashDamage", "ffaMedKitSpawns",
         "ffaLootCount", "ffaLootRadius", "ffaLootRespawnTicks",
-        "ffaLowGunSpawns", "ffaMidGunSpawns", "ffaHeavyGunSpawns"]:
+        "ffaLowGunSpawns", "ffaMidGunSpawns", "ffaHeavyGunSpawns",
+        "ringDamageRampTicks", "ringDamageMax", "passivityRadius",
+        "passivityGraceTicks", "passivityDamageTicks",
+        "passivityRecoveryTicks"]:
       check not echoed.hasKey(key)
 
   test "ffa weapon tiers have distinct deterministic stats":
@@ -120,6 +129,12 @@ suite "ffa config":
     config.ffaLootRadius = 120
     config.ffaLootRespawnTicks = 96
     config.ffaLowGunSpawns = 5
+    config.ringDamageRampTicks = 12
+    config.ringDamageMax = 4
+    config.passivityRadius = 80
+    config.passivityGraceTicks = 20
+    config.passivityDamageTicks = 7
+    config.passivityRecoveryTicks = 3
     var reloaded = defaultGameConfig()
     reloaded.update(config.configJson())
     check reloaded.mode == FfaMode
@@ -136,6 +151,12 @@ suite "ffa config":
     check reloaded.ffaLootCount == 8
     check reloaded.ffaLootRadius == 120
     check reloaded.ffaLootRespawnTicks == 96
+    check reloaded.ringDamageRampTicks == 12
+    check reloaded.ringDamageMax == 4
+    check reloaded.passivityRadius == 80
+    check reloaded.passivityGraceTicks == 20
+    check reloaded.passivityDamageTicks == 7
+    check reloaded.passivityRecoveryTicks == 3
 
   test "ctf retains the original combat economy defaults":
     let config = defaultGameConfig()
@@ -519,6 +540,161 @@ suite "ffa elimination":
     game.players[0].ringTicks = 5
     game.updateFfaRing()
     check game.players[0].ringTicks == 5 - FfaRingRecoveryTicks
+
+  test "default ring damage stays exactly one hp over repeated cycles":
+    var game = ffaGame(2)
+    game.config.ringShrinkSec = 1
+    game.config.ringDamageTicks = 3
+    game.collectEvents = true
+    game.players[0].placeAtCenter(20, 20)
+    game.tickCount = TargetFps
+    let beforeHp = game.players[0].hp
+    for _ in 0 ..< 9:
+      game.updateFfaRing()
+    check game.players[0].hp == beforeHp - 3
+    var amounts: seq[int]
+    for event in game.events:
+      if event.kind == Damage and event.weapon == "ring" and event.target == 0:
+        amounts.add event.amount
+    check amounts == @[1, 1, 1]
+
+  test "ring damage ramps by exposure and stops at the configured cap":
+    var game = ffaGame(2)
+    game.config.ringShrinkSec = 1
+    game.config.ringDamageTicks = 2
+    game.config.ringDamageRampTicks = 3
+    game.config.ringDamageMax = 3
+    game.collectEvents = true
+    game.players[0].placeAtCenter(20, 20)
+    game.tickCount = TargetFps
+    let beforeHp = game.players[0].hp
+    var lost = 0
+    for _ in 0 ..< 8:
+      game.updateFfaRing()
+    check game.players[0].hp == beforeHp - (1 + 2 + 3 + 3)
+    var amounts: seq[int]
+    for event in game.events:
+      if event.kind == Damage and event.weapon == "ring" and event.target == 0:
+        amounts.add event.amount
+        lost += event.amount
+        check beforeHp - event.hp == lost
+    check amounts == @[1, 2, 3, 3]
+
+  test "ring exposure escalation decays only inside the safe zone":
+    var game = ffaGame(2)
+    game.config.ringShrinkSec = 1
+    game.config.ringDamageRampTicks = 4
+    game.config.ringDamageMax = 10
+    game.config.ringRecoveryTicks = 2
+    game.players[0].ringTicks = 8
+    let center = ffaRingCenter()
+    game.players[0].placeAtCenter(center.x, center.y)
+    game.updateFfaRing()
+    check game.players[0].ringTicks == 6
+    game.recordFfaDamage(0, 1, 1)
+    check game.players[0].ringTicks == 6
+
+  test "proximity passivity fires after grace and recovers inside":
+    var game = ffaGame(2)
+    game.config.ringEnabled = false
+    game.config.passivityRadius = 100
+    game.config.passivityGraceTicks = 2
+    game.config.passivityDamageTicks = 3
+    game.config.passivityRecoveryTicks = 1
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(600, MapHeight div 2)
+    for _ in 0 ..< 5:
+      game.updateFfaPassivity()
+    check game.players[0].passivityTicks == 5
+    check game.players[0].hp == FfaHitPoints - 1
+    game.players[1].placeAtCenter(350, MapHeight div 2)
+    game.updateFfaPassivity()
+    game.updateFfaPassivity()
+    check game.players[0].passivityTicks == 3
+    check game.players[0].hp == FfaHitPoints - 1
+    game.killPlayer(1, -1)
+    game.players[0].passivityTicks = 0
+    game.updateFfaPassivity()
+    check game.players[0].passivityTicks == 0
+
+  test "passivity cannot be reset by offensive damage":
+    var game = ffaGame(2)
+    game.config.ringEnabled = false
+    game.config.passivityRadius = 10
+    game.config.passivityGraceTicks = 0
+    game.config.passivityDamageTicks = 2
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(350, MapHeight div 2)
+    game.players[0].aimBrads = 0
+    game.updateFfaPassivity()
+    check game.players[0].passivityTicks == 1
+    let beforeDamage = game.players[0].damageDealt
+    game.tryFire(0)
+    check game.players[1].hp == FfaHitPoints - FfaFistDamage
+    check game.players[0].damageDealt == beforeDamage + FfaFistDamage
+    game.updateFfaPassivity()
+    check game.players[0].passivityTicks == 2
+    check game.players[0].hp == FfaHitPoints - 1
+
+  test "isolation deaths are environmental and distinguishable":
+    var game = ffaGame(2)
+    game.config.ringEnabled = false
+    game.config.passivityRadius = 10
+    game.config.passivityGraceTicks = 0
+    game.config.passivityDamageTicks = 1
+    game.players[0].hp = 1
+    game.players[0].placeAtCenter(300, MapHeight div 2)
+    game.players[1].placeAtCenter(600, MapHeight div 2)
+    game.collectEvents = true
+    let account = game.rewardAccountForPlayer(1)
+    game.updateFfaPassivity()
+    check not game.players[0].alive
+    check game.players[1].kills == 0
+    check game.rewardAccounts[account].kills == 0
+    var isolationDeaths = 0
+    for event in game.events:
+      if event.kind == Death and event.source == game.players[0].joinOrder:
+        inc isolationDeaths
+        check event.weapon == "isolation"
+    check isolationDeaths == 1
+
+  test "default passivity is inert and touches no state":
+    var game = ffaGame(2)
+    let
+      beforeHash = game.gameHash()
+      beforeHp = game.players.mapIt(it.hp)
+      beforeTicks = game.players.mapIt(it.passivityTicks)
+    game.updateFfaPassivity()
+    check game.gameHash() == beforeHash
+    check game.players.mapIt(it.hp) == beforeHp
+    check game.players.mapIt(it.passivityTicks) == beforeTicks
+
+  test "ctf ignores all ffa anti-passivity fields":
+    var aggressiveConfig = defaultGameConfig()
+    aggressiveConfig.update("""{
+      "mode": "ctf",
+      "ringDamageRampTicks": 1,
+      "ringDamageMax": 20,
+      "passivityRadius": 1,
+      "passivityGraceTicks": 0,
+      "passivityDamageTicks": 1,
+      "passivityRecoveryTicks": 0
+    }""")
+    var
+      plain = initCtfForTest(defaultGameConfig())
+      aggressive = initCtfForTest(aggressiveConfig)
+    for i in 0 ..< 2:
+      discard plain.addPlayer("plain" & $i)
+      discard aggressive.addPlayer("aggressive" & $i)
+    plain.startGame()
+    aggressive.startGame()
+    let input = plain.none()
+    for _ in 0 ..< 10:
+      plain.step(input, input)
+      aggressive.step(input, input)
+      check aggressive.players.mapIt(it.hp) == plain.players.mapIt(it.hp)
+      check aggressive.players.mapIt(it.passivityTicks) ==
+        plain.players.mapIt(it.passivityTicks)
 
   test "one life over a 20 hp pool, and no respawn ever rearms":
     var game = ffaGame(4)
