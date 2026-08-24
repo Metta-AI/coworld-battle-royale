@@ -8,6 +8,7 @@ import
   test_corpse_label,
   test_extract_events,
   test_ffa_scorebug,
+  test_ffa_pact_cue,
   test_grenades,
   test_handicaps,
   test_identity_badges,

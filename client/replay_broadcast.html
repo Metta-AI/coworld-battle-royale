@@ -481,6 +481,17 @@ html, body {
   opacity: 0.26;
 }
 .ffa-lamp.pov { box-shadow: 0 0 0 calc(1.5 * var(--u)) var(--paper); }
+.ffa-lamp.pact {
+  outline: calc(1 * var(--u)) dotted var(--ghost);
+  outline-offset: calc(1 * var(--u));
+}
+.ffa-lamp.pact-break {
+  animation: pactbreak 400ms steps(2) both;
+}
+@keyframes pactbreak {
+  0%, 49.999% { outline: calc(2 * var(--u)) solid var(--amber); outline-offset: calc(1 * var(--u)); }
+  50%, 100% { outline: none; outline-offset: 0; }
+}
 .ffa-lamp.hit::after {
   content: '';
   position: absolute;
@@ -549,6 +560,17 @@ html, body {
   flex: none;
   min-width: calc(26 * var(--u));
   text-align: right;
+}
+.ffa-lead .pact-chip {
+  font-family: var(--finefont);
+  font-size: calc(7 * var(--u));
+  letter-spacing: 0.08em;
+  color: var(--ghost);
+  border: calc(1 * var(--u)) dotted var(--ghost);
+  padding: calc(1 * var(--u)) calc(3 * var(--u));
+  line-height: 1;
+  white-space: nowrap;
+  flex: none;
 }
 .ffa-lead.dead .pname, .ffa-lead.dead .score { opacity: 0.45; }
 .ffa-lead.crown .rank { color: var(--amber); }
@@ -689,6 +711,26 @@ body.ffa .feed-row { animation-name: feedin-l, feedflash; }
    (RING / PUDDLE / BARRAGE), and the whole row sits dimmer than kill rows so
    arena deaths never outshout player kills. */
 .feed-row.env { opacity: 0.78; }
+.feed-row.pact-row {
+  opacity: 0.68;
+  border-left: calc(2 * var(--u)) dotted var(--ghost);
+  padding-left: calc(5 * var(--u));
+  animation: feedin 250ms cubic-bezier(.2,1.3,.5,1);
+}
+body.ffa .feed-row.pact-row { animation-name: feedin-l; }
+.feed-row.pact-row .pact-marker {
+  color: var(--ghost);
+  font-family: var(--finefont);
+  font-size: calc(9 * var(--u));
+  letter-spacing: 0.1em;
+}
+.feed-row.pact-row .pact-glyph {
+  color: var(--ghost);
+  font-size: calc(12 * var(--u));
+}
+.feed-row.pact-row.broken {
+  opacity: 0.58;
+}
 .feed-row .hazard {
   font-family: var(--finefont);
   font-size: calc(9 * var(--u));
@@ -2446,7 +2488,10 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     // the boost as a seek.
     var stride = (s.ff || lastFf) ? Math.min((s.sp || 1) * 8, 64) : (s.sp || 1);
     var jumped = (s.t < lastTick) || (lastTick >= 0 && s.t - lastTick > stride * 4 + 2);
-    if (jumped) { clearFeed(); clearBanners(); lastSeatPositions = {}; }
+    if (jumped) {
+      clearFeed(); clearBanners(); clearFfaPacts(); lastSeatPositions = {};
+    }
+    if (!s.ffa) clearFfaPacts();
     lastFf = !!s.ff;
 
     // The follow readout names a seat from the roster, which only this frame
@@ -2705,6 +2750,79 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
   // order — so this code formats, it never computes a score.
   var FfaLeadRows = 3;
   var ffaBuilt = false;
+  var ffaPacts = {};
+  var nextFfaPactMarker = 1;
+  function pactKey(a, b) {
+    return (a < b ? a : b) + ':' + (a < b ? b : a);
+  }
+  function pactEntry(a, b) {
+    return ffaPacts[pactKey(a, b)] || null;
+  }
+  function pactEntriesForSlot(slot) {
+    var result = [];
+    Object.keys(ffaPacts).forEach(function (key) {
+      var pact = ffaPacts[key];
+      if (pact.a === slot || pact.b === slot) result.push(pact);
+    });
+    result.sort(function (a, b) { return a.marker - b.marker; });
+    return result;
+  }
+  function pactSeconds(pact) {
+    var seconds = (pact.windowTicks || 0) / FPS;
+    return Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1);
+  }
+  function pactTitle(pact, s) {
+    return "Broadcast's inference from damage in the last " + pactSeconds(pact) +
+      ' seconds; not a declared team. ' +
+      shortName(rosterName(s, pact.a)) + ' and ' +
+      shortName(rosterName(s, pact.b));
+  }
+  function clearFfaPacts() {
+    ffaPacts = {};
+    nextFfaPactMarker = 1;
+    var lamps = $('ffa-lamps');
+    if (lamps && lamps._lamps) {
+      Object.keys(lamps._lamps).forEach(function (slot) {
+        lamps._lamps[slot].classList.remove('pact', 'pact-break');
+        lamps._lamps[slot].title = shortName(rosterName(lastState, Number(slot)));
+      });
+    }
+    for (var i = 0; i < FfaLeadRows; i++) {
+      var row = $('ffa-lead-' + i);
+      if (row) {
+        var chip = row.querySelector('.pact-chip');
+        if (chip) { chip.textContent = ''; chip.style.display = 'none'; }
+      }
+    }
+  }
+  function syncFfaPactChrome(s) {
+    var lamps = $('ffa-lamps');
+    if (lamps && lamps._lamps) {
+      Object.keys(lamps._lamps).forEach(function (slot) {
+        var lamp = lamps._lamps[slot];
+        var pacts = pactEntriesForSlot(Number(slot));
+        lamp.classList.toggle('pact', pacts.length > 0);
+        lamp.title = pacts.length
+          ? pacts.map(function (pact) { return pactTitle(pact, s); }).join(' · ')
+          : shortName(rosterName(s, Number(slot)));
+      });
+    }
+    for (var i = 0; i < FfaLeadRows; i++) {
+      var row = $('ffa-lead-' + i);
+      if (!row || row.style.display === 'none') continue;
+      var seat = row._seat;
+      var chip = row.querySelector('.pact-chip');
+      if (!chip) continue;
+      var pacts = pactEntriesForSlot(seat);
+      chip.textContent = pacts.map(function (pact) {
+        return 'P' + pact.marker;
+      }).join(' ');
+      chip.style.display = pacts.length ? '' : 'none';
+      chip.title = pacts.length
+        ? pacts.map(function (pact) { return pactTitle(pact, s); }).join(' · ')
+        : '';
+    }
+  }
   function ensureFfaScorebug() {
     if (ffaBuilt) return;
     ffaBuilt = true;
@@ -2727,6 +2845,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
         '<div class="ffa-lead" id="ffa-lead-' + i + '" style="display:none">' +
         '<span class="rank"></span>' +
         '<span class="pname"></span>' +
+        '<span class="pact-chip" style="display:none"></span>' +
         '<span class="score">0</span>' +
         '<span class="margin"></span>' +
         '</div>';
@@ -2778,6 +2897,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       lamp.classList.toggle('out', !seat.alive);
       lamp.classList.toggle('pov', s.pov === seat.s);
     });
+    syncFfaPactChrome(s);
   }
 
   function renderFfaDamageCue(e, s) {
@@ -2808,6 +2928,74 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     setTimeout(function () {
       if (lamp._hitToken === token) lamp.classList.remove('hit');
     }, 380);
+  }
+
+  function pactFeedRow(pact, s, broken) {
+    var row = document.createElement('div');
+    row.className = 'feed-row pact-row' + (broken ? ' broken' : '');
+    row.innerHTML =
+      '<span class="pact-marker">P' + pact.marker + '</span>' +
+      ffaName(s, pact.a) +
+      '<span class="pact-glyph">⋯</span>' +
+      ffaName(s, pact.b) +
+      (pact.v == null ? '' :
+        '<span class="pact-glyph">⋯</span>' + ffaName(s, pact.v)) +
+      (broken ? '<span class="pact-glyph">×</span><span class="hazard">broken</span>' : '');
+    row.title = pactTitle(pact, s);
+    return row;
+  }
+
+  function onPact(e, s) {
+    if (!s.ffa || e.a == null || e.b == null || e.v == null) return;
+    var a = Math.min(e.a, e.b), b = Math.max(e.a, e.b);
+    var pact = {
+      a: a, b: b, v: e.v,
+      windowTicks: e.w || 0,
+      marker: nextFfaPactMarker++
+    };
+    ffaPacts[pactKey(a, b)] = pact;
+    syncFfaPactChrome(s);
+    pushFeed(pactFeedRow(pact, s, false));
+  }
+
+  function onPactFocus(e, s) {
+    if (!s.ffa || e.a == null || e.b == null || e.v == null) return;
+    var pact = pactEntry(e.a, e.b);
+    if (!pact) return;
+    pact.v = e.v;
+    syncFfaPactChrome(s);
+    pushFeed(pactFeedRow(pact, s, false));
+  }
+
+  function flashPactBreak(slot) {
+    var lamps = $('ffa-lamps');
+    var lamp = lamps && lamps._lamps ? lamps._lamps[slot] : null;
+    if (!lamp) return;
+    lamp.classList.remove('pact-break');
+    void lamp.offsetWidth;
+    lamp.classList.add('pact-break');
+    var token = (lamp._pactBreakToken || 0) + 1;
+    lamp._pactBreakToken = token;
+    setTimeout(function () {
+      if (lamp._pactBreakToken === token) lamp.classList.remove('pact-break');
+    }, 400);
+  }
+
+  function onPactBreak(e, s) {
+    if (!s.ffa || e.a == null || e.b == null) return;
+    var pact = pactEntry(e.a, e.b);
+    if (!pact) return;
+    pushFeed(pactFeedRow(pact, s, true));
+    flashPactBreak(pact.a);
+    flashPactBreak(pact.b);
+    delete ffaPacts[pactKey(e.a, e.b)];
+    syncFfaPactChrome(s);
+  }
+
+  function onPactEnd(e, s) {
+    if (!s.ffa || e.a == null || e.b == null) return;
+    delete ffaPacts[pactKey(e.a, e.b)];
+    syncFfaPactChrome(s);
   }
 
   function renderFfaLead(s, row, seat, runnerUp) {
@@ -2848,6 +3036,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
     row.querySelector('.margin').textContent = margin;
     row.classList.toggle('crown', seat.rank === 1);
     row.classList.toggle('dead', !seat.alive);
+    row._seat = seat.s;
     // The component split is the honesty receipt: hover reads the exact
     // survival/combat/podium breakdown the server sent (combat = credited
     // kills + assist splits; the server explains why those two are one number).
@@ -2855,6 +3044,12 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       seat.sv + ' survival + ' + seat.cb + ' combat' +
       (seat.pd ? ' + ' + seat.pd + ' podium' : '') +
       ', ' + seat.k + ' kills, ' + seat.dmg + ' damage';
+    var pacts = pactEntriesForSlot(seat.s);
+    if (pacts.length) {
+      row.title += ' · ' + pacts.map(function (pact) {
+        return pactTitle(pact, s);
+      }).join(' · ');
+    }
     row.onclick = function () { togglePov(seat.s); };
   }
 
@@ -2897,6 +3092,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       renderFfaLead(s, row, ranked[i], ranked[1]);
     }
     renderZoneCue(s);
+    syncFfaPactChrome(s);
   }
 
   function renderScorebug(s) {
@@ -4109,6 +4305,10 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
         beatPulse();
         break;
       case 'damage': renderFfaDamageCue(e, s); break;
+      case 'pact': onPact(e, s); break;
+      case 'pactfocus': onPactFocus(e, s); break;
+      case 'pactbreak': onPactBreak(e, s); break;
+      case 'pactend': onPactEnd(e, s); break;
       case 'steal': onSteal(e, s); markBeat(e.t, 'steal', e.flag); beatPulse(); break;
       case 'return': onReturn(e, s); markBeat(e.t, 'return', e.flag); beatPulse(); break;
       case 'capture': recordCapHeart(e); onCapture(e, s); markBeat(e.t, 'capture', captureTeam(s, e)); beatPulse(); break;
