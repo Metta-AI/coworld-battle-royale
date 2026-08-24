@@ -207,6 +207,17 @@ proc liveSpeedIndex(config: GameConfig): int =
       return i
   0
 
+proc pactWindowOverride(): int =
+  let raw = getEnv("COGAME_PACT_WINDOW_TICKS")
+  if raw.len == 0:
+    return DefaultPactWindowTicks
+  try:
+    result = parseInt(raw)
+  except CatchableError:
+    return DefaultPactWindowTicks
+  if result <= 0:
+    result = DefaultPactWindowTicks
+
 proc isWebSocketUpgrade(request: Request): bool =
   ## Returns true when the GET request is a websocket upgrade.
   request.headers["Sec-WebSocket-Key"].len > 0
@@ -1388,6 +1399,8 @@ proc runServerLoop*(
     broadcastTracker =
       if replayLoaded: move(initializedReplay.tracker)
       else: initBroadcastTracker()
+  let pactWindowTicks = pactWindowOverride()
+  broadcastTracker.setPactWindowTicks(pactWindowTicks)
 
   while true:
     var
@@ -1443,6 +1456,7 @@ proc runServerLoop*(
           sim.collectEvents = true
         replayPlayer = move(initializedReplay.player)
         broadcastTracker = move(initializedReplay.tracker)
+        broadcastTracker.setPactWindowTicks(pactWindowTicks)
         replayLoaded = true
         # The switched-in sim carries a new map, but the board render caches
         # are process-wide — without this, addMapBands keeps splicing the OLD
