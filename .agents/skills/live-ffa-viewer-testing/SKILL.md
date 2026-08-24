@@ -175,8 +175,19 @@ env -u CTF_BOT_FFA_DOCTRINE CTF_BOT_TRACE=1 \
 - The 2D canvas only repaints while the Chrome window/tab has focus. After switching
   tabs, click into the page before judging a screenshot — a black or stale canvas is
   usually focus, not a server/websocket failure (check `Network`/console: the ws stays open).
+- A **cold `/client/global` load is black for 30-60s** even with the tab focused: the
+  server pushes the sprite atlas first (~7 MB of images, ~88% of all player traffic in a
+  12-bot FFA), and nothing paints until it lands. `ss -tn | grep <port>` showing a
+  multi-MB send queue on the browser socket is that atlas streaming, not a hang. So open
+  the viewer, wait ~45s, click into the page, and only then judge the screenshot — a
+  6-minute FFA can otherwise be half over before the first frame appears. If you need the
+  early unarmed/fist phase on camera, load the viewer BEFORE the bots join (the FFA
+  startup barrier holds the match until all seats connect).
 - **Double-click the canvas** to re-enable auto-fit and frame the whole board; mouse
   wheel zooms, drag pans.
+- The per-seat number in the top-left HUD roster is not a reliable readout for a report
+  (rows are easy to misalign with the colour swatches when zooming a screenshot). Take
+  kills/deaths from `results-*.json` or the events ledger instead.
 - Clicking on/near a player can switch the view into that player's fog-of-war
   perspective (board goes dark with a visibility cone). Reload the page to get the
   full-board spectator view back.
