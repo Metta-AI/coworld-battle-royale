@@ -728,6 +728,14 @@ body.ffa .feed-row.pact-row { animation-name: feedin-l; }
   color: var(--ghost);
   font-size: calc(12 * var(--u));
 }
+/* The joint target is named with a word, not the kill row's `▸`: the same feed
+   carries factual kills, and an arrow between two names there means "killed". */
+.feed-row.pact-row .pact-on {
+  color: var(--ghost);
+  font-family: var(--finefont);
+  font-size: calc(8 * var(--u));
+  letter-spacing: 0.08em;
+}
 .feed-row.pact-row.broken {
   opacity: 0.58;
 }
@@ -2939,7 +2947,7 @@ body[data-noviewpanel] #viewpanel { display: none !important; }
       '<span class="pact-glyph">⋯</span>' +
       ffaName(s, pact.b) +
       (pact.v == null ? '' :
-        '<span class="pact-glyph">⋯</span>' + ffaName(s, pact.v)) +
+        '<span class="pact-on">on</span>' + ffaName(s, pact.v)) +
       (broken ? '<span class="pact-glyph">×</span><span class="hazard">broken</span>' : '');
     row.title = pactTitle(pact, s);
     return row;
