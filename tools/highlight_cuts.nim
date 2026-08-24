@@ -158,7 +158,14 @@ proc buildCuts(log: Ledger, options: Options): seq[Cut] =
         weapon = kill.weapon
         break
     let killer =
-      if blood.target >= 0: log.seatName(blood.target) else: "the ring"
+      if blood.target >= 0:
+        log.seatName(blood.target)
+      elif blood.weapon == "isolation":
+        "isolation pressure"
+      elif blood.weapon == "ring":
+        "the ring"
+      else:
+        "the environment"
     result.addCut(options, lastTick, "first_blood",
       &"first blood: {killer} kills {log.seatName(blood.source)}" &
         (if weapon.len > 0: &" with {weapon}" else: ""),
@@ -178,7 +185,7 @@ proc buildCuts(log: Ledger, options: Options): seq[Cut] =
   # The winning kill is the LAST elimination of the recording — not simply the
   # last credited kill row, which in a ring-decided episode lands long before
   # the end and would cut a highlight reel on the wrong moment. When the last
-  # seat out fell to the ring there is no winning kill, and the beat says so
+  # seat out fell to a hazard there is no winning kill, and the beat says so
   # rather than promoting an earlier kill into a decider it was not.
   if eliminations.len > 0:
     let final = eliminations[^1]

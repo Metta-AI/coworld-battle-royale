@@ -600,6 +600,7 @@ proc startGame*(sim: var SimServer) =
     sim.players[i].damageDealt = 0
     sim.players[i].deathTick = -1
     sim.players[i].ringTicks = 0
+    sim.players[i].passivityTicks = 0
     sim.recordGameTeamAssigned(i)
   sim.ffaWinnerSlot = -1
   sim.ffaDamageLog = @[]
@@ -1198,6 +1199,7 @@ proc killPlayer*(
   sim.players[targetIndex].hasBarrier = false  # carried cardboard is lost too.
   sim.players[targetIndex].puddleTicks = 0
   sim.players[targetIndex].ringTicks = 0
+  sim.players[targetIndex].passivityTicks = 0
   for team in sim.teams():
     if sim.flags[team].carrier == targetIndex:
       sim.players[targetIndex].carryingFlag = false
@@ -1245,7 +1247,12 @@ proc killPlayer*(
   sim.emitEvent(
     Death, source = targetIndex, target = killerIndex,
     weapon =
-      if sim.config.isFfa() and cause == "left the safe zone": "ring" else: "",
+      if sim.config.isFfa() and cause == "left the safe zone":
+        "ring"
+      elif sim.config.isFfa() and cause == "remained isolated":
+        "isolation"
+      else:
+        "",
     x = float(sim.players[targetIndex].x + CollisionW div 2),
     y = float(sim.players[targetIndex].y + CollisionH div 2),
     targetSlot = killerSlot
@@ -3390,7 +3397,7 @@ proc updateFfaRing*(sim: var SimServer) =
   ## Applies the shrinking-ring damage schedule in ffa: once the match has
   ## started, each live player accumulates outside ticks while standing past
   ## the current safe radius. Every ringDamageTicks of continuous exposure
-  ## costs one hp, flat, and stepping back inside resets the counter.
+  ## costs the configured charge, and stepping back inside drains the counter.
   if not sim.config.isFfa() or not sim.config.ringEnabled or
       sim.phase != Playing:
     return
@@ -3409,12 +3416,21 @@ proc updateFfaRing*(sim: var SimServer) =
     inc sim.players[i].ringTicks
     if sim.players[i].ringTicks mod sim.config.ringDamageTicks != 0:
       continue
-    let blocked = sim.absorbDamage(i, FfaRingDamage)
+    let rampDamage =
+      if sim.config.ringDamageRampTicks > 0:
+        sim.players[i].ringTicks div sim.config.ringDamageRampTicks
+      else:
+        0
+    let charge = min(
+      max(FfaRingDamage, sim.config.ringDamageMax),
+      max(FfaRingDamage, FfaRingDamage + rampDamage)
+    )
+    let blocked = sim.absorbDamage(i, charge)
     sim.emitEvent(
       Damage,
       target = i,
       weapon = "ring",
-      amount = FfaRingDamage,
+      amount = charge,
       hp = sim.players[i].hp,
       blocked = blocked,
       x = float(centerX),
@@ -3424,6 +3440,59 @@ proc updateFfaRing*(sim: var SimServer) =
       sim.players[i].paintHitTick = sim.tickCount
     else:
       discard sim.killPlayer(i, -1, cause = "left the safe zone")
+
+proc updateFfaPassivity*(sim: var SimServer) =
+  ## Applies positional isolation pressure in ffa. The default radius is zero,
+  ## so this proc returns before touching any state in ordinary games.
+  if not sim.config.isFfa() or sim.config.passivityRadius <= 0 or
+      sim.phase != Playing:
+    return
+  let radiusSq = sim.config.passivityRadius * sim.config.passivityRadius
+  for i in 0 ..< sim.players.len:
+    if not sim.players[i].alive:
+      sim.players[i].passivityTicks = 0
+      continue
+    let
+      centerX = sim.players[i].x + CollisionW div 2
+      centerY = sim.players[i].y + CollisionH div 2
+    var nearestSq = high(int)
+    var hasOther = false
+    for j in 0 ..< sim.players.len:
+      if i == j or not sim.players[j].alive:
+        continue
+      hasOther = true
+      let otherX = sim.players[j].x + CollisionW div 2
+      let otherY = sim.players[j].y + CollisionH div 2
+      nearestSq = min(nearestSq, distSq(centerX, centerY, otherX, otherY))
+    if not hasOther:
+      # An empty field is not isolation pressure; the match is already over.
+      continue
+    if nearestSq <= radiusSq:
+      sim.players[i].passivityTicks = max(
+        0, sim.players[i].passivityTicks - sim.config.passivityRecoveryTicks)
+      continue
+    inc sim.players[i].passivityTicks
+    let overGrace = sim.players[i].passivityTicks -
+      sim.config.passivityGraceTicks
+    if overGrace <= 0 or
+        overGrace mod sim.config.passivityDamageTicks != 0:
+      continue
+    let blocked = sim.absorbDamage(i, 1)
+    sim.emitEvent(
+      Damage,
+      source = -1,
+      target = i,
+      weapon = "isolation",
+      amount = 1,
+      hp = sim.players[i].hp,
+      blocked = blocked,
+      x = float(centerX),
+      y = float(centerY)
+    )
+    if sim.players[i].hp > 0:
+      sim.players[i].paintHitTick = sim.tickCount
+    else:
+      discard sim.killPlayer(i, -1, cause = "remained isolated")
 
 proc ffaPlacements*(sim: SimServer): seq[int] =
   ## The ffa finishing order, best first, as player indices. A TOTAL order by
@@ -4193,6 +4262,7 @@ proc step*(
   sim.updatePuddles()
   sim.updateBarrage()
   sim.updateFfaRing()
+  sim.updateFfaPassivity()
 
   sim.updateFfaSurvival()
   sim.checkWinCondition()

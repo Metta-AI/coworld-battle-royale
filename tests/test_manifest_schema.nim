@@ -99,6 +99,14 @@ const SampleJson = """{
   "respawnTicks": {"respawnTicks": 33},
   "scoring": {"scoring": "pot"},
   "seed": {"seed": 42},
+  "survivalPointsPerSec": {"mode": "ffa", "numPlayers": 4,
+                           "survivalPointsPerSec": 2},
+  "killPoints": {"mode": "ffa", "numPlayers": 4, "killPoints": 11},
+  "assistPoints": {"mode": "ffa", "numPlayers": 4, "assistPoints": 5},
+  "podiumPoints": {"mode": "ffa", "numPlayers": 4,
+                   "podiumPoints": [101, 41, 16]},
+  "assistWindowTicks": {"mode": "ffa", "numPlayers": 4,
+                        "assistWindowTicks": 241},
   "showPlayerLabels": {"showPlayerLabels": false},
   "slots": {"slots": [{"token": "tok1"}]},
   "startWaitTicks": {"startWaitTicks": 60},
@@ -117,6 +125,18 @@ const SampleJson = """{
                       "ringDamageTicks": 48},
   "ringRecoveryTicks": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
                         "ringRecoveryTicks": 2},
+  "ringDamageRampTicks": {"mode": "ffa", "numPlayers": 4,
+                          "ringDamageRampTicks": 10},
+  "ringDamageMax": {"mode": "ffa", "numPlayers": 4,
+                    "ringDamageMax": 2},
+  "passivityRadius": {"mode": "ffa", "numPlayers": 4,
+                      "passivityRadius": 100},
+  "passivityGraceTicks": {"mode": "ffa", "numPlayers": 4,
+                          "passivityGraceTicks": 10},
+  "passivityDamageTicks": {"mode": "ffa", "numPlayers": 4,
+                           "passivityDamageTicks": 10},
+  "passivityRecoveryTicks": {"mode": "ffa", "numPlayers": 4,
+                             "passivityRecoveryTicks": 1},
   "ffaGunDamage": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
                    "ffaGunDamage": 4},
   "ffaLootCount": {"mode": "ffa", "numPlayers": 4, "minPlayers": 4,
@@ -221,6 +241,18 @@ suite "league manifest config_schema vs GameConfig":
       FfaRingDamageTicks
     check schema["properties"]["ringRecoveryTicks"]["default"].getInt ==
       FfaRingRecoveryTicks
+    check schema["properties"]["ringDamageRampTicks"]["default"].getInt ==
+      FfaRingDamageRampTicks
+    check schema["properties"]["ringDamageMax"]["default"].getInt ==
+      FfaRingDamageMax
+    check schema["properties"]["passivityRadius"]["default"].getInt ==
+      FfaPassivityRadius
+    check schema["properties"]["passivityGraceTicks"]["default"].getInt ==
+      FfaPassivityGraceTicks
+    check schema["properties"]["passivityDamageTicks"]["default"].getInt ==
+      FfaPassivityDamageTicks
+    check schema["properties"]["passivityRecoveryTicks"]["default"].getInt ==
+      FfaPassivityRecoveryTicks
     check schema["properties"]["ffaGunDamage"]["default"].getInt ==
       FfaGunDamage
     check schema["properties"]["ffaLootCount"]["default"].getInt ==

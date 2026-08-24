@@ -69,7 +69,8 @@ type
     seat*: int
     tick*: int
     killer*: int               ## crediting seat, -1 for the environment.
-    weapon*: string            ## "ring" for a zone death, "" when unknown.
+    weapon*: string            ## "ring" or "isolation" for zone pressure,
+                               ## "" when unknown.
     x*, y*: float              ## where the seat fell.
 
   KillRow* = object

@@ -105,8 +105,14 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `ringEnabled` | bool / `false` | `ringEnabled` | ffa only | Enables the shrinking circular safe zone; omitted ffa configs enable it by default. |
 | `ringShrinkSec` | int / `150` (`FfaRingShrinkSec`) | `ringShrinkSec` | `>=1` (ffa only) | Linear safe-zone shrink duration from the arena-covering radius to the configured floor. |
 | `ringFloorAreaPct` | int / `3` (`FfaRingFloorAreaPct`) | `ringFloorAreaPct` | `1..100` (ffa only) | Safe-zone floor as a percentage of the arena area; the shipped 3% floor herds late survivors while gradual outside damage limits ring-only executions. |
-| `ringDamageTicks` | int / `48` (`FfaRingDamageTicks`) | `ringDamageTicks` | `>=1` (ffa only) | Cadence for one HP of outside-ring damage. |
+| `ringDamageTicks` | int / `48` (`FfaRingDamageTicks`) | `ringDamageTicks` | `>=1` (ffa only) | Cadence for one base HP of outside-ring damage. |
 | `ringRecoveryTicks` | int / `2` (`FfaRingRecoveryTicks`) | `ringRecoveryTicks` | `>=0` (ffa only) | Exposure ticks drained per tick spent inside the safe zone; zero reproduces reset-on-entry behavior. |
+| `ringDamageRampTicks` | int / `0` (`FfaRingDamageRampTicks`) | `ringDamageRampTicks` | `>=0` (ffa only) | Zero is inert; positive values add integer damage steps from accumulated outside-ring exposure. |
+| `ringDamageMax` | int / `1` (`FfaRingDamageMax`) | `ringDamageMax` | `>=1` (ffa only) | Maximum HP charged by one ring hit when escalation is active. |
+| `passivityRadius` | int / `0` (`FfaPassivityRadius`) | `passivityRadius` | `>=0` (ffa only) | Zero is inert; positive values arm positional isolation pressure outside the nearest-opponent radius. |
+| `passivityGraceTicks` | int / `480` (`FfaPassivityGraceTicks`) | `passivityGraceTicks` | `>=0` (ffa only) | Ticks of continuous isolation before pressure can damage. |
+| `passivityDamageTicks` | int / `96` (`FfaPassivityDamageTicks`) | `passivityDamageTicks` | `>=1` when `passivityRadius > 0` (ffa only) | Isolated ticks per HP of positional pressure after grace. |
+| `passivityRecoveryTicks` | int / `2` (`FfaPassivityRecoveryTicks`) | `passivityRecoveryTicks` | `>=0` (ffa only) | Isolated ticks drained per tick near another living player; zero leaves the accumulator unchanged. |
 | `ffaGunDamage` | int / `3` (`FfaGunDamage`, mid-tier) | `ffaGunDamage` | `1..5` (ffa only) | Direct mid-tier gun damage per hit against the FFA hit-point pool; low and heavy tiers use their named ladder constants. |
 | `ffaSprayDamage` | int / `4` (`FfaSprayDamage`) | `ffaSprayDamage` | `1..4` (ffa only) | Direct plasma-arc damage in FFA. |
 | `ffaGrenadeDamage` | int / `4` (`FfaGrenadeDamage`) | `ffaGrenadeDamage` | `1..4` (ffa only) | Direct grenade damage in FFA. |
@@ -206,11 +212,11 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 | `barrageStartPerSec` | int / `4` | | `1..barrageMaxPerSec` | Launch rate at the latch, targeting a 40px band inside every edge. |
 | `barrageStartSec` | int / `30` | | `>=1` | Clock seconds remaining that latch the barrage (4:30 elapsed on the default 5:00 clock). |
 | `barrageSaturateSec` | int / `30` | | `>=1` | Seconds from latch to full saturation (whole board at `barrageMaxPerSec`); defaults land it exactly at the scheduled end. |
-| `survivalPointsPerSec` | int / `1` (`FfaSurvivalPointsPerSec`) | `survivalPointsPerSec` | `>=0` (ffa only) | ffa reward per whole second alive, accrued live once every `TargetFps` ticks of play. |
-| `killPoints` | int / `10` (`FfaKillPoints`) | `killPoints` | `>=0` (ffa only) | ffa reward to the LAST damager of a kill. Environmental deaths (puddle, barrage) credit nobody. |
-| `assistPoints` | int / `4` (`FfaAssistPoints`) | `assistPoints` | `>=0` (ffa only) | ffa assist pot for a kill, split evenly among the victim's other recent damagers (integer split, remainder dropped). |
-| `assistWindowTicks` | int / `240` (`FfaAssistWindowTicks`) | `assistWindowTicks` | `>=0` (ffa only) | How far back a damager still counts as an assister; also bounds the in-sim damage log. |
-| `podiumPoints` | `seq[int]` / `@[100, 40, 15]` (`FfaPodiumPoints`) | `podiumPoints` | each `>=0` (ffa only) | ffa reward by final placement, best first; places past the list pay nothing. |
+| `survivalPointsPerSec` | int / `1` (`FfaSurvivalPointsPerSec`) | `survivalPointsPerSec` | `>=0` (ffa only) | ffa scoreboard/training-signal reward per whole second alive; this shapes the signal only, never placement or Elo. |
+| `killPoints` | int / `10` (`FfaKillPoints`) | `killPoints` | `>=0` (ffa only) | ffa scoreboard/training-signal reward to the LAST damager of a kill; this shapes the signal only, never placement or Elo. Environmental deaths credit nobody. |
+| `assistPoints` | int / `4` (`FfaAssistPoints`) | `assistPoints` | `>=0` (ffa only) | ffa scoreboard/training-signal assist pot; this shapes the signal only, never placement or Elo. |
+| `assistWindowTicks` | int / `240` (`FfaAssistWindowTicks`) | `assistWindowTicks` | `>=0` (ffa only) | ffa scoreboard/training-signal assist window; this shapes the signal only, never placement or Elo. |
+| `podiumPoints` | `seq[int]` / `@[100, 40, 15]` (`FfaPodiumPoints`) | `podiumPoints` | each `>=0` (ffa only) | ffa scoreboard/training-signal reward by final placement; this shapes the signal only, never placement or Elo. |
 
 ffa consts: `FfaHitPoints`=20 (spawn pool), weapon ladder
 `FfaFistDamage`=2 / `FfaLowGunDamage`=2 / `FfaMidGunDamage`=3 /

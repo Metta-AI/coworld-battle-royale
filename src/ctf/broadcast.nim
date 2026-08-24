@@ -153,6 +153,10 @@ proc ffaDeathAttribution(
         event.weapon == "ring":
       result.cause = "ring"
       return
+    if event.kind == Death and event.source == victimSlot and
+        event.weapon == "isolation":
+      result.cause = "isolation"
+      return
   for i in start ..< sim.events.len:
     let event = sim.events[i]
     if event.tick != deathTick or event.target != victimSlot:

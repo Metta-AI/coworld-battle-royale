@@ -24,7 +24,7 @@ METRICS="$OUT_DIR/metrics-$STAMP.json"
 
 mkdir -p "$OUT_DIR"
 python3 - "$CFG" "$N" "$SEED" "$ARM" <<'PY'
-import json, sys
+import json, os, sys
 path, n, seed, arm = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 cfg = json.load(open("config.br.json"))
 cfg["numPlayers"] = n
@@ -89,6 +89,12 @@ if arm in ("E2", "E4"):
     cfg["ffaGunDamage"] = 4
 if arm == "E4":
     cfg["ffaMedKitSpawns"] = 1
+overrides = os.environ.get("DEMO_CONFIG_OVERRIDES", "")
+if overrides:
+    extra = json.loads(overrides)
+    if not isinstance(extra, dict):
+        raise SystemExit("DEMO_CONFIG_OVERRIDES must be a JSON object")
+    cfg.update(extra)
 json.dump(cfg, open(path, "w"))
 PY
 
@@ -167,8 +173,19 @@ case "$ARM" in
     ;;
 esac
 
+# Optional per-seat doctrine mix: a comma-separated list cycled over slots,
+# so one match can seat legacy/passive/rush/shade side by side. Unset keeps
+# the single CTF_BOT_FFA_DOCTRINE for every seat.
+IFS=',' read -r -a SLOT_DOCTRINES <<<"${DEMO_DOCTRINE_BY_SLOT:-}"
+
 for slot in $(seq 0 $((N - 1))); do
-  env "${BOT_ENV[@]}" \
+  SLOT_ENV=("${BOT_ENV[@]}")
+  if [ "${#SLOT_DOCTRINES[@]}" -gt 0 ] && [ -n "${SLOT_DOCTRINES[0]}" ]; then
+    SLOT_ENV+=(
+      "CTF_BOT_FFA_DOCTRINE=${SLOT_DOCTRINES[$((slot % ${#SLOT_DOCTRINES[@]}))]}"
+    )
+  fi
+  env "${SLOT_ENV[@]}" \
     "COWORLD_PLAYER_WS_URL=ws://127.0.0.1:$PORT/player?name=Bot_$slot&slot=$slot&token=0xBADA55_$slot" \
     "$PWD/players/baseline/baseline.out" >>"$BOT_LOG" 2>&1 &
   BOT_PIDS+=("$!")
