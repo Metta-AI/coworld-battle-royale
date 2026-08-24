@@ -264,12 +264,13 @@ victims, preserving damage dealt as the placement tiebreak under kills.
 ### Baseline policy doctrine (process environment)
 
 These are reference-policy controls rather than `GameConfig` fields: they do
-not change the Coworld manifest or simulation `GameVersion`. The league
-baseline remains legacy unless a runner explicitly opts into another arm.
+not change the Coworld manifest or simulation `GameVersion`. Hunter is now the
+baseline default; `legacy` is the explicit opt-out for the previous behavior.
+The existing selector semantics and all other doctrine arms remain unchanged.
 
 | Environment variable | Values / default | Effect |
 |---|---|---|
-| `CTF_BOT_FFA_DOCTRINE` | `hybrid`, `legacy`, `passive`, `rush`, `shade`, `hunter` / `legacy` | Selects the baseline FFA doctrine. |
+| `CTF_BOT_FFA_DOCTRINE` | `hybrid`, `legacy`, `passive`, `rush`, `shade`, `hunter` / `hunter` | Selects the baseline FFA doctrine; set `legacy` explicitly to opt out of hunter. |
 | `CTF_BOT_FFA_HUNTER_RING_MARGIN` | float `>=0` / `0.0` | Extra safety margin used by the hunter ring gate. |
 | `CTF_BOT_FFA_HUNTER_ARM` | bool / `true` | Allows hunter trips to arm a weapon. |
 | `CTF_BOT_FFA_HUNTER_FIRE_RANGE` | bool / `true` | Enables hunter range gating. |
@@ -282,8 +283,8 @@ baseline remains legacy unless a runner explicitly opts into another arm.
 
 The hunter-only controls are ignored by the other doctrines. The parser in
 [`players/baseline/baseline.nim`](../players/baseline/baseline.nim#L4083)
-keeps an unset `CTF_BOT_FFA_DOCTRINE` at `legacy`; the defaults and bounds for
-the hunter controls are declared at
+keeps an unset `CTF_BOT_FFA_DOCTRINE` at `hunter`; set it to `legacy` for the
+explicit opt-out. The defaults and bounds for the hunter controls are declared at
 [`baseline.nim:253`](../players/baseline/baseline.nim#L253).
 
 Reward consts: `WinReward`=+1, `LossReward`=−1, `TimeoutReward`=−1 (draw penalty).
