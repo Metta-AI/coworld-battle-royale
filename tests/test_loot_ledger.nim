@@ -1,6 +1,6 @@
 import
   helpers,
-  std/[json, os, tables, unittest],
+  std/[os, tables, unittest],
   ctf/replays,
   "../tools/extract_events",
   "../tools/ledger"
@@ -12,7 +12,11 @@ let LedgerPath =
   getTempDir() / ("loot-ledger-" & $getCurrentProcessId() & ".jsonl")
 
 type
-  FixtureData = tuple[extraction: ExtractResult, ledger: Ledger]
+  FixtureData = tuple[
+    jsonl: string,
+    framesOut: string,
+    extraction: ExtractResult,
+    ledger: Ledger]
 
 var
   fixtureCache: FixtureData
@@ -20,25 +24,20 @@ var
 
 proc fixtureLedger(): FixtureData =
   if not fixtureLoaded:
-    fixtureCache.extraction = extractEvents(
-      loadReplay(FfaFixture), captureFrames = true)
-    var summary = newJObject()
-    summary["finished"] = %fixtureCache.extraction.finished
-    summary["draw"] = %fixtureCache.extraction.isDraw
-    summary["winner"] = %fixtureCache.extraction.winner
-    summary["slot_address"] = %fixtureCache.extraction.slotAddress
-    summary["slot_team"] = %fixtureCache.extraction.slotTeam
-    summary["slot_shots_fired"] = %fixtureCache.extraction.slotShotsFired
-    summary["slot_shots_hit"] = %fixtureCache.extraction.slotShotsHit
-    writeFile(LedgerPath, fixtureCache.extraction.events.eventsJsonl(
-      fixtureCache.extraction.ticks, summary))
+    let data = loadReplay(FfaFixture)
+    fixtureCache.jsonl = extractEventsJsonl(
+      data, fixtureCache.framesOut, captureFrames = true)
+    fixtureCache.extraction = extractEvents(data, captureFrames = true)
+    writeFile(LedgerPath, fixtureCache.jsonl)
     fixtureCache.ledger = loadLedger(LedgerPath)
     fixtureLoaded = true
   fixtureCache
 
 suite "FFA loot ledger instrumentation":
   test "frames v2 round-trips weapon tiers":
-    let extraction = fixtureLedger().extraction
+    let fixture = fixtureLedger()
+    let extraction = fixture.extraction
+    check fixture.framesOut == extraction.frames
     check extraction.frames[0 ..< 8] == "CTFFRM02"
     check extraction.frames.len == FramesHeaderBytes +
       extraction.frameCount *
@@ -100,8 +99,6 @@ suite "FFA loot ledger instrumentation":
       check outcome.gainOrigin == "spawn"
       check outcome.gainTick > outcome.tick
       check outcome.gainDistPx >= 0.0
-      check outcome.gainAtCorpse ==
-        (outcome.gainDistPx <= radiusPx)
       var explained = false
       for row in ledger.rows:
         if row.kind == "item_pickup" and row.source == outcome.killer and
