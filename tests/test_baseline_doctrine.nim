@@ -11,6 +11,8 @@ suite "baseline FFA doctrine":
   test "unset doctrine defaults to hunter":
     check baseline.count("FfaDoctrine = FfaHunter") == 1
     check baseline.count("if requestedDoctrine.len == 0: FfaHunter") == 1
+    check baseline.count("if requestedDoctrine.len == 0: FfaLegacy") == 0
+    check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaPassive") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaHybrid") == 0
     check demo.count(
@@ -43,7 +45,43 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
-      "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, or hunter")
+      "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
+
+  test "pact doctrine is selectable":
+    check baseline.count("requestedDoctrine == \"pact\"") == 1
+    check baseline.count("of FfaPact: \"pact\"") == 1
+    check baseline.contains("CTF_BOT_FFA_PACT_WINDOW_FRACTION")
+    check baseline.contains("CTF_BOT_FFA_PACT_WINDOW_SEC")
+    check baseline.contains("CTF_BOT_FFA_PACT_BRAWL_RADIUS")
+    check baseline.contains("CTF_BOT_FFA_PACT_CONVERGE_RANGE")
+    check baseline.contains("CTF_BOT_FFA_PACT_ENGAGE_RANGE")
+    check baseline.contains("CTF_BOT_FFA_PACT_MEMORY_SEC")
+    check baseline.contains("CTF_BOT_FFA_PACT_PARTNER_MATCH_RADIUS")
+    check baseline.contains("FfaPactWindowFractionDefault = 0.35")
+    check baseline.contains("FfaPactWindowSecDefault = 0")
+    check baseline.contains("FfaPactBrawlRadiusDefault = 220.0")
+    check baseline.contains("FfaPactMinBrawlSeparationDefault = 8.0")
+    check baseline.contains(
+      "d >= FfaPactMinBrawlSeparationDefault and")
+    check baseline.contains("FfaPactConvergeRangeDefault = 520.0")
+    check baseline.contains("FfaPactEngageRangeDefault = 220.0")
+    check baseline.contains("FfaPactMemorySecDefault = 3")
+    check baseline.contains("FfaPactPartnerMatchRadiusDefault = 60.0")
+    check baseline.contains(
+      "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
+
+  test "pact is never the default":
+    check baseline.contains("FfaDoctrineKind = enum\n    FfaHybrid")
+    check baseline.count("FfaDoctrine = FfaPact") == 0
+    check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 0
+
+  test "per-seat doctrine override is opt-in":
+    check baseline.contains(
+      "let doctrineSlots = getEnv(\"CTF_BOT_FFA_DOCTRINE_SLOTS\")")
+    check baseline.contains("if doctrineSlots.len > 0:")
+    check baseline.contains("slotNumber = parseInt(fields[0].strip())")
+    check baseline.contains(
+      "except ValueError:\n        continue\n      if slotNumber == slot:\n        FfaDoctrine = ffaDoctrineFor")
 
   test "hunter ring margin is opt-in and isolated":
     check baseline.count("if FfaHunterRingMargin > 0.0:") == 1

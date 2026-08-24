@@ -24,6 +24,14 @@ import
            # frame reports so the viewer can convert board px <-> world px
 
 type
+  PactDamageRow = object
+    tick: int
+    damagerSlot: int
+    victimSlot: int
+
+  PactPair = array[2, int]
+  PactFocus = array[3, int]
+
   BroadcastTracker* = object
     ## Per-server snapshot used to diff one sim step against the previous one.
     initialized: bool
@@ -36,12 +44,27 @@ type
     carriers: array[Team, int]
     captured: array[Team, bool]
     eventCursor: int
+    pactWindowTicks: int
+    pactDamage: seq[PactDamageRow]
+    prevPactPairs: seq[PactPair]
+    prevPactFocuses: seq[PactFocus]
+
+const
+  ## Five seconds of attributed damage by default. Override with the
+  ## `COGAME_PACT_WINDOW_TICKS` environment variable on the replay server.
+  DefaultPactWindowTicks* = 5 * TargetFps
 
 proc initBroadcastTracker*(): BroadcastTracker =
   ## Returns a fresh, unsynced broadcast tracker.
   result.prevPhase = Lobby
+  result.pactWindowTicks = DefaultPactWindowTicks
   for team in Team:
     result.carriers[team] = -1
+
+proc setPactWindowTicks*(tracker: var BroadcastTracker, ticks: int) =
+  ## Sets the positive recent-damage window used for inferred pacts.
+  if ticks > 0:
+    tracker.pactWindowTicks = ticks
 
 # policyName moved to sim_types.nim (the join path needs it to resolve perk
 # groups); re-exported through `import sim`, so every consumer still sees it.
@@ -102,7 +125,95 @@ proc snapshot(tracker: var BroadcastTracker, sim: SimServer) =
 proc resync*(tracker: var BroadcastTracker, sim: SimServer) =
   ## Snapshots without emitting events, after a seek/loop/skip. The next
   ## `stepEvents` then diffs against this frame, so no phantom beats fire.
+  tracker.pactDamage.setLen(0)
+  tracker.prevPactPairs.setLen(0)
+  tracker.prevPactFocuses.setLen(0)
   tracker.snapshot(sim)
+
+proc pactPairCmp(a, b: PactPair): int =
+  result = cmp(a[0], b[0])
+  if result == 0:
+    result = cmp(a[1], b[1])
+
+proc pactFocusCmp(a, b: PactFocus): int =
+  result = cmp(a[0], b[0])
+  if result == 0:
+    result = cmp(a[1], b[1])
+  if result == 0:
+    result = cmp(a[2], b[2])
+
+proc pactPairHasDamage(
+  tracker: BroadcastTracker,
+  a, b: int
+): bool =
+  for row in tracker.pactDamage:
+    if (row.damagerSlot == a and row.victimSlot == b) or
+        (row.damagerSlot == b and row.victimSlot == a):
+      return true
+  false
+
+proc pactPairDamagedThisStep(
+  pairs: openArray[PactPair],
+  a, b: int
+): bool =
+  [a, b] in pairs
+
+proc newestPactVictim(tracker: BroadcastTracker, pair: PactPair): int =
+  var newestTick = -1
+  result = -1
+  var victims: seq[int] = @[]
+  for row in tracker.pactDamage:
+    if row.victimSlot != pair[0] and row.victimSlot != pair[1] and
+        row.victimSlot notin victims:
+      victims.add(row.victimSlot)
+  for victim in victims:
+    var latestA = -1
+    var latestB = -1
+    for row in tracker.pactDamage:
+      if row.victimSlot != victim:
+        continue
+      if row.damagerSlot == pair[0]:
+        latestA = max(latestA, row.tick)
+      elif row.damagerSlot == pair[1]:
+        latestB = max(latestB, row.tick)
+    if latestA >= 0 and latestB >= 0 and max(latestA, latestB) >= newestTick:
+      newestTick = max(latestA, latestB)
+      result = victim
+
+proc derivePacts(
+  sim: SimServer,
+  tracker: BroadcastTracker
+): tuple[pairs: seq[PactPair], focuses: seq[PactFocus]] =
+  var aliveBySlot = newSeq[bool](sim.players.len)
+  for player in sim.players:
+    if player.joinOrder >= aliveBySlot.len:
+      aliveBySlot.setLen(player.joinOrder + 1)
+    aliveBySlot[player.joinOrder] = player.alive
+  var victims: seq[int] = @[]
+  for row in tracker.pactDamage:
+    if row.victimSlot notin victims:
+      victims.add(row.victimSlot)
+  victims.sort()
+  for victim in victims:
+    var attackers: seq[int] = @[]
+    for row in tracker.pactDamage:
+      if row.victimSlot != victim or row.damagerSlot == victim or
+          row.damagerSlot < 0 or row.damagerSlot >= aliveBySlot.len or
+          not aliveBySlot[row.damagerSlot]:
+        continue
+      if row.damagerSlot notin attackers:
+        attackers.add(row.damagerSlot)
+    attackers.sort()
+    for i in 0 ..< attackers.len:
+      for j in i + 1 ..< attackers.len:
+        let pair: PactPair = [attackers[i], attackers[j]]
+        if aliveBySlot[pair[0]] and aliveBySlot[pair[1]] and
+            not tracker.pactPairHasDamage(pair[0], pair[1]):
+          if pair notin result.pairs:
+            result.pairs.add(pair)
+          result.focuses.add([pair[0], pair[1], victim])
+  result.pairs.sort(pactPairCmp)
+  result.focuses.sort(pactFocusCmp)
 
 proc killerThisStep(
   sim: SimServer,
@@ -152,6 +263,10 @@ proc ffaDeathAttribution(
     if event.kind == Death and event.source == victimSlot and
         event.weapon == "ring":
       result.cause = "ring"
+      return
+    if event.kind == Death and event.source == victimSlot and
+        event.weapon == "isolation":
+      result.cause = "isolation"
       return
   for i in start ..< sim.events.len:
     let event = sim.events[i]
@@ -321,6 +436,8 @@ proc stepEvents*(
   # Keep the sink until after kill attribution above has consumed it.
   if sim.collectEvents:
     if sim.config.isFfa():
+      var directPactDamage: seq[PactPair] = @[]
+      var pactDamageChanged = false
       for event in sim.events:
         if event.kind == Damage and event.source >= 0 and event.target >= 0:
           events.add(%*{
@@ -332,6 +449,92 @@ proc stepEvents*(
             "x": event.x,
             "y": event.y
           })
+          if event.source != event.target:
+            pactDamageChanged = true
+            tracker.pactDamage.add PactDamageRow(
+              tick: event.tick,
+              damagerSlot: event.source,
+              victimSlot: event.target
+            )
+            let pair: PactPair = [
+              min(event.source, event.target),
+              max(event.source, event.target)
+            ]
+            if event.tick == tick and pair notin directPactDamage:
+              directPactDamage.add(pair)
+      let oldestTick = tick - tracker.pactWindowTicks
+      var firstRecent = 0
+      while firstRecent < tracker.pactDamage.len and
+          tracker.pactDamage[firstRecent].tick < oldestTick:
+        inc firstRecent
+      if firstRecent > 0:
+        pactDamageChanged = true
+        if firstRecent == tracker.pactDamage.len:
+          tracker.pactDamage.setLen(0)
+        else:
+          tracker.pactDamage = tracker.pactDamage[firstRecent .. ^1]
+
+      if pactDamageChanged:
+        let derived = sim.derivePacts(tracker)
+        var allPairs = tracker.prevPactPairs
+        for pair in derived.pairs:
+          if pair notin allPairs:
+            allPairs.add(pair)
+        allPairs.sort(pactPairCmp)
+        for pair in allPairs:
+          let wasApparent = pair in tracker.prevPactPairs
+          let isApparent = pair in derived.pairs
+          if wasApparent and pactPairDamagedThisStep(
+              directPactDamage, pair[0], pair[1]):
+            events.add(%*{
+              "t": tick, "k": "pactbreak", "a": pair[0], "b": pair[1]
+            })
+          elif wasApparent and not isApparent:
+            events.add(%*{
+              "t": tick, "k": "pactend", "a": pair[0], "b": pair[1]
+            })
+          elif not wasApparent and isApparent:
+            events.add(%*{
+              "t": tick,
+              "k": "pact",
+              "a": pair[0],
+              "b": pair[1],
+              "v": tracker.newestPactVictim(pair),
+              "w": tracker.pactWindowTicks
+            })
+          elif wasApparent and isApparent:
+            for focus in derived.focuses:
+              if focus[0] == pair[0] and focus[1] == pair[1] and
+                  focus notin tracker.prevPactFocuses:
+                events.add(%*{
+                  "t": tick,
+                  "k": "pactfocus",
+                  "a": focus[0],
+                  "b": focus[1],
+                  "v": focus[2]
+                })
+        tracker.prevPactPairs = derived.pairs
+        tracker.prevPactFocuses = derived.focuses
+      else:
+        var deadSlots: seq[int] = @[]
+        for i, player in sim.players:
+          if i < tracker.alive.len and tracker.alive[i] and not player.alive:
+            deadSlots.add(player.joinOrder)
+        if deadSlots.len > 0:
+          var alivePairs: seq[PactPair] = @[]
+          var aliveFocuses: seq[PactFocus] = @[]
+          for pair in tracker.prevPactPairs:
+            if pair[0] in deadSlots or pair[1] in deadSlots:
+              events.add(%*{
+                "t": tick, "k": "pactend", "a": pair[0], "b": pair[1]
+              })
+            else:
+              alivePairs.add(pair)
+          for focus in tracker.prevPactFocuses:
+            if focus[0] notin deadSlots and focus[1] notin deadSlots:
+              aliveFocuses.add(focus)
+          tracker.prevPactPairs = alivePairs
+          tracker.prevPactFocuses = aliveFocuses
     sim.events.setLen(0)
 
   tracker.snapshot(sim)

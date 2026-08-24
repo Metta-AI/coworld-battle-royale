@@ -454,6 +454,43 @@
           "maximum": 16,
           "default": 0
         },
+        "survivalPointsPerSec": {
+          "description": "FFA only: scoreboard and training-signal reward per whole second alive; this shapes the signal only, never placement or Elo.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 1
+        },
+        "killPoints": {
+          "description": "FFA only: scoreboard and training-signal reward for the last damager of a kill; this shapes the signal only, never placement or Elo.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 10
+        },
+        "assistPoints": {
+          "description": "FFA only: scoreboard and training-signal assist pot; this shapes the signal only, never placement or Elo.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 4
+        },
+        "podiumPoints": {
+          "description": "FFA only: scoreboard and training-signal reward by final placement; this shapes the signal only, never placement or Elo.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "default": [
+            100,
+            40,
+            15
+          ]
+        },
+        "assistWindowTicks": {
+          "description": "FFA only: scoreboard and training-signal assist window in ticks; this shapes the signal only, never placement or Elo.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 240
+        },
         "ringEnabled": {
           "description": "FFA only: enable the shrinking circular safe zone.",
           "type": "boolean",
@@ -480,6 +517,42 @@
         },
         "ringRecoveryTicks": {
           "description": "FFA only: exposure ticks drained per tick spent inside the safe zone; 0 reproduces reset-on-entry.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 2
+        },
+        "ringDamageRampTicks": {
+          "description": "FFA only: inert at the shipped zero default; when enabled, accumulated outside-ring exposure adds integer damage steps to each ring hit.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "ringDamageMax": {
+          "description": "FFA only: inert at the shipped one-point default; caps the integer damage charged by one ring hit when escalation is enabled.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "passivityRadius": {
+          "description": "FFA only: inert at the shipped zero default; when positive, players outside this distance from every other living player accrue isolation pressure.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "passivityGraceTicks": {
+          "description": "FFA only: inert while passivityRadius is zero; when enabled, isolated ticks before isolation pressure can damage.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 480
+        },
+        "passivityDamageTicks": {
+          "description": "FFA only: inert while passivityRadius is zero; when enabled, isolated ticks per point of isolation damage after grace.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 96
+        },
+        "passivityRecoveryTicks": {
+          "description": "FFA only: inert while passivityRadius is zero; when enabled, isolation exposure ticks drained per tick near another living player.",
           "type": "integer",
           "minimum": 0,
           "default": 2
@@ -816,7 +889,14 @@
         "mapWindows": 4,
         "mapPits": 18,
         "mapCenterFeature": "ring",
-        "mapEndzone": "disc"
+        "mapEndzone": "disc",
+        "ringShrinkSec": 150,
+        "ringFloorAreaPct": 3,
+        "survivalPointsPerSec": 1,
+        "killPoints": 10,
+        "assistPoints": 4,
+        "podiumPoints": [100, 40, 15],
+        "assistWindowTicks": 240
       }
     },
     {
@@ -889,7 +969,14 @@
         "mapWindows": 4,
         "mapPits": 18,
         "mapCenterFeature": "ring",
-        "mapEndzone": "disc"
+        "mapEndzone": "disc",
+        "ringShrinkSec": 150,
+        "ringFloorAreaPct": 3,
+        "survivalPointsPerSec": 1,
+        "killPoints": 10,
+        "assistPoints": 4,
+        "podiumPoints": [100, 40, 15],
+        "assistWindowTicks": 240
       }
     }
   ],
