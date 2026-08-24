@@ -24,7 +24,7 @@ METRICS="$OUT_DIR/metrics-$STAMP.json"
 
 mkdir -p "$OUT_DIR"
 python3 - "$CFG" "$N" "$SEED" "$ARM" <<'PY'
-import json, sys
+import json, os, sys
 path, n, seed, arm = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 cfg = json.load(open("config.br.json"))
 cfg["numPlayers"] = n
@@ -89,6 +89,12 @@ if arm in ("E2", "E4"):
     cfg["ffaGunDamage"] = 4
 if arm == "E4":
     cfg["ffaMedKitSpawns"] = 1
+overrides = os.environ.get("DEMO_CONFIG_OVERRIDES", "")
+if overrides:
+    extra = json.loads(overrides)
+    if not isinstance(extra, dict):
+        raise SystemExit("DEMO_CONFIG_OVERRIDES must be a JSON object")
+    cfg.update(extra)
 json.dump(cfg, open(path, "w"))
 PY
 

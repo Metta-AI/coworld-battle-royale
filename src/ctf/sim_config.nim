@@ -65,6 +65,12 @@ proc defaultGameConfig*(): GameConfig =
     ringFloorAreaPct: FfaRingFloorAreaPct,
     ringDamageTicks: FfaRingDamageTicks,
     ringRecoveryTicks: 0,
+    ringDamageRampTicks: FfaRingDamageRampTicks,
+    ringDamageMax: FfaRingDamageMax,
+    passivityRadius: FfaPassivityRadius,
+    passivityGraceTicks: FfaPassivityGraceTicks,
+    passivityDamageTicks: FfaPassivityDamageTicks,
+    passivityRecoveryTicks: FfaPassivityRecoveryTicks,
     ffaGunDamage: FfaGunDamage,
     ffaSprayDamage: FfaSprayDamage,
     ffaGrenadeDamage: FfaGrenadeDamage,
@@ -86,6 +92,12 @@ proc defaultFfaConfig*(numPlayers: int): GameConfig =
   result.mode = FfaMode
   result.numPlayers = numPlayers
   result.ringRecoveryTicks = FfaRingRecoveryTicks
+  result.ringDamageRampTicks = FfaRingDamageRampTicks
+  result.ringDamageMax = FfaRingDamageMax
+  result.passivityRadius = FfaPassivityRadius
+  result.passivityGraceTicks = FfaPassivityGraceTicks
+  result.passivityDamageTicks = FfaPassivityDamageTicks
+  result.passivityRecoveryTicks = FfaPassivityRecoveryTicks
   result.minPlayers = numPlayers
   result.lives = 1
   result.hitPoints = FfaHitPoints
@@ -663,6 +675,25 @@ proc validate(config: GameConfig) =
     if config.ringRecoveryTicks < 0:
       raise newException(
         CtfError, "Config field ringRecoveryTicks must be non-negative.")
+    if config.ringDamageRampTicks < 0:
+      raise newException(
+        CtfError, "Config field ringDamageRampTicks must be non-negative.")
+    if config.ringDamageMax < FfaRingDamage:
+      raise newException(
+        CtfError, "Config field ringDamageMax must be at least FfaRingDamage.")
+    if config.passivityRadius < 0:
+      raise newException(
+        CtfError, "Config field passivityRadius must be non-negative.")
+    if config.passivityGraceTicks < 0:
+      raise newException(
+        CtfError, "Config field passivityGraceTicks must be non-negative.")
+    if config.passivityRadius > 0 and config.passivityDamageTicks < 1:
+      raise newException(
+        CtfError,
+        "Config field passivityDamageTicks must be at least 1 when passivityRadius is enabled.")
+    if config.passivityRecoveryTicks < 0:
+      raise newException(
+        CtfError, "Config field passivityRecoveryTicks must be non-negative.")
     if config.ffaGunDamage notin 1 .. 5:
       raise newException(
         CtfError, "Config field ffaGunDamage must be 1..5.")
@@ -822,6 +853,12 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("ringFloorAreaPct", config.ringFloorAreaPct)
   node.readConfigInt("ringDamageTicks", config.ringDamageTicks)
   node.readConfigInt("ringRecoveryTicks", config.ringRecoveryTicks)
+  node.readConfigInt("ringDamageRampTicks", config.ringDamageRampTicks)
+  node.readConfigInt("ringDamageMax", config.ringDamageMax)
+  node.readConfigInt("passivityRadius", config.passivityRadius)
+  node.readConfigInt("passivityGraceTicks", config.passivityGraceTicks)
+  node.readConfigInt("passivityDamageTicks", config.passivityDamageTicks)
+  node.readConfigInt("passivityRecoveryTicks", config.passivityRecoveryTicks)
   node.readConfigInt("ffaGunDamage", config.ffaGunDamage)
   node.readConfigInt("ffaSprayDamage", config.ffaSprayDamage)
   node.readConfigInt("ffaGrenadeDamage", config.ffaGrenadeDamage)
@@ -1071,6 +1108,12 @@ proc configJson*(config: GameConfig): string =
     node["ringFloorAreaPct"] = %config.ringFloorAreaPct
     node["ringDamageTicks"] = %config.ringDamageTicks
     node["ringRecoveryTicks"] = %config.ringRecoveryTicks
+    node["ringDamageRampTicks"] = %config.ringDamageRampTicks
+    node["ringDamageMax"] = %config.ringDamageMax
+    node["passivityRadius"] = %config.passivityRadius
+    node["passivityGraceTicks"] = %config.passivityGraceTicks
+    node["passivityDamageTicks"] = %config.passivityDamageTicks
+    node["passivityRecoveryTicks"] = %config.passivityRecoveryTicks
     node["ffaGunDamage"] = %config.ffaGunDamage
     node["ffaSprayDamage"] = %config.ffaSprayDamage
     node["ffaGrenadeDamage"] = %config.ffaGrenadeDamage

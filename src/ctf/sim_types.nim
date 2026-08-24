@@ -566,11 +566,21 @@ const
                               ## outside damage is gradual, while the 3% floor
                               ## herds late survivors into final engagements.
   FfaRingDamageTicks* = 48    ## Ticks of CONTINUOUS exposure outside the
-                              ## ring that cost FfaRingDamage. Flat, never
-                              ## scaling: at 20 hp an agent can walk the
-                              ## whole board through the fire and live.
+                              ## ring that cost FfaRingDamage.
   FfaRingDamage* = 1          ## hp per exposure tick-count outside the ring.
   FfaRingRecoveryTicks* = 2   ## Exposure ticks drained per safe-zone tick.
+  FfaRingDamageRampTicks* = 0 ## Exposure ticks per extra hp of ring damage;
+                              ## zero disables escalation.
+  FfaRingDamageMax* = FfaRingDamage
+                              ## Maximum hp charged by one ring hit.
+  FfaPassivityRadius* = 0     ## Distance to the nearest opponent that arms
+                              ## isolation pressure; zero disables it.
+  FfaPassivityGraceTicks* = 480
+                              ## Continuous isolated ticks before pressure.
+  FfaPassivityDamageTicks* = 96
+                              ## Isolated ticks per point of damage after grace.
+  FfaPassivityRecoveryTicks* = 2
+                              ## Isolated ticks drained while near an opponent.
 
   FlagPickupRange* = 34       ## touch radius to steal the enemy flag: STAND ON
                               ## THE PEDESTAL AND THE HEART IS YOURS (GV42).
@@ -1330,9 +1340,17 @@ type
                                   ## linear, constant afterwards.
     ringFloorAreaPct*: int        ## ffa: the floor radius as a percent of
                                   ## arena AREA (FfaRingFloorAreaPct).
-    ringDamageTicks*: int         ## ffa: ticks outside the ring per point of
-                                  ## damage (FfaRingDamageTicks).
+    ringDamageTicks*: int         ## ffa: ticks outside the ring per base point
+                                  ## of damage (FfaRingDamageTicks).
     ringRecoveryTicks*: int       ## ffa: exposure ticks drained while inside.
+    ringDamageRampTicks*: int     ## ffa: exposure ticks per extra point of
+                                  ## ring damage; 0 leaves every hit flat.
+    ringDamageMax*: int           ## ffa: maximum hp charged by one ring hit.
+    passivityRadius*: int         ## ffa: nearest-opponent distance beyond
+                                  ## which isolation pressure accrues; 0 = off.
+    passivityGraceTicks*: int     ## ffa: isolated ticks before pressure starts.
+    passivityDamageTicks*: int    ## ffa: isolated ticks per hp after grace.
+    passivityRecoveryTicks*: int  ## ffa: isolated ticks drained while close.
     ffaGunDamage*: int            ## ffa: direct gun damage per hit.
     ffaSprayDamage*: int          ## ffa: direct plasma-arc damage.
     ffaGrenadeDamage*: int        ## ffa: direct grenade damage.
@@ -1448,6 +1466,14 @@ type
                                ## safe zone, drained gradually while inside
                                ## (excluded from gameHash; the hp it costs is
                                ## hashed).
+    passivityTicks*: int       ## ffa: positional isolation exposure, derived
+                               ## from the current roster and excluded from
+                               ## gameHash like ringTicks, damageDealt, and
+                               ## placedBarriers. Flatty keyframes restore
+                               ## appended fields positionally, while this
+                               ## accumulator is derived in-process, so no
+                               ## GameVersion bump is needed; the hp it costs
+                               ## remains hashed.
 
   FfaDamageHit* = object
     ## One ffa damage event, kept just long enough to resolve assists
@@ -1605,7 +1631,7 @@ type
     ## counter-diffing. Analysis-only: never enters gameHash.
     Shot        ## a gun shot released (source = shooter).
     Hit         ## a released shot connected with an enemy on its ray.
-    Damage      ## hit points removed (gun/spray/grenade), amount = hp lost.
+    Damage      ## hit points removed (weapon or hazard), amount = hp lost.
     Kill        ## a CREDITED kill (mirrors recordKill; self-kills by own
                 ## grenade are a Death without a Kill).
     Death       ## a player died (source = victim, target = killer).
@@ -1638,8 +1664,8 @@ type
     kind*: SimEventKind
     source*: int               ## acting player's stable join slot, -1 = n/a.
     target*: int               ## affected player's stable join slot, -1 = n/a.
-    weapon*: string            ## "gun" / "spray" / "grenade", the new phase
-                               ## name for PhaseChange, "" = n/a.
+    weapon*: string            ## weapon or hazard token; phase name for
+                               ## PhaseChange, "" = n/a.
     amount*: int               ## hp delta for Damage/Kill/Heal, the new
                                ## phase ordinal for PhaseChange, else 0.
     hp*: int                   ## the affected player's remaining hit points
