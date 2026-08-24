@@ -75,7 +75,7 @@ jobs:
           test -s /tmp/events.jsonl
           head -1 /tmp/events.jsonl | python3 -c 'import json,sys; json.loads(sys.stdin.readline())'
           test -s /tmp/frames.bin
-          test "$(head -c 8 /tmp/frames.bin)" = "CTFFRM01"
+          test "$(head -c 8 /tmp/frames.bin)" = "CTFFRM02"
 
           "$RUNNER_TEMP/dump_map_mask-linux-x64" /tmp/mask.png arena --raw /tmp/mask.bin --geom /tmp/geom.json
           test -s /tmp/mask.png
