@@ -275,7 +275,8 @@ baseline remains legacy unless a runner explicitly opts into another arm.
 
 | Environment variable | Values / default | Effect |
 |---|---|---|
-| `CTF_BOT_FFA_DOCTRINE` | `hybrid`, `legacy`, `passive`, `rush`, `shade`, `hunter` / `legacy` | Selects the baseline FFA doctrine. |
+| `CTF_BOT_FFA_DOCTRINE` | `hybrid`, `legacy`, `passive`, `rush`, `shade`, `hunter`, `pact` / `legacy` | Selects the baseline FFA doctrine. |
+| `CTF_BOT_FFA_DOCTRINE_SLOTS` | comma-separated `slot=doctrine` pairs / unset | Opt-in per-seat doctrine overrides; an unset value is a no-op. |
 | `CTF_BOT_FFA_HUNTER_RING_MARGIN` | float `>=0` / `0.0` | Extra safety margin used by the hunter ring gate. |
 | `CTF_BOT_FFA_HUNTER_ARM` | bool / `true` | Allows hunter trips to arm a weapon. |
 | `CTF_BOT_FFA_HUNTER_FIRE_RANGE` | bool / `true` | Enables hunter range gating. |
@@ -285,12 +286,36 @@ baseline remains legacy unless a runner explicitly opts into another arm.
 | `CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC` | int `>=1` / `30` | Maximum hunter arming-trip duration. |
 | `CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS` | float `>=1` / `240.0` | Maximum detour radius for an arming trip. |
 | `CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN` | float `>=0` / `80.0` | Safety margin required before arming. |
+| `CTF_BOT_FFA_PACT_WINDOW_FRACTION` | float `>=0` / `0.35` | Early pact-window length as a fraction of the FFA ring shrink duration. |
+| `CTF_BOT_FFA_PACT_WINDOW_SEC` | int `>=0` / `0` | Explicit pact-window length in seconds; overrides the fraction when positive. |
+| `CTF_BOT_FFA_PACT_BRAWL_RADIUS` | float `>=1` / `220.0` | Maximum target-to-attacker separation for detecting an ongoing fight. |
+| `CTF_BOT_FFA_PACT_CONVERGE_RANGE` | float `>=1` / `520.0` | Maximum distance from a detected brawl for pact convergence. |
+| `CTF_BOT_FFA_PACT_ENGAGE_RANGE` | float `>=1` / `220.0` | Target distance required to engage during the pact window. |
+| `CTF_BOT_FFA_PACT_MEMORY_SEC` | int `>=1` / `3` | Remembered partner/target lifetime across brief visibility gaps. |
+| `CTF_BOT_FFA_PACT_PARTNER_MATCH_RADIUS` | float `>=1` / `60.0` | Matching radius for remembered partner and common-target positions. |
 
-The hunter-only controls are ignored by the other doctrines. The parser in
-[`players/baseline/baseline.nim`](../players/baseline/baseline.nim#L4083)
+The hunter-only and pact-only controls are ignored by the other doctrines. Pact
+is opt-in, and an unset doctrine still means legacy. The parser in
+[`players/baseline/baseline.nim`](../players/baseline/baseline.nim#L4264)
 keeps an unset `CTF_BOT_FFA_DOCTRINE` at `legacy`; the defaults and bounds for
-the hunter controls are declared at
-[`baseline.nim:253`](../players/baseline/baseline.nim#L253).
+the doctrine controls are declared at
+[`baseline.nim:267`](../players/baseline/baseline.nim#L267).
+
+**Pact needs encounter density, and degrades silently without it.** A pact seat
+can only form a pact from what it can see: it needs a second and a third living
+player visible at once (a target plus the co-attacker already fighting it). On a
+sparse map that configuration never occurs, every tick falls through to the
+hunter path, and the arm looks identical to `hunter` — no error, no warning, and
+nothing in the metrics says the doctrine never engaged. Measured on the default
+huge-map demo arm (`tools/run_ffa_demo.sh 12 42`, 12 bots): mean visible actors
+per tick **0.32**, and **zero** `phase=PACT` trace ticks across the whole match,
+i.e. the pact branch never ran once. The working configuration is the small-map
+arm — `DEMO_DIR=... tools/run_ffa_demo.sh 12 <seed> D3` with
+`CTF_BOT_FFA_PACT_WINDOW_SEC=25` — where three-way encounters happen inside the
+window and both the co-attack and the post-window turn on the partner are
+visible in the extracted damage rows. When evaluating pact, check for
+`phase=PACT` ticks in the bot log before reading anything into the result: an
+arm with none of them measured hunter, not pact.
 
 Reward consts: `WinReward`=+1, `LossReward`=−1, `TimeoutReward`=−1 (draw penalty).
 GV41 removed the action-floor overtime: the clock never extends, and a game with
