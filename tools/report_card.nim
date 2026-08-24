@@ -291,7 +291,9 @@ proc reportCard(log: Ledger, options: Options, seat: int): string =
   result.add(&"| Shot accuracy | {stats.accuracy()} |\n")
   if stats.heals > 0:
     result.add(&"| Heals | {stats.heals} for {stats.healedHp} hp |\n")
-  result.add(&"| Gun tiers taken | {log.tierPickups(seat).len} |\n\n")
+  result.add(&"| Gun tiers taken | {log.tierPickups(seat).len} |\n")
+  result.add(&"| Fixed-spawn gun tiers | {log.fixedTierPickups(seat).len} |\n")
+  result.add(&"| Dropped gun tiers | {log.droppedTierPickups(seat).len} |\n\n")
   result.add(log.killSection(seat))
   result.add(log.deathSection(seat))
   result.add(log.tierSection(seat))
@@ -307,7 +309,8 @@ proc episodeIndex(log: Ledger, options: Options, files: Table[int, string]): str
     result.add(&", winner `{log.summary.winner}`")
   result.add("\n\n")
   result.add("| Placement | Seat | Kills | Deaths | Dmg dealt | Dmg taken | " &
-    "Tiers | Card |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+    "Tiers (fixed/dropped) | Card |\n" &
+    "| --- | --- | --- | --- | --- | --- | --- | --- |\n")
   var order: seq[(int, int)]     ## (placement, seat); 0 = survived.
   let eliminations = log.eliminations()
   for seat in 0 ..< seats:
@@ -328,7 +331,7 @@ proc episodeIndex(log: Ledger, options: Options, files: Table[int, string]): str
     result.add(&"| " & (if placement == 0: "survivor" else: $placement) &
       &" | {log.seatLabel(seat)} | {stats.kills} | {stats.deaths} | " &
       &"{stats.damageDealt} | {stats.damageTaken} | " &
-      &"{log.tierPickups(seat).len} | " &
+      &"{log.fixedTierPickups(seat).len}/{log.droppedTierPickups(seat).len} | " &
       # A `--seat` run writes one card, so every other row has nothing to link
       # to; an empty `[card]()` would look like a broken link rather than a
       # seat this run did not render.
