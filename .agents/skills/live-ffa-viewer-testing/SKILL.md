@@ -388,6 +388,43 @@ they do NOT resume playback after a `?t=<simTick>` seek (the frame counter stays
 - Get event coordinates from `tools/extract_events.nim` (`CTFFRM01` frame dump: seats' x/y,
   aim, flags; flag bit 64 = spray cone active, bit 1 = alive).
 
+## Verifying broadcast-chrome EVENT LIFECYCLES (feed rows, lamps, chips)
+
+Chrome features that appear/disappear over a few ticks (kill/hazard rows, the FFA
+"inferred pact" cue, banners) cannot be judged from `?t=<tick>` screenshots alone —
+the state has to be sampled WHILE playback runs. What worked:
+
+- Serve a committed fixture (`--load-replay:tests/fixtures/ffa-scorebug.bitreplay
+  --port:<your own free port>`); ask the lead which ports are already taken.
+- Install a `JSON.parse` hook on load that stashes the frame's `s.t` into
+  `window.__t`. The parsed state is closure-scoped and the HUD only shows a coarse
+  `Time left` clock, so this hook is the only way to cite exact ticks.
+- Write one small CDP driver with a `watch <targetTick>` mode: press `space` to
+  resume, poll a DOM digest (dotted/amber lamp slots, leader-plate chips, feed row
+  classes+text) every few ms, record only the TRANSITIONS, then press `space` at the
+  target to pause and screenshot desktop + genuine 640x360. Transition logs are what
+  make "it cleared at tick N with no amber and no new row" falsifiable.
+- **Feed rows have a dwell timeout**: a row can vanish before the state it describes
+  ends. Do not conclude "the row was removed by the feature" from a late screenshot —
+  read it off the transition log.
+- **The displayed tick is sim tick minus the lobby length** (120 on
+  `ffa-scorebug`, i.e. `displayed = sim - 120`). The `?t=` URL and the ledger use
+  SIM ticks; the `NNNN / 4052` readout and timeline-strip position use displayed
+  ticks.
+- To test seek/jump handling, click the TIMELINE STRIP inside the same page
+  (`x ≈ scrubLeft + displayedTick/totalTicks * scrubWidth`, read the rect via CDP) —
+  navigating `?t=` reloads the page, which trivially clears state and proves nothing.
+- **Never click the board to focus it**: a canvas click toggles POV/fog and changes
+  zoom to FIT, wrecking the frame. Drive `space`/keys via CDP `Input.dispatchKeyEvent`
+  on the already-focused page instead.
+- Ground truth: `nim c -d:release -o:/tmp/xevents tools/extract_events.nim` then
+  re-implement the derivation from `src/ctf/broadcast.nim` over `ev.jsonl` in ~40 lines
+  of python. Predicting each transition tick BEFORE looking at the UI is what turns a
+  screenshot into evidence. Do not use HUD kill columns as ground truth.
+- At genuine 640x360 the scorebug's small ghost/dotted markers (e.g. `P<n>` chips) can
+  degrade into an unreadable blob even though they are correct in the DOM — always zoom
+  the small-viewport capture at NEAREST and judge legibility separately from correctness.
+
 ## Devin Secrets Needed
 
 None — the server and viewer run locally with no auth.
