@@ -261,6 +261,31 @@ victim's recent damage can feed the assist split; environmental and
 elimination deaths remain uncredited. `recordFfaDamage` ignores posthumous
 victims, preserving damage dealt as the placement tiebreak under kills.
 
+### Baseline policy doctrine (process environment)
+
+These are reference-policy controls rather than `GameConfig` fields: they do
+not change the Coworld manifest or simulation `GameVersion`. The league
+baseline remains legacy unless a runner explicitly opts into another arm.
+
+| Environment variable | Values / default | Effect |
+|---|---|---|
+| `CTF_BOT_FFA_DOCTRINE` | `hybrid`, `legacy`, `passive`, `rush`, `shade`, `hunter` / `legacy` | Selects the baseline FFA doctrine. |
+| `CTF_BOT_FFA_HUNTER_RING_MARGIN` | float `>=0` / `0.0` | Extra safety margin used by the hunter ring gate. |
+| `CTF_BOT_FFA_HUNTER_ARM` | bool / `true` | Allows hunter trips to arm a weapon. |
+| `CTF_BOT_FFA_HUNTER_FIRE_RANGE` | bool / `true` | Enables hunter range gating. |
+| `CTF_BOT_FFA_HUNTER_PURSUIT` | bool / `true` | Enables hunter pursuit of a weaker target. |
+| `CTF_BOT_FFA_HUNTER_PURSUIT_MIN_HP` | int `>=1` / `6` | Minimum hunter HP for pursuit. |
+| `CTF_BOT_FFA_HUNTER_SUPPORT_RADIUS` | float `>=1` / `300.0` | Radius used to detect supporting allies. |
+| `CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC` | int `>=1` / `30` | Maximum hunter arming-trip duration. |
+| `CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS` | float `>=1` / `240.0` | Maximum detour radius for an arming trip. |
+| `CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN` | float `>=0` / `80.0` | Safety margin required before arming. |
+
+The hunter-only controls are ignored by the other doctrines. The parser in
+[`players/baseline/baseline.nim`](../players/baseline/baseline.nim#L4083)
+keeps an unset `CTF_BOT_FFA_DOCTRINE` at `legacy`; the defaults and bounds for
+the hunter controls are declared at
+[`baseline.nim:253`](../players/baseline/baseline.nim#L253).
+
 Reward consts: `WinReward`=+1, `LossReward`=−1, `TimeoutReward`=−1 (draw penalty).
 GV41 removed the action-floor overtime: the clock never extends, and a game with
 the barrage configured ignores `maxTicks` entirely (it ends only on capture/wipe). Win logic:
