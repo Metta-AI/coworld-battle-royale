@@ -44,7 +44,8 @@
   `sha256:dc358fc6948f1a4230d48604be1cac341b384277a37337c275fd982601cd1aed`.
   Uploaded as unsubmitted candidate `andre-battleroyale:v7`; exact binary
   clones are `andre-trial-6:v1` and `andre-trial-6:v2`.
-- XP id: Pending.
+- XP id: Baseline `xreq_ecd96c93-4e50-48dc-ba1f-941ebf5b05c4`;
+  candidate `xreq_4e9c91e4-86e3-48e3-b4a8-8cddb24c16f6`.
 - Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
