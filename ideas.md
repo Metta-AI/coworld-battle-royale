@@ -4,7 +4,7 @@
 
 - League: Battle Royale, Coworld `battleroyale` v0.1.13.
 - Player: Andre von Houck (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`).
-- Submitted policy: none.
+- Submitted policy: `andre-battleroyale:v1`.
 - Upstream policy base: `a39eb196131ac0083506bb344130359de1c2d9c8`.
 
 ## Backlog
@@ -26,6 +26,10 @@
 - Idea: Establish a working submitted champion before experiments.
 - Change: No behavior change. Build the current upstream
   `players/baseline/baseline.nim` example with its default legacy FFA doctrine.
+- Artifact: `andre-battleroyale:v1`, policy version
+  `ecaaf746-1b7c-46f8-a66b-746bd192be7a`, submission
+  `sub_6df85778-353f-4e4c-baac-9b8b20af7019`.
 - XP id: N/A. There is no submitted policy to use as a baseline.
 - Opponents: N/A. The initial champion is the explicit no-submission bootstrap.
-- Verdict: Pending build, upload, and champion submission.
+- Verdict: Kept as the initial champion. The submission placed successfully and
+  its league membership is active.
