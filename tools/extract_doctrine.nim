@@ -24,10 +24,11 @@ proc startupLine(binaryPath: string): string =
     process.close()
   result = process.outputStream.readLine()
 
-if paramCount() != 2:
+if paramCount() < 2:
   raise newException(
     ValueError,
-    "usage: extract_doctrine POLICY_BINARY EXPECTED_DOCTRINE"
+    "usage: extract_doctrine POLICY_BINARY EXPECTED_DOCTRINE " &
+    "[EXPECTED_FRAGMENT ...]"
   )
 
 let
@@ -36,4 +37,7 @@ let
 
 doAssert line.contains(expected),
   "expected " & expected & " in startup log: " & line
+for i in 3 .. paramCount():
+  doAssert line.contains(paramStr(i)),
+    "expected " & paramStr(i) & " in startup log: " & line
 echo line

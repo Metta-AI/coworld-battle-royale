@@ -4,7 +4,7 @@
 
 - League: Battle Royale, Coworld `battleroyale` v0.1.13.
 - Player: Andre von Houck (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`).
-- Submitted policy: `andre-battleroyale:v1`.
+- Submitted policy: `andre-battleroyale:v2`.
 - Upstream policy base: `a39eb196131ac0083506bb344130359de1c2d9c8`.
 
 ## Backlog
@@ -20,6 +20,26 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 2: conservative hunter ring margin
+
+- Idea: The hunter artifact spent 298 ticks retreating to the safe zone and
+  switched objectives 219 times while holding the ring boundary. Keeping its
+  radial band 80 pixels inside the safe radius should reduce boundary churn
+  and late ring exposure without changing combat, looting, or pursuit.
+- Change: Set only `FfaHunterRingMarginDefault` from `0.0` to `80.0`.
+- Isolation: Passed locally. `tools/extract_doctrine.nim` asserted that the
+  current champion starts with `ffaHunterRingMargin=0.0` and the candidate
+  starts with `ffaHunterRingMargin=80.0`; both start with the hunter doctrine
+  and the other printed doctrine parameters are unchanged. Hosted artifact
+  confirmation is pending.
+- Artifact: Production image `andre-battleroyale:candidate-2`, Linux AMD64,
+  command `/bin/baseline`. Upload pending.
+- XP id: Pending.
+- Opponents: At Andre's #12 MMR of 1338.99, the three nearest other players
+  are David Greis (`Battle Royale Baseline:v1`, 1332.13), softmaxwell
+  (`Picasso:v62`, 1353.03), and NanosaurusX (`nancy-br:v1`, 1426.65).
+- Verdict: Pending hosted XP significance.
 
 ### Trial 1: hunter doctrine default
 
@@ -54,7 +74,9 @@
   per side, `tools/compare_xp_scores.nim` found a candidate score improvement
   of 62.30 with a two-sided 95 percent Welch interval of 13.59 to 111.01 and
   `p=0.013249`. The interval clears zero, so the candidate is significantly
-  better on the exact frozen field.
+  better on the exact frozen field. Submitted as champion with submission
+  `sub_8830f756-8b27-4e9f-ae85-073e21ca9fb9` and active membership
+  `lpm_824d7092-f9c1-4bd5-8f39-1d3e492284be`.
 
 ### Bootstrap 0: current example champion
 
