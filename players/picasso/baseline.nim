@@ -1033,15 +1033,71 @@ const
                               # the bucket boundary selfHp already uses for
                               # our own side, so self and enemy stay on the
                               # same calibration.
-  RingHoldFrac = 0.55         # out of contact, station at this fraction of the
+  DpadBits = ButtonUp or ButtonDown or ButtonLeft or ButtonRight
+  RingHoldFracDefault = 0.55  # out of contact, station at this fraction of the
                               # safe radius: inside the band the ring is about
                               # to take, without joining the crowd at dead
-                              # centre.
-  DpadBits = ButtonUp or ButtonDown or ButtonLeft or ButtonRight
-  RingSafeMarginPx = 90       # BR: stand this far INSIDE the ring's edge. The
+                              # centre. Hand-picked, never measured — see
+                              # applyRingTuneOverrides / BRHOLDFRAC below.
+  RingSafeMarginPxDefault = 90 # BR: stand this far INSIDE the ring's edge. The
                               # rect is still shrinking while we walk to it, so
                               # arriving exactly ON the boundary means arriving
-                              # outside it.
+                              # outside it. Hand-picked, never measured — see
+                              # applyRingTuneOverrides / BRSAFEMARGIN below.
+  RingHoldDeadbandPx = 60.0   # the hold band is TWO-SIDED (see decide()): correct
+                              # inward when d > holdR, outward when d < holdR, and
+                              # do nothing within this many px of holdR either way
+                              # so we do not spend every frame correcting a wobble.
+                              # Not swept — new code written to fix the one-way
+                              # ratchet, not itself a recalibration target.
+
+var
+  RingHoldFrac = RingHoldFracDefault
+    ## Overridable via env BRHOLDFRAC (float) so a local sweep needs no
+    ## rebuild. Read once, in applyRingTuneOverrides, on the frame
+    ## FfaRing.have first turns true — never on a 2-team board, where that
+    ## flag never flips and this proc never runs. An unset env leaves the
+    ## hand-picked default above untouched, so an unset run is the control.
+  RingSafeMarginPx = RingSafeMarginPxDefault
+    ## Overridable via env BRSAFEMARGIN (int, px). Same gate as RingHoldFrac.
+  RingHoldDisabled = false
+    ## Overridable via env BRHOLDDISABLE (any non-empty value disables it):
+    ## drops the decide() wrapper's entire out-of-contact positioning branch
+    ## (arm-first loot-seek, unarmed break-off, ring-hold station) so
+    ## decideCore's own navigation keeps the feet whenever the wrapper is not
+    ## itself in an armed-and-in-contact frame. Does NOT touch the separate
+    ## hard ring-safety override inside decideCore — that is a survival
+    ## guard against dying to the boundary, not the positioning layer this
+    ## flag is meant to isolate.
+  RingFracProbe = false
+    ## Overridable via env BRRINGPROBE (any non-empty value enables it):
+    ## stderr-logs "RINGFRAC tick=<t> slot=<n> frac=<d/radius>" every frame
+    ## once FfaSeen has stamped our position, regardless of which branch
+    ## below actually drives the feet — this is what lets a sweep report the
+    ## ACHIEVED distance fraction per arm, not just the dial it was handed.
+
+proc applyRingTuneOverrides() =
+  ## Calibration hook for RingHoldFrac / RingSafeMarginPx / RingHoldDisabled /
+  ## RingFracProbe. Called exactly once per episode, gated on FfaRing.have
+  ## (see the call site in decideCore), so this is inert on any board that
+  ## never states a ring. A malformed or absent env value is silently
+  ## ignored, keeping the shipped default.
+  let holdFracEnv = getEnv("BRHOLDFRAC")
+  if holdFracEnv.len > 0:
+    try:
+      RingHoldFrac = parseFloat(holdFracEnv)
+    except ValueError:
+      discard
+  let safeMarginEnv = getEnv("BRSAFEMARGIN")
+  if safeMarginEnv.len > 0:
+    try:
+      RingSafeMarginPx = parseInt(safeMarginEnv)
+    except ValueError:
+      discard
+  RingHoldDisabled = getEnv("BRHOLDDISABLE").len > 0
+  RingFracProbe = getEnv("BRRINGPROBE").len > 0
+
+const
   ThreatRange = 200.0         # react to a visible enemy this close facing us
   DuckRange = 340.0           # duck from remembered threats this close on cooldown
   TempoPressRange = 150.0     # #8: within this range, press a wounded/turned
@@ -8804,6 +8860,8 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
         FfaRing.have = FfaRing.startR > 0 and FfaRing.shrinkSec > 0
       except ValueError:
         discard
+      if FfaRing.have:
+        applyRingTuneOverrides()
       break
   # ── OUR OWN REACH ──────────────────────────────────────────────────────
   # `weapon <token>` states what we are actually holding. Everything in the
@@ -15278,6 +15336,26 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   result = bot.decideCore(client)
   if not FfaRing.have or not FfaSeen.stamped:
     return
+  if RingFracProbe:
+    # Calibration instrumentation only (env BRRINGPROBE): log the ACHIEVED
+    # d/radius every frame regardless of which branch below ends up driving
+    # the feet — contact, disabled, or the hold station — so a sweep can
+    # report the true outcome and not just the dial it was handed. Mirrors
+    # the ring-schedule integration used below and in decideCore's hard
+    # override; kept as its own read rather than sharing locals with either,
+    # since this must run even on frames that return before computing them.
+    let
+      elapsedPr = max(0, bot.tick - max(bot.ringT0, 0)) + RingElapsedBiasTicks
+      totalPr = max(1, FfaRing.shrinkSec * FfaTicksPerSec)
+      stepPr = clamp(elapsedPr, 0, totalPr)
+      spanPr = max(0, FfaRing.startR - FfaRing.floorR)
+      radiusPr = float(FfaRing.startR - spanPr * stepPr div totalPr)
+      centrePr = vec(float(FfaRing.cx), float(FfaRing.cy))
+      mePr = vec(FfaSeen.meX, FfaSeen.meY)
+      dPr = dist(mePr, centrePr)
+    if radiusPr > 1.0:
+      stderr.writeLine("RINGFRAC tick=" & $bot.tick & " slot=" & $bot.slot &
+        " frac=" & $(dPr / radiusPr))
   let
     unarmed = FfaWeapon == LabelWeaponFist or FfaWeapon.len == 0
   # ⚠️ AN UNARMED COG MUST NOT BE HANDED THE FEET IN CONTACT. The core's
@@ -15291,6 +15369,14 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   # keeps aim and trigger either way, so if something does wander inside fist
   # reach we still swing at it — we just stop walking toward it.
   if FfaSeen.enemies > 0 and not unarmed:
+    return
+  if RingHoldDisabled:
+    # Calibration arm (env BRHOLDDISABLE): skip the entire out-of-contact
+    # positioning branch below and leave decideCore's own (2-team-fallback)
+    # navigation in charge of the feet, so the sweep can ask whether this
+    # layer helps at all rather than just how to tune it. The hard ring
+    # safety override inside decideCore is untouched — it is a survival
+    # guard, not part of what this arm is testing.
     return
   # No contact. Hold station INSIDE the ring rather than walking a phantom
   # objective: keep our angular position (the centre is where every survivor
@@ -15371,9 +15457,17 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       # as a loss: a kill is ten seconds.
       target = centre
     else:
-      if d <= holdR:
-        return                           # already stationed; leave the core's feet
-      target = centre + (me - centre) * (holdR / max(d, 1.0))
+      # TWO-SIDED band with a deadband. The old code only ever pulled us
+      # INWARD (d > holdR) and returned unconditionally whenever d <= holdR
+      # — a one-way ratchet that, combined with the unarmed errand's own
+      # "go to the centre" above, could parade an ARMED cog through the
+      # crowded middle with nothing to ever walk it back out. Now we correct
+      # in EITHER direction outside the deadband and hold still inside it.
+      if abs(d - holdR) <= RingHoldDeadbandPx:
+        return                           # inside the deadband; leave the core's feet
+      if d < 1.0:
+        return                           # dead centre: no bearing to correct on
+      target = centre + (me - centre) * (holdR / d)
   let steer = bot.navSteer(client, me, target)
   if steer.len() < 1e-6:
     return
