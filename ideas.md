@@ -53,7 +53,11 @@
 - Opponents: At launch Andre is #9 at 1466.38. The frozen nearest other players
   are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX (`nancy-br:v1`,
   1355.24), and David Greis (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Pending hosted XP significance.
+- Verdict: Pending extension. The first 10 hosted episodes per side were
+  inconclusive. Candidate minus baseline was `19.8000`, with a two-sided 95
+  percent Welch interval `[-46.0627, 85.6627]` and `p=0.527068`. Twenty more
+  episodes per side on the same frozen field are queued before a keep or revert
+  decision.
 
 ### Trial 3: pact doctrine default
 
