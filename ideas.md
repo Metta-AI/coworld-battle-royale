@@ -31,11 +31,15 @@
   when no pact opportunity exists.
 - Change: When `CTF_BOT_FFA_DOCTRINE` is unset, select `FfaPact` instead of
   `FfaHunter`. No pact or hunter parameter is changed.
-- Isolation: Passed locally. `tools/extract_doctrine.nim` compared the exact
+- Isolation: Failed behavioral coverage. `tools/extract_doctrine.nim` compared
+  the exact
   current-champion commit with the candidate: the control starts as `hunter`,
   the candidate starts as `pact`, and their printed hunter arming, pursuit,
   detour, and ring controls are identical. The extractor also asserted the
-  production Docker image directly. Hosted confirmation is pending.
+  production Docker image directly. Hosted logs confirmed `ffaDoctrine=pact`,
+  but `tools/extract_artifact_objective.nim` found zero `pact_converge`
+  activations across all 10 candidate artifacts. The required field never
+  exercised the strategy branch.
 - Artifact: Production image `andre-battleroyale:candidate-3`, Linux AMD64,
   command `/bin/baseline`, digest
   `sha256:9973a7615cb590828cc6523ae5f3bd21e8cef015e1c34a8886da5106176289d3`.
@@ -47,7 +51,12 @@
   are softmaxwell (`Picasso:v62`, 1383.44), NanosaurusX (`nancy-br:v1`,
   1377.97), and aosgoods (`eatth-battleroyale-decision-stack-v29:v1`,
   1364.67).
-- Verdict: Pending hosted XP significance.
+- Verdict: Reverted. The 10 hosted episodes per side gave candidate minus
+  baseline `23.2000`, with two-sided 95 percent Welch interval
+  `[-28.0189, 74.4189]` and `p=0.353880`, which is inconclusive. More
+  importantly, no hosted candidate artifact exercised `pact_converge`, so the
+  delta cannot be trusted as a strategy measurement. The default returned to
+  hunter; `andre-battleroyale:v4` remains unsubmitted.
 
 ### Trial 2: conservative hunter ring margin
 
