@@ -38,8 +38,13 @@
   safety margin, 30-second deadline, enemy avoidance, bands, pursuit, firing,
   and all other behavior are unchanged. Upgrade movement emits
   `upgrade_trip` and `move_upgrade` for isolation.
-- Isolation: Pending checks and artifact verification.
-- Artifact: Pending production image and upload.
+- Isolation: `nim check` and the doctrine source-contract suite pass.
+  Production startup extraction matches every submitted hunter setting, and
+  the production binary contains both upgrade telemetry markers. Hosted branch
+  verification is pending.
+- Artifact: `andre-battleroyale:candidate-9`, Linux AMD64 image
+  `sha256:1b1d831c9fd60e597592309afc61a648720fe44f16a4197925e29581bee76fe4`.
+  Upload is pending.
 - XP id: Pending.
 - Opponents: Andre remains #9 at 1466.38. The frozen nearest other players at
   launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
