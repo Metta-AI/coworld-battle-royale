@@ -30,8 +30,15 @@
 - Isolation: Passed. `tools/extract_doctrine.nim` ran the compiled policy with
   the doctrine environment variable removed and captured
   `ffaDoctrine=hunter`, `ffaHunterArm=true`, and `ffaHunterPursuit=true`.
-- XP id: Pending.
-- Opponents: Pending the displayed MRR and exact field freeze.
+- Artifact: `andre-battleroyale:v2`, policy version
+  `6e71ddba-557d-4f19-861e-3add5441f0d9`.
+- XP id: Baseline `xreq_dcc0888b-4175-4fbd-9a17-1dd04dcc48d5`;
+  candidate `xreq_8a17f619-bfc0-432c-a4da-4df7fbb5af4d`.
+- Opponents: At Andre's #11 MMR of 1435, the three nearest other players were
+  David Greis (`Battle Royale Baseline:v1`, 1441), sivannn
+  (`sivan-br-ringsurfer:v1`, 1470), and NanosaurusX (`nancy-br:v1`, 1479).
+  Both requests pin this exact field, use four agents, rotate seats, and run 10
+  hosted episodes.
 - Verdict: Pending hosted XP significance.
 
 ### Bootstrap 0: current example champion
