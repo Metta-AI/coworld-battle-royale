@@ -43,7 +43,9 @@
   Uploaded unsubmitted as `andre-battleroyale:v8`; the exact submitted control
   and candidate images were also uploaded as immutable XP policies
   `andre-trial-7:v1` and `andre-trial-7:v2`.
-- XP id: Pending.
+- XP id: Baseline `xreq_ff913c8c-526a-487c-a228-168c50829e4f` and
+  candidate `xreq_84edd7d4-5907-40f3-8f3a-e1f363e40d32`, 10 hosted episodes
+  per arm.
 - Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
