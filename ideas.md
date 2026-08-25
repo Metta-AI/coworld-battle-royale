@@ -45,7 +45,8 @@
 - Artifact: Production image `andre-battleroyale:candidate-5`, Linux AMD64,
   command `/bin/baseline`, digest
   `sha256:a6c02280b56463e8c6d92c63957ecf4703390aee17ad0353cec72678af5ff463`.
-  Upload is pending.
+  Uploaded as unsubmitted candidate `andre-battleroyale:v6`; exact binary
+  clones are `andre-trial-5:v1` and `andre-trial-5:v2`.
 - XP id: Pending.
 - Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
