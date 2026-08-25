@@ -53,11 +53,14 @@
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
   (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Pending extension. The first 10 hosted episodes per side were
-  inconclusive. Candidate minus baseline was `5.9000`, with a two-sided 95
-  percent Welch interval `[-70.6125, 82.4125]` and `p=0.869076`. Twenty more
-  episodes per side on the same frozen field are running before a keep or
-  revert decision.
+- Verdict: Reverted. The first 10 hosted episodes per side were inconclusive.
+  Candidate minus baseline was `5.9000`, with a two-sided 95 percent Welch
+  interval `[-70.6125, 82.4125]` and `p=0.869076`. Twenty more hosted episodes
+  per side used the same frozen field. Across all 30 episodes per side,
+  candidate minus baseline was `-11.6000`, with a two-sided 95 percent Welch
+  interval `[-56.4935, 33.2935]` and `p=0.606563`. This remains inconclusive,
+  so the default returned to `0.85`; `andre-battleroyale:v7` remains
+  unsubmitted.
 
 ### Trial 5: pursue equal-HP solo opponents
 

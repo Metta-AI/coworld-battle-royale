@@ -248,7 +248,7 @@ const
   FfaPerimeterBandDefault = 0.60
   FfaLootBandDefault = 0.60
   FfaHoldBandDefault = 0.50
-  FfaPassiveBandDefault = 0.60
+  FfaPassiveBandDefault = 0.85
   FfaShadeRingMarginDefault = 160.0  # one alarm width inside the ring-safety line
   FfaHunterRingMarginDefault = 0.0
   FfaLootOpenSecDefault = 35
