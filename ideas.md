@@ -37,8 +37,13 @@
   inside the safe ring. All movement, firing, arming, bands, ring behavior,
   health thresholds, and support radius are unchanged. Replacement cases emit
   `pursue_vulnerable` for isolation.
-- Isolation: Pending checks and artifact verification.
-- Artifact: Pending production image and upload.
+- Isolation: `nim check` and the doctrine source-contract suite pass. Production
+  startup extraction matches the submitted hunter settings, and the production
+  binary contains exactly one `pursue_vulnerable` marker. Hosted branch
+  verification is pending.
+- Artifact: `andre-battleroyale:candidate-8`, Linux AMD64 image
+  `sha256:85d94425bccbf88e1ce3119bafe8efe5146aa80b8f90aa5278e092899c6fa508`.
+  Upload is pending.
 - XP id: Pending.
 - Opponents: Andre remains #9 at 1466.38. The frozen nearest other players at
   launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
