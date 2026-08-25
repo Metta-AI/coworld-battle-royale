@@ -1,0 +1,15166 @@
+## Baseline capture-the-flag bot for Coworld CTF (8v8, classic two-flag,
+## dense-cover arena, FOG-OF-WAR full-map vision).
+##
+## Speaks the Bitworld Sprite v1 protocol over a websocket. The observation is
+## the FULL map in map coordinates, but entities are fogged: an enemy (and an
+## enemy carrying our flag) is only streamed while it sits inside OUR vision —
+## a forward cone (half-angle ~45 degrees around our AIM ANGLE, unlimited
+## range, walls block) plus a small omnidirectional bubble (~90px). Always
+## visible: the static map, BOTH flag pedestals (teammates are fogged too),
+## our own flag's state (an empty own pedestal means it is stolen), and
+## ourselves via the distinct "self <color> right|left" marker. AIM IS
+## DECOUPLED FROM MOVEMENT: a continuous per-player aim angle (0..255 brads,
+## 0 = east, counter-clockwise on screen) turns while B (CCW) or Select (CW)
+## is held at ~5 brads/tick; the d-pad never touches it. The aim drives the
+## gun, the vision cone, and the sprite flip, so pointing it is THE core
+## tactical decision. The bot keeps a persistent world model on top of that:
+##
+## - **Nav grid**: the full walkability mask arrives once at init; we erode it
+##   by the player footprint into an 8px cell grid and run a cost field
+##   (Dijkstra) to any goal, then follow the path with waypoint lookahead.
+## - **Cover model**: walkable cells adjacent to an obstacle are "cover
+##   cells". Cells a remembered enemy could shoot into (range + coarse LOS)
+##   get a soft path cost, so movement naturally advances cover-to-cover and
+##   keeps obstacles between us and known threats.
+## - **Flag model** (two flags): pedestals are STATIC known positions and
+##   pedestal flags are never fogged. Only OUR team can carry the enemy flag,
+##   so the "<enemy color> heart" sprite is always visible and fully describes
+##   our attack (pedestal / on me / on a mate). Only the enemy can carry OUR
+##   heart: the "<my color> heart" sprite on its pedestal means safe, visible
+##   off-pedestal is a live thief fix, and ABSENT means stolen by a fogged
+##   carrier somewhere between our pedestal and its home edge.
+## - **Memory**: visible players are matched to tracks (position, velocity,
+##   last-seen tick) that persist through fog, and the last thief fix guides
+##   the hunt after the carrier fogs out.
+## - **Roles** (deterministic from the per-team seat, 8 seats): a mid QUAD
+##   races lanes to the ENEMY pedestal, two flankers route wide and hit the
+##   pocket from behind, one overwatch sniper holds a shielded cover post
+##   whose peek cell owns the longest firing line over mid — under fog a lane
+##   watcher SEES map-wide down its open lane, so overwatch is also the radar
+##   — and one home defender guards the choke before our pedestal. The attack
+##   wave is deliberately six strong: with no global flag tracking, a carrier
+##   that slips the contest is hard to reacquire, so committed offense turns
+##   steals into captures. While our flag is stolen the back line hunts the
+##   thief along its predicted route toward ITS home edge; attackers press on
+##   — captures are instant wins both ways, so the race stays on.
+## - **Turret controller**: the bot dead-reckons its own aim (spawn aim is
+##   toward the enemy side; each held rotate button turns it 5 brads/tick)
+##   and resyncs it every frame from its own rendered aim-indicator dots.
+##   Each tick it outputs the rotate button that traverses toward the desired
+##   aim by the shortest arc, and fires only when the bullet corridor
+##   (~14px half-width) covers the target at its range.
+## - **Scanning**: units holding a position (overwatch posts, the defender's
+##   choke, cooldown ducks) sweep the aim back and forth across the watch arc
+##   with genuine rotate-button sweeps, raking the vision cone over it while
+##   standing perfectly still. On the move, the aim leads the movement
+##   direction when no target demands it, so attackers watch down-lane.
+## - **Peek-and-shoot**: the default combat mode. With the gun up and a
+##   remembered enemy blocked by a wall, PRE-LAY the aim on the firing line
+##   while stepping sideways to the nearest cell that opens it — the shot is
+##   ready the moment the ray clears; during the 12-tick cooldown, duck
+##   behind the nearest cover that breaks the threat's line and hold there.
+## - **Fire discipline**: the bullet is a corridor hitscan along the aim, so
+##   the fire gate is geometric: shoot when the aim error's perpendicular
+##   miss at the target's range is inside the corridor. Skip targets with a
+##   remembered teammate near the fire axis (friendly fire is on; the server
+##   kills the NEAREST player in the corridor).
+##
+## Coordinate model: the map object sits at (0, 0), so object positions ARE
+## map coordinates; we find ourselves via the self marker. Only a fresh A
+## press fires, and the aim angle locks at the pull (the bullet leaves after
+## a short windup), so we stop rotating on the tick we pull.
+
+when defined(ringProbe):
+  # -d:ringProbe ONLY: a lever nobody can see firing is how a shipped feature
+  # goes dark. Counts the override's fires and how many were a genuine
+  # already-outside rescue rather than a margin nudge.
+  var rpFires = 0
+  var rpOutside = 0
+  var rpHold = 0
+
+when defined(tgtprobe):
+  var tpFrames = 0
+
+when defined(perfprobe):
+  import std/monotimes, std/times
+  var ppFrames = 0
+  var ppDecideNs, ppFieldNs, ppNavBuildNs: int64
+  var ppFields = 0
+
+import
+  std/[algorithm, heapqueue, math, os, random, strutils],
+  bitworld/spriteprotocol,
+  whisky,
+  ctf/labels,
+  baseline/protocols
+
+# ── LEVER-LIVENESS PROBE (audit instrumentation, -d:leverprobe) ────────────
+# `lvC` wraps the FULL condition of every `if`/`elif` that reads a CombatTune
+# field, so the counters answer the question that matters — did the guarded
+# BODY run — not merely "was the tune flag read". WITHOUT -d:leverprobe the
+# template is the identity `c`, so the shipped decision path is byte-identical.
+const LvSites* = 163
+when defined(leverprobe):
+  var lvEval*: array[LvSites, int]   ## times the condition was EVALUATED
+  var lvTrue*: array[LvSites, int]   ## times it was TRUE (the branch fired)
+  template lvC*(i: int, c: bool): bool =
+    block:
+      let v = c
+      inc lvEval[i]
+      if v: inc lvTrue[i]
+      v
+else:
+  template lvC*(i: int, c: bool): bool = c
+
+
+when defined(hsprobe):
+  # -d:hsprobe ONLY: count how often the carrierHomeStretch branch fires and how
+  # often it actually MOVES the target off the lane-Y it would otherwise use.
+  # If fire=0 the trigger never occurs in self-play (field-only, like huntCarrier);
+  # if fire>0 but moved=0 the override is a no-op vs the lane path. Never compiled
+  # into the shipped player.
+  var hsFireCount = 0
+  var hsMovedCount = 0
+
+when defined(rgprobe):
+  # -d:rgprobe ONLY: instrument the regroupPush gate as a FUNNEL so a 0-fire
+  # result is diagnosable (correctly gated & field-only vs dead code / logic bug).
+  # Each counter is the count of decide()-frames surviving one more sub-condition.
+  # Never compiled into the shipped player.
+  var rgMid = 0       # alive mid seat with regroupPush on (the population the guard filters)
+  var rgNoCarry = 0   # ...and not iCarry/mateCarry (the suspect gate)
+  var rgNoStolen = 0  # ...and own flag not stolen
+  var rgReach = 0     # passed the FULL outer guard (also not retreating/pushOut, off the pedestal)
+  var rgDeep = 0      # ...and armed (over-extended past the trigger depth)
+  var rgVac = 0       # ...and local vacuum (no fresh enemy near)
+  var rgLone = 0      # ...and not yet grouped (a real solo over-extension)
+  var rgJoin = 0      # ...and support inbound (a fresh mate homeward to wait for)
+  var rgFireCount = 0 # ...and uncommitted => the rally-hold actually fired
+
+when defined(gtprobe):
+  # -d:gtprobe ONLY: instrument the grabTiming gate as a FUNNEL so a 0-fire result
+  # is diagnosable (correctly gated & field-only vs dead code / a stack that never
+  # forms in the mirror). Each counter = decide()-frames surviving one more gate.
+  # Never compiled into the shipped player.
+  var gtWant = 0      # frames a bot geometrically WANTS the pocket rush
+  var gtEligible = 0  # ...and grabTiming on, not pushOut, off the commit ring
+  var gtStacked = 0   # ...and the pocket is stacked (>=GrabStackDefenders)
+  var gtNoCover = 0   # ...and no mate covering in place
+  var gtFireCount = 0 # ...and a mate inbound => the hold actually fired
+
+when defined(hlprobe):
+  # -d:hlprobe ONLY: instrument the holdLine gate as a FUNNEL so a 0-fire result is
+  # diagnosable (correctly gated vs dead code / a line that never forms in the mirror).
+  # Each counter = decide()-frames surviving one more sub-condition. Never shipped.
+  var hlMid = 0       # alive mid seat with holdLine on (the population the guard filters)
+  var hlReach = 0     # ...passed the full outer guard (not carry/stolen/retreat/pushOut, off pedestal)
+  var hlDeep = 0      # ...and armed (over-extended past the trigger depth into enemy half)
+  var hlLine = 0      # ...and a fresh enemy line is to our front (not an empty vacuum)
+  var hlOutgun = 0    # ...and we LACK local fire-superiority (fresh mates near < fresh enemy near)
+  var hlLone = 0      # ...and not a lone last body (support genuinely inbound to wait for)
+  var hlFireCount = 0 # ...and uncommitted => the line-hold actually fired
+
+when defined(shapefire):
+  # -d:shapefire ONLY (2026-08-14, the Hermes SHAPE study): prove the one-runner
+  # shaping lever actually TOUCHES FEET. Team-indexed (0 Red / 1 Blue) because the
+  # in-process eval harness runs all 16 bots in one process and the A/B is
+  # team-scoped (SHAPETEAM), so a pooled counter could not tell the arms apart.
+  # A compiled-but-never-triggered lever is this project's most repeated failure:
+  # spHoldFired must be NON-ZERO or the hold moved nobody.
+  var spArmed: array[2, int]      # decide()-frames on a seat whose tune has oneRunner on
+  var spRunner: array[2, int]     # ...on the designated deep runner (role MidTop)
+  var spHold: array[2, int]       # ...on a holder that reached the clamp (past the carve-outs)
+  var spHoldFired: array[2, int]  # ...and its target was DEEPER than the hold line => clamped
+
+when defined(ggprobe):
+  # -d:ggprobe ONLY: instrument the grabGate as a FUNNEL so a 0-fire result is
+  # diagnosable. Each counter = decide()-frames surviving one more gate. Never shipped.
+  var ggWant = 0      # frames a bot geometrically WANTS the pocket rush
+  var ggEligible = 0  # ...and grabGate on, not pushOut, off the commit ring, not lone-last
+  var ggOutgun = 0    # ...and outgunned locally at the pedestal (deficit >= GrabGateDeficit)
+  var ggFireCount = 0 # ...=> the grab-gate actually fired (dive held)
+
+when defined(tempoprobe):
+  # -d:tempoprobe ONLY (2026-08-17, ffa4 L2/L4 tempo mandate): prove both new
+  # levers actually TOUCH A DECISION, not just a counter — the repeated failure
+  # mode this project has hit before (navSteer silently absorbing waypoint
+  # writes, the mid-quad levers reading inert on one map). Never shipped.
+  #   L2 volume gate (tradeGate): a frame where the gate DISCRIMINATES, i.e. the
+  #   old outnumberMargin arithmetic would have PRESSED (not badly outnumbered)
+  #   but tradeGate's "hold a real edge" bar DECLINES instead — the counter that
+  #   matters is the one where the two disagree, not raw evaluation frames.
+  var tgEval = 0        # frames the tradeGate branch actually ran (onOffense, fireSuperiority+tradeGate)
+  var tgWouldPress = 0  # ...of which the OLD margin test would have pressed (enemyGuns-friendGuns < breakMargin)
+  var tgDeclined = 0    # ...and tradeGate declined anyway (the ARMED bar) => DISCRIMINATES
+  # ── ⭐⭐⭐ TGEV (2026-08-20). The rule this project keeps relearning: "it FIRED"
+  # is not "it could have CHANGED the outcome" (an 88.7% bind rate that was
+  # constant by construction). So nothing here is a per-frame rate:
+  #   * tgEnter counts RISING EDGES — one decision, not 24 held frames;
+  #   * tgSquarePress / tgSquareDecl isolate the SHAPE change from the gate
+  #     itself, by scoring both bars on the same frame;
+  #   * tgFeetDrop is the SUPPRESSION COST — frames where the gate took the feet
+  #     off a target the engage branch had actually selected (the kill we forgo);
+  #   * tgEvt is a LEDGER, joined in grabprobe against engine-truth deaths, and it
+  #     is what makes the FUTILITY BOUND computable from ONE shadow run instead
+  #     of a sweep. Shadow mode writes the ledger and never touches declineUntil,
+  #     so the bound comes out of a byte-identical control.
+  var tgSquarePress = 0   # frames the SQUARE bar presses where the ADDITIVE bar declines
+                          # (the free finishing kill the additive bar throws away)
+  var tgSquareDecl = 0    # ...and the reverse: square declines where additive presses
+  var tgContestFrames = 0 # eval frames with >= TradeContestMinTeams distinct rival colours local
+  var tgColorUnknown = 0  # fresh local enemy tracks with NO colour read (perception gap;
+                          # a big number here invalidates the contest term, not the gate)
+  var tgHpFlip = 0        # frames the SELF/MATE hp weighting alone flips the verdict
+  # ⚠️⚠️ THE ARMS-LATE CHECK (coordinator, 2026-08-20). The discriminating window
+  # is ticks 200-400 (6.7-13.3s), where we burn 3.7x the leaders' early trades —
+  # NOT 40s. A gate that cannot fire until later misses the ENTIRE effect, and
+  # "nothing in the entry path is clocked" is a claim about code that has to be
+  # measured, not read. tgFirstFire is the earliest ENGINE tick the gate ever
+  # fired in a run; tgBucket is the whole decision distribution by tick band, so
+  # "it fires, but only after the window" is visible instead of invisible.
+  var tgFirstFire = -1    # earliest ENGINE tick any decline decision was taken
+  const TgBuckets* = 6
+  var tgBucket: array[TgBuckets, int]   # decisions by tick band:
+                          # 0-199 / 200-399 / 400-799 / 800-1199 / 1200-2399 / 2400+
+  var tgEnter = 0         # RISING-EDGE declines: actual decisions taken
+  var tgEnterContest = 0  # ...of which contested
+  var tgFeetDrop = 0      # act-site: frames `declining` diverted the feet while the
+                          # engage branch HAD a live target => the suppression cost
+  var tgTick* = 0         # ENGINE tick, stamped by the rig before each frame (aoeTick
+                          # precedent) so the ledger joins to sim events with no guess
+  var tgShadowUntil*: array[32, int]  # shadow-mode hysteresis mirror of declineUntil
+  var tgEvt*: seq[tuple[tick, slot, x, y: int, contested, wouldPress: bool]]
+    ## one row per DECISION (rising edge). grabprobe clears it per episode and
+    ## joins it forward TgFollowTicks against engine-truth deaths, which yields
+    ## BOTH deliverables from the same rows:
+    ##   futility bound = share of our EARLY deaths preceded by a decline decision
+    ##   measured c     = rival lives burned near a declined fight we walked away
+    ##                    from (the empirical source for TradeContestBurn)
+
+when defined(ffa4probe):
+  # -d:ffa4probe ONLY (2026-08-17, ffa4 INTEGRATION gate). The tempo package
+  # shipped its own -d:tempoprobe counters for L2/L4; the lives package shipped
+  # none, so L1/L3 had no fire proof at all. These are the missing half, built
+  # to the same DISCRIMINATE rule: count the frames where the lever is what
+  # made the decision differ, never raw eligibility. Never shipped.
+  var f4Frames = 0        # decide() frames reached (population)
+  var f4Ffa4 = 0          # ...on a GameTeams > 2 board
+  var f4LivesRead = 0     # ...where selfLives() PARSED (the readback is live at all)
+  var f4LivesHist: array[5, int]   # distribution of the parsed `lives` value (0..4)
+  var f4OnLastLife = 0    # ...and this bot is on its LAST life (lastLifeGuard armed)
+  # L3a HARD OFFENCE STOP. llGeomRush mirrors wantPocketRush with the last-life
+  # term REMOVED: every other gate already passed, so the pre-lever world would
+  # genuinely have dived.
+  var f4RushGeom = 0      # frames every non-lastLife term of wantPocketRush was true
+  var f4RushVetoLL = 0    # ...of which onLastLife is what closed it => DISCRIMINATES
+  # L3b WIDER MEDKIT ERRAND + L1 ffaMedSee, at the single commit point.
+  var f4MedFire = 0       # medEcon actually committed a kit target
+  var f4MedLastLife = 0   # ...on a last-life bot
+  var f4MedPickVis = 0    # ...target came from the VISIBLE family (ffaMedSee/medSee)
+  var f4MedPickVisOff = 0 # ...and that kit is OFF both formula spots => an address
+                          #    the pre-lever code could never have produced
+
+when defined(commsprobe):
+  # -d:commsprobe ONLY: prove the comms bus is LIVE — codewords emitted, heard,
+  # and adopted. A 0-heard result vs a >0-emit result diagnoses a wire/range gap.
+  var csEmit = 0      # frames a bot broadcast a scenario codeword
+  var csHeard = 0     # frames a bot decoded a mate's codeword (adopted a play)
+  var csAdopt = 0     # frames the adopted heard play actually drove selectScenarioPlay
+  var csStack = 0     # local classifications: ScStack
+  var csWipe = 0      # ...ScWipe
+  var csPeel = 0      # ...ScPeel
+  var csLine = 0      # ...ScLine (standing enemy line to our front)
+  var csNadeLine = 0  # frames a grenade carrier picked a CLUSTER (line/pocket) target
+                      # — the multikill lob that breaks the line before the wave punches
+  var csLineArm = 0   # frames a HEARD line armed holdLine's rally without a local line
+                      # sighting (the cross-fog convergence the callout buys)
+  var csArcSeek = 0   # frames the breacher seat detoured to grab a plasma arc on a line
+  var csArcFire = 0   # frames the breacher pressed the cone at a cluster (the multikill)
+  var csWipeArm = 0   # frames a HEARD wipe armed regroupPush's rally without a
+                      # local over-extend read (the coordination the bus buys —
+                      # a trailing mid converges on a wipe it never saw itself)
+  # ── v56 PLAY EXECUTORS. Each counter is FRAMES THE LEVER ACTUALLY MOVED
+  # SOMETHING, not frames it was merely eligible — the repeated failure in this
+  # policy is a lever that compiles, gates green and never fires. The *Px sums
+  # are total pixels of movement-target delta, so a non-zero fire count with a
+  # ~0 pixel sum still reads as the no-op it is.
+  var csStackMove = 0   # frames a heard STACK pulled this bot's approach target
+  var csStackMovePx = 0.0 # ...total px that pull moved the target
+  var csStackGate = 0   # frames a heard STACK (NOT our own eyes) held a fogged dive
+  var csWipeMove = 0    # frames a heard WIPE pulled our approach lane toward the hole
+  var csWipeMovePx = 0.0
+  var csLineMove = 0    # frames a heard LINE shoved our approach lane off the door
+  var csLineMovePx = 0.0
+  var csLatchDrop = 0   # different-token overwrites REFUSED inside the latch window
+  var csEchoSkip = 0    # emits suppressed because that play was already in the air
+  var csECall = 0       # "E <cell>.." enemy callouts we emitted
+  var csESeed = 0       # enemy tracks seeded from a mate's heard E-callout
+  # ── STACK-CONVERGE WATERFALL (2026-08-17): stackConverge/stackHoldGate fire 0
+  # even with the shout-forward bug fixed and WIPE/LINE firing fine. These break
+  # the STACK-only path down gate-by-gate so a single "fires: 0" doesn't have to
+  # be reverse-engineered again.
+  var csEmitStack = 0        # frames a bot EMITTED a STACK codeword (rp==RpStack at emit)
+  var csStackHeardRaw = 0    # frames bot.heardPlay == RpStack, no other condition
+  var csStackFreshEntry = 0  # ...AND heardFresh true (entered the stackConverge if)
+  var csStackTooClose = 0    # ...AND callD < StackConvergeMin (70)
+  var csStackTooFar = 0      # ...AND callD > StackConvergeMax (460)
+  var csStackBandOk = 0      # ...AND in [Min,Max] band
+  var csStackNoDelta = 0     # ...band ok but d <= 1.0 (already on target, no move)
+
+when defined(ssprobe):
+  # -d:ssprobe ONLY (v7): count how often the avoidDisarm repulsion is ACTIVE
+  # (a pickup we're not collecting sits inside DisarmAvoidRadius and bends the
+  # steer) and how often swordAmbush/shieldTank actually seek/swing. Proves the
+  # levers are live code even when accidental grabs are already near zero.
+  var ssAvoidActive = 0   # navigate frames where a sword/shield repulsion pushed us
+  var ssTankSeek = 0      # frames shieldTank steered toward a shield pickup
+  var ssAmbushSeek = 0    # frames swordAmbush steered toward a sword pickup
+  var ssAmbushSwing = 0   # frames swordAmbush actually pressed the melee swing
+
+when defined(canprobe):
+  # -d:canprobe ONLY: separate PERCEPTION from BEHAVIOUR on the spray-can
+  # pickup path, which is the one place a renamed label has burned this policy
+  # (0.7.x renamed `plasma arc` -> `spray can`; the pickup scans kept the old
+  # name and matched nothing, silently, for weeks).
+  #
+  # The distinction is the whole point. "We rarely carry a can" has two totally
+  # different causes with the same symptom: the SCAN comes back empty (we are
+  # blind), or the scan works and the SEEK gate declines (we are choosy). A
+  # pickup count alone cannot tell them apart — cpSeen can, because it counts
+  # the label read itself, before any policy judgement is applied.
+  var cpGate = 0      # decide frames where the pickup scan was actually run
+  var cpSeen = 0      # ...and the `spray can` scan came back NON-EMPTY
+  var cpObjs = 0      # total pickup objects the scan returned (summed over frames)
+  var cpSeek = 0      # ...and sprayGrab committed the steer to one
+
+when defined(mtprobe):
+  # -d:mtprobe ONLY (v9): instrument the medTopOff gate as a FUNNEL so a 0-fire
+  # result is diagnosable (correctly gated & rare vs dead code / a logic bug).
+  # Each counter = decide()-frames surviving one more sub-condition. Never
+  # compiled into the shipped player.
+  var mtOn = 0        # alive frames with medTopOff on and read hp (the population)
+  var mtWounded = 0   # ...and wounded (ownHp in 1..<MaxHp)
+  var mtSafe = 0      # ...and out of contact (engage<0 and nearThreat<0)
+  var mtFree = 0      # ...and not carrier/grabber/escort/stolen-flag (a free bot)
+  var mtVisible = 0   # ...and a med-kit pickup is visible at all this frame
+  var mtFireCount = 0 # ...and one sits within MedKitDetour => the detour actually fired
+
+when defined(meprobe):
+  # -d:meprobe ONLY (2026-07-28): instrument the medEcon gate as a FUNNEL, the same
+  # way mtprobe does for medTopOff, so "did the fix actually open the gate?" is a
+  # measurement and not a guess. The whole point of medEcon is that medTopOff's
+  # funnel collapsed at mtSafe/mtVisible; compare meSafe/meFireCount against those.
+  # Never compiled into the shipped player.
+  var meOn = 0         # alive frames with medEcon on and read hp (the population)
+  var meWounded = 0    # ...and wounded (ownHp in 1..<MaxHp)
+  var meFree = 0       # ...and not carrier/grabber/escort/stolen-flag/pickup-seeker
+  var meLightBreak = 0 # ...and IN contact but at 1 hp with no gun on us (the new case)
+  var meSafe = 0       # ...and cleared the contact rule (out of contact or light-break)
+  var meFireCount = 0  # ...and a known kit sits within MedKitEconDetour => fired
+
+when defined(lifeprobe):
+  # -d:lifeprobe ONLY (ffa4 lives audit, 2026-08-17): does each new lever
+  # actually FIRE a behavioural change, not just build? Never shipped.
+  var llOnLastLifeFrames = 0   # population: alive frames onLastLife read true
+  var llWantSuppressed = 0     # ...and wantPocketRush WOULD have been true
+                                # (the veto was load-bearing, not a no-op)
+  var ffaMedFireCount = 0      # frames ffaMedSee (not base medSee) supplied
+                                # the chosen medEcon target
+
+when defined(kselprobe):
+  # -d:kselprobe ONLY (⭐⭐⭐ kitSel, 2026-08-20): instrument the FEASIBILITY-AWARE
+  # KIT SELECTOR, and specifically separate "it FIRED" from "it could have CHANGED
+  # THE OUTCOME". A sibling lever's state-class coverage estimate over-stated its
+  # own effect 3.8x, so nothing here counts a STATE — every counter below is a
+  # frame on which the two arbitrations were both evaluated and compared.
+  var ksLearned = 0        # sightings that BANKED a new spawn into bot.kitSpots
+  var ksDry = 0            # spot-emptied beliefs formed (stood on it, saw nothing)
+  var ksScan = 0           # medEcon frames that reached the selector
+  var ksKnown = 0          # ...with >=1 learned spawn in hand (kitSel OWNS the pick)
+  var ksPickReal = 0       # ...and it committed to a learned REAL spawn
+  var ksDryAll = 0         # ...had spawns but every one was dry or out of budget
+                           # (kitSel takes NO errand here; the old code would have
+                           # walked to a phantom — this is the cost side of the ledger)
+  var ksOldPhantomWin = 0  # frames where the OLD arbitration would have picked a
+                           # FORMULA spot over everything visible — the defect rate
+  var ksOldHadNothing = 0  # ...frames the old code had no candidate at all
+  # ⭐ REALIZED COVERAGE — the two numbers the futility bound is built on. Not
+  # "hp1 segments" (a state class) but frames where our destination actually
+  # MOVED, and the subset where the new destination is also REACHABLE.
+  var ksMoved = 0
+  var ksMovedReachable = 0
+when defined(shprobe):
+  # -d:shprobe ONLY (⭐⭐⭐ shieldAddr + ⭐ medEncum, 2026-08-20): instrument the two
+  # consumable levers as FUNNELS, and separate "it FIRED" from "it could have CHANGED
+  # THE OUTCOME". Nothing below counts a STATE — every counter is a frame on which the
+  # arbitration was actually evaluated, and shMoved is the realized-coverage
+  # denominator (frames where the destination genuinely moved off the old formula).
+  var shAcquired = 0       # ⭐ TUNE-INDEPENDENT OUTCOME: shield acquisitions (iHaveShield
+                           # false -> true). A SHIELDADDR-unset run of the SAME binary is the
+                           # control, exactly as msHeals is for medSee.
+  var shFrames = 0         # alive frames, the denominator for shAcquired
+  var shLearned = 0        # sightings that BANKED a new shield spawn into bot.shieldSpots
+  var shDry = 0            # spot-emptied beliefs formed (stood on it, saw nothing)
+  var shScan = 0           # shieldRush frames that reached the address choice
+  var shPickLearned = 0    # ...and committed to a LEARNED (real, seen) spawn
+  var shPickFormula = 0    # ...fell back to the formula, which the stated endzone allows
+  var shRefuse = 0         # ...REFUSED: the formula is outside our own stated endzone, so
+                           # it provably is not our shield. The old code walked there anyway.
+  var shMoved = 0          # ⭐ REALIZED COVERAGE: the destination moved >ShieldMovedPx, or vanished
+  var seWounded = 0        # medEncum: wounded medEcon frames clearing every NON-gear yield
+  var seWoundedGear = 0    # ...of which the gear terms alone are what refuses the errand
+
+when defined(msprobe):
+  # -d:msprobe ONLY (plan #16): instrument medSee — does routing medEcon at a kit
+  # we can SEE actually change the chosen target, and does it convert into heals?
+  # Two families of counter:
+  #   * AVAILABILITY (msVis*) runs whether or not the tune bit is set, so one
+  #     binary measures ON and OFF apples-to-apples on the same seeds;
+  #   * PICK (msPick*) counts which family supplied the target medEcon committed to.
+  # Plus a tune-INDEPENDENT heal funnel in damageSense, so heals/10k wounded frames
+  # is comparable to the FIELD unit (ours 2.4, richard 7.0). Never shipped.
+  var msScan = 0        # medEcon frames that cleared every veto and reached the scan
+  var msVisAny = 0      # ...with >=1 HUD-filtered visible kit sprite in view
+  var msVisNear = 0     # ...with >=1 visible kit inside MedKitEconDetour
+  var msVisOffSpot = 0  # ...with >=1 visible kit inside the detour and OFF both formula spots
+  var msFire = 0        # ...and medEcon actually set a target (either family)
+  var msPickSpot = 0    # ...target came from the two hard-coded formula spots
+  var msPickVis = 0     # ...target came from the VISIBLE family (the new branch)
+  var msPickVisOff = 0  # ...and that visible kit is NOT at a formula spot  <= THE counter
+  var msWoundedFrames = 0  # tune-independent: frames our own hp read 1..<MaxHp
+  var msHeals = 0          # tune-independent: wounded -> full transitions (a kit taken)
+
+const MedSeeProbeScan* = defined(msprobe)
+  ## Compile-time only: under -d:msprobe the medEcon block walks the VISIBLE-kit
+  ## scan even with the lever OFF, so ONE binary measures availability ON and OFF
+  ## on the same seeds. It never selects a target unless bot.tune.medSee is set,
+  ## and folds to `false` in every shipped build.
+
+when defined(mkprobe):
+  # ⭐⭐ MATE-KO FUTILITY-BOUND PROBE (2026-08-20). TUNE-INDEPENDENT by design:
+  # the scan and every rejection counter run whether or not an arm is armed, so
+  # a plain CONTROL_SHIPPED=1 SHIPBASE=1 run (no MATEKO* set) measures the pure
+  # OPPORTUNITY rate -- how often the newly-live branches could POSSIBLY act --
+  # before a single episode is spent on an A/B. "It fired" is not the question;
+  # "could it ever have changed the outcome" is.
+  var mkAliveFrames = 0   # alive decide() frames (the denominator)
+  var mkKoLabels = 0      # own-colour KO markers observed at all
+  var mkRejRespawn = 0    # ...refused because the marker predates our respawn
+  var mkRejDedupe = 0     # ...already consumed (same spot, within one life)
+  var mkRejNoMate = 0     # ...no remembered mate track within 48px (our own body)
+  var mkStamps = 0        # ...accepted: a legitimate mate-death fix
+  var mkAimOpp = 0        # frames where dangerPreAim rung 1 WOULD take the turret
+  var mkWatchOpp = 0      # frames where the last-man watch WOULD fire
+  var mkDoorOpp = 0       # stamps landing inside the hotDoor crossing band
+  var mkIdleTurret = 0    # frames the turret is idle with no fresh track (rung-1 gate)
+
+when defined(wbprobe):
+  # -d:wbprobe ONLY (plan #13): instrument woundedBank as a FUNNEL plus the
+  # hp-1 SEGMENT FATE metric (the plan's §3.1 mechanism probe). Counters are
+  # module globals shared across the in-process harness's 16 bots — common-mode
+  # is fine for "does it fire". The hp-1 segment counters run tune-independent
+  # so a WBANK-unset run of the same binary is the control. Never compiled into
+  # the shipped player.
+  var wbAllFrames = 0      # alive decide frames with a read hp (dump clock)
+  var wbEntries = 0        # FIGHT→BANK segment entries
+  var wbFrames = 0         # banking frames
+  var wbFinishSuspend = 0  # frames the finish-window suspended an armed bank
+  var wbLineSegs = 0       # bank segments where a fresh threat line was on us
+  var wbBreak60 = 0        # ...and that line was BROKEN within 60t of entry
+  var wbBankDeaths = 0     # bank segments ending in death
+  var wbBankHeals = 0      # heals to full WHILE banking (the re-arm)
+  var wbHp1Segs = 0        # closed hp-1 segments (all bots, tune-independent)
+  var wbHp1Heals = 0       # ...ending in a heal to full (alive)
+  var wbHp1Deaths = 0      # ...ending in death
+  var wbHp1Ticks = 0       # total ticks spent at hp 1 across closed segments
+
+when defined(rwprobe):
+  # -d:rwprobe ONLY (plan #squad-1, issue #20): the M1 DIFFERENTIAL row. Runs BOTH
+  # movement selectors (with and without the mid-lane pull) over the SAME frame state
+  # and counts where the EMITTED OCTANT STEP differs — not where the TARGET moved.
+  # `carrierHomeStretch` retargeted 99 of 99 frames and was still INERT because
+  # navSteer's cost field plus octantBits' 8-way quantization collapsed the output, so
+  # a target-diff row proves nothing. Gate eligibility (G1-G4) is evaluated
+  # TUNE-INDEPENDENTLY, so the same binary measures the counterfactual with RALLY unset
+  # (control trajectory) and the realised differential with RALLY=1. The disambiguating
+  # triple (the finishWounded lesson — `pickDiff == 0` reads the same for a broken probe
+  # and a real no-op): rwTargetDiff+mean shift says the target moved at all, rwSurvive/
+  # rwOverwritten says whether a later movement branch erased it, rwGate* says which gate
+  # closed. Summary printed at EXIT (never a modulo dump — the wbprobe lesson).
+  var rwFrames = 0         # decide frames reaching the plan-layer movement block
+  var rwElig = 0           # ...meeting G1-G4 (tune-independent)
+  var rwTargetDiff = 0     # ...where the pull actually moved target.y (> 0.5px)
+  var rwShiftSum = 0.0     # ...total |Δy| applied, for the mean shift
+  var rwStepDiff = 0       # ...where the EMITTED octant step differs (THE M1 ROW)
+  var rwSurvive = 0        # eligible frames whose target reached the nav emit intact
+  var rwOverwritten = 0    # ...where a later branch replaced the target (absorbed)
+  var rwEmitOther = 0      # ...that never reached the nav-target emit at all
+  var rwGateRole = 0       # gate rejections: sentry seat (Overwatch / HomeDefender)
+  var rwGateDepth = 0      # gate rejections: already past CenterX (enemy half)
+  var rwGateContact = 0    # gate rejections: a rival body fresh THIS frame within 300px
+  var rwGatePhase = 0      # gate rejections: PhOpen / PhDefend / PhEscort / PhForce
+  var rwGateCarry = 0      # gate rejections: carrying / our heart stolen / at the pocket
+  # Per-frame scratch. Set in the plan-layer movement block and read later in the SAME
+  # decide() call, so the shared-globals hazard (16 bots, one process) cannot bite: no
+  # value ever survives across bots. Floats, not a Vec — `vec()` is declared far below.
+  var rwArmedFrame = false
+  var rwNavHit = false
+  var rwStepFlag = false
+  var rwPostX = 0.0
+  var rwPostY = 0.0
+  var rwStepDiffSurv = 0   # stepDiff frames whose target ALSO reached the nav emit
+                           # intact — the strictest reading of "the lever changed the
+                           # movement the bot actually emitted" (<= rwStepDiff).
+
+when defined(lkprobe):
+  # -d:lkprobe (2026-08-20): the OWN INSTRUMENT for the "lockPos is a PLACE" fix.
+  # ⚠️ This lever must NEVER be gated on attrition. The futility bound is 2.7-4.5%
+  # of the ffa4 gap (<=18% at the most generous credit) because kills are the half
+  # we already WIN (kills per 100 damage us 27.15 vs relh 28.08, field 27.17;
+  # kills/team-Ep us 11.56 vs relh 10.24, daveey 8.36), and within-policy the
+  # switch rate -> lives@1200 correlation is a TIGHT null: r = +0.009
+  # [-0.029,+0.046], n=2,716. At a +0.05-0.09 attrition margin it can never be
+  # A/B'd on lives@1200 and trying would manufacture a FALSE NULL.
+  #
+  # Every counter here is computed independently of `lockOne`, so the control and
+  # candidate arms census the SAME world.
+  var
+    lkLockFrames = 0        ## decide() frames with a LIVE commit lock
+    lkDiscHist: array[5, int]  ## in-disc candidate count, 0/1/2/3/4+
+    lkContested = 0         ## frames with >=2 in the disc — THE STIMULUS
+    lkNoopEvals = 0         ## candidate evals in the no-op region (disc <= 1)
+    lkNoopBreak = 0         ## ...of those, evals where old != new. MUST BE 0.
+    lkContestedEvals = 0    ## candidate evals on a contested frame
+    lkDivergeEvals = 0      ## ...of those, evals where old != new (the bite)
+
+when defined(scprobe):
+  # -d:scprobe ONLY (v9): instrument the satCap redistribution as a FUNNEL so a
+  # null A/B is diagnosable (pair-saturation never occurs in range vs occurs but
+  # the pick never actually spreads). Never compiled into the shipped player.
+  var scEngaged = 0   # decide frames with satCap on and an engage pick made
+  var scSatSeen = 0   # ...where >=1 fresh in-range candidate was saturated
+  var scRedirect = 0  # ...and the final pick was NOT a saturated enemy (spread)
+  var scDogpile = 0   # ...and the final pick WAS saturated (commit / only target)
+  var scCov1 = 0      # in-range candidate evals with >=1 mate gun lined (diag)
+  var scCov2 = 0      # ...with >=2 mate guns lined (the pair threshold, diag)
+  var scHp1 = 0       # ...with a read 1-hp (one lined gun suffices, diag)
+  var scMateFresh = 0 # mate tracks seen within 2 ticks (dot-read population, diag)
+  var scMateRead = 0  # ...whose aim-dot line actually read back (mAim >= 0, diag)
+  var scRayHit = 0    # (mate-ray, fresh-enemy) pairs where the ray covers it (diag)
+
+when defined(arprobe):
+  # -d:arprobe ONLY (v9): prove the aimRotRead sprite-id readback is LIVE and
+  # measure its coverage — how many visible actors yield a bearing from the
+  # rotation id, and how often the self-resync path fires. Never shipped.
+  var arFrames = 0    # decide frames with aimRotRead on
+  var arSelfRead = 0  # ...where the self rotation id yielded our aim
+  var arEnemySeen = 0 # visible enemy actors scanned (population)
+  var arEnemyRead = 0 # ...with aimBrads >= 0 off the rotation id
+  var arMateSeen = 0  # visible mate actors scanned
+  var arMateRead = 0  # ...with aimBrads >= 0 off the rotation id
+  var arResync = 0    # frames the rot readback actually corrected estAim
+
+when defined(wuffprobe):
+  # ⭐⭐⭐ -d:wuffprobe ONLY (2026-08-19): the WINDUP FRIENDLY-FIRE VETO's FUTILITY
+  # BOUND. "It fired" is not "it mattered" — an earlier lever reported an 88.7%
+  # bind rate that was constant by construction and meant nothing. So every
+  # counter here is one of three things and never a mix:
+  #   POPULATION  — candidate trigger pulls (the denominator)
+  #   FIRED       — the veto's verdict, split FOUR ways so the AXIS term and the
+  #                 LEAD term can be attributed separately from ONE run
+  #   MATTERED    — the join against engine-truth friendly-fire impacts, done in
+  #                 grabprobe: of the gun shots that actually hit a teammate, what
+  #                 share had their TRIGGER TICK flagged? That share is the bound.
+  # Every array is indexed by the RAW ENGINE TEAM (0..3), not Red/Blue: on a
+  # >2-team board `bot.team` collapses every non-zero team into Blue, so a
+  # per-team split keyed on it is wrong by construction. grabprobe fills
+  # wuffTeamOfSlot from engine.teamOfSlot before the episode runs.
+  var wuffTeamOfSlot: array[32, int]
+  var wuffCand: array[4, int]   # POPULATION: fresh candidate gun pulls (wantFire
+                                # and not firedLast) inside the engage branch,
+                                # counted whenever the lever is ARMED
+  var wuffBlkA: array[4, int]   # blocked on the SELECTION ray, both bodies at T0
+                                # (what the shipped selection-site test can see)
+  var wuffBlkB: array[4, int]   # blocked on bradsDir(estAim), both bodies at T0
+                                # (the AXIS term alone == a cqbLos-style check)
+  var wuffBlkC: array[4, int]   # blocked on estAim with the MATE led to T+5
+  var wuffBlkD: array[4, int]   # blocked on estAim with mate AND muzzle led (full)
+  var wuffBlkU: array[4, int]   # blocked by the UNION of C and D
+  var wuffNewD: array[4, int]   # D blocked where B did NOT — the population no T0
+                                # veto of any axis can reach
+  var wuffSup: array[4, int]    # pulls the ARMED, non-shadow veto actually killed
+  var wuffStale: array[4, int]  # ...where the deciding mate track was > WuffStaleAge
+  var wuffRe: array[3, array[4, int]]  # of suppressed pulls, how many re-fired
+                                # within 3 / 6 / 12 ticks (the "it only cost slew"
+                                # claim, measured instead of asserted)
+  var wuffSupAt: array[32, int] # per slot: tick of the last suppressed pull, -1 = none
+  var wuffTickFlags: array[32, seq[uint8]]  # per slot, per BOT TICK bitfield:
+                                # 1 = candidate pull, 2 = A, 4 = B, 8 = C, 16 = D,
+                                # 32 = suppressed, 64 = the C-OR-D union.
+                                # grabprobe sizes/clears it per
+                                # episode and joins it against the engine's gun
+                                # ShotImpact rows (trigger tick = impact - 5).
+  proc wuffMark(slot, tick: int, bits: uint8) =
+    if slot >= 0 and slot < 32 and tick >= 0 and tick < wuffTickFlags[slot].len:
+      wuffTickFlags[slot][tick] = wuffTickFlags[slot][tick] or bits
+
+when defined(caprobe):
+  # -d:caprobe ONLY: counterArc (Play C) funnel — verify the "plasma arc carried"
+  # attribution fires and the priority bump reaches a real engage. Also the place
+  # to empirically tune ArcCarryRadius (attrib should track actual enemy carriers).
+  var caArcAttrib = 0 # actors tagged hasArc via the carried-marker attribution
+  var caSeen = 0      # enemy tracks scanned in dangerScore with counterArc on
+  var caBump = 0      # tracks that got the disarmed-carrier priority credit
+
+when defined(asoprobe):
+  # -d:asoprobe ONLY (2026-08-07): the arcStandoff funnel. counterArc's caprobe proves the
+  # arc-carrier SPRITE READ is live; this proves the MOVEMENT reacts. Read it as a funnel —
+  # each counter narrows the one before, so a 0 tells you exactly which stage is blind:
+  #   asoNear  == 0 => no arc-carrier ever came within ArcStandoffRing+hold (nothing to do:
+  #                    expected in the mirror, where carriers only meet us inside 136px)
+  #   asoBack  == 0 with asoNear > 0 => detection fires but the back-off branch never wins
+  #                    the movement chain (a higher-priority branch owns those frames)
+  #   asoInCone > 0 => we were caught INSIDE 136px (the exact death arcStandoff exists to
+  #                    prevent) — with the lever ON this should trend toward 0 vs OFF.
+  # CRITICAL: near/caughtInCone are counted whenever COUNTERARC is on, NEVER gated on
+  # arcStandoff itself — gating the probe behind its own lever means the OFF arm can only
+  # ever report 0, which is indistinguishable from "no stimulus" (the ARCFOE rig exists
+  # exactly to rule that out; keep this gate on the PREREQUISITE, not the lever).
+  var asoNear = 0     # frames a fresh disarmed arc-carrier sat inside the standoff ring band
+  var asoBack = 0     # ...and the back-off actually drove our feet (branch won the chain)
+  var asoHold = 0     # ...and we sat in the dead band instead (neither closing nor fleeing)
+  var asoInCone = 0   # frames we were caught INSIDE PlasmaArcReachPx of a carrier (the kill zone)
+
+when defined(sgprobe):
+  # -d:sgprobe ONLY (2026-07-24 dive-death fix): the adaptive pocket-commit funnel. Never shipped.
+  var sgWant = 0      # frames a bot wanted the pocket rush (frontmost body inside PocketRushRange)
+  var sgDefended = 0  # ...and the pocket was DEFENDED (>=GrabStackDefenders fresh guns on it)
+  var sgHold = 0      # ...and we HELD at standoff (no Captain advantage) — the suicide dive PREVENTED
+  var sgCommit = 0    # ...and we COMMITTED the touch WITH advantage (pickEdge/PhForce/cover) — team push
+
+when defined(tcprobe):
+  # -d:tcprobe ONLY (2026-07-29 touch latch): does the latch arm, and what did it PREEMPT?
+  # The point is not just "did we grab" but "which branch would otherwise have stolen the
+  # tick" — the four counters below are the measured preemption census. Never shipped.
+  var tcLatch = 0     # frames the touch latch was armed (a body inside GrabCommitRing)
+  var tcNade = 0      # ...where the grenade charge/throw would have frozen us
+  var tcEngage = 0    # ...where the engage branch would have advanced on the ENEMY instead
+  var tcDuck = 0      # ...where the cooldown duck would have crawled to cover
+  var tcPeek = 0      # ...where the peek sidestep would have opened a firing line
+
+when defined(fsprobe):
+  # -d:fsprobe ONLY (2026-07-24, the focus-fire audit): quantify the two reported
+  # SEALs-violating behaviors. Never compiled into the shipped player.
+  var fsSwitch = 0    # frames the engage target CHANGED while the PRIOR locked target was
+                      # still alive + fresh + within engage range (target-switch mid-kill)
+  var fsSwitchLive = 0# ...and that abandoned prior target had its gun ON us (the lethal case)
+  var fsBackTurn = 0  # frames a gun-DOWN bot set moveMask AWAY from a fresh enemy whose gun
+                      # is on us within HoldVsGunRange, with NO cover-mate (turning the back)
+  var fsHold = 0      # ...frames the new holdVsGun guard actually caught + held that case
+
+when defined(arcprobe):
+  # -d:arcprobe ONLY (Stage 2, 2026-07-24): the OFFENSIVE arc-breacher funnel.
+  # Each counter = decide()-frames of the designated breacher seat surviving one
+  # more sub-condition, so a stage that zeroes the count NAMES the gating condition
+  # (the diagnostic the audit lacked when it shipped the lever OFF). Never compiled
+  # into the shipped player.
+  var apBreacher = 0   # frames the fixed breacher seat is alive with arcBreach on (population)
+  var apLineLive = 0   # ...and a line is live for us (classified OR heard)
+  var apEligible = 0   # ...and free to break off (no arc yet, not carry/escort/stolen)
+  var apSeek = 0       # ...=> steered toward the STATIC own-side arc spawn (the run)
+  var apArmed = 0      # frames the breacher actually HOLDS the arc (pickup landed)
+  var apCharge = 0     # ...and charged the seam with no cluster in cone yet (advancing)
+  var apInReach = 0    # ...and a fresh enemy sat inside the cone reach (a shot exists)
+  var apFire = 0       # ...=> pressed the cone on-bearing (the multikill press)
+  var apClusterSum = 0 # sum of cluster sizes at each fire (mean multikill = sum/apFire)
+  var apMaxCluster = 0 # the fattest cluster ever coned (a true multikill proof)
+  var apSingleFire = 0   # spraySingle: pressed the cone on a lone in-reach target
+                        # (no qualifying cluster existed at all)
+  var apSingleCharge = 0 # spraySingle: closed the gap on a lone out-of-reach target
+
+when defined(nmprobe):
+  # -d:nmprobe ONLY (v9): instrument the noMask mover-side repel as a FUNNEL so
+  # a null A/B is diagnosable (no live support ray ever forms vs rays form but
+  # the mover never crosses one). Never compiled into the shipped player.
+  var nmNavFrames = 0 # navigate-steer frames with noMask on (the population)
+  var nmRays = 0      # live support rays present across those frames
+  var nmRepel = 0     # lateral repel vectors actually applied (mover in corridor)
+
+when defined(ocprobe):
+  # -d:ocprobe ONLY (v9): instrument the offCone approach bend as a FUNNEL so a
+  # null A/B is diagnosable (cone never readable vs readable but never on us vs
+  # on us but the bend gated out). Never compiled into the shipped player.
+  var ocAdvance = 0   # engage-advance frames with offCone on (the population)
+  var ocConeRead = 0  # ...where the target's aimBrads was readable
+  var ocOnUs = 0      # ...and its cone was ON us (inside AimOnConeBrads)
+  var ocBend = 0      # ...and the tangential bend was actually applied
+
+when defined(asprobe):
+  # -d:asprobe ONLY (v9): instrument the assaultThrough trigger as a FUNNEL so
+  # a null A/B is diagnosable (surprises never happen vs gun never on us vs
+  # cover always nearer vs committed but the charge frames never run). Never
+  # compiled into the shipped player.
+  var asSurprise = 0  # surprise contacts scanned with assaultThrough on
+  var asGunOnMe = 0   # ...whose gun-cone was ON us at the moment of surprise
+  var asNoCover = 0   # ...with no duck cover nearer than the enemy → COMMITTED
+  var asCharge = 0    # duck-branch frames the charge override actually drove
+
+when defined(ffprobe):
+  # -d:ffprobe ONLY (v9): instrument the fatalFunnel pre-lay so a null A/B is
+  # diagnosable (sentries never idle vs idle but a fresh track always keeps the
+  # sweep vs the throat never computed). Never compiled into the shipped player.
+  var ffHold = 0      # sentry hold frames with fatalFunnel on (the population)
+  var ffIdle = 0      # ...with NO fresh enemy track (eligible to pre-lay)
+  var ffPreLay = 0    # ...where the turret actually pre-laid on the throat
+
+when defined(ndprobe):
+  # -d:ndprobe ONLY (2026-08-14, the v56 NADE PACKAGE proof). Read each group
+  # as a FUNNEL — a stage that zeroes names the gate that is blind.
+  #
+  # ⚠️ The population counters (ndCarryFrames, ndStaleSeen, ndPairFrames) are
+  # deliberately NOT gated on their own lever, so the OFF arm measures the same
+  # world (the asoprobe rule: gating a probe behind its own lever means the OFF
+  # arm can only ever report 0, which is indistinguishable from "no stimulus").
+  var ndCarryFrames = 0   # frames a live bot held a grenade and was scanning
+  var ndFreshAim = 0      # ...and a FRESH candidate won the aim (shipped path)
+  var ndStaleSeen = 0     # tracks scanned that were stale-but-remembered,
+                          # wall-BLOCKED and camped (the population the shipped
+                          # FreshShotTicks gate throws away). Lever-independent.
+  var ndStaleCluster = 0  # ...of those, ones that also had >=2 in one blast
+                          # (the exact wall-camper case; the throw candidate)
+  var ndStaleAim = 0      # ...and the stale candidate actually WON the aim
+  var ndStaleRelease = 0  # grenades RELEASED off a stale-armed charge
+  var ndFreshRelease = 0  # grenades RELEASED off a fresh-armed charge
+  # Supply funnel.
+  var ndSupplyRole = 0    # frames an eligible (role-restricted) seat was unarmed
+                          # and free to re-arm. Lever-independent population.
+  var ndSupplyDepot = 0   # ...with at least one KNOWN depot coordinate
+  var ndSupplySeek = 0    # ...where the detour actually drove the feet
+  var ndSupplySeen = 0    # frames the shipped SEEN-sprite scan took a pickup
+                          # (the LOS-gated path; lever-independent)
+  var ndDepotSeeded = 0   # depots seeded from static map geometry
+  var ndDepotLearned = 0  # depots learned from a sighting
+  # Anti-bunch funnel.
+  var ndPairFrames = 0    # frames a mate track sat inside ONE BLAST of us
+                          # (lever-independent — the bunching STIMULUS)
+  var ndBunchBand = 0     # frames the outer 40..66px band term pushed the steer
+  var ndBunchStep = 0     # frames the post-chain step-apart broke a standing pair
+  # Release ledger for the DISCRIMINATION score: (throw tick, seat slot, stale?).
+  # The harness joins these to the engine's GrenadeThrow/GrenadeImpact events by
+  # actionId, so a stale-armed throw's CONVERSION can be compared against a
+  # fresh-armed one — a gate must DISCRIMINATE, not just fire.
+  var ndReleases: seq[tuple[tick, slot: int, stale: bool]] = @[]
+
+when defined(aoeprobe):
+  # ── ⭐⭐ AoE FRIENDLY-FIRE PROBE (-d:aoeprobe ONLY, 2026-08-19). Never compiled
+  # into the shipped player. Its job is to make the FUTILITY BOUND computable
+  # from ONE control run, before any sweep is paid for — "it FIRED" is not "it
+  # could have CHANGED the outcome" (the 88.7% bind rate that meant nothing).
+  #
+  # Every counter here is LEVER-INDEPENDENT: the hot/veto tests are evaluated on
+  # the SAME decisions in both arms, so a control run (NADEFF/SPRAYFF unset)
+  # reports exactly how much of the UNVETOED world the veto reaches. Gating a
+  # probe behind its own lever makes the OFF arm read 0 and 0 is
+  # indistinguishable from "no stimulus" (the asoprobe rule).
+  #
+  # The SLACK LADDER is the point: each decision is scored at five margins
+  # around the shipped geometry, so the whole coverage-vs-suppression curve is
+  # readable from one run and the margin can be re-tuned without a re-sim.
+  const AoeSlackN* = 5
+  const AoeSlack*: array[AoeSlackN, float] = [-24.0, -12.0, 0.0, 12.0, 24.0]
+  var aoeTick* = 0        # ENGINE tick, stamped by the rig before each frame, so
+                          # the rows below join to sim events with no offset guess.
+  # GRENADE funnel.
+  var nfCand = 0          # candidate impact points that cleared every EXISTING
+                          # gate (range, LOS, cluster) — the throwable population
+  var nfCandHot: array[AoeSlackN, int]   # ...of those, ones with a mate in the burst
+  var nfCandVeto = 0      # ...and the ARMED lever actually dropped the candidate
+  var nfRelease = 0       # grenades actually RELEASED (the decision that matters)
+  var nfReleaseHot: array[AoeSlackN, int]  # ...with a mate predicted in the burst
+                          # AT BURST TIME = the throws the veto could have stopped
+  var nfHoldTicks = 0     # ticks the ARMED release veto held a charge back
+  var nfHoldBail = 0      # ...and threw anyway at NadeFfHoldMax (the residual)
+  var nfRel*: seq[tuple[tick, slot: int, hot: array[AoeSlackN, bool]]] = @[]
+                          # per-release ledger; the rig joins it to the engine's
+                          # GrenadeImpact damage so REACH and COST are exact
+                          # counts of hit points, not proxy fire rates.
+  # SPRAY funnel.
+  var sfPress = 0         # cone presses the existing policy would have made
+  var sfPressHot: array[AoeSlackN, int]  # ...with a mate inside the wedge
+  var sfVeto = 0          # ...and the ARMED lever actually declined the press
+  var sfFire*: seq[tuple[tick, slot: int, hot: array[AoeSlackN, bool]]] = @[]
+
+when defined(cgprobe):
+  # -d:cgprobe ONLY (2026-08-06): comboGrab mechanism proof. The co-carry
+  # counters are TUNE-INDEPENDENT (self-observed item state, no fog) so a
+  # NOCOMBOGRAB run of the SAME binary is a fair same-seed control; the fire
+  # counter is tune-DEPENDENT (only the new block increments it). Dumped
+  # periodically to stderr like wbprobe. Never compiled into the shipped player.
+  var cgFrames = 0         # decide()-frames reaching the item-state read (dump clock)
+  var cgCoShieldCan = 0    # ...with iHaveShield AND iHavePlasma both true (2a realized)
+  var cgCoNadeCan = 0      # ...with carryingNade AND iHavePlasma both true (2b realized)
+  var cgShieldGrabFire = 0 # comboGrab's new shield-grab-for-can-carrier block fired
+
+## ── PAINTBOT: the map and the match shape are drawn per EPISODE ──────────────
+## Everything position-shaped derives from these. They used to be compile-time
+## consts pinned to the old 1235x659 league arena; paintbot generates a new map
+## every episode (up to 2496x2496 on a giant 4-team board), so a fixed rectangle
+## made the nav grid cover 13% of the field and clamped every coordinate outside
+## it into a place that does not exist. Adopted at nav-grid build from the
+## walkability sprite, which always spans the whole arena.
+var
+  MapW = 1235
+  MapH = 659
+  CenterX = MapW div 2
+  CenterY = MapH div 2
+  GridW = 0                   # set by adoptMapSize (NavCell is declared below)
+  GridH = 0
+  LaneMid = float(CenterY)
+  LaneBottom = float(MapH) - 40.0
+  FireRange = 1250.0
+    ## Engage distance. GV34 fixed the gun at config.gunRange on EVERY map
+    ## (1300px in all four paintbot variants), so this is the gun's reach
+    ## capped by the board — never a map-width, which on a giant board would
+    ## admit targets 1200px past anything we can actually hit.
+  NadeMaxRange = 247.0        ## sim: MapWidth div 5, so it scales with the map
+  ShoutHeardRange = 247.0     ## sim ShoutRange: MapWidth div 5, likewise
+  MedKitAX = float(MapW div 2)
+  MedKitAY = float(MapH div 3)
+  MedKitBX = float(MapW div 2)
+  MedKitBY = float(2 * MapH div 3)
+  GameTeams = 2
+    ## How many teams share the board, from the `game teams <n> map <w>x<h>`
+    ## init marker. 2 keeps every classic mirrored-arena path untouched; 4
+    ## re-deals our color (seats go round the teams, slot mod GameTeams).
+  EndzoneMarks: seq[tuple[color, shape: string, x0, y0, x1, y1: int]]
+    ## Every team's stated home capture region, from the per-team
+    ## `endzone <color> <shape> <x0>,<y0> <x1>,<y1>` init markers. On a
+    ## generated board these markers ARE the scoring geometry — we no longer
+    ## reconstruct it from our own copy of the zone formulas.
+  PuddleMarks: seq[tuple[x0, y0, x1, y1: float]]
+    ## v56 hazardSense: every stated paint-puddle bounding box, from the
+    ## `puddle <x0>,<y0> <x1>,<y1>` init markers (absent on 4-team maps and
+    ## on puddle-less boards). Audit-confirmed ZERO readers before v56 —
+    ## sentries posted and wounded bots parked inside stated attrition zones.
+  BarrageDepthPx = 0.0
+    ## ⚠️ -d:barrprobe (2026-08-20) instruments this var; see bpMaxDepth.
+    ## v56 hazardSense: the stated grenade-barrage ring depth off the LIVE
+    ## `grenade barrage depth <n> rate <n> start <n> sat <n>` marker — every
+    ## map edge is saturated this many px deep RIGHT NOW (0 = mode off / not
+    ## latched; escalates to the full board). Refreshed every frame in
+    ## decide; audit-confirmed zero readers before v56.
+    ##
+    ## ⚠️⚠️ 2026-08-20 — "BarrageDepthPx was 0.0 on 100% of frames, so
+    ## hazardSense's barrage branch is a CONSTANT-FALSE GUARD" is REFUTED.
+    ## The branch is fine and the label contract is intact; the RIG is blind:
+    ##   * the marker is emitted only when `config.barrageMaxPerSec > 0`
+    ##     (src/ctf/global.nim:6242), and `defaultGameConfig()` ships
+    ##     `barrageMaxPerSec: 0` (src/ctf/sim_config.nim:52);
+    ##   * `newEvalEngine` (players/baseline/eval/harness_engine.nim) overrides
+    ##     aimTurnRate / gunRange / map / teams / scoring and NOTHING ELSE, so
+    ##     every local episode runs with the barrage mode OFF;
+    ##   * the HOSTED league arms it: coworld_manifest_paintbot.json sets
+    ##     `barrageMaxPerSec: 15, barrageStartPerSec: 4, barrageStartSec: 30,
+    ##     barrageSaturateSec: 30` on the 2v2, 4ffa AND 4ffa8 modes.
+    ## So in the field the marker DOES arrive and the depth DOES escalate — the
+    ## lever was written for a real, observed death cause ("we still don't react
+    ## to end-of-game perimeter bombs, we die to them a lot").
+    ## ⚠️ The depth is stated as 0 until the barrage LATCHES at 30s remaining,
+    ## which on the 7200-tick clock is ~tick 6480. A rig run with `--ticks 6000`
+    ## would read 0 even with the mode armed. Reproduce with EVAL_BARRAGE=15 and
+    ## ticks past the latch; see harness_engine.nim.
+
+when defined(barrprobe):
+  # -d:barrprobe ONLY (2026-08-20): the instrument that REFUTES "hazardSense's
+  # barrage branch is a constant-false guard". It answers the two questions a
+  # fire counter could not: did the stated depth ever become non-zero, and did
+  # the evacuation override ever drive the feet. Run it with EVAL_BARRAGE=15 and
+  # --ticks past the latch (barrageStartSec=30 remaining), or it reads 0 for the
+  # RIG's reason rather than the policy's.
+  var bpMaxDepth = 0.0    # largest BarrageDepthPx ever stated to us
+  var bpDepthFrames = 0   # bot-frames on which the stated depth was > 0
+  var bpPostVeto = 0      # target pushed out of the ring by the post/stand guard
+  var bpEvac = 0          # frames the body-evacuation override drove the feet
+
+var
+  FfaSeen: tuple[stamped: bool, alive: bool, enemies: int, meX, meY: float]
+    ## The core's own read of this frame, stamped once so the free-for-all
+    ## positioning wrapper can ask "were we in contact?" without paying for a
+    ## second sweep of every colour.
+  FfaRing: tuple[have: bool, cx, cy, startR, floorR, shrinkSec, dmgTicks: int]
+    ## The free-for-all safe-zone SCHEDULE, from the one-shot init marker
+    ## `ring center <x>,<y> start <r> floor <r> shrink <sec> damage <ticks>`.
+    ##
+    ## ⚠️ Unlike a per-frame hazard rect, this marker is stated ONCE and never
+    ## updated: the live radius is not on the wire at all, it is a FUNCTION of
+    ## elapsed ticks that every policy is expected to integrate for itself
+    ## (sim_state.ffaRingRadiusAt: LINEAR from start to floor over
+    ## shrinkSec * 24 ticks, integer division, then constant). A policy that
+    ## waits to be told where the edge is will never be told.
+    ##
+    ## `have` also doubles as our FFA/battle-royale detector: the marker is
+    ## emitted only when the ring is configured, so every block gated on it is
+    ## inert — byte-identical — in a normal team game.
+  HeartHome: array[16, bool]    ## per-colour: that team's heart is ON its
+                                ## pedestal right now. The planted banner is
+                                ## never fogged, so this is free truth every
+                                ## frame — and raiding a pedestal whose heart
+                                ## is already stolen or retired (GV33) is a
+                                ## walk across the board for nothing.
+  SelfColor = "red"             ## our confirmed wire color (see the self marker)
+  SelfEnemyColor = "blue"       ## the raid target's color
+
+const TeamColorNames = [
+    # ⚠️ THESE ARE THE FFA PALETTE NAMES, NOT TEAM NAMES. In a free-for-all
+    # every seat is its own side and the engine labels players by their PAINT
+    # SLOT, not by a team token: `player <colour> <side>` and `self <colour>
+    # <side>` both come from playerColorName(colorIndex) (global.nim, the
+    # isFfa() branch of the cog-rig emit and of labelSelf). Order is LOCKED to
+    # PlayerColorNames (sim_types.nim) — these strings ARE the wire, so a
+    # reordering silently re-labels every rival, and a WRONG LIST means the
+    # `self` sweep never matches, findSelf reports not-alive, decide returns a
+    # zero mask, and the cog is a statue for the whole episode.
+    # Note several are TWO WORDS ("light blue"); every scan here is an exact
+    # label match, so that is fine — but never split a colour on spaces.
+    "red", "orange", "yellow", "light blue",
+    "pink", "lime", "blue", "pale blue",
+    "gray", "white", "dark brown", "brown",
+    "dark teal", "green", "dark navy", "black",
+  ]
+  ## Wire colour tokens in engine seat-deal order; a game's active seats are
+  ## always a PREFIX of this list.
+
+static:
+  doAssert TeamColorNames.len == 16,
+    "TeamColorNames must carry all 16 engine team tokens (teamText)"
+  doAssert HeartHome.len == TeamColorNames.len,
+    "per-colour state must be as wide as the colour vocabulary"
+
+const
+  WebSocketPath = "/player"
+  RenderScale = 1             # 0.7.8 renderer restore: the wire is back to 1x
+                              # Object coordinates and sprite sizes arrive
+                              # multiplied by this; sprites stay centered on
+                              # the same map points, so dividing the object
+                              # center recovers exact legacy map coordinates.
+  PlayerHalf = 6              # solid footprint half-extent, matches the sim
+  MuzzleBloomSize = 7         # staggerFire: the muzzle-flash sprite is 7px, drawn
+                              # at a shooter's origin for the reload window; mirrors
+                              # global.MuzzleBloomSize (player doesn't import ctf/global)
+  GunRangePx = 1050.0         # THIS engine's fixed gun reach (sim_types.GunRange
+                              # = 1050). A picked-up LOW gun is shorter still
+                              # (700); mid and heavy are both 1050. Engaging past
+                              # the gun spends the fire cycle on nothing, and the
+                              # geometric fire gate prices the corridor at this
+                              # range, so the constant has to be the real one.
+  GunRangeLegacyPx = 1300.0   # config.gunRange in every paintbot variant. GV34
+                              # made the gun a FIXED range on every map instead
+                              # of "comfortably wider than the board", so this
+                              # is a real ceiling now, not a formality.
+  NavCell = 8                 # nav grid cell size in px
+  RepathTicks = 10            # refresh the cost field at least this often
+  LookaheadCells = 6          # how far ahead on the path we aim the waypoint
+
+  # FireRange is map-derived (adoptMapSize): the gun no longer outranges every
+  # board. GV34 fixed it at config.gunRange (1300 in every paintbot variant),
+  # and a giant board is 2500px+ wide — engaging past the gun wastes the cycle.
+  CarrierFireRange = 110.0    # while carrying, only shoot enemies this close
+  RushEngageRange = 230.0     # racing for the steal: only fight what blocks it
+  EscortEngageRange = 320.0   # escorting a run: only fight near threats
+  PocketRushRange = 210.0     # this close to the enemy pedestal, just GRAB
+  FfaTicksPerSec = 24         # sim_types.TargetFps — the schedule is stated in
+                              # SECONDS and integrated in TICKS.
+  RingLookaheadTicks = 96     # price the edge where it will be in ~4s, not
+                              # where it is. The radius is falling while we
+                              # walk to it, so a target on today's edge is a
+                              # target outside tomorrow's.
+  RingElapsedBiasTicks = 24   # deliberate PESSIMISM in our clock. ringT0 is our
+                              # first ALIVE frame, which is at or AFTER the real
+                              # start, so an unbiased estimate always thinks the
+                              # ring is bigger than it is — the one direction
+                              # that gets a cog killed. Assume we are a second
+                              # further along than we can prove.
+  RingHoldFrac = 0.55         # out of contact, station at this fraction of the
+                              # safe radius: inside the band the ring is about
+                              # to take, without joining the crowd at dead
+                              # centre.
+  DpadBits = ButtonUp or ButtonDown or ButtonLeft or ButtonRight
+  RingSafeMarginPx = 90       # BR: stand this far INSIDE the ring's edge. The
+                              # rect is still shrinking while we walk to it, so
+                              # arriving exactly ON the boundary means arriving
+                              # outside it.
+  ThreatRange = 200.0         # react to a visible enemy this close facing us
+  DuckRange = 340.0           # duck from remembered threats this close on cooldown
+  TempoPressRange = 150.0     # #8: within this range, press a wounded/turned
+                              # threat during our reload instead of ducking
+  TempoFreshTicks = 12        # #8: only press a threat seen this recently (a
+                              # stale fix is not a real half-beat opportunity)
+  BoundThreatRange = 720.0    # #6: an observed clear-line threat within this
+                              # (but beyond DuckRange) makes an advance across
+                              # open ground while reloading a bounding hold
+  BoundThreatTtl = 24         # #6: only bound for a threat remembered this recently
+  BoundMateRange = 340.0      # #6: a covering mate must be within this support radius
+  BoundMateTtl = 30           # #6: the covering mate must be this freshly seen
+  BoundMateDepth = 60.0       # #6: the covering mate is not deeper into the enemy
+                              # jaws than us by more than this (it covers from behind)
+  HoldVsGunRange = 900.0      # holdVsGun: a SOLO gun-down bot never turns its back on a
+                              # fresh enemy whose gun is ON us within this range (past
+                              # DuckRange, where the close-duck already covers). Short of
+                              # the map-wide fireRange(1250) on purpose — a gun at ~1000px+
+                              # is a rumor we can cross while reloading; a dead-on gun
+                              # inside 900 will punish a turned back before our gun returns.
+  HoldVsGunTtl = 20           # holdVsGun: only hold for a threat seen this recently (a
+                              # fresh, gun-on-us read — not a stale fix)
+  FinishRange = 260.0         # woundedBank: the finish-window — a fresh 1-hp enemy
+                              # inside this with our clear line is one trigger pull
+                              # from a won exchange; banking suspends (per-frame)
+                              # to convert it (disengaging a won exchange is the
+                              # REF-force trap)
+  BankSearchCells = 10        # woundedBank: bank-cell search radius in nav cells
+                              # (DuckSearchCells is a duck, not a disengage — the
+                              # bank needs the wider cover model)
+  BankRecalc = 12             # woundedBank: keep a chosen bank cell this many ticks
+                              # (no dithering between near-equal cover cells)
+  BankBlindTicks = 16         # woundedBank: no fresh threat line on us for this
+                              # long => HOLD sub-mode (park at the bank cell, aim
+                              # the re-emergence bearing, let medEcon route to a kit)
+  BankStandoffGain = 40.0     # woundedBank: an open-floor (non-LOS-breaking) cell
+                              # only qualifies with at least this much standoff GAIN
+                              # (radial-only retreat is the measured-useless shape)
+  BankKitLambda = 0.25        # woundedBank: kit-gravity tiebreak weight toward the
+                              # nearest static kit spot (disengage-to-heal synergy)
+  DominateGuardBand = 300.0   # #7: search the domination post within this x-band
+                              # inside our half of the center line (toward home)
+  MateSpacing = 40.0          # soft repulsion radius between teammates
+  CorridorHalfWidth = 15.0    # friendly-fire corridor half width along the ray
+  LeadTicks = 6.0             # aim this many ticks ahead of a moving enemy:
+                              # the 5-tick windup releases the bullet late
+  TrackMatchDist = 40.0       # a sighting matches a track within this distance
+  TrackTtl = 120              # forget a player not seen for ~5s
+  TrackCap = 8                # eight real opponents / teammates per side.
+                              # ⚠️ PROVENANCE (2026-08-20): introduced in cd2d247
+                              # "feat(bot): cover-based tactics for 8v8" on 2026-07-01 and
+                              # NEVER re-sized since — `git log --all -S TrackCap` finds only
+                              # that commit, two comment edits and the from-scratch scratch
+                              # bots. It is a TWO-TEAM constant sitting on a board that fields
+                              # TWELVE enemies. MEASURED (1421 hosted ffa4 replays): the cap
+                              # actually truncates on 0.069% of our alive ticks and an
+                              # UNCAPPED table would flip the tradeGate decision on 0.014% of
+                              # ticks, so raising it is NOT the lever it looks like — see
+                              # koRelease for the defect that IS real.
+  # ── KO MARKER (koRelease). Mirrors global.nim's damage-pop emission, which
+  # builds its label inline rather than from a labels.nim const; every number
+  # here is read off the engine so a GameVersion bump can diff it.
+  LabelPrefixDamagePop = "damage pop "   # "damage pop <color> <text> stage <n>"
+  KoPopToken = "KO"           # the <text> of a KILL marker (vs "-<n>" for damage)
+  KoPopStages = 4             # global.nim DamagePopStages: the age quartile in the label
+  KoPopRisePx = 16            # global.nim KillPopRisePx: px the marker floats UP across
+                              # its life, so the object centre sits that far ABOVE the
+                              # death spot at full age. Undo it from the stage.
+  KoMatchDist = 24.0          # one body: the same radius the v48 corpse release used
+  KoDedupePx = 20.0           # the object pool RECYCLES ids (DamagePopObjectBase + slot),
+                              # so a KO marker cannot be deduped by objectId the way a
+                              # corpse can. Dedupe by place instead, for the marker's life.
+  KoDedupeTicks = 44          # global.nim KillFxTicks: how long one marker lives.
+  FreshShotTicks = 24         # only fire at tracks seen this recently; the
+                              # turret needs traverse time, so chases keep
+                              # shooting a bit after the target fogs out
+  ThiefFixTtl = 40            # a thief position fix guides the chase this long
+  ThiefKillBonus = 260.0      # ⭐ v47 audit: fire-priority pull for the enemy CARRYING OUR
+                              # HEART. Killing the carrier is the ONLY recapture mechanism
+                              # the engine has (killPlayer -> resetFlag; body-block is void),
+                              # yet the target ledger had ZERO thief term — a facing escort
+                              # at 150px strictly out-pulled the fleeing thief, so defend
+                              # scrambles shot the bodyguard while the heart walked home.
+                              # Sized under commitBonus(400) so a committed finish still
+                              # completes; rides `pull` so the stickyCommit cap bounds it.
+  ThiefMatchDist = 24.0       # a track this close to the carrier fix IS the thief
+
+  AimBrads = 256              # aim angle units per full turn
+  AimRate = 5                 # brads/tick a held rotate button turns the aim
+                              # (matches the server's aimTurnRate default)
+  AimDotRadius = 16.0         # own aim-indicator dots sit within this radius
+  AimResyncBrads = 4          # trust dead reckoning inside this error
+  # --- v9 soldier rotation-sprite aim readback (aimRotRead) ---
+  # GameVersion 7 RETIRED the floating "aim dot <color>" line (addAimIndicators
+  # is a kept-as-no-op stub since e3bcf2e): the aim is now shown by the soldier
+  # sprite itself, pre-rotated through 16 steps that sweep with aimBrads. The
+  # label collapses to "player <color> <side>" for every step — the aim signal
+  # moved from the LABEL/geometry channel into the SPRITE ID. These mirror the
+  # engine pools (src/ctf/sim.nim + global.nim; verify on any engine bump):
+  #   sprite id = base + ord(team) * SoldierRotations + rot
+  #   rot       = soldierRotIndex(aimBrads) — nearest step, 16 brads apart
+  RotPlayerSpriteBase = 100   # live soldiers (PlayerSpriteBase, sim.nim)
+  RotSelfSpriteBase = 5100    # our white-outlined self, one id per rot (no team)
+  RotSteps = 16               # SoldierRotations: pre-rendered aim steps
+  RotBradsPerStep = 16        # AimBradsTurn(256) / SoldierRotations(16)
+  MaxHp = 3                   # hitPoints per life (config default); pip labels
+                              # read "hp <n>/<MaxHp>"
+  HpPipRadius = 22.0          # a player's overhead hp bar sits within this
+  HpFocusBonus = 60.0         # px of effective-distance credit per missing
+                              # enemy hit point — a tiebreak between
+                              # comparably-engageable targets, never a reason
+                              # to swing the turret across the map
+  FocusFireBonus = 45.0       # px of credit when a visible mate's aim line
+                              # already covers the target (finish together)
+  ShieldGunWeight = 1.5       # a shielded enemy (6-hp tank) counts as this many
+                              # guns in the fire-superiority break math — more than
+                              # a bare cog: it outlasts a normal exchange, so don't
+                              # commit a duel we can't finish (shieldTank awareness)
+  SatCapPenalty = 220.0       # satCap: px of priority DEBIT on an enemy already
+                              # saturated (enough mate guns lined to finish it) so
+                              # a further free gun spreads to an uncovered live
+                              # enemy instead of dogpiling. Sized to outweigh the
+                              # focus/hp credits + a typical distance gap, but well
+                              # under CommitBonus (400) so a gun already committed
+                              # to the target never breaks off its own kill; and a
+                              # penalty (not a veto) so a lone saturated target is
+                              # still engaged when nothing else is in range.
+  TraversePxPerBrad = 1.6     # px of effective distance per brad of turret
+                              # swing needed to lay on the target: err/AimRate
+                              # ticks of traverse at ~8px of enemy closing
+                              # motion per tick = 8/5 px per brad
+  MateAimHitSlack = 22.0      # enemy within this perpendicular distance of a
+                              # mate's aim ray counts as mate-targeted
+  MateAimRayLen = 90.0        # ⭐ trust a mate's aim line only this far (2026-07-29). WAS 700,
+                              # which GV24 turned into noise: a mate's rendered gun rotation is
+                              # fuzzed by up to ±AimFuzzBrads(14), and at 700px that displaces
+                              # the ray by 700·sin(19.7°) ≈ 236px — TEN TIMES the 22px slack
+                              # this test allows, so "which enemy is my mate shooting at" was
+                              # a coin flip past ~65px. The honest trust radius is where the
+                              # fuzz displacement stays inside the slack:
+                              # 22 / sin(19.7°) ≈ 65px, plus a small margin. Beyond that we
+                              # simply do not know, and pretending otherwise fed satCap/noMask
+                              # random bearings. Shortening this is a LOSS of intel we never
+                              # actually had — the alternative is acting on noise.
+  NoMaskAvoid = 30.0          # noMask: soft-repel this far off a mate's live
+                              # gun-line (support ray). CorridorHalfWidth(15) +
+                              # PlayerHalf(6) + a step of margin, so the mover
+                              # bends off BEFORE it would trigger the shooter's
+                              # friendlyBlocked veto (which costs the whole
+                              # ~17-tick fire cycle plus a re-lay).
+  OffConeCloseRange = 70.0    # offCone: inside this, charge straight — at knife
+                              # range a tangent step just orbits the enemy while
+                              # its whole cone covers us anyway.
+  AssaultHold = 45            # assaultThrough: ticks the near-ambush charge is
+                              # committed once triggered (~enough to close the
+                              # 95px surprise bubble; hysteresis so one fogged
+                              # frame doesn't flip charge->duck->charge).
+  AssaultPressRange = 130.0   # assaultThrough: only charge a threat this close
+                              # (the surprise bubble plus closing slack) — a
+                              # threat that opened the range back out is a far
+                              # ambush again: break contact normally.
+  FunnelBand = 160.0          # fatalFunnel: a passage only counts as the throat
+                              # if it intersects this y-band around our pedestal
+                              # (the approach axis a raider must cross to reach
+                              # the flag; passages off-axis are not our funnel).
+  FunnelFreshTtl = 60         # fatalFunnel: any enemy track fresher than this
+                              # returns the sentry to the two-speed sweep (which
+                              # dwells on real threats) — only a genuinely idle,
+                              # no-track sentry pre-lays (REF-hunt guardrail).
+  OffConeBendMin = 0.35       # offCone: tangential blend at the cone EDGE (a
+                              # nudge keeps us sliding out of the arc)...
+  OffConeBendMax = 0.9        # ...ramping to this when its gun is DEAD-ON us
+                              # (bend hard: every brad of forced slew is a tick
+                              # of its 5-brad turret we fight without return fire).
+  ButtonC = 1'u8 shl 7        # grenade charge/throw (input mask bit 128)
+  # NadeMaxRange is map-derived (adoptMapSize): the sim computes it as
+  # MapWidth div 5, so a giant board doubles it. Old fixed value 247.0.
+  NadeMinRange = 72.0         # never lob inside this — the 52px blast + drift would
+                              # clip us (keeps the old ~20px self-clearance vs blast)
+  NadeBlast = 52.0            # blast radius (GV17 GrenadeBlastRadius, was a stale 40
+                              # → cluster/pair targeting missed 40-52px spacings, the
+                              # exact line-cluster gap grenades exist to punish)
+  NadeFullChargeTicks = 24    # ~1s of holding C reaches max range
+  NadePickupDetour = 90.0     # grab a corner pickup within this detour range
+  # --- v7 sword/shield (GameVersion 7) ---
+  DisarmAvoidRadius = 34.0    # avoidDisarm: steer this far around a sword/shield
+                              # pickup we're NOT deliberately collecting (a body is
+                              # ~24px; a shell of margin clears the 12px touch grab).
+  SprayGrabDetour = 170.0     # opportunistic spray pickup budget (GV36 melee)
+  ShieldGrabDetour = 120.0    # shieldTank: an escort grabs a shield within this detour.
+  ShieldRushSeat = 0          # the designated shield-rusher team-seat. ⚠️ v47 audit: this
+                              # was 3, but the league deals us 4 STRIDED seats whose
+                              # teamSeats are {0,2,4,6} or {0,1,2,3} — seat 3 exists in only
+                              # one of the two patterns, so the lever was silently dead in
+                              # the stride-4 deal. Seats 0 and 2 are the only teamSeats
+                              # present in EVERY real deal; 0 (FlankBottom, an attacker in
+                              # all modes) takes the shield detour.
+  ShieldRushWindow = 240      # only shield-detour in the first ~10s of a life (from gameStart)
+                              # — a quick opening grab, never mid-game backtracking.
+  ShieldOnSpotPx = 20.0       # "on the spawn spot": if we're this close and no shield is
+                              # visible here, it's already taken → give up and rush.
+  # ── ⭐⭐⭐ shieldAddr: THE LEARNED SHIELD MAP (2026-08-20, consumables audit).
+  # shieldRush's DOCTRINE — "navigate to the known spawn, no line-of-sight
+  # needed" — is right and it WORKS: on two-team boards teamSeat 0 takes 1.535
+  # shields per slot-life while every other seat takes 0.006-0.144, i.e. that
+  # ONE seat carries 86% of our two-team shields. Its ADDRESS is what breaks.
+  # `ownShieldSpawn` is the classic `layoutSides` formula — (50, 3H/4) for Red
+  # and (W-50, 3H/4) for EVERYTHING ELSE — and this file's Team enum has only
+  # Red and Blue, so on a four-team board green and yellow both inherit BLUE's
+  # address. Ground truth, 600 hosted four-team boards re-simulated with
+  # tools/consum_spawn_dump (whose med-kit geometry cross-checks 1200/1200
+  # against the corpus kit dump, so the sim is faithful):
+  #     distance from the address to that team's OWN shield, median
+  #       Red 395px   Blue 395px   Green 1136.9px   Yellow 65px
+  #     inside the 12px pickup range:  0 of 2400 team-addresses
+  #     inside the 20px give-up latch: 0 of 2400
+  # Two-team: 81.4% land inside 12px — Red always; Blue misses by 330px on the
+  # symRot180 draw, where the rotation swaps the high/low pair and the address
+  # lands on Blue's SPRAY CAN spawn instead. The realized behaviour matches the
+  # geometry seat for seat: our teamSeat-0 shield rate collapses 1.535 -> 0.051
+  # from two-team to four-team, on exactly the seat the broken address serves,
+  # while teamSeat 2 (comboGrab, which uses ONLY the visible-sprite scan) holds
+  # 0.866 — which also refutes this file's own claim that "the see-it scan fired
+  # 0", a number that was measured in a two-team mirror.
+  # So the fix is the kitSel/nadeSupply contract, not a better formula: bank what
+  # we SEE, and keep the formula only as a cold start and only where the board
+  # itself says that point could be ours. Strictly a REPLACED address plus a
+  # REFUSAL — same seat, same window, same detour, no new errands (the
+  # errand-ADDING shape is the one that costs captures).
+  ShieldSpotSeenPx = 40.0     # shieldAddr: two sightings within this are the SAME static
+                              # spawn. Safe by construction — the four-team orbit seats its
+                              # shields a full base apart (measured min separation 460px)
+                              # and the two-team pair is a board width apart, so this can
+                              # never fuse two real spawns while absorbing sprite jitter.
+  ShieldSpotMax = 4           # shieldAddr: one shield per team, so four is the whole board.
+  ShieldSpotDryPx = 20.0      # shieldAddr: standing this close to a remembered spot with no
+                              # sprite on it proves it is taken — a pickup inside our own
+                              # 90px bubble is never fogged. Same rule as NadeDepotDryPx.
+  ShieldMovedPx = 12.0        # shieldAddr, PROBE ONLY: the engine's ShieldPickupRange. A new
+                              # address further than this from the old one is a destination
+                              # that genuinely MOVED — the realized-coverage denominator, not
+                              # a state class ("it fired" is not "it could have changed the
+                              # outcome"; a sibling lever over-stated itself 3.8x that way).
+  ShieldSpotDryTicks = 30 * 24  # shieldAddr: ...so ignore that spot for one
+                              # ShieldRespawnTicks (sim_types.nim: 30s * ReplayFps 24 = 720).
+                              # Believing a take for exactly the refill period IS the
+                              # presence model — the engine's clock, no probabilistic decay.
+  ComboGrabSeat = 2           # ⭐⭐ comboGrab's designated seat (mirrors ShieldRushSeat's
+                              # single-seat pattern above). ⚠️ v47 audit: was 4 — absent
+                              # from the {0,1,2,3} teamSeat deal, i.e. dead in 100% of
+                              # ffa4 episodes and every stride-2 2-team deal (it existed
+                              # only in the stride-4 {0,2,4,6} pattern).
+                              # Seat 2 exists in every deal and is an attacker everywhere
+                              # (seat 1 is now the ffa4 HomeDefender, so it must not take
+                              # a grab loadout). Only this ONE seat runs the sequenced
+                              # shield-then-can grab; every other seat keeps single-item
+                              # discipline (shieldTank/sprayGrab/shieldRush unchanged).
+  SwordGrabDetour = 90.0      # swordAmbush: grab a sword within this detour when boxed.
+  SwordReach = 26.0           # sword melee arc range (mirrors SwordRange in sim.nim).
+  SwordCloseRange = 70.0      # swordAmbush only engages an enemy within this (charge-in).
+  # --- v9 med kit (GameVersion 9) ---
+  MedKitDetour = 150.0        # medTopOff: a wounded, out-of-contact bot routes to a
+                              # VISIBLE center med kit within this detour to heal to full
+                              # (sim heals on a 12px touch). Larger than the pickup detours
+                              # (a full heal is worth more than a grenade) but capped so the
+                              # bot never abandons its lane to chase a far kit; fog reveals a
+                              # kit only near center, so this rarely binds anyway.
+  # --- medEcon (2026-07-28): the med kits are a STATIC, renewable HP economy ---
+  # League measurement over 20 real episodes: the field took 42 heals to our 11
+  # (3.8x). With 3 hp per life and 3 lives, a full heal is worth a whole life's
+  # damage, so that gap alone explains a chunk of our -63 K-D. Root cause was the
+  # old gate: it needed the kit VISIBLE in the fog cone within MedKitDetour AND no
+  # contact whatsoever, a conjunction almost never true in the tick-1000..3000
+  # mass-engagement window where 81% of our kill deficit is booked.
+  #
+  # Both kits sit at DETERMINISTIC coords the engine recomputes every reset:
+  # (MapWidth div 2, MapHeight div 3) and (MapWidth div 2, 2*MapHeight div 3),
+  # each nudged to the nearest walkable floor (sim.resetMedKits). Verified against
+  # 53 real league heal events, which cluster at (617,219) and (617,439). So the
+  # position needs NO fog read at all - like the pedestals, it is static knowledge.
+  # (MedKitAX/AY/BX/BY are map-derived and live in the adopted `var` block —
+  # paintbot draws a new map every episode, and on a 4-team board the kits are
+  # a rot90 diamond of FOUR, not this 2-team pair. See adoptMapSize.)
+  MedKitEconDetour = 320.0   # medEcon: how far a WOUNDED bot will divert to a known
+                              # kit. Wider than MedKitDetour because the target no
+                              # longer has to be visible - the walk is the whole cost,
+                              # and a 1-hp bot is worth less than the detour.
+  MedKitOnSpotPx = 26.0       # "we are standing on the spot": if this close and the
+                              # kit sprite is NOT visible, it is taken - stop going.
+  # ── ⭐⭐⭐ kitSel: THE LEARNED KIT MAP (2026-08-20, ffa4 selection audit).
+  # medEcon's doctrine — "route to remembered kit positions like a pedestal, no
+  # fog read needed" — is right. Its MEMORY is wrong: it remembers a FORMULA
+  # (MedKitAX/AY, BX/BY) instead of what it has SEEN. arena.nim's generator
+  # NEVER puts a kit on that formula on a generated board (4-team: a rot90 /
+  # quadMirror orbit of FOUR round the centre; 2-team: the mid column with y
+  # DRAWN per map from a range that only grazes H/3, and only TWO of the four
+  # candidates activated by a coin flip). So the remembered address is empty
+  # floor. These constants replace the formula memory with a SIGHTING memory,
+  # exactly as nadeSupply already does for grenade depots (NadeDepotSeenPx and
+  # friends below are the same four ideas) — the difference being that a kit
+  # spot, once seen, is static for the episode and so permanent knowledge.
+  KitSpotSeenPx = 40.0        # kitSel: two sightings within this are the SAME
+                              # static spawn (dedupe the learned set). Safe by
+                              # construction — the 4-team ring seats its kits a
+                              # quarter-orbit apart and the 2-team pair is
+                              # separated by >=0.06*MapH, both far above 40px, so
+                              # this can never fuse two real spawns while still
+                              # absorbing the sprite's own centring jitter.
+  KitSpotMax = 8              # kitSel: remembered spawn cap. A 4-team board
+                              # carries 4 and a 2-team board 2 active (+2 dormant
+                              # candidates that never stock), so 8 is generous.
+  KitSpotDryPx = 20.0         # kitSel: standing this close to a REMEMBERED spot
+                              # with no sprite on it proves the kit is taken — a
+                              # kit inside our own bubble is never fogged. Same
+                              # rule as NadeDepotDryPx, and the same failure it
+                              # prevents: a wounded bot parked on an empty spot.
+  KitSpotDryTicks = 30 * 24   # kitSel: ...so ignore that spot for one
+                              # MedKitRespawnTicks (sim_types.nim: 30s *
+                              # ReplayFps 24 = 720 ticks). Believing a take for
+                              # exactly the refill period IS the presence model —
+                              # no probabilistic decay, just the engine's clock.
+  KitBlockedCost = 1.7        # ⭐ kitSel FEASIBILITY. `dist()` is EUCLIDEAN, so
+                              # today a kit behind a wall outranks one down an
+                              # open corridor at the same range and the bot walks
+                              # into the wall. When the eroded nav grid has no
+                              # straight line to a candidate its real path is
+                              # strictly longer, so its cost scales by this. A
+                              # RANKING term, never a veto: a blocked kit is
+                              # still taken when it is the only one. (The veto
+                              # shape — refuse the errand unless the walk fits
+                              # inside expected remaining life — was separately
+                              # bounded at 0.074 deaths and is deliberately NOT
+                              # rebuilt here. The hypothesis is a better errand,
+                              # not fewer errands.)
+  KitSightCost = 1.25         # kitSel: a spot we REMEMBER but cannot currently
+                              # see is worth slightly less than one whose sprite
+                              # is in the cone right now — the remembered one may
+                              # have been taken by someone we never saw. Small,
+                              # because a remembered spot is still a real spawn
+                              # and a formula spot is not a spawn at all.
+  MedKitLightContactHp = 1    # medEcon: at or below this hp a bot breaks LIGHT contact
+                              # (a threat that is not aiming at us) to go heal. At 1 hp
+                              # the next bullet is death, so healing outranks the duel.
+  # ⛔ TOMBSTONE — L3b "WIDER MEDKIT ERRAND" (MedKitEconDetourLastLife = 480.0,
+  # 1.5x MedKitEconDetour for a bot on its last life). BUILT AND DROPPED
+  # 2026-08-17. It fired — 819-913 load-bearing commits per 10-episode arm, both
+  # this file's -d:ffa4probe and the lives branch's -d:lifeprobe agreeing — and
+  # moved nothing: medkits/Ep on the armed team was 0.50 in EVERY arm including
+  # the all-off control (0.50), i.e. the widening changed the routing cap without
+  # changing a single kit collected. The band it opens is 320-480px on a bot that
+  # is simultaneously wounded AND on its last life, the narrowest intersection in
+  # the package. It is also unnecessary on the real board: all 1627 medkit pickups
+  # across n=348 hosted ffa4 episodes sit WITHIN 320px of a formula spot (max 292),
+  # so the normal MedKitEconDetour already reaches every kit that exists — what was
+  # broken was the ADDRESS, not the range, and that is what ffaMedSee fixes.
+  CarrySelfRadius = 26.0      # a carried heart rides CarriedFlagLift (~10 map
+                              # px) above its carrier's center, so our own
+                              # carry shows as the enemy heart floating just
+                              # over our head — never within the old 4px test
+  CarriedFlagLift = 10.0      # px a carried heart flies above its carrier's
+                              # center (mirrors CarriedFlagLift in src/ctf/global.nim).
+  FlagPickupRange = 34.0      # touch radius to steal the enemy heart off its
+                              # pedestal (mirrors FlagPickupRange in src/ctf/sim.nim;
+                              # GV42 widened 12 -> 34, "stand on the pedestal").
+  CarrierEstSpeed = 1.9       # px/tick a fogged mate-carrier is assumed to
+                              # advance homeward (carrier moves at ~70% speed)
+  CombatDeadband = 2          # stop the traverse within this error (brads);
+                              # AimRate 5 cannot settle tighter than +-2
+  CruiseDeadband = 8          # sloppier deadband for non-combat aim
+  FightOutRadius = 260.0      # the breakout ring after a snatch: inside it the
+                              # carrier keeps a point-blank gun (fight off the X)
+  CqbRange = 180.0            # REFUTED AND UNREAD — a tombstone, not a knob.
+  CqbFireSlackPx = 6.0        # Nothing reads these (nor WindupPlantTicks below).
+                              # The CQB "plant-and-settle" fork they parameterize
+                              # was A/B'd and REVERTED (de33aca, 2026-08-04); its
+                              # use site was never committed. They are kept only
+                              # to stop the census below from being rediscovered
+                              # and re-tried. DO NOT wire them up.
+                              #
+                              # The census is REAL (24 arena episodes): our locked
+                              # heading is OFF the body on 27% of point-blank
+                              # shots vs the field's 13%, and we fire while MOVING
+                              # >8px during the windup on 33% of them vs their 8%.
+                              # The REMEDY is what was wrong. The field's
+                              # plant/hit correlation was a SIDE-COMPOSITION
+                              # confound — their planted shots at one end, our
+                              # moving shots at the other; the within-side
+                              # gradient was 8pp, not the pooled 39pp we chased.
+                              #
+                              # The 12-game frozen A/B executed the mechanism
+                              # perfectly and still lost: moving-while-firing 63%
+                              # -> 0.1%, CQB hit% 36.0 -> 36.1 (nothing), shots
+                              # -19%, hits -25%, kills -34%, deaths +34%, W-L-D
+                              # 1-9-2. Planting only made us a stationary target;
+                              # our shooter hits ~36% at CQB planted OR moving,
+                              # while the field hits ~65% against the same bots.
+                              #
+                              # The census's real cause was the AIM-STATE ESTIMATE
+                              # (a +-8-brad sprite readback ~= 19px of ray error),
+                              # and that fix IS live — see ownAimBrads() and the
+                              # resync block in decide(), which adopt the engine-
+                              # stated `own aim <brads>` marker outright.
+                              #
+                              # Note GV36 moved this corridor the OPPOSITE way:
+                              # inside 300px the engage branch WIDENS slack to a
+                              # 17px floor, where CqbFireSlackPx would halve it to
+                              # 6. See AUDITOR.md, "the CQB plant trap".
+  WindupPlantTicks = 5        # DEAD with the above: the movement suppression the
+                              # reverted plant applied after a CQB trigger pull.
+  WuffLeadTicks = 5.0         # ⭐⭐ WINDUP FRIENDLY-FIRE VETO (wuff): ticks between
+                              # the trigger pull and the bullet actually leaving.
+                              # NOT invented — it is `FireWindupTicks* = 5` from
+                              # src/ctf/sim_types.nim:396, which sim_config.nim
+                              # hands the server as `fireWindupTicks`. sim.step()
+                              # arms the windup at the pull (startFireWindup locks
+                              # `windupBrads` = the aim), decrements it once per
+                              # tick, and releases on the tick it reaches 0 — from
+                              # the shooter's THEN-CURRENT centre against the
+                              # THEN-CURRENT bodies (selectFireTarget). So the veto
+                              # has to be run on the geometry at T0+5, not at T0.
+  # ── ⭐⭐ The SHARED MATE-MOTION ESTIMATOR (trackAhead) and its Ff* constants
+  # are defined ONCE, in the AoE friendly-fire block further down this same
+  # const section. The merge of the gun veto and the AoE vetoes deliberately
+  # collapsed the two copies into that one: gun corridor, grenade blast disc and
+  # spray wedge all answer "where will this mate BE when my weapon lands" from
+  # the same estimator, and a second copy is a second thing to keep in sync.
+  WuffSelfStepCapPx = 6.0     # a plausible ONE-tick move for the muzzle-lead
+                              # estimate (top speed is ~2.75px/tick; 6 leaves room
+                              # for a diagonal). Above this the delta is a respawn
+                              # teleport or the first frame, so no self lead is
+                              # applied and the muzzle is tested where it stands.
+  WuffStaleAge = 4.0          # a mate track older than this counts as STALE in the
+                              # probe's attribution split (diagnostic only).
+  # ⭐⭐⭐ WINDUP LEAD (wlead, 2026-08-20) — the POINT-BLANK ACCURACY DEFECT.
+  # The gun is HITSCAN and its bearing LOCKS at the trigger pull (windupBrads),
+  # but the bullet leaves FireWindupTicks(5) later and is traced FROM THE
+  # SHOOTER'S CENTRE AT THE RELEASE TICK. So the required lead is a CONSTANT
+  # number of ticks, never a range-proportional one — and it applies to OUR OWN
+  # muzzle exactly as much as to the target's body.
+  WLeadTicks = 6.0            # total target lead handed to the FIRE bearing,
+                              # measured from the bot's own frame: the mask is
+                              # emitted at bot tick T, the engine pulls at T+1
+                              # and releases 5 later, so the horizon is 6.
+  WLeadSelfTicks = 5.0        # ticks of OWN-muzzle lead: aim from where our
+                              # centre will BE at release, not where it is.
+  WLeadStepCapPx = 6.0        # a plausible ONE-tick move; anything larger is a
+                              # respawn teleport or the first frame and leads
+                              # nothing (same guard as WuffSelfStepCapPx).
+  FireSlackPx = 11.0          # fire when the aim error's perpendicular miss
+                              # at the target's range is inside this (the
+                              # corridor half-width is ~14px; keep margin)
+  StickyDangerCap = 60.0      # stickyCommit: a NON-committed target's danger credit is
+                              # capped at commitBonus - this, so a fresh dead-on threat stays
+                              # at least this far below a committed kill in priority (switch
+                              # hysteresis — kills the single-frame target flip off a kill).
+  CommitBonus = 400.0         # px of priority credit for the committed target,
+                              # so we finish the enemy we are already killing
+                              # instead of switching to a marginally closer one
+  LockTtl = 48                # hold a target commitment this many ticks past
+                              # the last frame we could engage it (~2 shots)
+  LockMatchDist = 60.0        # a candidate this close to the lock fix IS it
+  AimHoldTtl = 60             # TARGET-LOCK: keep the turret (and the vision
+                              # cone, which rides the aim) pinned on a committed
+                              # enemy's bearing for this many ticks past the last
+                              # sighting. The server turns a fixed 5 brads/tick
+                              # (aimTurnRate, uncappable), so LOSING a target into
+                              # fog and re-slewing to re-acquire is the single
+                              # costliest waste of the scarcest resource; holding
+                              # the bearing keeps them lit AND pre-lined.
+  PreSlewOffUsPx = 3.0        # ⭐ FIRE FIRST (v8): px of pre-lay credit per brad the
+                              # candidate enemy's gun points OFF us. Among the same
+                              # engageable-range fresh set aimLock already picks from,
+                              # discount the enemy whose turret is most off our bearing
+                              # (the draw we WIN — our windup finishes while its gun is
+                              # still slewing onto us). Requires aimThreat's aim-dot read;
+                              # an unreadable dot leaves the pick on pure distance.
+  HuntSweepTtl = 90           # HUNTING POSTURE: with no engageable target, aim
+                              # toward the nearest enemy remembered this recently
+                              # instead of blindly down the movement lane.
+  AimThreatBonus = 120.0      # px of priority credit for an enemy currently
+                              # FACING us (about to shoot) — engage the greatest
+                              # threat first.
+  DangerCloseBonus = 200.0    # #1: extra facing-credit at point-blank, tapering
+                              # linearly to 0 at DangerFalloff — a close aligned
+                              # gun kills us THIS second, a far one barely threatens
+  DangerFalloff = 620.0       # range (px) at which a facing enemy's added danger
+                              # decays to nothing (~half the map-wide gun range)
+  DangerWoundedBonus = 90.0   # #1: extra credit for a target that is BOTH facing
+                              # us AND wounded — the cheapest, most dangerous kill
+  # --- counterArc (Play C, GameVersion 15 plasma arc) ---
+  PlasmaArcReachPx = 136.0    # sim.nim PlasmaArcReach = 4*SoldierBodyPx(34): the
+                              # enemy cone's max reach. Beyond it a plasma carrier
+                              # is DISARMED (gun off while holding) AND out of cone
+                              # range = a free kill. Local copy (player can't import
+                              # sim); re-verify vs sim.nim on every engine bump.
+                              # ⛔⛔ STALE SINCE GameVersion 30 — see
+                              # tests/test_arc_reach.nim. The engine's DAMAGE const is
+                              # `PlasmaArcReach = 5 * PlasmaArcSquare` = 170px
+                              # (sim_types.nim:558); 4*34 = 136 is now
+                              # `PlasmaArcFxReach` (:546), the DRAWN PLUME's span —
+                              # ART geometry. Reading the FX const instead of the
+                              # damage const is almost certainly how 136 got here.
+                              # ⚠️ THE SPRAY LANE OWNS THIS CONSTANT and is correcting
+                              # it together with ArcBreachFireReach. Do NOT change its
+                              # VALUE from a second branch: one consumer (the
+                              # arc-breacher cluster scan, :11067) uses this symbol as
+                              # a CLUSTER RADIUS, not a danger radius, and 136 -> 170
+                              # silently widens that gate 1.56x in AREA.
+  CounterArcBonus = 240.0     # px of priority credit for an enemy arc-carrier we can
+                              # kill from OUTSIDE its cone. Above AimThreatBonus(120)
+                              # so it beats a generic/far/wounded enemy, but BELOW
+                              # CommitBonus(400) so it NEVER drops a target we're one
+                              # hit from killing (protects the commit lock + OBJ-1).
+  CounterArcReachBuffer = 24.0 # margin past the cone reach before we treat a
+                              # carrier as "safely disarmed" — covers the 5-tick cone
+                              # sweep + our closing speed so we don't mis-classify a
+                              # carrier about to be in reach.
+                              # ⛔ MEASURED WRONG 2026-08-20 (lever-liveness pass;
+                              # ASSERTED, NOT PATCHED — tests/test_arc_reach.nim).
+                              # Against the STALE PlasmaArcReachPx(136) this puts the
+                              # "safely disarmed, free kill" threshold at 160px, which
+                              # is INSIDE the real damage envelope: the engine selects
+                              # a victim while forward <= PlasmaArcReach(170) +
+                              # PlasmaArcBodyRadius(17) = 187px (sim.nim:855-869), and
+                              # PlasmaArcDamage(3) == MaxHp(3) makes one touch an
+                              # instant kill. Worse than a blind spot: CounterArcBonus
+                              # (240) actively PULLS the engage onto exactly the
+                              # enemies that can one-shot us. The buffer is fine; its
+                              # BASE is stale. Fix belongs with the const owner.
+  # --- arcStandoff (the MOVEMENT companion to counterArc) ---
+  ArcStandoffBuffer = 60.0    # px past PlasmaArcReachPx(136) that we hold off a DISARMED
+                              # enemy arc-carrier. Sized off the sim: a cog closes at
+                              # MaxSpeed/MotionScale = 704/256 = 2.75px/tick, so 60px is
+                              # ~22 ticks of approach — well past the 5-tick cone sweep
+                              # (PlasmaArcActiveTicks) plus our one-frame reaction. Bigger
+                              # than CounterArcReachBuffer(24) on purpose: that one only has
+                              # to CLASSIFY a carrier, this one has to out-FOOT it.
+  ArcStandoffRing = PlasmaArcReachPx + ArcStandoffBuffer  # 196px: inside this we back off.
+                              # ⛔ MEASURED WRONG 2026-08-20 (ASSERTED, NOT PATCHED —
+                              # tests/test_arc_reach.nim): 136 + 60 = 196, but the real
+                              # damage envelope reaches 187px, so the INTENDED 60px of
+                              # foot-room is actually NINE px — ~3 ticks at 2.75px/tick,
+                              # well inside the 5-tick cone sweep (PlasmaArcActiveTicks)
+                              # this buffer was explicitly sized to cover. The dead band
+                              # (196..236) then straddles the kill line instead of
+                              # sitting outside it, and the whole "hold at the ring and
+                              # keep shooting is a FREE kill" argument in the block
+                              # comment below assumes a ring that clears the cone.
+                              # ⚠️ arcStandoff has prior history — retreat a cone
+                              # DIAGONALLY, not radially — so a range change interacts
+                              # with the slip geometry. Needs its own A/B, not a
+                              # drive-by number swap.
+  ArcStandoffSlipMix = 1.0    # sideways:backward ratio of the break-contact step. 1.0 = a 45°
+                              # diagonal, which is exactly an octant on the 8-way d-pad (so
+                              # octantBits quantizes it with ZERO error). Sideways is what
+                              # actually escapes a 28°-wide cone; backward is what buys range.
+                              # 45° takes both at full value and needs no tuning sweep.
+  ArcStandoffLatch = 12       # ticks the back-off stays latched once it fires (hysteresis).
+                              # ~33px of travel at 2.75px/tick: enough to clear the ring and
+                              # commit to the dead band rather than flip-flopping on 196px.
+  ArcStandoffHold = 40.0      # dead band past the ring (196..236px) where we neither close
+                              # nor retreat — kills the boundary chatter of advance-then-
+                              # back-off, and 236px is deep inside our 1300px gun range, so
+                              # holding here is a FREE kill, not a stalemate. Equal top
+                              # speeds (we and it both move 2.75px/tick) mean a carrier can
+                              # NEVER close this gap on a bot that keeps backing up.
+  # --- arcBreach (anti-line OFFENSE, GameVersion 17 plasma arc) ---
+  ArcBreachSeat = 1           # the FIXED team-seat (0..7) that plays breacher when a
+                              # line is called — a deterministic seat, NOT lowest-alive
+                              # (teammates are fogged, so no bot can see who else is up).
+                              # Seat 1 = the MidGuard (trailing mid) so a front rusher
+                              # never trades its gun; the breacher arms up from behind.
+  ArcBreachSeek = 260.0       # (legacy) see-radius of the OLD LOS-gated seek. The arc
+                              # spawns in our own BACK CORNER (arcSpawn), ~200px behind a
+                              # forward breacher and far outside the 90px vision bubble, so
+                              # a see-it scan fired ~0 (the shipped-OFF bug). The seek now
+                              # navigates to the STATIC arcSpawn coordinate, no LOS needed.
+  ArcBreachCommit = 520       # once the breacher commits to the arc run (a line was live
+                              # and it broke off), hold the run this many ticks past the
+                              # last live-line frame so a FLICKERING line read can't abort
+                              # the trek. Sized to the WORST-CASE round-trip: a breacher
+                              # deep at the seam (~x 707) must path BACK to the arc corner
+                              # (x 50) then out again = ~1314px / 2.75px·t⁻¹ ≈ 478t; 520
+                              # covers it (the old 170 covered only one leg → aborted runs).
+  ArcLineMemoryTicks = 900    # PROACTIVE ARM opponent-adaptivity: pre-arm off a Captain
+                              # pressure phase ONLY if a real line was seen within this window
+                              # (~37s). So the breacher wakes up vs a line-playing opponent
+                              # (h006) and stays a dormant full gun vs an aggressive no-line
+                              # field — it never trades its gun for a line that never comes.
+  ArcArmMaxDepth = 40.0       # PROACTIVE ARM (the geometry fix): only START an arc run while
+                              # the breacher is SHALLOW — at most this far past center into the
+                              # enemy half (so it's near/behind mid, a cheap ~one-leg detour to
+                              # the own-corner arcSpawn). A breacher already DEEP forward would
+                              # face the ~478t round trip the audit killed, so it never arms
+                              # there; it arms off-spawn / while trailing, on a Captain line-prone
+                              # read, THEN carries the armed cone forward to the called cluster.
+  ArcConeMinCluster = 2       # MIN fresh enemies inside one cone before we FIRE it. The arc
+                              # trades our gun for LIFE, so coning a SINGLETON (cluster 1) is
+                              # a net DPS loss vs just shooting it (25t recharge, disarmed for
+                              # life). Field-measured: without this gate the cone averaged 1.33
+                              # hits (mostly singletons). Only spend the cone on a real cluster.
+  ArcBreachFireReach = 128.0  # ⛔ SUPERSEDED by sprayConeFire (2026-08-20); kept only as the
+                              # NOSPRAYCONE=1 control value. It was written as "just inside the
+                              # engine's 136px reach, a margin for our aim/step" — and that 136
+                              # is PlasmaArcReachPx, which is the FX const (sim_types
+                              # PlasmaArcFxReach = 4 * PlasmaArcSquare = 136) mistaken for the
+                              # DAMAGE const (PlasmaArcReach = 5 * PlasmaArcSquare = 170).
+                              # The real forward cap is 170 + PlasmaArcBodyRadius(17) = 187, so
+                              # this refused the entire 128..187 band. Worse, it is RADIAL and
+                              # the engine's test is on FORWARD distance along the locked aim.
+                              # Field: 71.3% of takeable shots died here alone (n = 3,609).
+                              # ⚠️ WHY 136 SURVIVED FOUR PROPAGATIONS AND TWO AUDITS: it is the
+                              # DRAWN PLUME. sim_types.nim:546 says so in as many words — "how
+                              # far the DRAWN plume spans... This is art geometry, not damage."
+                              # So the number is checkable against a replay and LOOKS right.
+                              # It is worse than that: the same doc adds that the puffs are
+                              # "drawn oversize so they merge (SprayPuffOverlap), so its
+                              # outermost pixel lands well past this", and PlasmaArcReach's own
+                              # doc says the 5th square (GameVersion 30, was 4) exists precisely
+                              # "to cover the tip of the plume the game draws, so a cog the
+                              # paint engulfs cannot walk away clean". The paint you can SEE
+                              # therefore reaches ~the damage envelope, not 136 — eyeballing a
+                              # replay does not merely fail to catch this, it CONFIRMS a number
+                              # that is wrong in the safe-looking direction.
+                              # Guarded from here on: the FIRE ⊆ VETO ⊆ ENGINE bounds in
+                              # maxwell/ffa4-deadlever e9953dc.
+  ArcBreachConeBrads = 12     # ⛔ SUPERSEDED by sprayConeFire; the NOSPRAYCONE=1 control value.
+                              # "the ~14° half-cone" is right only AT MAX REACH: the wedge is
+                              # perpendicular <= forward*0.25 + 17, so its half-angle is
+                              # atan((forward*0.25 + 17)/forward) = 19.3° at forward 170 and 28°
+                              # at forward 60. A fixed 12 brads (16.9°) is therefore NARROWER
+                              # than the weapon at every range inside the reach. 6.8% of
+                              # takeable shots died here alone.
+  ArcApproachRadius = 300.0   # a DISARMED breacher CLOSES on a fat cluster (>= ArcConeMinCluster
+                              # fresh enemies within one PlasmaArcReach of each other) detected
+                              # within this radius — wider than the 128px fire reach, because to
+                              # cone a DEEP line the gunless body must first close the gap. This
+                              # approach is the +EV act the weapon exists for (area-denial vs a
+                              # cluster; doctrine "numbers are the currency"), NOT feeding: it is
+                              # gated on a REAL cluster, never a singleton (that's the dry case).
+  # ── ⭐⭐ AoE FRIENDLY-FIRE VETO (2026-08-19). The gun has friendlyBlocked;
+  # the GRENADE and the SPRAY CONE have no friendly check at ALL, and together
+  # they are 36% of our friendly-fire damage (gun 441 / spray 174 / grenade 72
+  # per the ffa4 autopsy). That 36% is unvetoed BY CONSTRUCTION, so it is a
+  # MISSING CHECK, not a tuning error. A corridor hitscan is the wrong SHAPE for
+  # either: one is a disc at a destination, the other a widening wedge from us.
+  # Every number below is READ OFF THE ENGINE (src/ctf/sim.nim, sim_types.nim) —
+  # none is invented, and each names its source so a GameVersion bump can diff it.
+  FfMateFreshTicks = 36       # friendlyBlocked's own mate-freshness bar, reused so
+                              # all three weapons veto off the SAME track set.
+  FfStaleGrowPx = 0.35        # ...and its staleness widening (px per tick of age).
+  FfPlayerHalfPx = 6.0        # sim_types PlayerHalf: the SOLID footprint half-extent.
+  FfMaxSpeedPx = 2.75         # sim_types MaxSpeed(704) / MotionScale(256) = px/tick.
+  FfUnknownMotionCapPx = 20.0 # a track with ONE sighting carries vel (0,0) BY
+                              # CONSTRUCTION (see Track.sightings), so "standing
+                              # still" is unknowable. Treating it as stationary is
+                              # a silent FALSE NEGATIVE — exactly the body that
+                              # walks onto the impact during the lock. Pay a
+                              # BOUNDED isotropic pad instead of a wrong vector.
+  FfEmaLagFrac = 0.5          # updateTracks blends velocity as (old + new)*0.5, so
+                              # a body that JUST started moving reads at half its
+                              # true speed and converges only over several
+                              # sightings. Pad the predicted displacement by this
+                              # fraction of itself to cover the lag.
+  # GRENADE. sim.explodeGrenade tests the victim's solid body BOX against a disc:
+  # nearX = max(0,|dx|-PlayerHalf), nearY likewise, caught iff nearX^2+nearY^2 <=
+  # GrenadeBlastRadius^2. That region is the Minkowski sum of the disc with the
+  # 12x12 box, whose FURTHEST point is the diagonal, 52 + 6*sqrt(2) = 60.49px —
+  # so a plain radius test at 60.49 is a strict SUPERSET of the engine rule and
+  # can never miss a real catch (the on-axis 58px figure the engine comment
+  # quotes would).
+  NadeFfBlastPx = NadeBlast + FfPlayerHalfPx * 1.41422
+  NadeFfFlightTicks = 10      # sim.throwGrenade: max(1, GrenadeFlightMultiple(2) *
+                              # fireWindupTicks(5)). FIXED fuse, near or far — a
+                              # mate outside the disc NOW can be inside it at burst.
+  NadeFfDriftPx = 8.0         # residual motion margin on top of the velocity
+                              # extrapolation: ~3 ticks of MaxSpeed, for the
+                              # acceleration a one-frame velocity read cannot carry.
+  NadeFfHoldMax = 8           # release-time veto is a HOLD, not an abort (the engine
+                              # throws on the C RELEASE edge, so a charge cannot be
+                              # abandoned). Bounded so a blocked bot is a statue for
+                              # at most 8 ticks, then throws anyway.
+  # SPRAY CONE. sim.selectArcVictims: forward in (0, reach + bodyRadius], and
+  # perpendicular <= forward * (maxWidth / (2*reach)) + bodyRadius, then gated on
+  # paintPathClear. A WEDGE, not a fixed-radius arc.
+  ArcFfReachPx = 170.0        # sim_types PlasmaArcReach = 5 * PlasmaArcSquare
+                              # (= SoldierBodyPx 34). ⚠️ the policy's own
+                              # PlasmaArcReachPx(136) is STALE — GV31 grew the reach
+                              # 4 -> 5 squares and nobody updated it. The veto uses
+                              # the ENGINE number; the stale const is left alone so
+                              # this change stays a pure ADD.
+  ArcFfBodyPx = 17.0          # sim_types PlasmaArcBodyRadius = SoldierBodyPx div 2:
+                              # the cone hits the DRAWN body, not the 1px point.
+  ArcFfSlope = 0.25           # sim PlasmaArcMaxWidth(5*34 div 2 = 85) / (2 * 170).
+                              # atan(0.25) = 14.04deg, the documented half-angle.
+  ArcFfActiveTicks = 5        # sim_types PlasmaArcActiveTicks: ticks a fired cone
+                              # stays on, re-selecting victims EVERY one of them.
+  ArcFfRidePx = 13.75         # PlasmaArcActiveTicks(5) * FfMaxSpeedPx(2.75). The
+                              # cone's BEARING is locked at the fire instant
+                              # (arcAimBrads) so it never sweeps — but its ORIGIN
+                              # RIDES its owner and victims are re-selected EVERY
+                              # active tick, so a mate can walk into a cone that was
+                              # clean when we pressed. This is that window.
+  ArcFfAimPadSlope = 0.125    # tan(AimRate 5 brads = 7.03deg): one tick of turret
+                              # lag between bot.estAim and the aimBrads the engine
+                              # actually locks.
+
+  ArcSeamHoldDepth = 55.0     # a DISARMED breacher with NO cluster anywhere (the dry case) must
+                              # NOT charge its gunless body INTO the line to be focus-fired for
+                              # free. Hold at this shallow depth just past center — a live cone is
+                              # a THREAT that shapes the line (enemies space to dodge AoE) even
+                              # unfired, and we stay poised to close the instant a cluster forms.
+  ArcCarryRadius = 48.0       # attribute the "plasma arc carried" marker (floats
+                              # ABOVE the head, higher than the hp pip) to the nearest
+                              # actor within this — bigger than HpPipRadius(22) for the
+                              # extra vertical offset. Verify empirically via cAprobe.
+  AimOnConeBrads = 32         # aimThreat: gun bearing within this many brads of the
+                              # line to us counts as "aimed at us" (~45°, generous
+                              # since the enemy is still turning toward us). Beyond
+                              # this the gun points elsewhere = a lesser threat.
+  AimFuzzBrads = 14           # ⭐ GV24: every OTHER soldier's rendered gun rotation is the
+                              # true aim plus a deterministic offset of up to ±14 brads
+                              # (~±20°), re-rolled every 12 ticks — so an enemy's aim read
+                              # off the sprite is NEVER exact and cannot be averaged out
+                              # (the window outlives the 5-tick windup, by design). Mirrors
+                              # the engine's AimRenderFuzzBrads. Our OWN aim is exempt again
+                              # (GV26), so this applies ONLY to enemies and mates.
+  AimFuzzFloor = 0.25         # ⭐ never HARD-ZERO a threat on a fuzzed read: a gun measured
+                              # "off cone" may really be dead on us. This is the residual
+                              # danger credit such a target keeps — small enough that a
+                              # genuinely-aside gun still loses the tiebreak, large enough
+                              # that it is not invisible.
+  AimDeadOnBrads = 8          # aimThreat: gun within this of dead-on = maximal
+                              # danger scale (lethal THIS tick); credit tapers
+                              # linearly from full at 0 to the on-cone floor here.
+  RetreatRadius = 260.0       # local force-balance radius: count the fresh
+                              # enemies and friendlies within this of us
+  OutnumberMargin = 2         # fall back when fresh local enemies outnumber
+                              # local friendlies (incl. self) by >= this
+  Gv21OutnumberMargin = 3     # gv21Press: the WIDER break threshold — hold and trade
+                              # until the enemy overmatch is this big. GV21 deleted
+                              # spawn-protection + punishes draws, so a 1-gun deficit
+                              # is worth pressing (the kill wins the wipe) not ceding.
+  LocalFreshTicks = 20        # a track counts toward local balance only if
+                              # seen this recently
+  RetreatHold = 24            # once outnumbered, commit to the withdrawal for
+                              # this many ticks (hysteresis; no flip-flopping)
+  RegroupRadius = 460.0       # fall back onto a remembered mate within this
+                              # range (re-form the wave), else straight home
+  RetreatStep = 240.0         # else withdraw this far toward our home side
+  DeclineStep = 140.0         # tradeGate's declineTo fallback (no home bias): break
+                              # away+lateral from the specific threat this far when
+                              # no mate is near to converge on. Shorter than
+                              # RetreatStep on purpose — this holds our depth in the
+                              # field, it does not march home.
+  ScanArc = 44                # scan sweeps this many brads each side of the
+                              # watch heading (cone half-angle is 32 brads)
+  ScanDwellRange = 900.0      # #3: a sentry dwells on a fresh threat inside its
+                              # arc within this range instead of sweeping past it
+  ScanDwellTtl = 40           # #3: dwell only on a threat remembered this recently
+  PushOutTicks = 360          # endgame push: no enemy seen for ~15s...
+  PushOutMinGame = 2400       # ...this deep into the game breaks the posts
+  LatePushTick = 4200         # all-in on the clock: past this tick a draw is
+                              # the default outcome, so commit to the capture. Was 6800 —
+                              # DEAD on the 5000-tick clock (MaxTicks 5000), so post-break
+                              # never fired and defenders camped posts into a timeout=−1 draw.
+                              # 4200 aligns with ForceClockTick(3800): break posts + go win late.
+
+  # --- post-wipe consolidation (regroupPush) ----------------------------------
+  # The v14 loss cause (2026-07-18 replay study): after we clear the enemy nest
+  # we TRICKLE mids into the ~72t respawn wave one body at a time and die
+  # piecemeal — "cash the wipe 0% of the time, squander 47%" in losses. The fix
+  # is a TIMING correction, not a depth cut: depth correlates with WINNING (we
+  # die deeper in their half in WINS), so this must fire ONLY in the squander
+  # signature — a mid over-extended into the enemy half, local area cleared of
+  # live enemies (the post-wipe vacuum), and strung out from its mates. It then
+  # holds a shallow midfield rally until the trio re-forms, then RELEASES to push
+  # deep together. When grouped it does nothing (full-depth push preserved).
+  RegroupPushRallyDepth = 70.0  # hold the rally this far INTO the enemy half (past
+                                # center) — forward of mid so we don't cede ground,
+                                # shallow enough that strung-out mates re-form fast
+  RegroupPushTrigDepth = 130.0  # only consolidate once we've pushed at least THIS
+                                # deep into the enemy half alone (genuinely committed
+                                # / over-extended, not merely crossing midfield)
+  RegroupPushPack = 2           # release and push once this many FRESH mates are
+                                # grouped near us (self + this = a 3-body wave)
+  RegroupPushRadius = 200.0     # a mate counts toward the pack within this range
+  RegroupPushClearRange = 240.0 # "vacuum": no fresh enemy within this of us (the
+                                # nest is cleared — the moment we tend to trickle in)
+  RegroupPushCommit = 90        # once grouped, commit the joint push for this many
+                                # ticks (hysteresis: don't re-hold as the wave spreads)
+
+  # --- grab timing (anti-stacked-dive) ----------------------------------------
+  # The dive-death finding (96 hash-clean H2H, 2026-07-20): 96% of our carrier
+  # deaths are AT the enemy pedestal (<210px), 85% within 50px of the grab, and
+  # grab->cap conversion is 0% in EVERY loss. We out-grab the field 2x but rush a
+  # lone, often gun-down body into a STACKED pocket and it is shot on the touch.
+  # The pocket is the ONE place commit's kill-to-convert mechanism structurally
+  # cannot fire: selectFireTarget SKIPS spawn-protected bodies (sim.nim:2854), so
+  # a fresh respawner is UNKILLABLE for SpawnProtectTicks(24) yet still shoots our
+  # toucher. grabTiming is the fireSuperiority "break only if you can't win the
+  # exchange AND no mate is free to assault" carve-out applied to exactly that
+  # spot — it DELAYS/SEQUENCES the dive when the pocket is stacked and cover is
+  # inbound, it never abandons the objective (a lone last body still dives).
+  GrabStackDefenders = 2        # "stacked": this many fresh enemy guns within
+                                # GrabStackRange of the pedestal make a solo dive
+                                # a coin-flip death — hold for a covering mate.
+  GrabStackRange = 150.0        # count pocket defenders within this of the pedestal
+                                # (a gun this close to the heart covers the touch)
+  GrabCommitRing = 60.0         # once inside this of the pedestal we are committed —
+                                # a hold here just feeds ticks, so dive through it.
+  GrabHoldStandoff = 150.0      # hold the gun up at this radius off the pedestal
+                                # (outside GrabStackRange so we suppress from beyond
+                                # the defenders' tightest cover, still pressuring).
+  GrabCoverRange = 110.0        # a mate this close to US at the pocket is cover in
+                                # place — release and grab TOGETHER (the point of it)
+  GrabInboundGap = 20.0         # a mate this much homeward of us is genuinely
+                                # inbound support worth waiting a beat for.
+  GrabMateFreshTicks = 90       # mate tracks count for cover/inbound up to this
+                                # stale: the diving rusher's cone is welded to its
+                                # aim ON the pocket, so a mate approaching from
+                                # homeward sits BEHIND the cone and can't be seen
+                                # fresh at the moment of the hold decision. At
+                                # LocalFreshTicks(20) the inbound count was
+                                # structurally 0 (gtprobe: noCover 144 -> FIRED 0).
+
+  # --- L2/L4 ffa4 tempo mandate (2026-08-17, 347 re-simulated ffa4 episodes) ---
+  TradeMinEdge = 1.0            # L2 VOLUME GATE (tradeGate), ships OFF. In a
+                                # four-way pot a 1:1 trade burns both fighters' life
+                                # pools while the two bystanders pay nothing — parity
+                                # is a LOSS, not a wash (measured: holding K-D fixed
+                                # at 0, low-volume wins 36.6% vs high-volume 6.5%).
+                                # Require a full extra effective gun over the local
+                                # enemy tally (the same shield/hp-weighted count
+                                # fireSuperiority already computes) to PRESS; an even
+                                # matchup declines and regroups on a mate instead.
+  # --- ⭐⭐⭐ TGEV: the ffa4 TRADE-EV GATE (2026-08-20). ------------------------
+  # Everything below is DERIVED, not tuned. In an N-team last-team-standing pot
+  # the only thing that scores is the ORDINAL, and the pre-registered predictor
+  # of it is the ATTRITION MARGIN  M = mean(rival lives spent) - ours  (AUC 0.777
+  # for finishing first, n=1953; logit P(win) = -1.414 + 0.378*M). Differentiate
+  # M over one exchange:
+  #     we kill, we live      dM = +1/(N-1)
+  #     we die,  they live    dM = -1
+  #     EVEN TRADE            dM = -1 + 1/(N-1) = -(N-2)/(N-1)
+  #                                   = 0 at N=2, -0.667 at N=4
+  # THAT is the inversion: an even trade is exactly neutral in a duel and costs
+  # two thirds of a margin unit in a four-way pot. Requiring E[dM] >= 0 with
+  # p = P(we win the exchange) gives
+  #     p/(N-1) - (1-p) >= 0   <=>   p >= (N-1)/N
+  # i.e. a 4-team fight needs a SEVENTY-FIVE PERCENT win chance to break even,
+  # where a 2-team fight needs fifty. TradeMinEdge's additive +1.0 gun bar cannot
+  # express that, because "one extra gun" means something different at 1v1 than
+  # at 4v3 -- see TradeSquareLaw below.
+  TradeContestBurn = 0.5        # c: expected RIVAL lives burned in a fight we walk
+                                # away from, when >= TradeContestMinTeams distinct
+                                # rival COLOURS are locally fresh. A contested melee
+                                # is the one fight whose outside option is worth
+                                # something: the bystanders attrit each other while
+                                # we pay nothing, so walking away is not EV-neutral,
+                                # it is EV-POSITIVE and the bar to join must rise:
+                                #     p >= (N-1+c)/N
+                                # c = 0.5 says "half a rival life gets burned in the
+                                # melee we declined". ⚠️ THIS IS THE ONE CONSTANT IN
+                                # THE DESIGN WITHOUT A MEASURED SOURCE. -d:tempoprobe
+                                # MEASURES it (TGBURN row: rival deaths inside
+                                # RetreatRadius over the next TgFollowTicks, split
+                                # contested vs not) so it can be re-pinned from data
+                                # instead of argued. ⭐ FIRST MEASUREMENT (2026-08-20,
+                                # 6 gen 4-team eps): SOLO declines burn 0.406-0.422
+                                # rival lives inside 260px over the next 120 ticks —
+                                # so even an UNCONTESTED walk-away is worth ~0.41 of a
+                                # rival life, which the c=0 case assumes is zero. The
+                                # CONTESTED cell is n=0 (see tradeGateContest's null),
+                                # so c itself is still unmeasured. TGCONBURN=<f> overrides at
+                                # runtime; TradeContestBurn is also the DEFAULT tune
+                                # value, so a bot with tradeGateContest off is
+                                # byte-identical whatever this holds.
+  TradeContestMinTeams = 2      # distinct rival colours inside RetreatRadius that make
+                                # a fight CONTESTED. 2, not 3: with two rival teams in
+                                # the pile there is already someone else paying.
+  TgFollowTicks = 120           # -d:tempoprobe ONLY: the look-ahead window that joins a
+                                # decline decision to what happened next. ~4s at 30Hz —
+                                # long enough for the declined exchange to resolve
+                                # (median 4-team fight), short enough that a death 120t
+                                # later is still plausibly THIS fight.
+  # ⛔⛔ TOMBSTONE — L4 "LATE-FLAG CLOCK" (flagClock / LateFlagClockTick),
+  # BUILT 2026-08-17, MEASURED AND RETIRED THE SAME DAY. Do not re-derive it.
+  # The idea: ffa4 steals before ~60% of the clock win 33-38% (below the ~44%
+  # parity bar) and late ones win 68-86%, so gate the pocket-rush commit and the
+  # touch latch shut until a late tick, then "commit hard". Four independent
+  # findings killed it; the first two are why the SHAPE of the idea cannot work,
+  # the last two are why the PREMISE was never true.
+  #
+  # 1. THE CLOCK CANNOT BE EXPRESSED AS AN ABSOLUTE TICK. Real ffa4 length over
+  #    n=348 HOSTED 4-team episodes (~/.ctf/scout/events, summary `ticks`) is
+  #    min 1340 / p25 2420 / median 3087 / p75 4594 / p90 7130 / max 8379. There
+  #    is no 5000-tick league clock (22.1% run past 5000). One constant therefore
+  #    means "opens at 87% through" in a short episode and "at 36%" in a long
+  #    one. The original 3000 pin was the ~53rd percentile of LENGTH: in 46.6% of
+  #    real episodes it NEVER OPENED, making the lever a permanent ban. Re-pinning
+  #    to 2000 fixed the never-opens half and changed nothing else.
+  # 2. IT KEYS ON bot.gameStart, A PER-PROCESS COUNTER. See shippedCombatTune's
+  #    commsCrypto kill: our four seats run as four processes that do NOT share a
+  #    frame-receipt clock, so each bot opens its own clock at a different real
+  #    time. In-process eval steps every seat on one stream, which is exactly why
+  #    a mirror can never see the skew.
+  # 3. THE PREMISE IS REFUTED ON OUR OWN EPISODES. Within our 346 hosted ffa4
+  #    team-episodes, MORE early (<t2000) steals goes with FEWER lives spent and
+  #    MORE wins: 0 early steals -> 7.33 lives by t1500 / 22.3% win (our WORST
+  #    bucket); 1 -> 6.78 / 27.4%; 2 -> 7.03 / 33.3%; 3+ -> 7.10 / 28.6%. The
+  #    "early steals win only 33-38%" figure is a comparison ACROSS teams — weak
+  #    teams steal early and lose, strong teams are still alive to steal late —
+  #    i.e. survivorship, not a cost of stealing early.
+  # 4. IT BANS THE WINDOW THAT PRODUCES MOST OF OUR CAPTURES. 144 of our 186
+  #    hosted ffa4 captures (77%) land before tick 2000, and we are already near
+  #    best-in-field at capturing (0.54 caps/ep vs focusfire 0.30). The lever paid
+  #    that to chase a late window holding 29 steals across 346 episodes.
+  #
+  # MEASURED BEHAVIOUR, for anyone tempted by the counters: armed on ONE team
+  # (FFA4TEAM=red FFA4ONLY=L4, 10 episodes, gen 4-team, EVAL_PLAYERS=16), the
+  # armed team's episodes were IDENTICAL to the all-off control in 8 of 9 — same
+  # winner, tick count, grabs and captures — and the ninth differed only in
+  # length. Across every arm ever run, holdGrab's "commit hard" bypass fired
+  # ZERO times. A lever that blocks 125-671 frames and changes no outcome is
+  # blocking frames that were not going to become steals.
+  #
+  # If you are re-reading this because the fifths table looks compelling again:
+  # the fifths are real and reproduce exactly. They are a survivorship signal.
+  # Test any successor ARMED ON ONE TEAM ONLY against the same seeds before
+  # believing a counter.
+  # --- holdLine (anti-over-extend vs a standing line) -------------------------
+  # The h006 line-defense finding (2026-07-22 corpus): the #1 policy forms a line
+  # in its own half and lets us over-push into a converging kill. We die 39% in the
+  # enemy half; h006 ~14%. Sibling of regroupPush (shares its movement-only, lone-
+  # survivor-presses, release-when-grouped guard structure and its REF-force
+  # firewall) but the OPPOSITE trigger: regroupPush holds in a post-wipe VACUUM;
+  # holdLine holds when we have over-extended into the enemy half AND fresh enemies
+  # are present AND we lack LOCAL fire-superiority (fresh mates near us < fresh enemy
+  # guns near us). It rallies at a shallow line so the wave engages the defense
+  # together instead of trickling in one body at a time to be farmed.
+  HoldLineTrigDepth = 90.0      # only bite once we've pushed at least this deep into
+                                # the enemy half alone (shallower than regroupPush's
+                                # 130: a standing line kills earlier than a vacuum lets
+                                # us wander, so hold before we reach the kill pocket)
+  HoldLineRallyDepth = 40.0     # rally this far into the enemy half at our lane (still
+                                # forward of mid — we never cede ground, just re-form)
+  HoldLineEnemyRange = 200.0    # a fresh enemy gun within this of us = a live line to
+                                # our front (not an empty vacuum — regroupPush's job)
+  HoldLineMateRange = 200.0     # a fresh mate within this counts toward our local pack
+  HoldLineSuperiority = 0       # release the hold when (fresh mates near) - (fresh enemy
+                                # near) >= this: we have the local edge to engage the line
+  HoldLinePack = 2              # OR release once this many fresh mates are grouped (a
+                                # 3-body wave hits the line together = regroupPush parity)
+  HoldLineCommit = 90           # once released, commit the joint push for this many ticks
+                                # (hysteresis; mirrors RegroupPushCommit)
+
+  # --- grabGate (numbers-gated pocket rush) -----------------------------------
+  # The h006 grab-discipline finding (2026-07-22): h006 grabs almost only when up
+  # bodies (steal->cap 46-64% vs our 28%); we grab even/behind and feed the carrier.
+  # Distinct from grabTiming (pocket-STACKING gate): grabGate gates the pocket-rush
+  # itself on LOCAL fire-superiority near the pedestal. Teammates are fogged, so we
+  # use fresh-mate-vs-fresh-enemy-gun proxies around stealTarget, never a global
+  # headcount (that would be the falsified forceBalance). Same lone-last-body /
+  # pushOut / commit-ring carve-outs as grabTiming: it DELAYS the open, never abandons.
+  GrabGateEnemyRange = 150.0    # count fresh enemy guns within this of the pedestal
+                                # (matches GrabStackRange — the same defense grabTiming sees)
+  GrabGateMateRange = 170.0     # an inbound mate must be within this of US to count as
+                                # support arriving in time (a mate homeward but far back
+                                # is not converting THIS grab)
+  GrabGateDeficit = 1           # gate the dive when (pocket enemies) - (me + inbound
+                                # support) >= this: the defense beats our local force at
+                                # the touch by this margin — the exact suicide-grab state
+
+  # --- team comms (shouts) & damage awareness ---------------------------------
+  # The engine gives each player ONE shout channel: <=ShoutMaxChars (10) chars,
+  # at most one per second, heard by teammates within ~247px THROUGH walls and
+  # fog. We use it for four messages on one prioritized slot (see decide()):
+  #   "oh shit!"  surprise: an enemy appeared in our face after a blind gap
+  #   "die"       pre-fire: we are about to shoot with a mate in earshot
+  #   "E <cell>.." enemy callout: chess-cell fixes on fresh enemy tracks
+  #   "C<cx> <cy>" carrier heartbeat (existing; lowest priority)
+  ChessFiles = 26             # A..Z map columns for the callout grid
+  ChessRanks = 14             # 1..14 map rows: ~47x47px cells (MapW/26, MapH/14)
+  ShoutGapTicks = 26          # min ticks between our own shouts (server caps at
+                              # ReplayFps ~1/s; we self-rate a touch slower)
+  CalloutFreshTicks = 20      # only call out enemies seen this recently
+  CalloutMaxCells = 2         # name at most this many enemy cells per shout
+  CalloutSeedTtl = 96         # a heard callout seeds a track at that cell ONCE, not
+                              # once per frame: any track already within a cell of it
+                              # and younger than this counts as the same lead. Must
+                              # exceed the shout bubble's life (ShoutTicks = 72) plus
+                              # the callout's own emit freshness (20), or the same
+                              # bubble re-seeds a phantom every frame it is on screen.
+                              # ("E M9 C4" fits the 10-char budget)
+  SurpriseRadius = 95.0       # an enemy THIS close that we were not tracking is
+                              # "in our face" — the corner-ambush jump scare
+  SurpriseGapTicks = 40       # ...and unseen for at least this long before now
+                              # (or brand new) — genuinely a surprise, not an
+                              # enemy we watched approach
+  SurpriseShoutCooldown = 150 # one "oh shit!" per bot per ~6s (flavor, not spam)
+  DieEarshot = 200.0          # shout "die" when a friendly is within this of us
+                              # as we fire — close enough to hear and help
+  DieShoutCooldown = 90       # one "die" per bot per ~3.75s
+  VanityShoutChance = 5       # % of eligible frames that actually emit a vanity
+                              # ("oh shit!"/"die") shout. Without this the cooldown
+                              # is the ONLY throttle, so in a clustered 8v8 a mate
+                              # is almost always in earshot and every bot fires
+                              # "die" every DieShoutCooldown ticks = a wall of
+                              # bubbles on screen. This is a rare-flavor gate: keep
+                              # the lines occasional, not constant. Uses a
+                              # per-(slot,tick) hash, NOT rand(), so the shared RNG
+                              # stream stays untouched and the mask stays neutral.
+  # ShoutHeardRange is map-derived (adoptMapSize): the sim's ShoutRange is
+  # MapWidth div 5, so a fixed 247 DISCARDS shouts we really heard on a big
+  # board — the comms bus loses half its intake. Old fixed value 247.0.
+  ContactWatchTicks = 30      # after hearing "oh shit!"/"die"/callout, orient
+                              # the vision cone toward the fix for this long
+  HpDropOrientTicks = 24      # after taking a hit from an unseen direction,
+                              # orient toward the muzzle-ring bearing this long
+  ShotSoundRange = 300.0      # only react to "shot sound" muzzle rings within
+                              # this of us (a nearby unseen shooter, likely at us)
+  RearTurnGuessDist = 200.0   # rearTurn: how far out to plant the opposite-of-
+                              # own-aim guess fix when no ring and no track is
+                              # known (only the BEARING matters, not the range)
+  MateGoneTicks = 120         # believe "every mate is dead" only after this long
+                              # with a mate corpse newer than any live-mate
+                              # evidence (fog: silence alone proves nothing)
+  MateCorpseMatchDist = 48.0  # a corpse counts as a MATE death only within this
+                              # of a remembered mate track (rejects our own
+                              # lingering corpse scanned right after respawn)
+  DangerAimTtl = 300          # dangerPreAim: a mate-death / last-hit bearing
+                              # stays worth pre-laying for this long (~10s)
+  # -- MATE-DEATH ON THE KO MARKER (mateKo*, 2026-08-20). WARNING/MEASURED: the
+  # two constants above feed `mateDeathPos`/`mateDeathTick`, whose ONLY write
+  # site fills them from a `corpse <color> <side>` scan -- and global.nim draws
+  # a corpse ONLY when `viewerIsGhost = not player.alive`. The policy's own dead
+  # path `return`s BEFORE that scan, so the fields are written in NEITHER state:
+  # never while alive (no such label is emitted to us), never while dead (the
+  # scan is unreachable). Wire proof: 0 corpse labels in 179 live-viewer samples
+  # vs 1,149 in 141 ghost-viewer samples; engine proof + live-viewer regression
+  # in tests/test_live_viewer_death_channel.nim.
+  #
+  # `damage pop <color> KO stage <n>` is the same fact on a channel a LIVE
+  # viewer does receive: planted at the victim's centre, in the VICTIM's colour,
+  # fog-honest (addDamagePops skips any pop outside `fovVisibleAt`, which is
+  # hard-false for a dead viewer), alive KillFxTicks. Every number below is read
+  # off global.nim so a GameVersion bump can diff it. The parse deliberately
+  # mirrors the sibling koRelease reader rather than inventing a second one.
+  # ⚠️ MERGE (v59): LabelPrefixDamagePop / KoPopToken / KoPopStages / KoPopRisePx are
+  # declared ONCE, in the koRelease block above — tracktable f93bbc4 and ghostseed
+  # 1d2b4e6 each read the same wire and each transcribed the same four numbers off
+  # global.nim with IDENTICAL values. One declaration, so a GameVersion bump can
+  # only be got wrong in one place. KoDedupeTicks(44) above and KoPopLifeTicks(44)
+  # here are the same engine constant under two names; both kept so each reader
+  # keeps its own branch verbatim.
+  KoPopLifeTicks = 44         # global.nim KillFxTicks: how long one marker lives
+  MateKoDedupePx = 20.0       # the damage-pop object pool RECYCLES ids, so a marker
+                              # cannot be deduped by objectId the way a corpse can --
+                              # dedupe by PLACE instead, for one marker's life.
+  PuddleStandMargin = 12.0    # hazardSense: stand-target clearance pushed out
+                              # around a stated puddle box (the box is already
+                              # loose — disc-union splats, conservative corners)
+  BarrageEvadeMargin = 48.0   # hazardSense: evacuate to this far INSIDE the
+                              # stated shell ring, not just onto its lip
+  # ── v56 NADE PACKAGE (2026-08-14, play-layer-analysis-2026-08-14.md §3).
+  # Three independent levers with one env opt-out each: staleNade
+  # (NOSTALENADE), nadeSupply (NOSUPPLY), antiBunch (NOBUNCH).
+  NadeStaleTicks = 110        # staleNade: a REMEMBERED bunker cluster stays a
+                              # legal LOB target this long. FreshShotTicks(24)
+                              # is a GUN gate — the turret needs the body to
+                              # still be roughly where it was — but a grenade
+                              # flies OVER the wall and bursts on AREA, so the
+                              # gun's freshness bar is the wrong instrument.
+                              # Capped under TrackTtl(120) so the track is still
+                              # remembered at all when we commit the charge.
+  NadeStaleVelPx = 0.6        # staleNade: ...and only for a CAMPER — last
+                              # observed speed under this (px/tick; top speed is
+                              # 2.75). A body that was MOVING when it fogged out
+                              # is not where we remember it; a wall-camper is.
+  NadeStaleMinCluster = 2     # staleNade: ...and only for >=2 remembered bodies
+                              # inside ONE blast. A lone stale memory is a
+                              # guess; two stacked memories behind cover is the
+                              # exact shape the grenade exists to punish (and
+                              # the measured five-kill door camper of §1).
+  NadeDepotDetour = 320.0     # nadeSupply: role-restricted RE-ARM detour budget,
+                              # in px of EXTRA path (me->depot->task minus
+                              # me->task). 320px is the measured cost of the
+                              # 2026-07 ammo detour; that finding's rule is that
+                              # such a detour MUST be role-restricted or it
+                              # drags the whole line off task.
+  NadeSpawnInsetPx = 50.0     # nadeSupply: the sim's corner grenade spawn inset
+                              # = ArenaBorder(10) + GrenadeSpawnInset(40),
+                              # planted EXACTLY (resetGrenades does no
+                              # nearest-walkable nudge). Only valid on a
+                              # layoutSides board — i.e. anything under 4 teams.
+  NadeDepotSeenPx = 24.0      # nadeSupply: two sightings within this are the
+                              # same static depot (dedupe the learned set)
+  NadeDepotMax = 8            # nadeSupply: remembered depot cap
+  NadeDepotDryPx = 20.0       # nadeSupply: standing this close to a depot and
+                              # STILL unarmed proves the corner is empty (the
+                              # sim picks up on a 12px touch, automatically)
+  NadeDepotDryTicks = 5 * 24  # nadeSupply: ...so ignore that depot for one
+                              # GrenadeRespawnTicks (5s * ReplayFps 24). Without
+                              # this a bot parks on a taken corner forever —
+                              # the detour's own worst failure mode.
+  BunchSpacing = NadeBlast + 14.0  # antiBunch: keep mates outside ONE blast
+                              # (52px + body). MateSpacing(40) sits INSIDE the
+                              # blast radius, so the shipped repulsion settles
+                              # pairs exactly where one grenade takes both:
+                              # 56% of enemy impacts that damaged us caught 2+.
+  BunchOuterGain = 0.5        # antiBunch: gain of the extra 40..66px band term
+                              # (half the inner MateSpacing gain — a nudge that
+                              # spaces the wave, not a term that breaks it up)
+  BunchMateTtl = 24           # antiBunch: a mate track this fresh still counts
+                              # for spacing. The shipped 12-tick gate plus the
+                              # fog contract (NO team radio — a mate is visible
+                              # only inside your own cone) is why two bots
+                              # facing the SAME way never repel each other.
+  BunchStepPx = 32.0          # antiBunch: probe this far when picking the
+                              # step-apart direction round cover
+  # ── Shout-reaction gate (calloutGate, 2026-07-16): a heard callout is
+  # INTEL, not an order. Listening (banking the enemy track) is always cheap;
+  # REACTING (turning the cone / moving) must clear a distraction bar keyed to
+  # the bot's own task priority — SEAL "priority of work / need-to-know". These
+  # gate the reaction, they do NOT gate the intel intake.
+  CalloutSelfBubble = 130.0   # a callout THIS close to us is a threat to our OWN
+                              # survival — even a committed carrier/grabber glances
+                              # (OrientOnly), because a dead carrier captures nothing.
+  CalloutLaneCone = 40        # brads: half-cone around our travel bearing. A
+                              # callout inside it is a threat we are about to walk
+                              # INTO, so even a committed bot orients to it.
+  CalloutSectorRange = 300.0  # a posted defender (Overwatch/HomeDefender) reacts
+                              # to a callout only within this of the thing it guards
+                              # (the carrier it covers, or our own flag) — need-to-know.
+  CalloutLaneReach = 520.0    # the lane-cone proximity override reaches this far
+                              # down our travel bearing — a called threat farther
+                              # than this on our path is not yet a walk-into risk.
+
+  # ── COMMS BUS (C1/C2, 2026-07-22, Track B) ──────────────────────────────────
+  # Event-driven team plays over the one shout channel. A bot classifies a LIVE
+  # scenario from its OWN fresh local reads (classifyScenario) and broadcasts an
+  # opaque 2-char codeword; teammates in earshot adopt it (heardPlay) and fold it
+  # with their own read through ONE shared matrix (selectScenarioPlay) so the team
+  # converges without a captain and degrades to the clock playbook if it hears
+  # nothing. Emit is mask-neutral (rides shoutWant); adoption moves MOVEMENT INTENT
+  # only, never the turret (the v1/v2 cone-diversion lesson, REF-comms).
+  CommsScanRange = 240.0      # a fresh enemy/mate within this of us counts toward
+                              # the local STACK/WIPE read (~the pocket + a lane)
+  CommsStackDefenders = 2     # >= this many fresh enemy guns clustered near the
+                              # steal target = the pocket is STACKED (ScStack)
+  CommsWipeMax = 0            # <= this many fresh enemies near us while our guns are
+                              # up + we are deep = a local WIPE vacuum (ScWipe)
+  CommsLineGuns = 2           # >= this many fresh enemy guns clustered to our front
+                              # while we're deep but NOT at the pocket = a standing
+                              # defensive LINE (ScLine) — the h006 farm-our-push posture
+  CommsPlayTtl = 90           # a heard/derived scenario play is held this many ticks
+                              # (~3.75s — a play beat) then decays to the clock fallback
+  CommsEmitCooldown = 40      # min ticks between our own codeword emits (own rate
+                              # limit on top of ShoutGapTicks; a play beat, not spam)
+  CommsSalt = 0x5A17          # compiled-in team secret for the rotating codeword
+                              # table (commsCrypto). Rotate this each upload if a
+                              # clone ships our exact salt (the C2 hedge).
+  # The 1-char play tokens (the SECOND char carries the flank for flip plays). The
+  # scheme rotates which glyph maps to which play per round (commsCrypto); this pool
+  # is the alphabet drawn from. Opaque single letters, not "PushTop" — a clone reads
+  # a letter, not our play. Order matters ONLY as the rotation base.
+  CommsTokenPool = "kqxzjvwy" # 8 low-frequency glyphs; index = (play + roundSalt) mod 8
+
+  # ── ⭐⭐ v56 PLAY EXECUTORS (2026-08-14, the comms-forensics batch) ───────────
+  # MEASURED on 310 league episodes / 3,526 v55 P-calls (comms-forensics memo):
+  # the channel LANDS (mean 2.86 alive in-earshot hearers, only 7.6% starved) and
+  # DECODES (v53+ wire is provably salt-0-coherent) — but nothing MOVES. Pq=STACK
+  # was 23.8% of all traffic and had NO reader anywhere (selectScenarioPlay folded
+  # RpStack to the unchanged clock flank); Px/Pw were 75.5% and their entire
+  # designed reaction was to lower ONE hold threshold, i.e. the adoption of a play
+  # call rendered as STANDING STILL. These constants bound the fix: a heard play
+  # now moves FEET, on a leash, movement-intent only (REF-comms v2 — the turret is
+  # still never diverted by a codeword).
+  StackConvergePull = 140.0   # ⭐ Pq/STACK: a heard stack means a mate is AT the
+                              # contested pocket and needs the SECOND GUN the
+                              # doctrine comment has promised since C1. Pull the
+                              # listener's approach target this far toward the
+                              # CALLER's bubble (bounded step, not a teleport).
+  StackConvergeMin = 70.0     # ...but only from outside this: closer than this we
+                              # are already stacked on him, and the pull would just
+                              # collapse two bodies onto one grenade (the 56%
+                              # multi-hit blast finding).
+  StackConvergeMax = 460.0    # ...and no farther than this: a stack call from
+                              # across the map is not OUR fight; ~2x earshot so a
+                              # relayed echo can still pull a second lane in.
+  WipeLanePull = 120.0        # ⭐ Px/WIPE: a heard wipe names a lane the caller just
+                              # CLEARED. Pull the listener's approach lane (y) this
+                              # far toward the caller's bubble — push through the
+                              # hole, instead of only holding a rally line.
+  LineDivertPush = 170.0      # ⭐ Pw/LINE: a heard line names where the enemy is
+                              # STANDING. Do not feed it: shove the listener's
+                              # approach lane this far to the FAR side. Directly
+                              # attacks the one-door conveyor (measured entry-y
+                              # stdev 5-31px vs daveey's 148-242 — we use one door,
+                              # he uses the whole wall).
+  LineDivertBand = 190.0      # ...armed only when our approach lane is inside this
+                              # of the called line's lane (we are ABOUT to walk into
+                              # it). Farther off and we are already the other door.
+  CommsPlayLatch = 45         # ⭐ TTL LATCH: 41% of back-to-back calls carried a
+                              # DIFFERENT token inside the 90t TTL, so the single
+                              # heardPlay slot thrashed and even the threshold
+                              # nudges flapped. A freshly adopted play is IMMUNE to
+                              # a different-token overwrite for this many ticks
+                              # (half the TTL); a SAME-token echo always refreshes.
+  CommsEchoSuppress = 60      # ⭐ EMIT DEDUPE: 58% of calls were same-token echoes
+                              # of something already in the air. Do not re-shout a
+                              # play we HEARD this recently — the slot is worth more
+                              # as an E-callout (v55 emitted ZERO E; the enemy
+                              # lineage emitted 13,077 in the same window).
+
+  CoverShieldDist = 42.0      # an obstacle this close blocks a threat direction
+  PeekLineDist = 150.0        # floor for an overwatch peek firing line; post
+                              # scoring strongly prefers the longest line
+  DuckSearchCells = 3         # duck-cell search radius in nav cells
+  PeekSearchCells = 3         # peek-cell search radius in nav cells
+  ExposureRange = 380.0       # enemy threat radius used for exposure costing
+  ExposureThreats = 3         # cost only the freshest few remembered threats
+  ExposureTrackTtl = 60       # only cost threats remembered this recently
+  UnderFireTrackTtl = 16      # tracks this fresh can pin us on open ground
+  SerpentineNear = 100.0      # serpentine band: closer threats are jink/duck
+  SerpentineFar = 400.0       # ... and farther tracks cannot really aim at us
+  StepCost = 5'i32            # orthogonal move cost in the nav field
+  DiagCost = 7'i32            # ~sqrt(2) * StepCost
+  ExposedCost = 14'i32        # extra cost to enter a threat-exposed cell:
+                              # under fog the exposure model (enemy sniper
+                              # posts + fresh tracks) is the only warning of
+                              # watched lanes, so routes respect it hard
+  FlankDepth = 260.0          # wide flankers cross this far past mid
+  WeaveBand = 280.0           # rushers serpentine within this x-band of mid
+
+  # ── ⭐⭐ MID-QUAD BREAK (v56, 2026-08-14). The role table dealt FOUR of eight
+  # seats into the mid family and dealt MidBottom LITERALLY TWICE on every
+  # colour (seat 4, plus whichever of seats 2/3 resolves to MidBottom) — the
+  # docstring says it outright, "a mid quad plus two flankers". The field roster
+  # scan says that quad IS the problem: EVERY badly-performing seat is a mid and
+  # no non-mid seat is bad.
+  #   Β MidGuard  (full squad, n=67)  K/D 0.72 vs 1.14 squad — worst on the board
+  #   Γ Mid       (full squad, n=67)  K−D/ep +0.40 → −0.35 across the v55 ship
+  #   Ε MidBottom (full squad, n=67)  K−D/ep +0.20 → −0.14 (the DUPLICATE seat)
+  #   Δ Mid       (half squad, n=125) K/D 1.11 vs 1.34; (ffa4, n=345) 0.95 vs 1.17
+  #
+  # ⚠️⚠️ THE EVIDENCE THIS RESTS ON, AND THE EVIDENCE IT DOES NOT (2026-08-17).
+  # The original write-up justified this package on the ONE-DOOR FUNNEL. That
+  # explanation was measured and REFUTED, and none of it is load-bearing here:
+  #   ✗ "the partnered deal starves us into a funnel" — entry-y per deal shape
+  #     is partnered 70.7 vs h2h 63.2 (door 58.8 vs 56.8). The partnered deal is
+  #     NOT worse, which is the opposite of what seat-starvation predicts.
+  #   ✗ "ours 46.2px vs daveey 188px" — apples to oranges: ours was taken AT THE
+  #     DOOR, his at the MIDLINE. At equal depth he is 14.5px, ~2.3x wider than
+  #     us, not 30x. He funnels too.
+  #   ✗ "spending MidGuard is cheap because it is our worst seat" — that rank
+  #     (8 of 8) reproduces only on h2h, the deal where the swap changes no role
+  #     composition at all. On partnered, where a lever would bite, that seat is
+  #     1.30 against a 1.34 squad mean, rank 3 of 4. Dropped.
+  #   ✗ entry SPREAD as the mechanism at all — on gen-57711 a stock
+  #     paintbot-baseline filler found a second door at y≈386 while all nine of
+  #     our crossings went through y≈570, with NO role change. Route selection is
+  #     MAP-DERIVED; a fixed seat→role table cannot see a door.
+  # What survives, and is the whole case for this package:
+  #   ✓ every flagged-bad seat is a mid and no non-mid is flagged (a per-seat
+  #     PERFORMANCE finding, untouched by the funnel refutation),
+  #   ✓ MidBottom is dealt TWICE per colour — a literal duplicate, indefensible
+  #     on its own terms whatever the routing story turns out to be,
+  #   ✓ 8.1% of half4 deaths are own-colour (60 Picasso-on-Picasso) — direct
+  #     crowding damage, and unlike entry-y a metric this rig CAN move,
+  #   ✓ we die 0.52-0.53 deep inside THEIR half while the opponent arm dies
+  #     0.36-0.39 inside its own.
+  # Three levers, each independently revertable:
+  #   (1) seat 4 stops duplicating MidBottom             — NOSEAT4=1
+  #   (2) roleSep   — a bot whose role is ALSO dealt to a lower seat takes a
+  #                   separated lane/depth, so a duplicate is never a clone
+  #                                                       — NOROLESEP=1
+  #   (3) midSpread — the mid trail offsets stop being a 52px blob on approach
+  #                                                       — NOMIDSPREAD=1
+  # ⚠️ Levers 2 and 3 are APPROACH-ONLY: every one of them sits behind the
+  # existing `dist(me, stealTarget) > 90` / `> 170` gates, so the pocket
+  # convergence that actually scores the touch is byte-identical. Touch
+  # conversion is our known lever (71.8% vs 94.9%); nothing here may tax it.
+  MidTrailNarrowY = 26.0      # the ORIGINAL mid trail offset — MidBottom sat
+                              # +26px and MidGuard −26px off the steal target,
+                              # i.e. the whole mid stack inside one 52px band
+                              # while it walked the length of the map.
+  MidTrailWideY = 72.0        # midSpread: the widened band (144px apart). Sized
+                              # to exceed one blast (GrenadeBlastRadius 52), so
+                              # a single grenade cannot take the pair. ⚠️ The
+                              # "58.4% of nade impacts caught 2+ of ours" figure
+                              # that originally sized this belongs to the
+                              # refuted funnel write-up; the surviving crowding
+                              # evidence is the 8.1% own-colour DEATH rate, and
+                              # on this rig that metric did not move (below).
+  RoleSepLaneMix = 0.5        # roleSep: a DUPLICATE flanker runs halfway between
+                              # its namesake lane and LaneMid instead of sharing
+                              # the primary's corridor (both endpoints are
+                              # map-derived open lanes, so the blend is in the
+                              # band between two known-walkable corridors).
+  RoleSepDepthMul = 0.55      # roleSep: ...and turns in at 55% of FlankDepth, so
+                              # the pair separates in DEPTH as well as height and
+                              # does not arrive on the same beat.
+  MidSpreadRange = 200.0      # ⚠️ LOAD-BEARING. The widened band and the
+                              # duplicate's depth offset apply ONLY beyond this
+                              # range; inside it the mids fall back to the
+                              # ORIGINAL narrow anchor. The mid branch re-asserts
+                              # its anchor every frame that `dist > 90`, so an
+                              # anchor further than 90px from the steal target is
+                              # a bot that walks to it and PARKS there for the
+                              # rest of the round — no error, no statue (it
+                              # moved), it just never arrives. |(60,−72)| = 94
+                              # and the duplicate offsets are 143/166, all three
+                              # outside that gate. Staging the spread keeps every
+                              # anchor inside 90 once we are close, so the
+                              # approach spreads and the RUN-IN is byte-identical.
+  RoleSepTrailPx = 90.0       # roleSep: a duplicate MID mirrors its trail offset
+                              # in y and sits this much deeper in x, so it cannot
+                              # land on the seat it is duplicating (or on
+                              # MidGuard, which holds the mirrored y).
+
+  # ── ⭐ ONE-DOOR BREAK (v56, 2026-08-14). Replay forensics, r1692 e20 vs
+  # daveey (report play-layer-analysis-2026-08-14.md): ALL EIGHT of our entries
+  # into the enemy half crossed one 16px slot (x~707-716, y in [566,582]) on a
+  # 638px-tall map, and daveey's slot 7 killed FIVE of us in a row standing on
+  # it (t=1386/1469/1831/1883/1938) without our route ever changing. Entry-y
+  # stdev: ours 5/17/31px, his 148-242px. Timing is NOT the defect (our
+  # re-entries are clocked at 27-42t gaps) — the DESTINATION is: every strided
+  # seat we hold is dealt a mid-or-bottom role, so every path matches.
+  # Three levers, each independently revertable:
+  #   (1) roleForSeat puts a FlankTop in the strided prefix   — NODOOR1=1
+  #   (2) hotDoor    — remembered crossing-band deaths push the next crossing
+  #                    into the OTHER y-half                  — NOHOTDOOR=1
+  #   (3) waveGate   — stage short of the crossing until a mate is with us,
+  #                    under a HARD tick cap                  — NOWAVEGATE=1
+  HotDoorMemory = 900         # ticks a remembered door death stays "hot" (the
+                              # camper in the case study held one point for
+                              # 1000+ ticks; ~2 respawn cycles of memory)
+  HotDoorRadius = 90.0        # |dy| within which two deaths are the SAME door
+  HotDoorMinDeaths = 2        # this many hot deaths on my crossing line = reroute
+                              # (one death is noise; the case study had five)
+  HotDoorBandPx = 300.0       # only deaths within this |x - CenterX| band are
+                              # "at the door" — a death deep in the pocket is a
+                              # fight we lost, not a covered entrance
+  HotDoorSlots = 8            # ring capacity of remembered door deaths
+  HotDoorCommit = 180         # once rerouted, hold the alternate lane this long
+                              # so a flickering read can't stutter us back
+  HotDoorSepPx = 200.0        # the alternate crossing must be at least this far
+                              # in y from the hot door (else it IS the same door)
+  WaveGateArmBand = 170.0     # arm only while within this px of the crossing on
+                              # OUR OWN side (pre-contact by construction)
+  WaveGateStageBack = 70.0    # stage this far back from CenterX while holding
+  WaveGatePack = 1            # fresh mates (besides me) needed to release
+  WaveGateRadius = 220.0      # a fresh mate this close counts as staged with me
+  WaveGateMaxHold = 90        # ⚠️ HARD liveness cap on ONE hold. Teammates are
+                              # FOGGED, so a headcount gate can deadlock a whole
+                              # squad into statues (2 of 6 bots once stood still
+                              # for a whole episode on a silent seat contract).
+                              # The budget is per re-entry and expires on its own.
+
+  LaneTop = 40.0              # open corridor above the mirrored obstacles
+  # LaneMid / LaneBottom are map-derived (adoptMapSize).
+  RespawnBandHalf = 84.0      # fresh enemies respawn at pedestal height ±72px
+                              # aimed E-W; a carrier at that height runs straight
+                              # down the invulnerable respawner's firing line, so
+                              # a carrier clears this band vertically before the run.
+  PocketClearX = 130.0        # while this close (x) to the robbed pedestal, the
+                              # carrier is still in the respawn pocket.
+  CarrierFinishBand = 150.0   # within this x-distance of our home-deep point the
+                              # whole capture column is protected open floor at
+                              # every y, so the carrier drives straight in at its
+                              # current height instead of diagonally to a stub-lined
+                              # extreme lane (the home-wall wedge fix).
+  EscortRunThreatRange = 260.0 # #esc: a remembered enemy within this of the carrier
+                              # (anywhere on the OPEN run home, not just the pocket
+                              # cone carrierScreen covers) makes the nearest free mate
+                              # interpose on the threat->carrier ray. Round-624 decode:
+                              # our carrier died at minDist=280 in MIDFIELD, ~585px from
+                              # the robbed pocket — outside carrierScreen's ~390px reach
+                              # and outside CarrierFinishBand — alone, un-interposed.
+  EscortRunGap = 34.0         # #esc: the escort sits this many px toward the threat
+                              # from the carrier, one body onto the incoming ray (the
+                              # gun kills the NEAREST body in the cone, so the escort
+                              # eats the shot). Tuned near a body radius.
+  EscortRunMateRange = 520.0  # #esc: only a mate already within this of the carrier
+                              # commits to escort — a distant bot pressing the enemy
+                              # pedestal keeps the capture race on, doesn't peel back.
+  HuntCarrierStaleTtl = 240   # #hunt: keep hunting an enemy carrier this long after
+                              # the last fix (vs ThiefFixTtl's short converge window).
+                              # Round-624 decode: their carrier ran EXPOSED 518 ticks
+                              # and we never chased — the interceptor gave up the instant
+                              # the fix went stale and parked on a static lane guess.
+  HuntCarrierStandoff = 120.0 # #hunt: intercept the enemy carrier THIS many px in front
+                              # of (toward center from) its capture edge, on its last-seen
+                              # lane — cut the corner of the race and MEET the runner near
+                              # the finish, rather than trailing a stale-velocity phantom.
+  SentryDwellTicks = 90       # a sentry (overwatch / home defender) holds a post
+                              # ~3.6s of scanning, then DISPLACES to an adjacent
+                              # covered vantage — SEAL "never a static target," and
+                              # it fixes the "our guys stay still far too much"
+                              # complaint without abandoning the ground it commands.
+  SentryShiftPx = 96.0        # how far a displacing sentry slides along its watch
+                              # face to the next vantage (a lateral cover step, not
+                              # a retreat: same x-band, ± along the crossing it owns).
+  PlayPeriod = 450            # PLAYBOOK: the favored attack flank flips every this many
+                              # elapsed round-ticks (~18s). Long enough to actually mass
+                              # and commit a flank push before switching; short enough that
+                              # an opponent can't scout a fixed side. Shared across all 8
+                              # bots via elapsed = tick - gameStart, so no comms needed.
+  PlayFlankPull = 150.0       # how hard an off-role attacker is pulled toward the favored
+                              # lane when its play says PUSH there (px of Y bias toward the
+                              # strong flank; the two feint holders keep the other lane).
+  # ── CONTINGENCY STATE MACHINE (teamPhase) timing. GV21 games are 5000 ticks
+  # (MaxTicks halved from 10000) and a timeout draw is −1 for BOTH sides, so the
+  # plan must force a decisive attempt WELL before the clock and win the opening.
+  OpenPhaseTicks = 600        # the OPENING window (~25s): contest mid TOGETHER to win
+                              # the first clash grouped (we currently lose it 14-6 by
+                              # trickling to lane roles). After this, fall to PROBE.
+  ForceClockTick = 3800       # past this elapsed tick (~76% of the 5000 clock) with no
+                              # decisive edge, commit a grouped all-in flag attempt — a
+                              # "good enough" hit beats stalling into the −1 timeout draw.
+  OpenGroupPull = 200.0       # PhOpen: px of Y bias pulling the attack wave toward the
+                              # shared mid lane so the opening clash lands as a GROUP,
+                              # not eight bots trickling up their own lanes to be picked.
+  RallyContactPx = 300.0      # rallyWave (issue #20): a rival body seen THIS FRAME within
+                              # this radius means the seat is in/near contact, and the pull
+                              # is silent. The FEET LAW (failed.md: medSee/frontage/
+                              # woundedBank) is a CONTACT law — "the advance IS the gun",
+                              # 83% of shots land under 150px — so rallyWave is hard-gated
+                              # to the regime where there is no gun to tax. 300px is the
+                              # brief's own contact radius (the local-advantage window).
+  EscortCollapseRange = 900.0 # PhEscort: a free gun within this of the carrier collapses
+                              # onto its home lane to suppress chasers (body-block is void
+                              # on this engine — CollisionW=1 — so escort value = kill the
+                              # chaser, per the cqc-video-game-lens focus-fire principle).
+  PickEdgeRange = 300.0       # PhPress: a fresh enemy corpse / our recent kill within this
+                              # of us = a local man-advantage window worth pressing.
+  # ── v29 (2026-07-29) MEASURED phase timing + recapture geometry. The phase-occupancy
+  # probe (-d:phprobe, 12 games GV23) read PhForce at 0 frames of 266,279: games end by
+  # WIPE at mean 2410 ticks (min 1541, max 4004) so a 3800 trigger never armed. GV23's
+  # action-clock floor (ActionClockFloorTicks 500 banked into overtimeTicks on every kill
+  # or steal) only extends games that are still ACTIVE, which does not rescue the trigger.
+  ForceClockTickTuned = 2000   # forceTiming: arm the late all-in at ~40% of the nominal
+                               # clock — past the opening + a probe window, but inside the
+                               # mean 2410-tick life of a real game, so FORCE actually fires.
+                               # ⛔ TOMBSTONE (VERIFIED 2026-08-14): this value has NEVER
+                               # run. `forceTiming` is set nowhere outside defaultCombatTune
+                               # (= false) — shippedCombatTune does not touch it and no env
+                               # knob reads FORCE_TICK despite the comment at :1962 — so the
+                               # live trigger at :6417 resolves to ForceClockTick = 3800 in
+                               # every build we have ever shipped. `git log -S "forceTiming
+                               # = true"` is empty. Do not cite 2000 as "what we run".
+  # ── SHAPE: ONE COMMITTED RUNNER, SEVEN HOLDING (v56, 2026-08-14, the Hermes study).
+  # Both Hermes head-to-heads were won by whichever side kept that shape; in our loss
+  # every one of our 24 deaths fell in OUR OWN half and we crossed the midline zero
+  # times — i.e. we had the "hold" with NO runner, the worst of both shapes. The lever
+  # designates the single closest-spawn rusher seat (role MidTop, exactly one per team
+  # on every deal) as the committed deep runner and caps every other seat's movement
+  # target at a line on OUR OWN side, so the squad presents one crosser and a held
+  # line instead of a six-body trickle. MOVEMENT-TARGET ONLY: the combat block still
+  # trades out anything lined up, and carry / own-heart-stolen states are carved out.
+  ShapeHoldLinePx = 140.0      # holders' cap: this many px HOME-ward of the centre line.
+                               # Deep enough to contest the crossing (gun range 1300 easily
+                               # covers mid from here) without standing in the enemy's farm.
+  DefendInterceptPush = 40.0   # defendTeeth: px past the thief fix, toward ITS capture edge —
+                               # cut the thief off ahead rather than trailing the fix (the same
+                               # lead the HomeDefender intercept already applies).
+  DefendCrossGuard = 60.0      # defendTeeth: with a STALE fix the thief is fogged but MUST
+                               # cross mid toward its own edge; hold this far onto our side of
+                               # center and guard the crossing instead of chasing a phantom.
+  DefendPicketSpread = 90.0    # defendTeeth: px of Y separation between recapture seats at the
+                               # crossing. Six bots on ONE pixel is grenade bait (the cluster
+                               # lesson from the anti-line work) and covers a single row; a
+                               # 3-wide picket spans the lane the fogged thief may drift into.
+
+type
+  Team = enum
+    Red, Blue
+
+  Role = enum
+    MidTop, MidBottom, MidGuard, FlankTop, FlankBottom,
+    Overwatch, HomeDefender
+
+  Play = enum                 # PLAYBOOK: the team's current shared posture, computed
+                              # identically by every bot from shared signals only.
+    PushTop,                  # mass the attack wave on the TOP flank, feint bottom
+    PushBottom,               # mass on the BOTTOM flank, feint top
+    StackDefense              # own flag stolen: converge on the thief / recapture
+                              # (posture already handled by the ownStolen branches;
+                              # this is the label the play layer reports for it)
+
+  EnemyFlagState = enum       # ⭐ PLAN LAYER: the enemy heart's state — GLOBALLY LEGIBLE
+                              # (the "<enemy> heart" sprite is always visible, bot header
+                              # L27-29), so every bot reads it identically with NO comms.
+    EfPedestal,               # enemy heart sits on its pedestal — nobody has stolen it
+    EfCarried,                # WE are carrying it (on me or a mate) — the escort window
+    EfDropped                 # off-pedestal but uncarried (a dropped/contested steal)
+
+  TeamPhase = enum            # ⭐⭐ CONTINGENCY STATE MACHINE (2026-07-23, "chess not
+                              # checkers"): the team's shared plan PHASE, a pure function
+                              # of the three shared signals (elapsed clock, ownStolen,
+                              # enemyFlagState) so all 8 bots compute the SAME phase on the
+                              # SAME tick and flow branch→branch with no thrash. Each phase
+                              # is a default posture PLUS pre-briefed transitions — the plan
+                              # is planned AHEAD (see docs/designs/contingency-plan-arch.md).
+    PhOpen,                   # opening: contest mid TOGETHER (win the first clash grouped,
+                              # not trickle to lane roles and get picked off individually)
+    PhProbe,                  # mid-game default: pressure the read, hold the finish
+    PhPress,                  # up a body (local pick): group + hit the up-side FAST before
+                              # the downed enemy respawns (the man-advantage window)
+    PhEscort,                 # WE carry the heart: everyone collapses to the carrier lane,
+                              # suppress its chasers, trade for the capture
+    PhDefend,                 # own flag stolen: full-team collapse to recapture (never a
+                              # half hedge — "never split-decide")
+    PhForce                   # clock late + no decisive edge: commit a grouped all-in flag
+                              # attempt (a "good enough" hit beats stalling into the −1 draw)
+
+  Scenario = enum             # ⭐ COMMS BUS C1: the live team-event a bot classifies from
+                              # its own fresh local reads (the event-driven layer above the
+                              # clock playbook). Maps through the shared matrix (selectScenario
+                              # Play) to a Play, so two bots on the same picture pick the same
+                              # play with no comms; the bus only propagates the read so more
+                              # bots converge sooner. Emitted as an opaque 2-char codeword.
+    ScNone,                   # no live event — fall through to the clock playbook
+    ScStack,                  # the enemy pocket in front of us is CONTESTED/stacked:
+                              # converge a second gun, gate the dive (feeds grabTiming/grabGate)
+    ScWipe,                   # we just cleared the enemy in front of us (post-wipe vacuum):
+                              # rally + push the respawn wave together (feeds regroupPush)
+    ScPeel,                   # an exposed enemy is carrying OUR flag near us: peel to the
+                              # recapture race (feeds huntCarrier/StackDefense)
+    ScLine                    # ⭐ ANTI-h006: a STANDING ENEMY LINE to our front (>=2 fresh
+                              # guns clustered forward, NOT at the pedestal pocket) that
+                              # farms a lone push. The SEAL counter to a prepared line is
+                              # combined-arms, not a frontal charge: rally the wave (don't
+                              # trickle) + SATURATE the cluster with grenades (a line is a
+                              # cluster; area weapons punish clustering) then punch the gap.
+                              # Broadcasting it converges mates a lane away who can't see the
+                              # line (feeds holdLine's rally + the grenade cluster-target).
+
+  ReactPlay = enum            # COMMS BUS: the adopted play a bot decodes from a heard
+                              # codeword — the same set the classifier can trigger, so the
+                              # heard play and the local read fold through one matrix.
+    RpNone, RpStack, RpWipe, RpPeel, RpFlipTop, RpFlipBottom, RpLine
+
+  ReactLevel = enum           # SHOUT-REACTION GATE: how far a heard callout may
+                              # move this bot, keyed on its own task priority.
+                              # Every seat in this policy is always OCCUPIED by an
+                              # objective (rush / carry / escort / post), so a
+                              # report never moves the FEET — the strongest verdict
+                              # is a cone glance; the intel is banked regardless.
+    None,                     # bank the intel only — never touch the aim
+    OrientOnly                # swing the vision cone onto it (turn-and-watch)
+
+  Vec = object                # a map-space point or direction
+    x, y: float
+
+  Actor = object              # a player visible this frame
+    pos: Vec
+    colorId: int8             # ⭐ TeamColorNames index + 1 (0 = unread). The reader
+                              # ALREADY scans one colour at a time (actorsForEnemies
+                              # loops the active colours) and then THREW THE INDEX
+                              # AWAY, so on a 4-team board the whole combat layer saw
+                              # one undifferentiated "enemy" blob. +1-biased on
+                              # purpose: Nim zero-inits, and 0 must not alias "red".
+    facingRight: bool
+    hp: int                   # from the overhead pip bar; 0 = not read
+    aimBrads: int             # gun bearing read from the aim-dot line; -1 unknown
+    hasArc: bool              # carrying a plasma arc ("plasma arc carried" over
+                              # the head) => gun DISABLED, a 136px cone specialist
+    hasShield: bool           # carrying a shield ("shield carried" over the head)
+                              # => 6 HP (a 4+-hp bubble) + fires 3x SLOWER. The hp
+                              # pip CANNOT show this (it renders 3/3, capped at the
+                              # 3-seg bar), so this marker is the only tell — without
+                              # it we fight a 6-hp tank as a 3-hp cog and undershoot.
+
+  Track = object              # a remembered player
+    pos, vel: Vec
+    lastSeen: int
+    colorId: int8             # last observed TeamColorNames index + 1 (0 = unread);
+                              # see Actor.colorId. Lets a >2-team board ask "how many
+                              # DISTINCT rival teams are in this fight", which is the
+                              # difference between a duel and a three-way melee.
+    facingRight: bool
+    hp: int                   # last observed hit points; 0 = never read
+    aimBrads: int             # last observed gun bearing (aim dots); -1 unknown
+    hasArc: bool              # last observed plasma-arc possession (disarmed)
+    hasShield: bool           # last observed shield possession (6-hp tank, slow fire)
+    sightings: int            # how many frames this track has been MATCHED.
+                              # A brand-new track carries vel (0,0) by
+                              # construction, so "it was standing still" is
+                              # unknowable until the second sighting — staleNade
+                              # needs that distinction (a camper vs a blur).
+
+  CombatTune = object
+    ## The fire/engage decision knobs, made per-bot so a forked policy can
+    ## sharpen its shooting without touching the shipped baseline. Every field
+    ## mirrors a module const; `defaultCombatTune` fills them WITH those consts,
+    ## so a bot left on the default decides bit-identically to the old code —
+    ## the shipped path is provably unchanged. Only the fields the const used to
+    ## drive in the COMBAT decision are here; nav/post/peek geometry still reads
+    ## the consts directly, so a hunter's tune never perturbs its navigation.
+    fireSlackPx: float        # perp-miss corridor a shot must sit inside
+    freshShotTicks: int       # only fire at tracks seen this recently
+    leadTicks: float          # aim this many ticks ahead of a moving enemy
+    windupLead: float         # ⭐ wlead: TOTAL target lead (ticks) the FIRE
+                              # bearing carries, replacing the range-scaled
+                              # `leadTicks * leadScale` phantom for the TURRET
+                              # only (the feet keep the old phantom). 0 = off.
+    windupSelfLead: float     # ⭐ wlead: ticks of OWN-muzzle lead applied to the
+                              # fire bearing's ORIGIN. 0 = off.
+    combatDeadband: int       # settle the traverse within this error (brads)
+    fireRange: float          # default engage distance
+    carrierFireRange: float   # engage cap while carrying the flag
+    rushEngageRange: float    # engage cap while racing for the steal
+    escortEngageRange: float  # engage cap while escorting a carrier
+    pocketRushRange: float    # inside this of the enemy pedestal, just GRAB
+    commit: bool              # target commitment: keep firing on the enemy we
+                              # already wounded until it dies/fogs, instead of
+                              # re-picking the nearest each frame. Off => shipped.
+    commitBonus: float        # px of priority credit for the committed target
+    stickyCommit: bool        # ⭐ FINISH THE KILL (2026-07-24 focus-fire audit, Bug 1):
+                              # the commit lock SURVIVES satCap's spread-debit and the
+                              # dangerScore pull-off. Without it, a half-killed enemy that our
+                              # mates also shoot (saturated, +220) or a fresh nearer dead-on
+                              # threat (-320 danger) out-scores the lock and our gun SWITCHES
+                              # off the enemy we'd already wounded — it recovers and kills us.
+                              # SEALs: commit to a target and FINISH it.
+                              # ⚠️ DOC CORRECTION (2026-08-20). This comment used to say the
+                              # lock survives "when the LOCKED target is one-hit-from-death OR
+                              # has its gun on us". NO SUCH PREDICATE HAS EVER EXISTED: `stick`
+                              # is `stickyCommit and isLocked`, with no hp or aim term, so the
+                              # protection is UNCONDITIONAL on the locked target — strictly
+                              # broader than the prose promised. The companion field `lockHp`
+                              # (written every frame, NEVER read, from its very first commit
+                              # e0abe31 — a stillborn field, NOT a tombstone of a removed
+                              # read) was deleted with this correction. Implementing the
+                              # documented hp==1 narrowing was REJECTED: it would REMOVE
+                              # protection from every wounded-but-not-1hp lock, which is the
+                              # exact <=2hp -> ==1hp narrowing that broke ffa4 in v55, and it
+                              # is a behaviour change owing its own A/B, not a doc fix.
+    forceBalance: bool        # local numbers awareness (FALSIFIED 2026-07-14 as
+                              # a win lever; kept behind this flag, OFF).
+    outnumberMargin: int      # fall back when localEnemies - localFriends >= this
+    unstuckEngaged: bool      # BUG FIX: let the stuck-recovery jink fire even
+                              # while a target is selected, so a bot grinding an
+                              # obstacle corner as it advances can break free.
+    aimLock: bool             # ⭐ TARGET-LOCK: hold the turret on a committed
+                              # enemy's bearing whenever we have a fresh track,
+                              # and never reset aim to the move lane while locked.
+    huntSweep: bool           # HUNTING POSTURE: with no shot, aim at the nearest
+                              # remembered enemy instead of down the move lane.
+    fireOnRealBody: bool      # gate the trigger on the perp-miss to the target's
+                              # REAL last-seen position, not the full lead phantom.
+    windupFf: bool            # ⭐⭐ WINDUP FRIENDLY-FIRE VETO (wuff) master arm:
+                              # CLOSE the gun trigger when a remembered teammate
+                              # will be inside the corridor AT THE RELEASE TICK.
+                              # Off => the shipped trigger (which has no
+                              # friendly-fire veto on it at all).
+    windupFfAxis: bool        # test on bradsDir(estAim) — the bearing the turret
+                              # will actually LOCK and fire on — instead of the
+                              # ray to the aim point that target SELECTION cleared.
+                              # Independently toggleable so the A/B can attribute
+                              # the gain to the AXIS separately from the LEAD.
+    windupFfLead: int         # ticks of MATE lead handed to trackAhead: where the
+                              # body will be when the bullet leaves. 0 disables
+                              # PREDICTION entirely and reproduces friendlyBlocked's
+                              # T0 geometry exactly, which is the control arm for
+                              # attributing the LEAD term on its own.
+    windupFfSelfLead: float   # ticks of SELF lead: advance our MUZZLE by our own
+                              # one-tick step over the windup (the bearing is
+                              # locked, but the origin travels with us).
+    windupFfMateRange: float  # veto only on a mate whose ALONG-TRACK distance is
+                              # inside this (0 = no gate). Deliberately NOT the
+                              # target's range: the field census puts the mate we
+                              # hit at median 47px along the ray while the target
+                              # sits at 190px, so a target-range gate discards
+                              # about two thirds of its own population.
+    windupFfUnion: bool       # ⭐ C-OR-D UNION: block if EITHER the mate-lead test
+                              # with the muzzle held at T0 OR the mate+muzzle-lead
+                              # test trips. Built because the muzzle lead is NOT
+                              # strictly better than the mate lead alone — it moves
+                              # the corridor off some real collisions while catching
+                              # others (measured: of the friendly hits that got
+                              # through the full lever, 13/37 carried a mate-lead
+                              # flag at their own trigger frame).
+    windupFfShadow: bool      # MEASURE ONLY: evaluate the veto and record it, but
+                              # never suppress. Behaviour stays byte-identical to
+                              # the control, which is what makes the futility bound
+                              # an OBSERVATION rather than a second arm.
+    threatFacingBonus: bool   # danger-score: credit an enemy FACING us so we
+                              # engage the greatest threat first.
+    shout: bool               # EMIT shouts at all (carrier heartbeat + enemy
+                              # callouts + "oh shit!" + "die"). Off => silent.
+    shoutCallout: bool        # emit "E <cell>.." chess enemy-position callouts.
+    shoutSurprise: bool       # emit "oh shit!" when ambushed at close range.
+    shoutDie: bool            # emit "die" pre-fire when a mate is in earshot.
+    reactContact: bool        # REACT to a heard mate shout: orient the vision
+                              # cone toward the fix (turn-and-watch, not a rush).
+    commsBus: bool            # ⭐ COMMS BUS C1 (2026-07-22, Track B): EMIT a 2-char
+                              # scenario codeword ("<tok><flank>") on the shout channel
+                              # when a bot classifies a live team event (STACK/WIPE/PEEL/
+                              # FLIP) from its own fresh local reads. The token is opaque
+                              # (a rotating table, commsCrypto) so daveey's clone can't
+                              # read our play off the wire. Emit-only + mask-neutral
+                              # (rides shoutWant AFTER the button mask, like vanity shouts)
+                              # — turning it on never swings the gun/feet, so it cannot
+                              # incur the v1/v2 cone-diversion loss on its own.
+    commsPlay: bool           # ⭐ COMMS BUS C1 adopt-side: when a bot HEARS a mate's
+                              # scenario codeword it adopts that play as bot.heardPlay
+                              # for CommsPlayTtl ticks. selectScenarioPlay folds the
+                              # heard play + the bot's OWN classification through the
+                              # same shared matrix, so two bots on the same picture pick
+                              # the same play and a bot that missed the shout degrades to
+                              # its own read + the clock fallback (never a split, never
+                              # worse than today's clock playbook). Requires playbook ON
+                              # (it extends selectPlay). Reaction is MOVEMENT-INTENT only
+                              # (which flank/rally), never a turret bearing (the v2 lesson).
+    stackConverge: bool       # ⭐⭐ v56 PLAY EXECUTOR #1 (NOSTACKCONV). Pq/STACK was
+                              # 23.8% of ALL play traffic and had ZERO readers — heard,
+                              # decoded, banked into bot.heardPlay, then folded straight
+                              # back to the unchanged clock flank. This is the executor
+                              # the C1 doctrine comment ("converge a second gun") always
+                              # promised: a fresh heard STACK pulls the listener's
+                              # approach target toward the CALLER's bubble, bounded by
+                              # StackConvergePull inside [Min,Max]. Movement only.
+    stackHoldGate: bool       # ⭐ v56 PLAY EXECUTOR #1b (NOSTACKGATE). The other half of
+                              # the STACK contract ("gate the dive"): a listener walking
+                              # into the pocket out of FOG cannot see the defenders its
+                              # mate just called, so smartGrab's local `defenders` read
+                              # is 0 and it dives solo — the measured dive-death. A fresh
+                              # heard STACK whose caller is AT the pocket counts as the
+                              # stack for THIS bot's smartGrab, so it holds at standoff
+                              # until the Captain's advantage read opens the touch.
+    playMove: bool            # ⭐⭐ v56 PLAY EXECUTOR #2 (NOPLAYMOVE). Px/WIPE + Pw/LINE
+                              # were 75.5% of traffic and their ONLY adoption was lowering
+                              # a hold threshold — the designed reaction to a play call
+                              # was to stand still. Now each moves FEET on the approach:
+                              # a heard WIPE pulls the listener's lane TOWARD the caller
+                              # (push through the hole he cleared), a heard LINE shoves it
+                              # AWAY (don't feed the standing line — take the other door).
+                              # Bounded, approach-only, clamped to the lane corridor.
+    playLatch: bool           # ⭐ v56 PLAY EXECUTOR #3 (NOPLAYLATCH). Channel hygiene:
+                              # (a) TTL LATCH — a freshly adopted play resists a
+                              # DIFFERENT-token overwrite for CommsPlayLatch ticks (41%
+                              # of back-to-back calls flipped the token mid-TTL, so the
+                              # one heardPlay slot thrashed); (b) EMIT DEDUPE — never
+                              # re-shout a play we HEARD within CommsEchoSuppress (58% of
+                              # calls were redundant echoes), which frees the shout slot.
+    eCallout: bool            # ⭐ v56 PLAY EXECUTOR #4 (NOECALL). v55 emitted ZERO enemy
+                              # callouts — the whole shout budget went to play codewords —
+                              # while the rival lineage emitted 13,077 in the same window.
+                              # Re-opens the "E <cell>.." emit AND its cross-fog track
+                              # INTAKE, without re-arming the carrier "C" heartbeat (that
+                              # one leaks our carrier and stays on shoutCallout) and
+                              # without the cone reorient (that stays on reactContact —
+                              # REF-comms v2: a report never swings the turret).
+    commsCrypto: bool         # ⭐ COMMS BUS C2: rotate the play->token table each round
+                              # by a shared salt (hash of roundStart + team + a compiled-in
+                              # secret) that our 8 bots derive identically but a hand-copied
+                              # clone can't. Off => a fixed plaintext-ish token table (still
+                              # 2-char codes, but static — fine for the FIRST value test).
+    damageAware: bool         # orient toward the shooter when hit from an unseen
+                              # direction (own-HP drop + "shot sound" ring).
+    rearTurn: bool            # ⭐ REAR-GUARD TURN-ON-HIT (v56, Maxwell replay
+                              # note: last-man-back shot from behind and never
+                              # turned). Arms the damageSense intake itself
+                              # (damageAware shipped OFF, so the whole sense was
+                              # inert) and adds the missing tail: a hit with NO
+                              # visible enemy and NO audible ring still swings
+                              # the cone — onto the freshest remembered enemy,
+                              # else DIRECTLY BEHIND our own aim (the shooter is
+                              # provably somewhere we are not looking). Also:
+                              # sentries consume the staged orient bearing (only
+                              # the navigate arm ever read it), and with every
+                              # mate believed dead the watch bearing faces the
+                              # FIELD, not the static -homeSign parity vector.
+    hazardSense: bool         # ⭐ STATED-HAZARD READS (v56): consume the engine's
+                              # puddle-box + grenade-barrage markers (audit-
+                              # confirmed ZERO readers). Never STAND/post/park a
+                              # movement target inside a stated puddle box; when
+                              # the stated endgame shell ring covers us, sprint
+                              # for the shrinking safe interior ("we still don't
+                              # react to end-of-game perimeter bombs").
+    dangerPreAim: bool        # ⭐ DANGER-BEARING PRE-AIM (v56): with no fresh
+                              # track and nothing else claiming the turret, aim
+                              # where the enemy WILL be — freshest mate-death
+                              # fix, else the last damage bearing on us, else
+                              # the approach corridor toward enemy country.
+                              # Bearings decay (DangerAimTtl), never steer the
+                              # feet, and lose to every live-target claim — NOT
+                              # the refuted huntSweep.
+    mateKoAim: bool           # ⭐⭐ MATE-DEATH SEED, AIM CONSUMER (2026-08-20).
+                              # Seeds mateDeathPos/Tick from an own-colour KO
+                              # marker and lets dangerPreAim's FIRST ladder rung
+                              # use it. That rung has NEVER executed in shipped
+                              # play: its only data source is the ghost-only
+                              # corpse scan (see the mateKo* consts). The other
+                              # two rungs (lastHitPos, stealTarget) always did
+                              # run, so this arms ONE rung, not the lever.
+                              # MATEKOAIM=1 arms, NOMATEKOAIM=1 force-reverts.
+    mateKoWatch: bool         # ⭐⭐ MATE-DEATH SEED, LAST-MAN CONSUMER. Lets
+                              # rearTurn's last-man watch fire. Also never
+                              # executed: it needs mateDeathTick > lastMateAlive
+                              # and mateDeathTick is pinned at -100_000 forever.
+                              # rearTurn's OTHER half (the turn-on-hit rear
+                              # guard) never touched mateDeath* and DID ship
+                              # live — so this is not "rearTurn", it is the one
+                              # dark branch of it. MATEKOWATCH=1 / NOMATEKOWATCH=1.
+    mateKoStale: bool         # ⭐⭐ MATE-DEATH SEED, TRACK-AGING CONSUMER. A mate
+                              # we watched die stays a fresh REGROUP buddy in the
+                              # track table until TrackTtl expires it. Aging it on
+                              # the KO marker is a behaviour change no other arm
+                              # shares, so it is bounded separately rather than
+                              # confounding them. MATEKOSTALE=1 / NOMATEKOSTALE=1.
+    mateKoDoor: bool          # ⭐⭐ MATE-DEATH SEED, HOTDOOR CONSUMER. The second
+                              # camper witness (a SEEN mate death in the crossing
+                              # band). hotDoor's first witness — our OWN death —
+                              # fires on the dead path and was always live.
+                              # MATEKODOOR=1 / NOMATEKODOOR=1.
+    staleNade: bool           # ⭐ STALE-TRACK WALL GRENADE (v56 nade package).
+                              # The nade target scan reuses the GUN's freshness
+                              # gate (FreshShotTicks=24) — so a bunched enemy
+                              # KNOWN to be behind a wall can NEVER be targeted,
+                              # which is precisely the case a grenade exists
+                              # for. This is a NARROW exception, not a removal:
+                              # a stale track qualifies only if it is
+                              # wall-BLOCKED, was CAMPING (vel <= NadeStaleVelPx)
+                              # and has >=NadeStaleMinCluster remembered bodies
+                              # inside one blast. Everything else keeps the
+                              # 24-tick gate, and a stale candidate never
+                              # outranks an equal fresh one. NOSTALENADE=1
+                              # reverts.
+    nadeSupply: bool          # ⭐ ROLE-RESTRICTED NADE SUPPLY (v56 nade
+                              # package). We are supply-starved (38 pickups vs
+                              # 68). The shipped pickup scan is LOS-gated —
+                              # `spriteObjectsWithLabel("grenade")` is
+                              # fog-honest and the vision bubble is 90px — so
+                              # the flankers' "unlimited reach to their lane
+                              # corner" only ever fires by accident, the same
+                              # fires-0 shape the shield/arc seek had. Grenade
+                              # spawns are STATIC KNOWN POINTS (sim
+                              # grenadeSpawnPoints; on every non-4-team board
+                              # the four corners at ArenaBorder+GrenadeSpawnInset
+                              # = 50px inset), and a taken corner refills in 5s
+                              # — so navigate to the COORDINATE. Restricted to
+                              # the flank/trailer seats with a hard
+                              # NadeDepotDetour budget. NOSUPPLY=1 reverts.
+    antiBunch: bool           # ⭐ ANTI-BUNCH SPACING (v56 nade package). 56% of
+                              # enemy grenade impacts that damaged us caught 2+
+                              # of ours in one blast. MateSpacing(40) is INSIDE
+                              # NadeBlast(52), so the shipped repulsion parks
+                              # pairs in the kill radius. Adds an outer
+                              # 40..BunchSpacing band term on the nav steer plus
+                              # a post-chain step-apart for a STANDING pair
+                              # inside one blast. NOBUNCH=1 reverts.
+    carrierFlee: bool         # a carrier keeps MOVING home while engaged (gun
+                              # still fires) instead of advancing — FALSIFIED
+                              # 2026-07-15 (net -3, conv worse): fleeing turns the
+                              # back to the respawner without clearing its cone.
+    # ⛔ carrierClearBand — FIELD DELETED 2026-08-20 (lever-liveness correctness
+    # pass). It read: "inside the robbed pocket, route the carrier DIAGONALLY out
+    # of the respawn firing band (pedestal height ±72px, where fresh invulnerable
+    # respawners spawn aimed E-W) before the home run — never pick the mid lane
+    # that IS the cone." v47 RETRACTED the premise (ab27fc8 deleted spawn
+    # protection; GV25/72fd075 made respawns land uniformly over the whole
+    # endzone) and deleted the lane veto + the vertical bugout — but left the
+    # `if tune.carrierClearBand and arenaExit: ... else: ...` SHELL behind with
+    # BYTE-IDENTICAL arms. The liveness audit counted 1,008 "fires" on 2-team and
+    # read that as a live 2-team-only lever; every one of those fires was a no-op.
+    # "It FIRED" is not "it could have CHANGED the outcome". See the carrier-home
+    # branch (search: carrierClearBand tombstone) for the surviving history.
+    carrierSerpentine: bool   # ⭐ CARRIER-RUN SURVIVAL (2026-07-24): the carrier WEAVES while
+                              # crossing watched ground on the run home. Carriers were EXEMPT
+                              # from the serpentine (speed-beats-evasion) — wrong for the SLOWEST
+                              # (70% speed), highest-value unit vs a map-wide hitscan gun with no
+                              # back-armor: a straight predictable line is a free shot in transit.
+                              # A shallow weave (small amplitude, net homeward progress preserved)
+                              # forces the gun to re-slew each beat. Movement-only.
+    carryAnyHeart: bool       # ⭐⭐ FOUR-TEAM CARRY BLINDNESS (2026-08-05, issue #17).
+                              # `enemyColorFor` re-picks the raid target every frame
+                              # and its first pass PREFERS a rival whose heart is
+                              # still on its pedestal (HeartHome). The instant WE
+                              # lift a heart that team's HeartHome goes false, so the
+                              # raid target re-points to a different rival on the very
+                              # next frame — and the flag scans below key off it:
+                              #   enemyPlanted = <enemyColor> flag planted
+                              #   if enemyPlanted.len > 0: discard  # "nobody carries"
+                              # A planted banner is NEVER fogged, so the new target's
+                              # banner is present forever after and iCarry stays FALSE
+                              # for the whole carry. Measured on 8 four-team corners lab
+                              # episodes: 631 of 668 physically-carrying frames (94.5%)
+                              # had iCarry=false; on the 2-team control 1 of 90 (1.1%),
+                              # because there `enemyColorFor` returns a CONSTANT and can
+                              # never re-point. The carrier therefore never enters the
+                              # carrier branch at all — no captureAim, no carrierFlee,
+                              # no home-stretch, no fight-out ring — and walks off to
+                              # raid a THIRD base hauling a heart at 70% speed.
+                              # FIX: while a rival's carried banner is centred on us,
+                              # PIN enemyColor to that colour. Everything downstream
+                              # then behaves exactly as on a 2-team board. Four-team
+                              # only (activeColors() > 2); no new movement code.
+    cornerDeep: bool          # ⭐ The subordinate half of issue #17. A `corner` capture
+                              # zone (layoutCorners) is a DIAGONAL L1 region and the
+                              # engine states its BOUNDING BOX; statedZone's box centre
+                              # therefore sits at L1 = diagLimit exactly — dead ON the
+                              # scoring threshold, margin 0, the farthest point of the
+                              # zone from safety. tools/ez_probe.nim over seeds 301-312
+                              # x 4 teams: 36 of 48 team-targets ON THE EDGE (every
+                              # corner team), 12 inside (arm, margin 82), 0 outside.
+                              # FIX: for the `corner` shape return a point at
+                              # L1 = diagLimit/2 from the map corner instead.
+    carrierSprint: bool       # ⭐⭐ CAPTURE CONVERSION (survive=110t/drop@home=4%
+                              # diagnosis): a carrier NEVER enters the combat branch
+                              # (engage range 0, like pocketRush). It was burning
+                              # ~4.5s pinned in the pocket firing at the INVULNERABLE
+                              # spawn-protected respawner (selectFireTarget skips it,
+                              # so 100% wasted) while advancing INTO the nest. Drop
+                              # combat entirely: pure-navigate home at full speed.
+                              # FALSIFIED 2026-07-15 (net -3): the gun buys survival
+                              # by suppressing KILLABLE pursuers; a pure runner is
+                              # shot in the back and dies FASTER. Kept behind flag.
+    carrierScreen: bool       # ⭐⭐⭐ COORDINATION: the escort nearest the robbed
+                              # pocket bodies-blocks the respawn cone — sits at the
+                              # carrier's EXACT y, one body toward the pocket, so a
+                              # westward/eastward respawner shot aimed at the carrier
+                              # crosses the escort FIRST (selectFireTarget stops at
+                              # the first body; friendly fire ON). The one mechanism
+                              # the mirror can't refute away: a screen is physics.
+    # ⛔ carrierGrabDetect — FIELD DELETED 2026-08-20 (lever-liveness correctness
+    # pass). STILLBORN: it shipped `true` with ZERO read sites, for months.
+    # `git log --all -S "tune.carrierGrabDetect"` returns exactly ONE commit,
+    # 80e7f87 ("wip: vanity 5% gate ... pre-0.7.8-merge snapshot", 2026-07-16),
+    # which is NOT an ancestor of HEAD — it survives only on
+    # maxwell/ctf-shouts-awareness and maxwell/picasso-0.7.8-perception. So no
+    # SHIPPED build has ever read this field, and the harness `GRABFIX` knob was
+    # a no-op that could not move an A/B.
+    # THE FIX IT NAMES DID SHIP, unconditionally, and is still live: the wakeup
+    # deadlock (a carrier standing ON the robbed pedestal keeps the heart ~7px
+    # away, under the >16px self-carry test, so iCarry stayed FALSE and the bot
+    # camped the pedestal it had already robbed — hosted replays: 67-75% of a
+    # game frozen there, a DRAW that should have been a win) is fixed by the
+    # constant `CarrySelfRadius = 26.0`, not by a flag. ⚠️ v3's ship-log credit
+    # ("+7, field-proven core") CANNOT rest on this lever.
+    # ── SEAL/CQB v4 levers (2026-07-16). Each defaults false (control), all ON
+    # in shippedCombatTune, each with its own harness env knob. Derived from the
+    # recovered ctf-combat-strategy doctrine, reinterpreted for WIN-ONLY scoring
+    # (serve winning firefights that clear a carrier's path / hold the flag →
+    # captures & wipes, NOT raw kill volume).
+    dangerScore: bool         # #1 GREATEST-THREAT-FIRST: a richer target danger
+                              # score — a facing enemy's engage credit scales UP
+                              # with proximity (a close aligned gun kills us THIS
+                              # second; a far one barely threatens), and a facing
+                              # AND wounded enemy is the top-value engage. Supersedes
+                              # the flat threatFacingBonus tiebreak.
+    twoSpeedScan: bool        # #3 TWO-SPEED SCAN: a sentry's idle sweep DWELLS on
+                              # the bearing of the nearest fresh threat inside its
+                              # arc for a few ticks instead of raking straight past
+                              # the one bearing that matters (the turret turns at a
+                              # fixed rate, so "slow" = pause on the hot bearing).
+    boundingOverwatch: bool   # #6 BUDDY BOUNDING OVERWATCH: do not stroll forward
+                              # across a threatened open lane while MY gun is on
+                              # cooldown and a covering mate is up — duck to cover
+                              # for the reload, then bound forward when the gun is
+                              # live. Keeps at least one team gun always up.
+    holdVsGun: bool           # ⭐ NEVER TURN YOUR BACK ON A LIVE GUN (2026-07-24, the
+                              # focus-fire audit fix). boundingOverwatch only guards a
+                              # gun-down bot that has a covering MATE within 720px — a
+                              # SOLO bot with its gun on cooldown and a fresh enemy whose
+                              # gun is ON us out to fireRange falls through to objective
+                              # movement and strolls away, dying to the map-wide gun in
+                              # the back. This guard catches that SOLO case: face the
+                              # threat + break its line (duck) instead of turning away.
+                              # SEALs: never present your back to an unsuppressed gun.
+    woundedBank: bool         # ⭐ WOUNDED BANK (plan #13, the hp-keyed survival
+                              # posture). At own hp == 1 (own-state ONLY — headcount
+                              # appears NOWHERE in entry/exit, the REF-force
+                              # distinction) disengage on the COVER model: route to
+                              # a bank cell that BREAKS the fresh threat lines (out-
+                              # geometry, not out-run — equal top speeds make radial
+                              # retreat useless), gun held on the chaser the whole
+                              # withdraw. Suspended per-frame by the finish-window
+                              # (a fresh 1-hp enemy with our clear line inside
+                              # FinishRange — one pull from a won exchange) and by
+                              # an imminent grab (inside GrabCommitRing). Carriers
+                              # never bank (carrierFlee owns them). A banked 1-hp
+                              # life still counts toward the lives/wipe economy and
+                              # re-arms to FULL off a kit (sim heals to MaxHp).
+    pointOfDomination: bool   # #7 POINT OF DOMINATION: score overwatch posts by
+                              # clear-LOS coverage of the cells where enemies
+                              # ACTUALLY travel (baked from the occupancy heatmap),
+                              # and give the home defender a domination post too —
+                              # dominate the ground the enemy must cross.
+    tempoPress: bool          # #8 TEMPO / AUDACITY: press on the half-beat — when
+                              # the near threat is wounded or just fired (mid-
+                              # cooldown, can't punish us), DON'T duck; close for
+                              # the kill in its dead time.
+    fireSuperiority: bool     # #9 PRESS-VS-BREAK ON FIRE SUPERIORITY (the correct
+                              # forceBalance): break off only when we are genuinely
+                              # fire-INFERIOR (outnumbered AND their guns are real,
+                              # not mostly wounded), never on raw head-count — and
+                              # PRESS whenever we can win the trade.
+    calloutGate: bool         # SHOUT-REACTION GATE (2026-07-16): gate the REACTION
+                              # to a heard callout by the bot's own task priority
+                              # (SEAL need-to-know) instead of reorienting anyone in
+                              # earshot. Requires shout/reactContact ON to have any
+                              # callouts to gate. Off => the old indiscriminate react.
+    aimThreat: bool           # AIM-DOT THREAT (2026-07-16, task #19): read a visible
+                              # enemy's gun bearing from its rendered aim-dot line and
+                              # replace the coarse facingRight half-plane test with a
+                              # precise gun-on-me cone. Danger credit scales with how
+                              # tightly the gun points at us (dead-on = lethal now).
+                              # Falls back to facingRight when the dots are unreadable.
+                              # Requires dangerScore (it sharpens that block's threat).
+    carrierHomeStretch: bool  # CARRIER FINISH FIX (2026-07-16): on the final approach
+                              # the capture column (x < ArenaCaptureClear) is protected
+                              # open floor at EVERY y, so drive STRAIGHT into it at our
+                              # current height instead of diagonally to an extreme lane.
+                              # The extreme lanes (y≈40 / y≈619) are exactly the rows the
+                              # border-attached stub columns sit on near home, and a
+                              # carrier aimed at that corner wedges on the stub and never
+                              # crosses the threshold — the "stuck on the last wall at the
+                              # bottom of the map" deadlock. Also biases the stuck-jink
+                              # toward home so a corner-grind actually breaks free.
+    chaseThief: bool          # THIEF PURSUIT (2026-07-16): when OUR flag is stolen and a
+                              # thief (or any enemy on our side) is in sight, CLOSE and
+                              # shoot instead of sidestepping away. The generic threat-jink
+                              # made a defender who spotted the carrier flee "out of fear";
+                              # the capture race is lost if nobody hunts the runner.
+    playbook: bool            # PLAYBOOK (2026-07-16): observation-triggered team plays.
+                              # The favored attack flank OSCILLATES on the shared round
+                              # clock (elapsed div PlayPeriod), so all 8 bots agree on the
+                              # strong side WITHOUT comms and an opponent can't pre-stack a
+                              # fixed flank. Attackers mass on the favored lane; the off-lane
+                              # keeps a light feint. Posture (offense/defense) already keys
+                              # off shared flag state. Verified consensus-safe: elapsed and
+                              # flag-state are identical across teammates; per-game entropy
+                              # does NOT exist (spawns are deterministic) so we vary on TIME.
+    topBias: bool             # COUNTER-DAVEEY (2026-07-16): the observed field crosses
+                              # and runs the flag along the TOP lane far more than the
+                              # bottom ("daveey always goes to the top of the map"). When
+                              # our flag is stolen and the thief is FOGGED (never seen this
+                              # life), guess LaneTop instead of LaneMid, and post the idle
+                              # home sentry high. A cheap DEFENSIVE prior: costs ~nothing
+                              # when wrong (a high post still covers mid on the sweep) and
+                              # puts a gun on the runner's actual lane when right.
+    sentryDisplace: bool      # SENTRY DISPLACE (2026-07-16): a sentry (overwatch /
+                              # home defender) that has held its post for SentryDwellTicks
+                              # with nothing to shoot slides to an adjacent covered vantage
+                              # instead of standing frozen. SEAL "shoot-move-communicate,
+                              # never a static target"; fixes "our guys stay still far too
+                              # much." It keeps commanding the same crossing (a lateral step
+                              # along the watch face, ± SentryShiftPx), so coverage holds.
+    cornerPreAim: bool        # CORNER PRE-AIM (2026-07-16): when a target is wall-blocked,
+                              # pre-lay the turret on its EMERGENCE CORNER (the nearest cell
+                              # from which the enemy can see us) instead of on its body
+                              # behind the wall. The enemy's body appears exactly at that
+                              # corner when it peeks, so our bullet is already on-bearing and
+                              # the vision cone is already there — winning the trade instead
+                              # of shooting the wall and eating the shot as it steps out.
+    escortRun: bool           # ESCORT RUN (2026-07-17, round-624 KILL-case fix): when a
+                              # mate carries our stolen heart and a remembered enemy is
+                              # within EscortRunThreatRange of the carrier ANYWHERE on the
+                              # open run home, the nearest free mate interposes one body
+                              # onto the threat->carrier ray (the gun kills the nearest
+                              # body in the cone, so the escort eats the shot). Distinct
+                              # from carrierScreen (which only body-blocks the E-W RESPAWN
+                              # cone within ~390px of the robbed pocket): the 624 carrier
+                              # died at minDist=280 in MIDFIELD, alone, past every existing
+                              # screen. ⚠️ partly a COORDINATION lever — the mirror measures
+                              # the MECHANICAL half (carrier-survival, path-eff) but not the
+                              # economy half (thinning the press); a hosted mixed-field xreq
+                              # settles that. See [[CAP-escort]].
+    huntCarrier: bool         # HUNT CARRIER (2026-07-17, round-624 OUT-RACE-case fix): when
+                              # OUR flag is stolen, keep PURSUING the enemy carrier toward its
+                              # capture edge for HuntCarrierStaleTtl after the last fix, instead
+                              # of giving up when the short ThiefFixTtl converge-window lapses
+                              # and parking on a static lane guess. Round-624 decode: their
+                              # carrier ran EXPOSED 518 ticks and no one chased it while our
+                              # own carry lost the parallel race. Pairs with carrierHomeStretch
+                              # (our finish speed) — this is the DEFENSIVE half of the race.
+                              # Asymmetric (turns a would-be enemy capture into a recapture
+                              # race) so the self-play mirror CAN measure it. See [[CAP-homestretch]].
+    preSlew: bool             # ⭐ FIRE FIRST (v8, 2026-07-18): when we have no clear
+                              # shot THIS frame, pre-lay the turret (via aimLock's
+                              # hold) on the freshest engageable-range enemy whose
+                              # gun is most OFF us — the draw we win — instead of the
+                              # merely-nearest. Our 5-tick windup then completes while
+                              # its turret is still slewing onto us (OODA half-beat),
+                              # so our bullet leaves first. A fire-TIMING choice inside
+                              # aimLock's on-objective candidate set; requires aimThreat
+                              # (enemy aim-dot read) and falls back to nearest when a dot
+                              # is unreadable. NOT the refuted huntSweep (that aims off-
+                              # objective at any enemy and trades wins for kills).
+    staggerFire: bool         # ⭐ STAGGERED BOUNDING (v8, 2026-07-18, §G4): the
+                              # complement of boundingOverwatch — when MY gun is up
+                              # but a covering mate's gun is DOWN (a muzzle bloom on
+                              # it = fired within the 12t reload), HOLD my up-gun on
+                              # the crossing to cover its reload instead of bounding
+                              # forward and leaving the lane with no live team gun.
+                              # Turns a pair into alternating bounds (one gun always
+                              # live), killing the "both empty on one beat → focus-
+                              # fired wipe" death-burst. Movement-only; never throttles
+                              # my own trigger (the engage branch always wins a clear
+                              # shot), so it can't regress into fire-discipline tuning.
+    regroupPush: bool         # ⭐ POST-WIPE CONSOLIDATION (2026-07-18): the v14 loss
+                              # cause — after clearing the enemy nest we feed the ~72t
+                              # respawn wave one body at a time and die piecemeal
+                              # (losses: cash-the-wipe 0%, squander 47%). When a mid is
+                              # over-extended into the enemy half, its local area is a
+                              # post-wipe VACUUM (no fresh enemy near), and it is strung
+                              # out from its mates, HOLD a shallow midfield rally until
+                              # the trio re-forms, then release to push deep TOGETHER.
+                              # A timing lever, NOT a depth cut (depth correlates with
+                              # winning) — it only bites in the squander signature and
+                              # does nothing once the wave is grouped. ⚠️ COORDINATION
+                              # lever: the self-play mirror gives BOTH teams the regroup
+                              # (benefit cancels) and its trigger — a clean wipe with the
+                              # enemy carrier already dead — barely occurs in the mirror;
+                              # validate on a hosted/asymmetric mixed field, not the lab.
+    # ⛔⛔ ZERO READ SITES since smartGrab (:9231) superseded it — the field is
+    # DECLARED but nothing reads `tune.grabTiming`. KEPT ON PURPOSE, not
+    # overlooked: `git log --all -S "tune.grabTiming"` shows a real shipped
+    # history (410a1cf "FIX the suicidal pedestal dive" wired it; 3ac6643 v47
+    # unwired it), and the design notes below are the record of WHY the
+    # hard-threshold shape was abandoned. That makes it a TOMBSTONE, which the
+    # house rule says to document in place rather than delete.
+    # ⚠️ Its harness knob GRABTIMING was DELETED 2026-08-20 — it armed a field
+    # nothing reads, so every A/B run through it was a guaranteed null that read
+    # as "no effect". The knob now fails loud. Do NOT re-add an arming line here
+    # without first re-adding a read site.
+    grabTiming: bool          # ⭐ ANTI-STACKED-DIVE (2026-07-20, the dive-death
+                              # finding): 96% of our carrier deaths are AT the enemy
+                              # pedestal, 0% grab->cap in every loss — we rush a lone
+                              # (often gun-down) body into a stacked pocket and it dies
+                              # on the touch. When the pocket is STACKED (>=GrabStack
+                              # Defenders fresh guns within GrabStackRange of it), NO
+                              # mate is covering us in place, and a mate IS inbound,
+                              # HOLD the grab: keep the gun UP at GrabHoldStandoff and
+                              # suppress the KILLABLE defenders instead of diving unarmed,
+                              # then grab once a mate arrives to cover. Self-limiting: a
+                              # lone last body (no inbound mate) dives NOW (= shipped),
+                              # cover-in-place releases the dive, and pushOut/late all-in
+                              # suicide-grabs as today. DELAYS the dive, never abandons it
+                              # (NOT the refuted forceBalance/pocketRush — the pedestal is
+                              # the one spot commit's kill-to-convert can't fire: spawn-
+                              # protected respawners are unkillable but shoot). Asymmetric
+                              # (turns a wasted grab into a covered one) so mirror-measurable
+                              # on grab->cap; the "vs a real stacked defense" edge is field.
+    smartGrab: bool           # ⭐⭐ ADAPTIVE POCKET COMMIT (2026-07-24, THE dive-death fix). Replaces
+                              # grabTiming+grabGate's hard thresholds + suicide carve-out with a
+                              # Captain-brain gate: commit the disarmed pocket touch ONLY on a real
+                              # advantage read (pickEdge local numbers edge / PhForce grouped all-in /
+                              # a mate covering in place); otherwise HOLD at a firing standoff and
+                              # suppress the clustered pocket from range as a team. No lone suicide dive.
+    touchCommit: bool         # ⭐⭐ THE TOUCH LATCH (2026-07-29, THE grab-conversion fix). FIELD-
+                              # MEASURED on 123 GV26 league episodes: a steal is THE deciding
+                              # axis (steal once -> we win 66.7%; never steal -> 26.4%), and we
+                              # never steal at all in 58.5% of episodes. The gap is NOT approach
+                              # and NOT conversion: we reach within 40px of the enemy heart as
+                              # often as the field does (71 vs 79 episodes) but convert that
+                              # approach to a steal only 71.8% vs THEIR 94.9%. In 20 episodes a
+                              # bot sat 5-39px from the heart — pickup range is 12px — and never
+                              # took it. Cause: GrabCommitRing existed but only ever DISABLED
+                              # holdGrab; it set no flag, so once inside the ring four LIVE
+                              # branches still outrank the 12px touch — the grenade charge
+                              # (holdStill, gated on iCarry but NOT pocketRush), the engage
+                              # branch (an armedPocket advances on the ENEMY, not the heart),
+                              # and duck/peek (guarded on `rushing`, which is Mid-only, while
+                              # wantPocketRush includes the FLANKERS — that is the 5-39px
+                              # cohort). touchCommit latches a bot inside GrabCommitRing onto
+                              # the heart: nothing preempts a touch that is one step away.
+                              # Deliberately NOT a return to the suicide dive smartGrab fixed —
+                              # the latch arms only INSIDE the ring, where the body is already
+                              # committed and the cheapest way out is forward onto the heart.
+    armedRush: bool           # ⭐ NEVER DISARM INTO A STACK (2026-07-24, THE dive-death fix).
+                              # pocketRush's maxEngage=0 (gun OFF, no duck/dodge) rests on an
+                              # OBSOLETE premise — that pedestal respawners are spawn-protected
+                              # (unkillable), so shooting them is wasted. GV20+ REMOVED spawn
+                              # protection (0 refs in GV22 sim.nim): those defenders are KILLABLE
+                              # now. So a rusher that disarms and dives a defended pocket dies
+                              # doing nothing — >half our deaths, pure waste. armedRush: when
+                              # ANY fresh defender guards the pocket, keep the gun UP (engage a
+                              # close band + re-enable the duck/dodge/aim branches) and SHOOT the
+                              # way in / dodge, instead of a blind unarmed dive. Only a genuinely
+                              # UNCONTESTED touch (no fresh defender) still rushes disarmed for
+                              # speed. Offensive by construction: arrive shooting, never as a
+                              # free kill. Asymmetric (turns a wasted death into fire on the
+                              # pocket) so mirror-measurable on grab->cap + K/D.
+    holdLine: bool            # ⭐ ANTI-OVER-EXTEND (2026-07-22, the h006 line-defense
+                              # finding): the new #1 (h006) forms a LINE in its own half and
+                              # lets us over-push into a converging kill (loss diag: 39% of
+                              # our deaths are in the ENEMY half vs h006's ~14%; our over-
+                              # extension MANUFACTURES their clean 2.97 hits/kill). SIBLING
+                              # of regroupPush but the OPPOSITE trigger: regroupPush holds a
+                              # mid in a post-wipe VACUUM (no fresh enemy); holdLine holds a
+                              # mid that has over-extended into the enemy half INTO A STANDING
+                              # DEFENSE (fresh enemies present + not local fire-superiority),
+                              # rallying it at a shallow line until the wave re-forms so we
+                              # engage the line together instead of trickling in to be farmed.
+                              # Movement-target ONLY (combat still takes any clear shot); a
+                              # lone last body / carrier / own-flag-stolen never holds; and
+                              # it uses LOCAL fresh-mate-vs-fresh-enemy proxies, never a global
+                              # headcount (teammates are fogged) — so it is NOT the falsified
+                              # forceBalance retreat. Releases on local fire-superiority or a
+                              # grouped wave. Asymmetric (we stop feeding isolated cogs) so the
+                              # mirror can measure the K-D/own-half delta; the full edge is field.
+    shapeHoldPx: float        # oneRunner's hold line, px HOME-ward of centre. Sweepable
+                              # from the harness via SHAPEPX so the hold DEPTH gets a real
+                              # sweep instead of a guessed constant (0 = hold ON the midline,
+                              # i.e. still contest the crossing). Ignored unless oneRunner.
+    oneRunner: bool           # ⭐ SHAPE — ONE RUNNER, SEVEN HOLD (v56, 2026-08-14, the
+                              # Hermes study). Both Hermes head-to-heads were decided by
+                              # SHAPE, not by aim: the side that kept exactly one committed
+                              # deep runner while the rest held its own half won both. Our
+                              # loss was the degenerate shape — 24 of 24 deaths in OUR half
+                              # and zero midline crossings, a held line with nobody running.
+                              # The lever names the single closest-spawn rusher (role MidTop,
+                              # exactly one seat per team on every deal we are dealt) as the
+                              # runner, exempts it from the holdLine / regroupPush rallies so
+                              # its commitment cannot be talked out of it, and caps every
+                              # other seat's movement target at ShapeHoldLinePx on OUR side.
+                              # MOVEMENT-TARGET ONLY (the combat block is untouched — a
+                              # holder still trades out anything lined up); carrier, escort
+                              # and own-heart-stolen states are carved out, so a capture run
+                              # and a recapture are never clamped. NOSHAPE=1 reverts.
+    # ⛔⛔ ZERO READ SITES since smartGrab (:9231) superseded it — see the
+    # grabTiming tombstone above; identical status, identical reasoning. Its
+    # harness knob GRABGATE was DELETED 2026-08-20 and now fails loud.
+    grabGate: bool            # ⭐ NUMBERS-GATED GRAB (2026-07-22, the h006 grab-discipline
+                              # finding): h006 commits to the heart almost ONLY when up bodies
+                              # (its carries start at a local numbers lead; steal->cap 46-64%
+                              # vs our 28%); we grab at even/behind and throw the carrier away.
+                              # Distinct from grabTiming (which gates a solo dive on POCKET
+                              # STACKING): grabGate gates the pocket-rush on LOCAL fire-
+                              # superiority near the pedestal (fresh mates vs fresh enemy guns
+                              # around stealTarget) — don't open the unarmed dive unless we have
+                              # the local edge that converts it. Same guard structure + REF-force
+                              # firewall as grabTiming (lone last body dives NOW; pushOut/late
+                              # all-in dives; DELAYS never abandons). Mirror-measurable on grab->cap.
+    avoidDisarm: bool         # ⭐ SWORD/SHIELD AVOID (v7, 2026-07-19): the live league
+                              # runs GameVersion 7 — a sword or shield picked up on a 12px
+                              # touch is AUTOMATIC and sets canFire=false (silent disarm:
+                              # the gun goes dead until death). Our unadapted pathing walks
+                              # over one ~0.4×/game (measured, SS-PROBE) and then "fires"
+                              # air for ~13s. This adds a soft repulsion from a "sword"/
+                              # "shield" pickup sprite so a bot that is NOT deliberately
+                              # collecting one steers a body-width around it. Pure downside
+                              # removed; MIRROR-MEASURABLE (SS-PROBE pickup count → ~0). The
+                              # ONLY v7 lever safe to lab-prove; the two below are field-only.
+    shieldTank: bool          # ⭐ SHIELD-TANK ESCORT (v7, 2026-07-19): a shield gives 6 HP
+                              # but canFire=false. A carrier-escort with our flag stolen and
+                              # a shield pickup in reach deliberately grabs it, then body-
+                              # blocks the carrier's respawn/threat cone as a 6-HP wall (it
+                              # can't shoot anyway, so trading its gun for a 2× tank on the
+                              # ray is free). Extends carrierScreen/escortRun with a fat
+                              # shield. ⚠️ COORDINATION lever — the mirror gives both teams
+                              # the tank and its trigger (mate carrying past our shield) is
+                              # rare in self-play. Validate hosted, gated OFF.
+    sprayGrab: bool           # GV36 melee: opportunistic spray-can pickup
+    nadeLob: bool             # GV36 lob discipline: the engine throws along the CURRENT
+                              # aim at C-release, and a mid-charge slot-servo correction
+                              # sweeps whole revolutions (13 ticks for ±1 slot) — so a
+                              # release mid-sweep flies the WRONG WAY (field-observed).
+                              # Freeze the lob bearing at charge start; release only on
+                              # a settled turret (holding C past full just caps range).
+    spinCap: bool             # GV36 spin budget: gcd(5,32)=1 makes an EXACT ±1-slot
+                              # correction cost 13 held ticks = two full blind
+                              # revolutions (vision rides the aim). Cap the budget at 4
+                              # ticks; settle on the best cheaply-reachable slot and let
+                              # fire-gate slack govern the residual ≤1 slot (11.25°).
+    spinCapRangePx: float     # ⭐ RANGE-AWARE SPIN BUDGET (the spinCap logic fork). The
+                              # accepted residual is ANGULAR but the fire corridor is
+                              # LINEAR: perpMiss = D·sin(err). One slot of residual (8
+                              # brads) costs 0.195·D of miss, so past D=87px it exceeds
+                              # the 17px corridor and the trigger can NEVER open — the
+                              # budget is free in CQB and a fire-gate LOCKOUT at range.
+                              # Apply it only to combat traverses inside this range;
+                              # beyond it pay the exact plan (the v38 servo) so err→0 and
+                              # the corridor actually opens. Non-combat traverses always
+                              # keep the budget (nothing fires there, so the blind
+                              # multi-rev spin is pure cost). Inf == plain v39.
+    shieldRush: bool          # ⭐⭐ SHIELD-RUSH CARRIER (2026-07-23, the grab→cap fix): the
+                              # A/B + n=37 teardown proved we LOSE ON THE RUN HOME — 34 steals /
+                              # 4 caps (12%) vs h006, carriers die at MIDFIELD crossing back. A
+                              # shield = 6 HP (survive 6 hits vs 3) and a carrier can hold BOTH
+                              # flag + shield and still CAPTURE (tryPickupFlags/checkWin don't
+                              # exclude it). The prior "grab a shield AFTER stealing" variants
+                              # were geometry-void (enemy shield is DEEPER in). This grabs OUR
+                              # OWN endzone shield PRE-steal (home-side ¾-height, near spawn — a
+                              # cheap detour TOWARD home), so the rusher carries home at 6 HP the
+                              # whole way. Mirror-MEASURABLE (per-team HP edge → grab→cap), unlike
+                              # the coordination levers. GV21 makes it stronger (no spawn-protect
+                              # → carriers more exposed). Gated to the rusher seat.
+    planLayer: bool           # ⭐⭐ CONTINGENCY STATE MACHINE (2026-07-23, "chess not
+                              # checkers"): drives movement posture from teamPhase (OPEN/
+                              # PROBE/PRESS/ESCORT/DEFEND/FORCE) instead of the flat one-
+                              # scenario-one-play matrix. OPEN groups the opening clash;
+                              # ESCORT full-collapses the free guns onto the carrier lane;
+                              # FORCE commits a grouped all-in before the −1 timeout. All
+                              # phases are a pure fn of shared signals so the team flows
+                              # branch→branch unanimously (no thrash / no split-decide).
+    aimLegacy: bool           # A/B ONLY (OLDAIM=1): reproduce the GV36 slot
+                              # servo + its mod-8 inference guard + the 40-brad
+                              # default, i.e. the SHIPPED-BROKEN aim, so the
+                              # GV40 fix can be measured head-to-head from one
+                              # frozen binary. Never set in a shipped tune.
+    hotDoor: bool             # ⭐ ONE-DOOR BREAK lever 2 (2026-08-14): remember friendly
+                              # deaths that happened AT THE CROSSING and route the next
+                              # crossing into a y-half that is not being camped. Field
+                              # evidence: daveey's slot 7 killed five of us in a row on
+                              # ONE 16px point over 1000+ ticks while our route never
+                              # changed. Perception-legal on a fogged client: our OWN
+                              # death position is always known and the memory outlives
+                              # the respawn, plus mate corpses we actually saw.
+                              # Movement-target only, pre-contact by construction (it
+                              # arms on OUR side of the midline). NOHOTDOOR=1 reverts.
+    waveGate: bool            # ⭐ ONE-DOOR BREAK lever 3 (2026-08-14): stage just short
+                              # of the crossing until a fresh mate is with us, instead of
+                              # trickling single bodies through a covered door (the case
+                              # study: s0 enters t=1368, dies t=1386; s6 enters t=1429,
+                              # 43 ticks AFTER s0 is already dead). ⚠️ Teammates are
+                              # FOGGED, so this can NEVER be an open-ended headcount wait:
+                              # the hold is capped at WaveGateMaxHold ticks and the budget
+                              # is spent once per re-entry. NOWAVEGATE=1 reverts.
+    roleSep: bool             # ⭐ MID-QUAD BREAK lever 2 (2026-08-14): eight seats over
+                              # SEVEN roles means one role is always dealt twice, and the
+                              # two holders ran the same route with the same offsets — a
+                              # clone, not a second body. A bot computes its own role
+                              # ORDINAL from the deterministic, comms-free role table
+                              # (how many LOWER seats hold my role) and a non-primary
+                              # takes a separated lane and depth. Zero perception: the
+                              # table is a pure function of (seat, team, GameTeams), all
+                              # three of which a bot knows about ITSELF. Approach-only —
+                              # every site sits behind the existing pocket-range gates.
+                              # NOROLESEP=1 reverts.
+    midSpread: bool           # ⭐ MID-QUAD BREAK lever 3 (2026-08-14): the mid stack
+                              # trailed inside one 52px band (MidBottom +26, MidGuard −26)
+                              # for the whole walk up the map, which is narrower than a
+                              # grenade — 58.4% of enemy nade impacts that damaged us
+                              # caught 2+ of ours. Widen the APPROACH band to ±72px; the
+                              # pocket (dist ≤ 90) is untouched so the touch is unchanged.
+                              # NOMIDSPREAD=1 reverts.
+    rallyWave: bool           # ⭐ rallyWave (plan #squad-1 / issue #20, 2026-08-06): arm
+                              # PhOpen's EXISTING mid-lane pull for the RE-ENTRY MARCH.
+                              # Field truth (26 GV36 league episodes, free 7-vs-7 in-episode
+                              # control): on the arena only 44.9% of our alive seat-frames
+                              # sit in a mutual buddy pair within 120px vs focusfire's 62.3%;
+                              # we are locally outnumbered in 41.7% of contact frames vs his
+                              # 6.5%, at local advantage −0.06 vs +1.76. The mechanism that
+                              # builds that lattice is the re-entry trek: respawn→first
+                              # contact is 689px/283t for us vs 165px/77t for him at
+                              # IDENTICAL path efficiency (0.76 vs 0.75) — a DESTINATION
+                              # problem, and 69% of a 439-tick life. `OpenGroupPull` already
+                              # fixes exactly this ("we currently lose it 14-6 by trickling
+                              # to lane roles") and is armed for `elapsed < 600` only, i.e.
+                              # 12% of the game. This changes its ARMING WINDOW, not its
+                              # mechanism: same pull, same constant, same statement, applied
+                              # on the march back in when NO rival is within RallyContactPx.
+                              # Target is `CenterY`, a map constant, so seven seats converge
+                              # by identical inference with ZERO comms (no captain, no
+                              # thrash, none of the REF-comms turret tax). Roles, speed,
+                              # turret, aim and the fire gate are byte-untouched.
+    defendTeeth: bool         # ⭐ PhDefend RECAPTURE TEETH (v29, 2026-07-29). v26 gave DEFEND
+                              # an intercept target, but it aimed at `mateCarryPos` — the
+                              # position of OUR mate carrying the ENEMY heart, NOT the thief
+                              # holding ours. Wrong entity, and it is (0,0) whenever no mate
+                              # carries, so the `> 0.5` guard fell through to `me.y` and the
+                              # "converge on the thief's lane" collapse never converged. This
+                              # routes the 6 attacker seats at the REAL thief fix (bot.carrierPos
+                              # / carrierSeen — the same globally-legible read huntCarrier uses),
+                              # predicting the intercept toward the thief's own capture edge and
+                              # guarding the mid crossing it MUST pass when the fix is stale.
+                              # Recapture = KILL (body-block is void), so the engage teeth stay.
+    forceClockTick: int       # forceTiming's actual trigger tick (sweepable by the eval
+                              # harness via FORCE_TICK so the timing constant gets a real
+                              # sweep instead of a second guess). Ignored unless forceTiming.
+    forceTiming: bool         # ⭐ PhForce TIMING (v29, 2026-07-29). ForceClockTick=3800 was a
+                              # first-guess constant ("~76% of the 5000 clock") and MEASURED at
+                              # 0 firing frames out of 266k: GV23 games end by WIPE at mean 2410
+                              # ticks (min 1541 max 4004), so the late all-in never armed. Moves
+                              # the trigger to ForceClockTickTuned (sweepable via the harness) so
+                              # the force window lands inside a real game's lifetime.
+    swordAmbush: bool         # ⭐ SWORD AMBUSH (v7, 2026-07-19): a sword is a 26px forward-
+                              # arc GUARANTEED kill (instant, no windup, ignores the 3-hit
+                              # gun) but canFire=false while held. A back-line/pocket bot
+                              # with no clear ranged shot and a sword pickup in reach grabs
+                              # it, then treats the attack button as melee: it closes on the
+                              # nearest enemy inside SwordReach and swings. Wins the point-
+                              # blank scrum the windup gun loses. ⚠️ trades the gun for melee
+                              # — only fires when boxed in close with a sword handy; a
+                              # COORDINATION/positional lever, validate hosted, gated OFF.
+    medTopOff: bool           # ⭐ MED-KIT TOP-OFF (2026-07-20, doctrine: an operator
+                              # tops off HP between contacts, never fights hurt when a
+                              # kit is free). GameVersion 9 seeds two center-line med
+                              # kits; a wounded living bot heals to FULL on a 12px touch
+                              # (sim tryPickupMedKits) and a healthy bot walks over one
+                              # untouched, so a kit is never wasted — a pure-upside
+                              # MOVEMENT lever (never touches the trigger). A wounded,
+                              # out-of-contact bot routes to the nearest VISIBLE kit
+                              # within MedKitDetour. Fog only reveals a kit near center,
+                              # so distance already self-limits the pull; the gate fires
+                              # ONLY when safe (engage<0 AND nearThreat<0) and never for a
+                              # carrier / committed grabber / escort / stolen-flag defender
+                              # (they own a higher objective), so it can't pull a bot off a
+                              # live objective or into a gunfight. Mirror-measurable: both
+                              # sides get chipped near mid, so the healthier survivor wins
+                              # the next contact — an asymmetric survival edge the self-play
+                              # mirror can score (carrier-survival / K-D / deaths).
+    medEcon: bool             # ⭐⭐ MED-KIT ECONOMY (2026-07-28, from the live-league Elo
+                              # assessment: the field took 42 heals to our 11 over 20 real
+                              # episodes). medTopOff had the right doctrine but a gate that
+                              # almost never opens mid-game. medEcon keeps the doctrine and
+                              # fixes the three things that closed the gate:
+                              #   1. STATIC POSITION — the kits are at fixed engine coords
+                              #      (verified vs 53 league heal events), so stop requiring
+                              #      the sprite to be VISIBLE in the fog cone. A wounded bot
+                              #      walks to a remembered kit the way it walks to a pedestal.
+                              #      This is the big one: the old visibility requirement is
+                              #      why a 320px-away kit was invisible and thus ignored.
+                              #   2. WIDER DETOUR — MedKitEconDetour(320) over MedKitDetour(150),
+                              #      because the walk is now the only cost.
+                              #   3. LIGHT CONTACT — at MedKitLightContactHp a bot breaks
+                              #      contact with a threat that is NOT aiming at it to heal.
+                              #      At 1 hp the next bullet kills, so the heal outranks the
+                              #      duel; a threat actually pointing at us still wins (we
+                              #      never turn our back on a live gun — the holdVsGun rule).
+                              # Still a pure MOVEMENT lever (never touches the trigger) and
+                              # still yields to every real objective (carrier / escort /
+                              # committed grabber / stolen-flag defender / pickup seeker).
+                              # Mirror-measurable for the same reason medTopOff was: it is a
+                              # resource RACE, not a coordination lever, so self-play scores
+                              # it (heals, deaths, K-D) — unlike comms.
+    # ⚠️⚠️ 2-TEAM MEDKIT PERCEPTION BLACKOUT (recorded 2026-08-20, lever-liveness
+    # correctness pass). The visibility gate in the medEcon commit block is
+    #     let medVisOn = bot.tune.medSee or (bot.tune.ffaMedSee and ffa4Board)
+    # and `medSee` is armed ONLY by `getEnv("MEDSEE")` while players/baseline/
+    # Dockerfile declares exactly one variable, `ENV PATH`. So medSee is FALSE in
+    # every shipped build, and on a TWO-TEAM board `medVisOn` is FALSE OUTRIGHT:
+    # the candidate set collapses to the two formula spots and the union of
+    # VISIBLE kit sprites is never populated at all.
+    # That is the mechanism behind the standing finding "we never steer to
+    # medkits — broken on 2-team too". On 2-team it is not a steering failure or
+    # a losing tie-break; it is a PERCEPTION BLACKOUT by construction.
+    # ⚠️ ARMING IT IS A REAL TRADE, NOT A FREE FIX — see the v-lever note in
+    # shippedCombatTune(): medSee was dropped 2026-08-06 for costing the holder
+    # 13% of its kills on the 2-team mirror (the FEET LAW). Measured 2026-08-20
+    # by the kit-selector lane on 3 hosted 2-team mapSpecs x 3 seeds (n=18,
+    # paired within map/seed/team): adding SIGHT alone is +0.32 ± 0.08
+    # heals/team-Ep but −0.02 ± 0.01 captures/team-Ep — the capture sign the
+    # revert predicted. The gate for this belongs to the CONSUMABLE-ECONOMY lane
+    # (one knob per consumable, so kits and shields attribute separately); it is
+    # deliberately NOT added here to avoid two branches arming the same
+    # expression. Score CAPTURES, not just heals, when it lands.
+    medSee: bool              # ⭐⭐ medSee (2026-08-05, issue #16): give medEcon its EYES.
+                              # medEcon above buys the RIGHT doctrine with a TWO-TEAM ARENA
+                              # coordinate: its candidate set is exactly the two formula spots
+                              # (MapW/2, MapH/3) and (MapW/2, 2*MapH/3), and its only use of
+                              # the kit SPRITE is the on-spot presence check — so it can never
+                              # route to a kit it can SEE. On a generated board (every paintbot
+                              # episode) the formula is wrong: the generator DRAWS the pair's y
+                              # per map from a random band, and on a 4-team board there are FOUR
+                              # kits in a rot90 orbit that is nowhere near the centre line.
+                              # A wounded bot therefore walks to an empty patch of floor while a
+                              # real kit sits in its vision cone (Maxwell's replay read).
+                              # medSee makes the candidate set {VISIBLE kit sprites} UNION {the
+                              # known formula spots}, nearest wins, both capped by
+                              # MedKitEconDetour. It changes NOTHING else: same hp gate, same
+                              # higher-objective yields, same in-contact rule, same aimedAtUs
+                              # hold-vs-gun rule, same HUD-indicator edge filter, and the formula
+                              # spots keep their on-spot presence check (a visible sprite needs
+                              # none — seeing it IS presence).
+                              # ⚠️ It adds ZERO new disengagement: a bot walking under medSee was
+                              # ALREADY walking under the champion, just to the wrong place. That
+                              # is the discriminator from woundedBank / learned-kit-spots, which
+                              # both removed a gun from the fight and lost.
+    satCap: bool              # ⭐ DISTRIBUTED FIRE (2026-07-20, backlog #2, FM 3-90
+                              # fire-distribution): "destroy the greatest threat first,
+                              # THEN distribute fires — avoid target overkill." Enough
+                              # guns to kill is sufficient; a further free gun reassigns
+                              # to the highest-danger UNCOVERED live enemy. We already
+                              # count mate aim-rays (mateTargeted). When >=2 mate guns are
+                              # already lined on an enemy whose hp the pair can finish
+                              # (pendingKill), a THIRD gun gets no focus credit for it —
+                              # and if a fresh UNCOVERED live enemy is also engageable, it
+                              # is preferred, so no live gun is left unengaged. A
+                              # complement to commit/aimLock (NOT a dilution): it fires
+                              # ONLY past the kill-sufficiency threshold, so the proven
+                              # concentration still gets its 2 guns; the 3rd+ just stops
+                              # dogpiling. Mirror-measurable (changes which enemies die and
+                              # how many free shots we eat), no comms.
+    mateAimPos: bool          # ⭐ MATE-POS PROXY (2026-08-07, v45, captain-brain audit
+                              # Audit 2). satCap/FocusFireBonus/noMask's supportRays all
+                              # read `mateTargeted`/`mateGuns`, computed by ray-casting a
+                              # mate's DECODED aim bearing (mateAimBrads / m.aimBrads) —
+                              # and m.aimBrads rides the same soldier-sprite rotation
+                              # channel GV24 (commit d2526eb) deliberately fuzzes ±14
+                              # brads (~±19.7°) in every player view, "enemy, teammate,
+                              # corpse, and self marker alike." At the current
+                              # MateAimRayLen=90px trust distance that fuzz alone produces
+                              # up to ~30px of lateral ray error — already past
+                              # MateAimHitSlack=22px beyond ~65px — so the geometric
+                              # "is a mate's gun on this enemy" read can misfire in both
+                              # directions for a third of its own trust envelope. This is
+                              # the standing aimRotRead-is-poisoned doctrine (OTHERS' aim
+                              # must never gate a decision), just newly found to apply to
+                              # MATE aim too, not only enemy aim. When true, the coverage
+                              # test below drops the angular ray entirely and uses
+                              # proximity + LOS (pixelRayClear, non-aim) + gun-up
+                              # (mateGunDown, a muzzle-bloom read, non-aim) instead — same
+                              # mateTargeted/mateGuns/supportRays output shape, so all
+                              # three downstream consumers repair from one input swap.
+                              # LEVER-CLASS: env-gated OFF by default (MATEPOS=1 arms it)
+                              # pending its own A/B — the diagnosis is proven, the fix is
+                              # a behavior change and needs the gate before shipping.
+    noMask: bool              # ⭐ DON'T MASK FIRES — mover-side (2026-07-20, backlog #3,
+                              # ATP 3-21.8): "the moving element must not mask the fires of
+                              # the base-of-fire element." friendlyBlocked handles this only
+                              # from the SHOOTER'S side (the mate holds fire, losing a whole
+                              # ~17t fire cycle). Move the cost to the MOVER (who has slack):
+                              # a navigation step is soft-repelled off any cell on the ray
+                              # between a mate holding a live (off-cooldown) gun and that
+                              # mate's target, so we don't walk into the mate's shot. Pays
+                              # OBJ-2 fire-time in the exact focus-fire geometry we win with;
+                              # one-sided (realized per team) so mirror-measurable. Turret-
+                              # neutral, no comms.
+    assaultThrough: bool      # ⭐ NEAR-AMBUSH → ASSAULT THROUGH (2026-07-20, backlog #6,
+                              # Battle Drill 4): caught in a NEAR ambush (point-blank, in
+                              # the kill zone), return fire and assault THROUGH — never turn
+                              # your back at knife-fight range. When an UNTRACKED enemy
+                              # appears inside SurpriseRadius (the existing surprisePos read)
+                              # with its gun-cone on us and no cover nearer than the enemy,
+                              # suppress the retreat/duck branch and close-and-fire straight
+                              # down the bearing: charging keeps our gun on-axis and lowers
+                              # the enemy's angular rate (nulls bearing error faster) while
+                              # the slow 5-brad turret would lose a turn-and-run. ⚠️ GATED
+                              # HARD vs REF-force: this is CHARGE keyed to surprise + close
+                              # range + gun-on-me, NEVER to head-count; it does not break or
+                              # retreat. Today surprisePos drives only a vanity shout. Aim +
+                              # movement reflex, no comms, mirror-measurable.
+    offCone: bool             # ⭐ OFF-CONE APPROACH (2026-07-20, backlog #4, Battle
+                              # Drill 6 "Knock Out a Bunker"): never assault an oriented
+                              # gun down the axis it covers — approach through its blind
+                              # side. The offensive dual of aimThreat: when closing on an
+                              # engage target whose aim-dot cone (aimBrads) is laid on a
+                              # lane, bend the APPROACH bearing so we arrive from OUTSIDE
+                              # its ±AimOnConeBrads cone — it must slew the uncappable
+                              # 5-brad/tick turret to face us while our gun is already on
+                              # its body. A movement-only override (touches the feet, not
+                              # desiredAim, which stays on the enemy); scores approach cells
+                              # by the enemy's required slew-to-face and picks the max, then
+                              # nav-steers there so walls are respected. Requires aimThreat
+                              # (needs a readable cone); falls back to the shipped beeline
+                              # when the dot is unreadable. Mirror-measurable (wins aim
+                              # races), no comms.
+    fatalFunnel: bool         # ⭐ DEFENSIVE FATAL FUNNEL (2026-07-20, backlog #5, FM
+                              # 90-10-1 App K): the defender's half of the fatal funnel —
+                              # orient the weapon ON the chokepoint a channelized enemy MUST
+                              # cross, before any target is seen, so fire is immediate with
+                              # zero orient/lay delay. An idle Overwatch/HomeDefender sentry
+                              # with NO live track pre-aims the turret at the throat of the
+                              # nearest chokepoint on the enemy's approach axis (toward our
+                              # pedestal) instead of the two-speed sweep. Vision rides the
+                              # aim, so the cone lights the throat; the 5-brad turret is thus
+                              # already lined when a body funnels through — acquisition ~0
+                              # instead of a 15-30t re-slew. Breaks to a real target the
+                              # instant one appears (LOCK-1 style). ⚠️ GUARDRAIL vs REF-hunt:
+                              # only the idle no-track sentry pre-lays, and it must not tunnel
+                              # onto a dead lane. Mirror-PARTIAL (like huntCarrier the mirror
+                              # rarely mounts a deep unchallenged approach to defend against)
+                              # — may need a hosted field to score. Gated OFF.
+    aimRotRead: bool          # ⭐⭐ AIM READBACK RESTORATION (2026-07-20): GameVersion 7
+                              # retired the "aim dot <color>" line (no-op addAimIndicators
+                              # since e3bcf2e) — so observedAim (our own drift resync),
+                              # mateAimBrads (focus-fire mate rays), and enemy aimBrads
+                              # (aimThreat's full-cone dangerScore + preSlew's off-us read)
+                              # have ALL been silently dead on the live engine since v7.
+                              # aimThreat/dangerScore degrade to the coarse facingRight
+                              # half-plane; focus fire and preSlew are inert. This reads the
+                              # aim back from the soldier sprite ID instead (16 pre-rotated
+                              # steps sweep with aimBrads, id = base + team*16 + rot), ~±8
+                              # brad resolution vs the dots' ~±2 — coarser but alive. Label-
+                              # blindness family: the DATA CONTRACT moved channels (label →
+                              # sprite id); fix-forward, gated OFF until the A/B proves it.
+    counterArc: bool          # ⭐ COUNTER-ARC (Play C, GameVersion 15 plasma arc): an enemy
+                              # holding a plasma arc has its 1300px gun DISABLED for the rest
+                              # of its life (canFire=false while hasPlasmaArc, no drop) and
+                              # its lethal cone reaches only 136px. Beyond that it is the
+                              # softest high-value target on the board — a free kill that also
+                              # deletes the enemy's whole AoE play. This bumps such a carrier's
+                              # engage priority (prio -= CounterArcBonus) ONLY when it sits
+                              # beyond PlasmaArcReachPx+buffer (safely disarmed); inside the
+                              # cone the existing close+aim danger terms already top it. Reads
+                              # the "plasma arc carried" sprite (fog-gated). Requires
+                              # dangerScore (sharpens that block, like aimThreat). Retarget-
+                              # ONLY — no movement/back-off branch (that's a separate future
+                              # arcStandoff lever, kept clear of REF-force). Mirror-measurable
+                              # (symmetric readable object, asymmetric kill value, no comms).
+    arcStandoff: bool         # ⭐ ARC STANDOFF (2026-08-07, the MOVEMENT companion counterArc
+                              # deliberately left out): counterArc only RETARGETS a disarmed
+                              # enemy arc-carrier — our feet still walk straight into its cone.
+                              # The sim numbers make that walk fatal: PlasmaArcDamage(3) ==
+                              # MaxHp(3), so ONE cone touch inside 136px is an instant kill, the
+                              # cone is REPEATABLE (25t recharge, not single-use), and it tracks
+                              # its owner's live aim for 5 active ticks — while the carrier's own
+                              # 1300px gun is dead for the rest of its life (canFire=false, no
+                              # drop). So the carrier's ONLY win condition is closing to 136px,
+                              # and the correct answer is purely geometric: never be there. Back
+                              # off to ArcStandoffRing(196px) and keep shooting — the gun reaches
+                              # 1300px, and equal top speeds mean it can never close. Movement-
+                              # intent ONLY (never touches desiredAim/wantFire — the turret keeps
+                              # whatever counterArc/engage chose, so we retreat still firing).
+                              # Requires counterArc (same fog-gated sprite read). Ships DEFAULT
+                              # ON, matching the NOxxx convention (NOARCSTANDOFF=1 opts out) —
+                              # see shippedCombatTune for the field-only-cost justification.
+                              # MEASURED on GV22 (asoprobe + the ARCFOE rig, which forces the
+                              # control team to field an armed carrier since no mirror opponent
+                              # grabs one). In-cone exposure as a share of frames a carrier was
+                              # within 236px — i.e. how often we sat in the instant-death band,
+                              # OFF -> ON: seed 100  52.1% -> 39.1%   seed 200  99.4% -> 40.0%
+                              # seed 300  76.5% -> 32.8%   (3/3 seeds better, backOff 0 -> fires).
+                              # With NO arc foe present the A/B was BYTE-IDENTICAL, so the lever
+                              # is provably zero-cost when the trigger is absent — the same
+                              # field-only ship precedent counterArc/shieldTank used.
+    arcAlways: bool           # DIAGNOSTIC ONLY: arm the arcBreach seat with no line-memory
+                              # gate, so a self-play team reliably fields an armed arc-carrier.
+                              # Exists solely to give arcStandoff a real cone to test against in
+                              # the mirror (ARCFOE=1 on the control side). NEVER shipped — the
+                              # unconditional gun-trade is the lone-wolf breacher the 2026-07-24
+                              # audit killed.
+    arcBreach: bool           # ⭐ ARC BREACHER (2026-07-22, the anti-line OFFENSE): the
+                              # plasma arc is a MULTIKILL cone (136px reach, dmg 3, hits
+                              # everyone in the ~14° arc at once, instant/no-windup). A
+                              # line is a CLUSTER — the perfect cone target. When a line
+                              # is classified/heard, ONE designated breacher seat (fixed,
+                              # not lowest-alive — teammates are fogged) grabs the arc,
+                              # charges the seam, and fires the cone across the cluster
+                              # while the rest are base-of-fire. Trades the breacher's gun
+                              # for its life (canFire=false while held) — a deliberate
+                              # specialist swap, so gated to the breacher seat + a live
+                              # line only. Movement+attack-intent; requires commsPlay (the
+                              # line read). Field-only (no line forms in the mirror).
+    gv21Press: bool           # ⭐ GV21 AGGRESSION (2026-07-23, the h006-loss recalibration):
+                              # the engine deleted spawn-protection (fresh respawners are
+                              # KILLABLE now, not a 1s invuln wall) and made draws −1 with a
+                              # 5000-tick clock — so decisive KILLS/wipes win and caution
+                              # loses. A/B teardown: we lose to h006 by −6 K/D, out-killed in
+                              # open combat. This presses harder: the fire-superiority break
+                              # only trips at a WIDER enemy overmatch (gv21OutnumberMargin),
+                              # so a lone gun keeps trading instead of ceding the firefight
+                              # that the clock now forces us to win. Pure combat posture.
+    anchorRelock: bool        # ⭐⭐ ANCHOR RELOCK (4-team audit finding #1, 2026-08-06):
+                              # buildNavGrid resolves five tactical anchors (overwatch post,
+                              # mirrored enemy posts, point-of-domination, defender choke,
+                              # funnel throat) off bot.myColor/bot.team on the FIRST
+                              # walkabilityReady frame — before the self-marker color lock in
+                              # decide() can correct the initial slot-mod-teams parity guess on
+                              # a 4-team board. bot.navBuilt never resets, so a wrong guess
+                              # caches anchors pointed at a RIVAL's base for the whole episode.
+                              # Re-runs the five computations once, right when the lock flips to
+                              # a color they were not built for. Pure bug fix: a no-op on 2-team
+                              # boards (the guess already matches) and a no-op once the anchors
+                              # were already correct. Default ON; NOANCHORRELOCK=1 turns it off
+                              # for the A/B.
+    spraySingle: bool         # ⭐⭐ SPRAY SINGLE (4-team can-conversion fix, 2026-08-06): the arc
+                              # breacher fire block only cones a CLUSTER (>= ArcConeMinCluster
+                              # fresh enemies) — "coning a singleton is a net DPS loss" doctrine
+                              # that assumed the GUN stayed available as the fallback. It does
+                              # not: canFire=false for the whole time the can is held, so a
+                              # disarmed carrier facing only a singleton currently just walks
+                              # past unarmed and silent. Field truth: winners convert can pickups
+                              # into 5.28 kills/ep, we convert into 0.50, and 87% of our pickups
+                              # die WITHOUT EVER FIRING it. When no qualifying cluster exists,
+                              # treat the nearest fresh enemy in reach with clear LOS as a valid
+                              # single-target cone shot instead of standing disarmed and mute.
+                              # Default ON; NOSPRAYSINGLE=1 turns it off for the A/B.
+    sprayConeFire: bool       # ⭐⭐⭐ SPRAY CONE GEOMETRY (2026-08-20, the carried-can funnel).
+                              # spraySingle above fixed WHICH targets are eligible; this fixes
+                              # the SHAPE of the gate, which is the constraint that actually
+                              # binds. The fire block asks two hand-tuned questions —
+                              # `dist <= ArcBreachFireReach(128)` and `aimErr <=
+                              # ArcBreachConeBrads(12)` — and both were derived from the STALE
+                              # PlasmaArcReachPx(136). The engine's real test (selectArcVictims)
+                              # is a WEDGE: forward <= 170+17 = 187, perpendicular <=
+                              # forward*0.25 + 17, paintPathClear. The radial gate refuses the
+                              # entire 128..187 band and the brads gate is narrower than the
+                              # wedge at EVERY range inside it.
+                              # ⭐⭐⭐ WHY THIS IS THE CHEAPEST LEVER ON THE BOARD: the hosted
+                              # config runs hitPoints=3 and PlasmaArcDamage is 3, so ONE cone
+                              # touch on an unshielded cog is an INSTANT KILL. Field-measured
+                              # over our own 365 presses: 90.1% landed, 3.304 hp per press,
+                              # 1.025 KILLS PER PRESS. A press costs a 25-tick recharge we are
+                              # not otherwise spending, and 0.011 friendly hits. Every press we
+                              # decline is very close to a whole kill declined.
+                              # FIELD FUNNEL, 1,421 re-simulated Elite ffa4 episodes, 306 of our
+                              # carry-lives, n = 3,609 ready carry-ticks on which the sim's own
+                              # test would have damaged a fresh enemy at the bearing we already
+                              # held: 21.0% passed our constants, 71.3% were refused by the
+                              # RADIAL REACH alone, 6.8% by the brads gate alone, 0.9% by both.
+                              # ⚠️ ArcConeMinCluster is INNOCENT and is NOT touched: of our 160
+                              # unfired carry-lives only 19 ever saw a >=2 cluster inside the
+                              # TRUE reach at all, and only 3 ever saw one that also cleared the
+                              # reach+brads pair — so relaxing the cluster gate moves almost
+                              # nothing, and spraySingle already carries the singleton case.
+                              # The stale PlasmaArcReachPx(136) is ALSO the peer radius of that
+                              # cluster scan a few lines below; it is deliberately left alone
+                              # (the deadlever lane owns that const, and widening a gate this
+                              # measurement says is innocent would only add confounds). And the press
+                              # itself is SATURATED inside our own gate (0.482 fires per
+                              # gate-open tick against a 25-tick recharge) — there is nothing
+                              # wrong with the trigger, only with the gate's shape.
+                              # When on, both the candidate scan and the press use
+                              # arcConeCovers() — the enemy-side twin of friendlyInCone, term
+                              # for term the engine's own victim test, with NO padding.
+                              # ⭐ IT TOUCHES NO FEET, and that is deliberate given the
+                              # kill-banking law (one life saved is worth 5.6 kills made, so a
+                              # lever that buys kills with exposure loses). On the dominant
+                              # path — a lone foe at 128..187px — the OLD code already fell to
+                              # the spraySingle CHARGE branch (nearD <= ArcApproachRadius 300)
+                              # and emitted `octantBits(foe - me)` with `desiredAim` on the
+                              # foe; the NEW code enters the spraySingle FIRE branch and emits
+                              # the SAME mask and the SAME desiredAim. The only delta on that
+                              # path is `wantFire`. We do not walk one pixel further than the
+                              # control does; we pull a trigger we were already carrying.
+                              # ⭐ IT CANNOT OUTRUN v58's sprayFfVeto, and this was checked
+                              # term by term, not assumed. The veto's wedge is
+                              # forward <= 170 + 17 + ArcFfRidePx(13.75) + staleness pad and
+                              # perp <= forward*(0.25 + ArcFfAimPadSlope 0.125) + 17 + ride;
+                              # this gate is forward <= 170 + 17 and perp <= forward*0.25 + 17,
+                              # with NO padding. The veto wedge STRICTLY CONTAINS the fire
+                              # wedge at every bearing and range, so no press the wider gate
+                              # opens can slip past the friendly check. Note what that implies:
+                              # v58 already sized the FF half of this weapon to the true 170,
+                              # and the FIRE half was left on the stale-136-derived 128. The
+                              # two halves of one weapon disagreed; this makes them agree.
+                              # Default ON; NOSPRAYCONE=1 holds the 128/12 behaviour for the
+                              # A/B, SPRAYCONETEAM=<n>[,<n>] isolates a RAW ENGINE TEAM INDEX
+                              # in grabprobe.
+    sprayFireFirst: bool      # ⭐⭐ SPRAY FIRE-BEFORE-CHARGE (2026-08-20). Branch-ORDER defect
+                              # in the same block, and it gets WORSE once sprayConeFire widens
+                              # the eligible set. The chain is: cluster-in-reach FIRE, else
+                              # cluster-in-APPROACH (300px) CHARGE, else spraySingle FIRE. So a
+                              # cluster of two sitting 250px away — out of any cone — PREEMPTS a
+                              # singleton standing inside the cone right now, and the carrier
+                              # walks instead of pressing. A press costs nothing but a 25-tick
+                              # recharge and does not interrupt the approach; there is no state
+                              # in which declining an in-reach shot to keep walking is correct.
+                              # When on, the single-target FIRE branch is tested BEFORE the
+                              # approach-charge branch. Kept SEPARATE from sprayConeFire so the
+                              # A/B can attribute the geometry fix and the ordering fix apart.
+                              # Default ON; NOSPRAYFIRST=1 restores the old order.
+    comboGrab: bool           # ⭐⭐⭐ COMBO GRAB (2026-08-06, item-stacking insight: shield/
+                              # spray-can/grenade are separate state bits and STACK on one
+                              # agent — nothing in the engine forces a choice). SHARPENED per
+                              # captain-brain audit course-correction: not a population-wide
+                              # opportunistic grab, but ONE designated seat (ComboGrabSeat,
+                              # mirrors ShieldRushSeat) that runs a SEQUENCED shield-then-can
+                              # grab with a done-latch (comboGrabDone, mirrors shieldRushDone).
+                              # Pure movement (never touches the trigger) except the
+                              # wantPocketRush gate below. Every other seat keeps today's single-item
+                              # discipline untouched (sprayGrab explicitly excludes this seat
+                              # so the two never race).
+                              #   PHASE 1: not iHaveShield -> route to the nearest known
+                              #     shield (ShieldGrabDetour budget, same as shieldTank).
+                              #   PHASE 2: iHaveShield, not iHavePlasma -> route to the
+                              #     nearest known can (SprayGrabDetour budget, same as
+                              #     sprayGrab) — the case the general sprayGrab gate's own
+                              #     `not iHaveShield` term refuses; this seat gets its own
+                              #     dedicated can-seek instead of a shared exception.
+                              # Also exempts JUST this seat from avoidDisarm's plasma-pickup
+                              # repel (it always wants the can eventually, so it should never
+                              # be pushed away from one), and gates wantPocketRush's push-
+                              # commit on comboGrabDone (never dives the pedestal mid-gear-up).
+                              # Default ON; NOCOMBOGRAB=1 turns it off for the A/B.
+    aggro: float              # ⭐⭐ AGGRO SCALAR (2026-08-06, the defHold meta): one
+                              # multiplier threaded through the engagement/commit range, the
+                              # fire-superiority retreat threshold + hold time, the arc
+                              # breacher's proactive-arm depth, and the endgame pushOut
+                              # patience — a single knob that sweeps posture from press (>1)
+                              # to hold (<1) without a bespoke lever per point. 1.0 = today's
+                              # shipped behavior exactly (every multiply site is a no-op at
+                              # 1.0, so the control arm is byte-identical). defHold preset:
+                              # AGGRO=0.65 — env-tunable ONLY, never baked into the shipped
+                              # default (see shippedCombatTune).
+    medPeel: bool             # ⭐⭐ MEDPEEL (2026-08-07, Alex Smith forensics): medEcon's
+                              # failure is the CONDITION GATE, not the destination — the
+                              # kit coordinates (X) are exact, so this does NOT touch the
+                              # destination formula (that ground is closed, same as medSee).
+                              # Two changes to the in-contact light-break gate:
+                              #   (1) RANGE-GATE aimedAtUs — an aimed enemy only vetoes the
+                              #       detour when INSIDE effective engagement range (~260px,
+                              #       FinishRange). 83% of shots land under 150px, so a gun
+                              #       aimed at us from 358px+ (where Alex routinely peels) is
+                              #       a paper threat, not a real veto.
+                              #   (2) WIDEN MedKitLightContactHp from 1 to 2, so the peel can
+                              #       fire before the bot is one hit from death (Alex breaks
+                              #       at 2 of 3 hp, median, per parameter_table.csv).
+                              # Directional evidence only (n=7-8 peels) — stays behind its own
+                              # A/B before any ship. Default ON; NOMEDPEEL=1 turns it off.
+    ffaMedSee: bool           # ⭐⭐ FFA4 MEDKIT VISIBILITY (2026-08-17, ffa4 lives audit, 347
+                              # re-simulated ffa4 episodes). medEcon's destination is two STATIC
+                              # formula spots (MedKitAX/AY, MedKitBX/BY) — a two-team-arena
+                              # truth. On a GENERATED ffa4 board the kit pair's y is drawn per
+                              # map and a 4-team board carries FOUR kits in a rot90 orbit nowhere
+                              # near that line (see the medSee field doc, 2026-08-05), so a
+                              # wounded ffa4 bot routes to empty floor while a real kit sits in
+                              # its own vision cone. This is the measured mechanism behind the
+                              # ffa4 medkit gap: us 0.63 medkits/episode vs winners 1.84-2.46,
+                              # P(escape|hp==1) us 2.5% vs the SCRIPTED FILLER's 7.3% and
+                              # winners' 9.2-14.0%. `medSee` (the union-of-visible-sprites fix)
+                              # already exists and is fully wired — it was reverted 2026-08-06
+                              # because it cost the holder 13% of its kills on the 2-team MIRROR
+                              # (the FEET LAW: routing feet toward a destination taxes guns).
+                              # That verdict was measured on 2-team DEATHMATCH, where a lost duel
+                              # just concedes a respawn. ffa4 is ELIMINATION (3 lives/agent, 3rd
+                              # death PERMANENT) where early deaths predict the winner 76.4% and
+                              # early kills predict 45.1% (noise floor) — the kill tax medSee
+                              # pays is exactly the currency this game mode does not score on.
+                              # Reuses the medSee mechanism UNCHANGED (same hp gate, same
+                              # objective yields, same in-contact and aimedAtUs rules); the only
+                              # new thing is WHEN it fires. Gated at the CALL SITE on
+                              # GameTeams > 2, not baked into the default here — GameTeams is
+                              # unknown at shippedCombatTune() time (init markers land later) —
+                              # so a 2-team game runs byte-identical regardless of this flag.
+                              # ⭐ v57 SHIP EVIDENCE (2026-08-17), the reason this is the ONLY
+                              # lever of the four in the ship claim: the bug is not a judgement
+                              # call, it is 100% prevalent on the real board. Across n=348 HOSTED
+                              # 4-team episodes (~/.ctf/scout/events), ALL 1627 med_kit pickups
+                              # sit MORE than MedKitOnSpotPx from BOTH formula spots — median
+                              # 177px, max 292px, and the result is 100.00% for every plausible
+                              # map dimension (swept: it only drops to 99.4% at a map 120px
+                              # larger than the observed play extent). The pre-lever code
+                              # therefore steers every wounded ffa4 bot at a location that has
+                              # never once held a kit. Consequence in the field: we take 0.63
+                              # medkits/Episode on ffa4 — LAST in the field, below even the
+                              # scripted filler's 1.11, against 1.83-2.46 for every real rival —
+                              # and our P(escape | hp==1) is 2.0% (n=3084 segments) against the
+                              # filler's 7.0% and the winners' 9.0-13.8%. Every kit is already
+                              # inside MedKitEconDetour (max 292px < 320), so what was broken is
+                              # the ADDRESS, not the range — which is why the widened-detour
+                              # sibling was deleted rather than shipped (see its tombstone).
+                              # ⚠️ NO win-rate or life-spend claim rides on this. The local
+                              # 4-team mirror is saturated (10.3-10.9 lives of 12 spent by tick
+                              # 1500, vs 7.02 in the field) and structurally cannot resolve the
+                              # payoff; the dose-response curve that motivated the package is a
+                              # CORRELATE, not causation (the scripted filler shows the opposite
+                              # slope). This ships as a repaired address, nothing more.
+                              # Default ON; NOFFAMEDSEE=1 turns it off.
+    kitSel: bool              # ⭐⭐⭐ FEASIBILITY-AWARE KIT SELECTOR (2026-08-20, ffa4
+                              # selection audit). ffaMedSee above repaired WHICH
+                              # candidates exist; it did not repair the ARBITRATION,
+                              # and that is why it fired 19,439 times and produced
+                              # FEWER heals. Three defects survive it, all in the
+                              # `for spot in [vec(MedKitAX,...), vec(MedKitBX,...)]`
+                              # loop that runs AFTER the visible scan:
+                              #   (1) THE FORMULA FAMILY IS UNCONDITIONAL. It is
+                              #       gated by NO tune flag at all. ffaMedSee only
+                              #       ADDS visible kits; the two formula spots stay
+                              #       in the candidate set on every board.
+                              #   (2) IT WINS ON RAW EUCLIDEAN NEAREST. The formula
+                              #       loop's `if d >= bestEcon: continue` means a
+                              #       phantom one pixel nearer than a kit we can SEE
+                              #       takes the commit. Certainty is not scored at
+                              #       all — a spot that has never held a kit ties
+                              #       with a sprite in our own vision cone.
+                              #   (3) IT CARRIES NO PRESENCE EVIDENCE. The "is a kit
+                              #       actually here" check only runs at
+                              #       d <= MedKitOnSpotPx(26). Between 27px and the
+                              #       320px budget the bot commits to the phantom
+                              #       with zero evidence, walks the whole way, and
+                              #       only then discovers the floor is empty.
+                              # Root cause, from the generator rather than inferred:
+                              # arena.nim's hand-authored `arena` maps DO seat kits
+                              # at (W/2, H/3) and (W/2, 2H/3) — that is where the
+                              # formula came from — but the GENERATED boards the
+                              # league actually plays do not. A 4-team board draws
+                              # FOUR kits in a rot90 / quadMirror orbit round the
+                              # centre; a 2-team board draws the mid column with
+                              # y1 in [0.16H, 0.34H] and y2 in [0.36H, 0.47H] and
+                              # then COIN-FLIPS which pair is active, leaving two
+                              # candidate coordinates permanently unstocked. H/3 is
+                              # 0.333H: it grazes the very top of the y1 draw and
+                              # can never be inside the y2 draw at all. So the
+                              # phantom is not an ffa4 regression — it is wrong on
+                              # EVERY generated board, which is exactly what the
+                              # placebo-controlled approach study found when our
+                              # 2-team approach measured +0.1 +/-3.3 px, the same
+                              # zero as ffa4.
+                              # kitSel replaces the formula MEMORY with a SIGHTING
+                              # memory (bot.kitSpots), the same contract nadeSupply
+                              # already runs for grenade depots, and scores the
+                              # candidates on REACHABILITY (KitBlockedCost) and
+                              # CERTAINTY (KitSightCost) rather than raw euclidean
+                              # range. The formula spots survive only as a cold-start
+                              # fallback, used when we have never seen a kit, and are
+                              # counted separately so their share is measurable.
+                              # ⚠️ It does NOT widen any gate: same hp tier, same
+                              # objective yields, same in-contact and aimedAtUs
+                              # rules, same MedKitEconDetour budget, same peel-feet
+                              # rule. Only the ADDRESS changes. It is also NOT a
+                              # commit-time feasibility veto — that shape was bounded
+                              # at 0.074 deaths and refusing errands is not the
+                              # hypothesis; picking a better errand is.
+                              # ⛔ SHIPS OFF. KITSEL=1 arms it; NOKITSEL=1 is the
+                              # force-revert and stays authoritative over both the
+                              # arm and the KITSELTEAM isolation knob.
+    shieldAddr: bool          # ⭐⭐⭐ LEARNED SHIELD ADDRESS (2026-08-20, consumables audit).
+                              # See the ShieldSpotSeenPx const block for the geometry proof.
+                              # Three things change, and NOTHING else — same designated seat
+                              # (ShieldRushSeat), same ShieldRushWindow, same detour, no new
+                              # seats and no new errands:
+                              #   1. LEARN. Every shield sprite the 90px bubble shows is banked
+                              #      into bot.shieldSpots, exactly the contract nadeSupply
+                              #      already runs for grenade depots. A shield spawn never moves
+                              #      within an episode (sim.resetShields runs once), so one look
+                              #      is permanent map knowledge — and it is knowledge no formula
+                              #      can have, because the engine's own placement is layout- AND
+                              #      symmetry-dependent and then NUDGED to the nearest walkable
+                              #      floor. Learning is gated on the lever alone, never on the
+                              #      errand's preconditions: most sightings happen while healthy
+                              #      and in transit, which is precisely the look that makes the
+                              #      later errand possible.
+                              #   2. DRY BELIEF. Standing within ShieldSpotDryPx of a remembered
+                              #      spot with no sprite on it proves it was taken; ignore it for
+                              #      one refill period. Without this the give-up latch is the only
+                              #      escape and it needs the address to be RIGHT to fire at all.
+                              #   3. REFUSE. With no learned spot the formula survives as a cold
+                              #      start, but ONLY when it lies inside our OWN stated endzone
+                              #      box (the `statedZone` primitive chokeSpot already uses to fix
+                              #      this same two-team-formula defect for the defender post).
+                              #      Otherwise the seat takes NO shield errand at all. That branch
+                              #      is the whole point: today a green seat whose parity guess is
+                              #      Blue is sent 1137px across the board into YELLOW's corner in
+                              #      the opening 240 ticks, and refusing that is a gain even if
+                              #      shields were worth nothing.
+                              # ⚠️ SHIELDS ARE THE SPECULATIVE HALF of this lane and this lever is
+                              # deliberately scored ALONE. A shield is +3.0 absorbed damage but
+                              # ShieldFireSlowdown is 3x, so it is a real trade, and the
+                              # within-policy correlation behind the shield bound is only +0.080.
+                              # Report it against captures/team-Ep, never summed with med kits.
+                              # ⛔ SHIPS OFF. SHIELDADDR=1 arms it; NOSHIELDADDR=1 is the
+                              # force-revert and stays authoritative over both the arm and the
+                              # SHIELDADDRTEAM isolation knob.
+    medEncum: bool            # ⭐ MED-KIT GEAR VETO (2026-08-20, consumables audit). medEcon's
+                              # "a higher objective owns this bot" yield list contains
+                              # `iHaveShield` and `iHavePlasma`, so simply HOLDING a shield or a
+                              # spray can cancels the heal errand outright for the rest of the
+                              # life. Both terms are wrong on the engine's own reading:
+                              #   * a shield "never heals base damage (that is the med kits'
+                              #     job)" — sim.tryPickupShields says so verbatim. The two are
+                              #     COMPLEMENTS, not alternatives, and the state bits STACK (the
+                              #     comboGrab doc already relies on that).
+                              #   * a can-carrier has canFire=false, so the FEET LAW cost this
+                              #     veto is implicitly protecting — leaving the gun line to walk
+                              #     — is exactly ZERO for it. It has no gun line to leave.
+                              # ⚠️ HONESTLY SMALL, and pre-registered as such. Realized coverage,
+                              # measured on 12,480 hosted replays as the share of our WOUNDED
+                              # ticks spent holding a shield or an unspent can: 17.5% on 4-team
+                              # (shield 10.4 / can 7.5) and 12.1% on 2-team. So the ceiling is a
+                              # 1.21x lift in medEcon-eligible wounded time against a 5.9x heal
+                              # gap — about 4% of it. It is a correctness repair, NOT the fix.
+                              # It is also REFUTED as the mechanism: Ron is MORE gear-encumbered
+                              # than us while wounded (22.8% vs 17.5% on 4-team) and still heals
+                              # 5.9x as often, so the state is plainly compatible with healing.
+                              # ⛔ SHIPS OFF. MEDENCUM=1 arms it; NOMEDENCUM=1 force-reverts.
+    lastLifeGuard: bool       # ⭐⭐ LAST-LIFE GUARD (2026-08-17, ffa4 lives audit). Per-seat
+                              # deaths-of-3 are flat (A 2.69 / B 2.59 / C 2.74 / D 2.79) — no
+                              # seat currently protects its OWN last life, yet P(win) by our own
+                              # eliminated-slot count is 0 out 59.8%, 1 out 75.9%, 2 out 63.0%,
+                              # 3 out 44.6%, 4 out 0 OF 801 — losing every slot is close to a
+                              # guaranteed loss, so the marginal life on a bot already on its
+                              # last one is worth far more than a marginal kill. Two effects,
+                              # ONLY while bot.ownLives == 1 (this life is our last — read off
+                              # the `lives <hp>hp x<lives>` HUD marker, see selfLives):
+                              #   (1) HARD OFFENCE STOP — never volunteer for the pocket dive
+                              #       (wantPocketRush stays false), the single riskiest committed
+                              #       action a bot takes. It can still shoot, hold a line, or
+                              #       cover a mate's dive; it just never IS the diver on its
+                              #       last life.
+                              #   (2) WIDER MEDKIT ERRAND — medEcon's out-of-contact detour
+                              #       budget widens (MedKitEconDetourLastLife) so a last-life bot
+                              #       walks further for a heal before returning to the fight; the
+                              #       in-contact aimedAtUs veto is UNTOUCHED (a live gun on us
+                              #       still wins — that safety rule is not the "stop shooting at
+                              #       hp==1" idea already refuted, P(die|fired) 95.8% vs
+                              #       P(die|held) 96.1%, flat for every policy).
+                              # Deliberately NOT team-wide passivity: only the bot ON its last
+                              # life stands down from diving — spending 0 lives by half-time wins
+                              # 53.3%, WORSE than spending 2 (74.4%), so the other three slots
+                              # keep pressing. GameTeams > 2 only, gated at the call site (same
+                              # reasoning as ffaMedSee). Default ON; NOLASTLIFE=1 turns it off.
+    koRelease: bool           # ⭐⭐ KILL RELEASE, ON A LABEL A LIVE VIEWER ACTUALLY GETS
+                              # (2026-08-20). The v48 kill release below scans `corpse
+                              # <color> <side>` — and global.nim only draws a corpse for a
+                              # GHOST viewer ("Ghost viewers (dead players) watch the whole
+                              # map unfogged"; the CorpseSpriteBase comment says the same in
+                              # so many words). VERIFIED on the wire: over 179 sampled
+                              # live-viewer packets from 12 hosted ffa4 replays the corpse
+                              # label appears ZERO times, while 141 ghost-viewer samples
+                              # carry 1149 of them. So for the whole time we are ALIVE — the
+                              # only time it could change a shot — the v48 release is dead
+                              # code, and a killed enemy stays a FRESH engage candidate for
+                              # FreshShotTicks(24) and a remembered threat for TrackTtl(120).
+                              # MEASURED IN THE FIELD (138 hosted ffa4 team-episodes,
+                              # 1.22M alive ticks, re-simulated with a byte-faithful copy of
+                              # updateTracks driven by the engine's own fog): 4.78% of alive
+                              # ticks hold a FRESH track on a body that is already dead
+                              # (8.60% on 2-team), and 35.1% of enemy deaths happen to a body
+                              # we are holding a fresh track on.
+                              # THE CHANNEL THAT DOES REACH US: `damage pop <color> KO stage
+                              # <n>` — a floating KO marker the engine plants at the VICTIM's
+                              # center in the VICTIM's colour, fog-honest (addDamagePops
+                              # tests fovVisibleAt per frame) and alive for KillFxTicks(44),
+                              # i.e. longer than the freshness window it has to beat. 85.2%
+                              # of our fresh dead-body tracks sit on a death whose KO marker
+                              # we can actually see (90.6% on 2-team), so this is a nearly
+                              # complete fix, not a partial one.
+                              # COUNTERFACTUAL, same corpus, same seats: fresh dead-body
+                              # tracks 4.78% -> 0.71% of alive ticks; ticks the
+                              # friendGuns-enemyGuns tally is EXACT against fog-free truth
+                              # 95.15% -> 97.81%; |margin error| 0.0335 -> 0.0201 guns; and
+                              # the tradeGate press/decline decision disagrees with truth on
+                              # 1.78% -> 0.62% of ticks. The price is 1.2748 -> 1.2316
+                              # distinct LIVE enemies remembered (-3.4%), which is memory we
+                              # were only ever holding because it was WRONG.
+                              # ⛔ SHIPS OFF pending a hosted A/B (this file's rule: never
+                              # bake an unproven lever into the champion tune). KOREL=1 arms
+                              # it, NOKOREL=1 force-offs on top (the HOTDOOR double gate).
+    tradeGate: bool           # ⭐⭐ L2 VOLUME GATE (2026-08-17, ffa4 tempo mandate): 347
+                              # re-simulated ffa4 episodes show holding K-D fixed, LOW-volume
+                              # beats HIGH-volume massively (K-D=0: 36.6% win vs 6.5%, 5.6x). In
+                              # a four-way pot a 1:1 trade burns both fighters' life pools while
+                              # the two BYSTANDERS pay nothing — parity in a two-team duel is a
+                              # loss in a four-way pot (against our contender in the SAME
+                              # episode we deal +1.43 more early kills AND take +1.45 more early
+                              # deaths — trading at par and mistaking it for parity). This raises
+                              # fireSuperiority's press bar from "not badly outnumbered" to "hold
+                              # a REAL edge": reuses the same local fresh-gun tally
+                              # (enemyGuns/friendGuns, shield/hp-weighted) already computed there
+                              # and presses only when friendGuns exceeds enemyGuns by >=
+                              # TradeMinEdge, so an even matchup (1v1, 2v2, ...) is DECLINED — we
+                              # reposition toward a mate instead of advancing into a coin-flip
+                              # trade (the existing "free trade on the way out" behavior in the
+                              # retreat branch still fires back at a target already lined up;
+                              # this only stops us ADVANCING into the wash). Explicitly NOT
+                              # directional focus-fire (REFUTED: most-focused team wins only
+                              # 19.5%, most-spread wins 29.3%, and being ganged up on is not a
+                              # death sentence either — 32.5% vs 20.2%) — this is a pure
+                              # volume/commitment gate, agnostic of WHO we shoot. Scoped to
+                              # GameTeams > 2 (2-team combat is already the fireSuperiority
+                              # arithmetic and stays byte-identical). NOVOLUME=1 reverts.
+    tradeGateSquare: bool     # ⭐⭐⭐ TGEV-A, THE SHAPE FIX (2026-08-20). Replaces
+                              # tradeGate's ADDITIVE bar (friendGuns - enemyGuns >=
+                              # TradeMinEdge) with the EV/Lanchester bar
+                              # (friendGuns >= enemyGuns * tradeEdgeMul(GameTeams,0)).
+                              # See tradeEdgeMul. The additive bar declines a lone
+                              # 1-hp enemy — a free finishing kill — and is looser
+                              # than the algebra against big piles; the square bar
+                              # fixes both and collapses to "parity is enough" at
+                              # GameTeams == 2 by construction. Reads the SAME tally
+                              # fireSuperiority already computes; no new perception.
+                              # ⛔⛔ MEASURED NULL, 2026-08-20 (6 gen 4-team episodes,
+                              # EVAL_TEAMS=4, all four teams armed): ZERO disagreements
+                              # in 100,336 eval frames, and the TGSQ arm came back
+                              # BYTE-IDENTICAL to the additive arm (mask
+                              # 0x89474edf5ddf7ea9 both). The algebra is right and the
+                              # free-finishing-kill case is real, but it requires
+                              # friendGuns == 1 and enemyGuns == 1/3 EXACTLY (a lone
+                              # 1-hp enemy, no mate inside 260px, offense role, off the
+                              # pedestal) and that state never occurred. Keep the
+                              # derivation, do NOT spend a sweep on it: the two bars
+                              # coincide over the realized support.
+                              # Ships OFF. TGSQ=1 (or TGEV=1) arms, NOTGSQ=1 reverts.
+    tradeGateContest: bool    # ⭐⭐⭐ TGEV-B, THE BYSTANDER TERM (2026-08-20). The
+                              # mandate's "scale with how many uninvolved rivals
+                              # exist", made local instead of global: when
+                              # TradeContestMinTeams or more DISTINCT rival colours
+                              # are fresh inside RetreatRadius, the fight we are
+                              # about to join is one that burns rival lives WITHOUT
+                              # us, so declining is EV-POSITIVE rather than merely
+                              # EV-neutral and the bar rises to
+                              # tradeEdgeMul(GameTeams, tradeGateBurn).
+                              # ⚠️ Needs Track.colorId, which did not exist before
+                              # this lever: actorsForEnemies scanned colour by colour
+                              # and discarded the index, so "is a THIRD team in this
+                              # fight" was UNASKABLE by the entire combat layer.
+                              # ⛔⛔ MEASURED NULL, 2026-08-20, and it refutes the
+                              # PREMISE not the code: over 104,888 eval frames the
+                              # colour read never failed (0 unread tracks) and there
+                              # were ZERO frames with two distinct rival colours fresh
+                              # inside RetreatRadius. Three-way melees do not happen at
+                              # 260px on this board — rivals arrive sequentially, not
+                              # simultaneously. Any bystander term has to key on a much
+                              # wider radius than the gun tally uses, which is a
+                              # different lever. colorId stays: it is now free
+                              # perception any future lever can read.
+                              # Ships OFF. TGCON=1 (or TGEV=1) arms, NOTGCON=1 reverts.
+    tradeGateSelfHp: bool     # ⭐⭐ TGEV-C, THE SYMMETRY FIX (2026-08-20).
+                              # fireSuperiority weights every ENEMY by hp fraction
+                              # (a 1-hp enemy is 1/3 of a gun) but counts OURSELVES
+                              # and every mate as a whole gun regardless of hp — an
+                              # asymmetry that systematically OVERSTATES our side of
+                              # the very ratio the gate keys on. Applies the identical
+                              # rule to self (bot.ownHp, known exactly) and mates.
+                              # Byte-identical at full hp; hp==1 is already owned by
+                              # woundedBank, so the live case is hp==2.
+                              # ⭐ THE ONLY ONE OF THE THREE THAT IS LIVE (2026-08-20):
+                              # 271 verdict flips over ~105k eval frames, and the arm
+                              # diverges from the additive control (mask 0xfb4a3244 vs
+                              # 0x89474edf) — small, real, and unmeasured for outcome.
+                              # Ships OFF. TGHP=1 (or TGEV=1) arms, NOTGHP=1 reverts.
+    tradeGateShadow: bool     # ⭐⭐ TGEV SHADOW (windupFfShadow precedent). Evaluates
+                              # the whole gate and feeds every -d:tempoprobe counter
+                              # and the decision LEDGER, but never writes
+                              # declineUntil — so the emitted button stream stays
+                              # byte-identical to the control while still producing
+                              # the FUTILITY BOUND (which early deaths were preceded
+                              # by a gate fire). One run, no sweep. TGSHADOW=1.
+    tradeGateBurn: float      # c in tradeEdgeMul, for tradeGateContest. Defaults to
+                              # TradeContestBurn; TGCONBURN=<f> overrides. Unread
+                              # unless tradeGateContest is on.
+    nadeFfVeto: bool          # ⭐⭐ GRENADE FRIENDLY VETO (2026-08-19, the AoE hole).
+                              # friendlyBlocked guards the GUN only; the lob has never
+                              # had a friendly check of any kind, so every mate the
+                              # blast catches is unvetoed BY CONSTRUCTION. Two gates,
+                              # both off the one `friendlyInBlast` disc test:
+                              #   (a) SELECTION — a candidate impact point with a mate
+                              #       predicted inside the burst is not a target at all
+                              #       (no charge is even started, so nothing is wasted);
+                              #   (b) RELEASE — the charge takes 3-24 ticks and the fuse
+                              #       another 10, so a mate can walk in AFTER the throw
+                              #       was planned. The engine throws on the C RELEASE
+                              #       edge, so a charge cannot be aborted; the veto
+                              #       therefore HOLDS the charge (the same mechanism
+                              #       nadeLob's turret-settle wait already uses) for at
+                              #       most NadeFfHoldMax ticks, then throws anyway.
+                              # Ships OFF. NADEFF=1 arms it, NONADEFF=1 force-reverts on
+                              # top; NADEFFTEAM=<n>[,<n>] in grabprobe arms one team so a
+                              # local run is not a mirror.
+    sprayFfVeto: bool         # ⭐⭐ SPRAY FRIENDLY VETO (2026-08-19, the AoE hole). Same
+                              # missing check in the other AoE weapon: the arc-breacher
+                              # presses attack on pure enemy geometry and the sim's cone
+                              # hits EVERY body in the wedge, mate included. Blocks the
+                              # press (never the approach) when `friendlyInCone` puts a
+                              # remembered mate inside the wedge the engine would cut —
+                              # so the can is not spent, and the next tick re-tests.
+                              # Ships OFF. SPRAYFF=1 arms, NOSPRAYFF=1 force-reverts;
+                              # SPRAYFFTEAM=<n>[,<n>] isolates a team in grabprobe.
+    raidFrame: bool           # ⭐⭐⭐ THE RAID FRAME (2026-08-20). `homeSign`'s SIGN is
+                              # correct — 0 inverted frames in 172,364 across all four
+                              # colours on real hosted boards — but its AXIS is wrong.
+                              # Hosted corners board: Red(186,99) Blue(1048,99)
+                              # Green(186,559) Yellow(1048,559): 862px apart in x, 460px
+                              # in y. Under nearest-rival raid targeting THE RAID AXIS IS
+                              # PURELY ±y on 100% of boards, while every homeSign
+                              # expression is purely ±x — and the two colours that SHARE a
+                              # home x are exactly the two nearest-rival pairs, so an
+                              # x-only sign CANNOT DISTINGUISH OUR OWN BASE FROM THE BASE
+                              # WE RAID. That is an ALIAS: it does not lose precision, it
+                              # names the wrong place. Measured consequence, replicated on
+                              # three byte-exact hosted boards: the FLANK STAGING POINT
+                              # lands in an uninvolved THIRD PARTY's Voronoi cell on
+                              # 97.3-99.8% of the ~14k frames/board it is written, against
+                              # a body-position baseline of 6.8-10.1%.
+                              # THE FIX, one frame instead of one axis:
+                              #   o     = (ownHome + stealTarget)/2
+                              #   f     = norm(stealTarget - ownHome)
+                              #   perp  = (-f.y, f.x)
+                              #   fwd   = dot(me - o, f)
+                              #   stage = o + f*depth + perp*(laneY - CenterY)
+                              # Two call sites, and they are ONE UNIT: the flank staging
+                              # point and its coupled release `behindLines`. Move the
+                              # staging point without the release and the flanker walks to
+                              # a point whose x never satisfies the x-keyed release gate,
+                              # re-asserts the same anchor every frame, and PARKS FOREVER.
+                              # ⭐ ALGEBRAICALLY REDUCES ON 2 TEAMS: f == vec(-homeSign,0)
+                              # and o == (CenterX, CenterY) on a symmetric two-base board,
+                              # so stage == vec(CenterX - homeSign*depth, laneY) and
+                              # fwd == -homeSign*(me.x - CenterX) EXACTLY. Gated at the
+                              # CALL SITE on GameTeams > 2 anyway (the ffaMedSee shape —
+                              # GameTeams is unknown when the tune is built), so 2-team is
+                              # untouched twice over. Default ON; NORAIDFRAME=1 reverts;
+                              # RAIDFRAMETEAM=<n>[,<n>] (RAW ENGINE INDEX 0..3) isolates.
+    lockOne: bool             # ⭐⭐⭐ ONE LOCK OWNER (2026-08-20, the lockfix merge). See
+                              # the field's read site in decide() for the full measurement:
+                              # 63.2% of live-target switches inside a <=20-tick window land
+                              # <=60px from the abandoned target (the same cluster, not the
+                              # same body moving), and `updateTracks` matches sightings to a
+                              # track by POSITION within 40px, so one enemy can hold TWO live
+                              # tracks — both inside the 60px lock disc, both collecting the
+                              # full CommitBonus and the StickyDangerCap exemption, so the
+                              # commit bonus CANCELS against a ghost of itself exactly in the
+                              # crowded fight the lock was written to protect. The fix elects
+                              # ONE owner (the fresh, in-range candidate nearest the lock fix)
+                              # and gives the bonus + exemption to it alone; it is a STRICT
+                              # NO-OP whenever at most one track sits in the disc.
+                              # ⛔ MIGRATED OFF PROCESS ENV (2026-08-20). This used to be
+                              # `getEnv("NOLOCKONE")` read DIRECTLY inside decide(), PER
+                              # FRAME PER BOT — invisible to the lever-liveness tripwire
+                              # (which audits this CombatTune switch panel, not decide()'s
+                              # body) and impossible to seat-isolate in any rig, because
+                              # every bot in one process reads the SAME env var, so both
+                              # arms of an in-process A/B always agreed (common-mode).
+                              # Same class of fix as the raidFrame/sprayConeFire migration
+                              # before it: the knob now lives here, stamped ONCE per bot in
+                              # shippedCombatTune(), and decide() reads `bot.tune.lockOne`
+                              # instead of calling getEnv itself.
+                              # Ships DEFAULT ON in code with a NOLOCKONE=1 opt-out (the
+                              # arcStandoff / touchCommit / raidFrame shape) — NEVER a
+                              # container ENV, which sat a shipped lever DARK for nine days.
+                              # NOLOCKONE=1 is proven byte-identical to base 702701e by the
+                              # FNV-over-every-emitted-button-mask fingerprint (the migration
+                              # only moves WHERE the env is read, not the truth table);
+                              # LOCKONETEAM=<n>[,<n>] (RAW ENGINE INDEX 0..3) isolates it in
+                              # grabprobe, the same shape as RAIDFRAMETEAM/SPRAYCONETEAM.
+
+  Bot = ref object
+    slot: int
+    ringT0: int               # tick of our FIRST ALIVE frame, the origin we
+                              # integrate the ring schedule from. The engine
+                              # measures the shrink from the moment the match
+                              # phase starts and never states the elapsed count
+                              # on the wire, so this is our only clock. -1 =
+                              # not yet started.
+    team: Team
+    myColor: string           # our ACTUAL wire color ("red".."yellow"): the
+                              # slot-dealt guess until the self marker — the one
+                              # sprite only we ever see — confirms it. On a
+                              # 4-team board the red/blue parity guess is wrong
+                              # for half the seats, and a wrong color blinds
+                              # every label scan (the statue bug).
+    colorLocked: bool         # self marker seen this game: myColor is truth
+    stealPedPos: Vec          # OBSERVED enemy pedestal (never fogged); cached
+    stealPedSeen: bool        # because the banner vanishes while it is carried
+    ownPedPos: Vec            # our own pedestal, likewise observed
+    ownPedSeen: bool
+    wasCarrying: bool         # edge detector for our OWN carry (grabPos stamp)
+    grabPos: Vec              # where THIS carry began: the fight-out breakout
+                              # is measured from the actual snatch point
+    carryColor: string        # carryAnyHeart (#17): the colour of the heart whose
+                              # carried banner is centred on US. Pins enemyColor for
+                              # the duration of the carry so the raid-target re-pick
+                              # cannot blind the self-carry test. Per-BOT, not a module
+                              # global — the in-process harness shares globals and a
+                              # once-per-frame stamp there would cross bots.
+    aimStepBrads: int         # GV36: brads the server turns per held rotate
+                              # tick (aimTurnRate SLOTS x 8). Inferred live
+                              # from own-aim marker deltas (default 40 = the
+                              # league manifest's aimTurnRate 5), so a config
+                              # change cannot silently break the servo again.
+    prevStatedAim: int        # last frame's stated aim, for the inference
+    lifeStart: int            # tick of this life's (re)spawn; shieldRush's
+                              # opening window is per LIFE, since every respawn
+                              # starts at the shield's own column
+    plantUntil: int           # DEAD with the reverted CQB plant (see CqbRange):
+                              # zeroed in resetTransient, never set nonzero and
+                              # never read. Suppressed movement after a close-
+                              # range trigger pull; the A/B lost 1-9-2.
+    role: Role
+    roleOrd: int               # ⭐ MID-QUAD BREAK (2026-08-14): how many LOWER seats are
+                               # dealt the SAME role as me. 0 = I am the primary holder
+                               # (byte-identical behaviour); >0 = I am a duplicate and
+                               # roleSep hands me a separated lane/depth. Derived from
+                               # roleForSeat alone — a pure function of (seat, team,
+                               # GameTeams) — so it needs no comms and no perception, and
+                               # it is recomputed beside `role` on every re-deal (the
+                               # 4-team colour re-lock can change the deal mid-episode).
+    teamSeat: int              # ⭐ SEAT-IDENTITY FIX (2026-08-07, v45): the physical
+                              # team-seat (slot div teams, same formula that picks
+                              # `role` below) — the STABLE identity a "one designated
+                              # seat" lever (shieldRush/comboGrab/sprayGrab's own-seat
+                              # exclusion) must key on. roleForSeat's table assigns the
+                              # SAME role to two different seats per team (MidBottom ==
+                              # seat 2 and seat 4 for Red, seat 3 and seat 4 for Blue —
+                              # verified by enumerating every case branch), so any check
+                              # written as `bot.role == roleForSeat(N, team)` silently
+                              # matches BOTH physical seats whenever N collides with
+                              # another seat's role. Comparing `bot.teamSeat == N`
+                              # directly sidesteps the whole role table.
+    tune: CombatTune          # fire/engage knobs; default == baseline consts
+    tick: int                 # sim ticks, advanced by frames received
+    navBuilt: bool
+    navBuiltColor: string     # ⭐ anchorRelock: the color buildNavGrid resolved
+                              # the five tactical anchors (post/enemyPosts/
+                              # dominatePost/chokeHold/funnelThroat) FOR. On a
+                              # 4-team board buildNavGrid runs on the first
+                              # walkabilityReady frame, often before the self-
+                              # marker color lock in decide() corrects the
+                              # initial slot-mod-teams parity guess — compared
+                              # against bot.myColor once the lock lands so a
+                              # stale guess can trigger exactly one re-run.
+    anchorsRelocked: bool     # one-shot guard: the anchorRelock re-run has
+                              # already happened (or was checked and not
+                              # needed) this episode, so it never repeats.
+    cellWalkable: seq[bool]   # eroded walkability, GridW x GridH
+    coverCell: seq[bool]      # walkable cells hugging an obstacle
+    exposure: seq[bool]       # cells a remembered enemy could shoot into
+    navDist: seq[int32]       # cost field toward navGoal
+    navGoal: int              # goal cell of the current field, -1 = stale
+    navStamp: int             # tick the field was computed
+    postHold, postPeek: Vec   # overwatch cover post and its peek cell
+    postReady: bool
+    enemyPosts: seq[Vec]      # the mirrored ENEMY sniper peek cells
+    chokeHold: Vec            # defender hold point snapped to cover
+    funnelThroat: Vec         # fatalFunnel: center of the narrowest walkable
+                              # passage on the enemy's approach axis to our
+                              # pedestal (pure deterministic map geometry,
+                              # computed once from the walkability grid)
+    funnelReady: bool
+    dominatePost: Vec         # #7 POINT OF DOMINATION: the defensive cover cell
+    dominateReady: bool       # with the widest clear LOS over the enemy approach
+    behindLines: bool         # flanker has crossed deep into the enemy half
+    enemies: seq[Track]
+    mates: seq[Track]
+    carrierPos, carrierVel: Vec   # last fix on the thief carrying OUR flag
+    carrierSeen: int
+    koReleased: seq[tuple[pos: Vec, tick: int]]
+                              # koRelease: death spots already released, with the tick, so
+                              # one KO marker expires one track ONCE across its 44-tick life
+                              # (the damage-pop object pool recycles ids, so objectId dedupe
+                              # — the corpse path's trick — is not available here).
+    corpseSeen: seq[int]      # v48 kill release: corpse sprite objectIds already
+                              # processed, so each death expires a track ONCE
+                              # (a lingering corpse must not re-expire a fresh
+                              # track when a live enemy later walks over it)
+    lastEnemySeen: int        # last tick ANY enemy was inside our vision
+    gameStart: int            # tick of the last lobby-to-playing transition
+    firedLast: bool           # A was set on the previous sent mask
+    estAim: int               # dead-reckoned own aim angle in brads
+    rotSign: int              # rotation of the last sent mask: +1 B, -1 Select
+    wasDead: bool             # respawn resets the aim to the spawn heading
+    scanHigh: bool            # scan sweep currently heading to the high end
+    lastPos: Vec
+    stuckTicks: int
+    jinkUntil: int
+    jinkBits: uint8
+    nadeCharge: int           # ticks the C button has been held; 0 = idle
+    mateFixPos: Vec           # last SEEN position of a mate-carried enemy heart
+    mateFixTick: int          # tick of that sighting; 0 = never seen this game
+    nadeNeed: int             # charge ticks required for the planned throw
+    nadeLockAim: int          # nadeLob: lob bearing frozen at charge start (-1 idle)
+    nadeHold: int             # nadeLob: full-charge ticks spent waiting for the turret
+    nadeFfHold: int           # nadeFfVeto: ticks this charge has been HELD because a
+                              # mate is predicted inside the burst. Bounded by
+                              # NadeFfHoldMax so a blocked bot never freezes for good.
+    nadeStaleArm: bool        # staleNade: this charge was armed on a STALE
+                              # (remembered, wall-blocked, camped) cluster, not
+                              # a fresh sighting — carried to the release so the
+                              # probe can score the two classes separately
+    nadeDryUntil: seq[int]    # nadeSupply: parallel to nadeDepots — tick until
+                              # which that corner is believed EMPTY (we stood on
+                              # it and got nothing), so we stop walking to it
+    nadeDepots: seq[Vec]      # nadeSupply: known grenade spawn points. Seeded
+                              # from the sim's STATIC corner geometry where the
+                              # layout is knowable, then extended with anything
+                              # we actually see. Static per episode, so this is
+                              # map knowledge, not a track.
+    shoutWant: string         # chat packet to send after this frame's input
+    lastShoutTick: int        # rate limit: server allows one shout per second
+    heardPlay: ReactPlay      # COMMS BUS: play decoded from the last heard codeword
+    heardPlayTick: int        # tick that codeword was heard (decays after CommsPlayTtl)
+    heardPlayPos: Vec         # ⭐ v56 PLAY EXECUTORS: the CALLER's rough (jittered)
+                              # bubble position for that codeword. A play call is only
+                              # actionable if you know WHERE it was called from — every
+                              # v56 movement executor (stack converge / wipe lane / line
+                              # divert) is a bounded pull relative to this point. x<0 =
+                              # unknown (never set, or the call was our own bubble).
+    lastCommsTick: int        # own rate limit for emitting a scenario codeword
+    lockPos: Vec              # committed target's last-known position, matched
+    lockUntil: int            # frame-to-frame; commit holds it until this tick
+    aimLockPos: Vec           # TARGET-LOCK: the enemy the turret is pinned on,
+    aimLockUntil: int         # held (aim stays on its bearing) until this tick
+    retreatUntil: int         # force-balance withdrawal committed until this tick
+    declineUntil: int         # ⭐⭐ L2 VOLUME GATE (tradeGate): a SEPARATE commit
+                              # timer from retreatUntil, deliberately never routed
+                              # through the home-biased regroupTo fallback —
+                              # spending less time at home predicts WINNING
+                              # field-wide, and we already sit below the field's
+                              # own home-dwell share, so a lever that fires on
+                              # every even matchup (not just genuine overmatch)
+                              # must not erode that edge. See `declining` below.
+    bankCell: int             # woundedBank: cached LOS-break bank cell (-1 = none)
+    bankCellTick: int         # woundedBank: tick that cell was computed (BankRecalc)
+    bankBlindSince: int       # woundedBank: last tick a fresh threat had a clear
+                              # pixel ray to us (HOLD sub-mode after BankBlindTicks)
+    when defined(wbprobe):
+      pWasBanking: bool       # probe: banking state last frame (segment edges)
+      pBankEnter: int         # probe: tick the current bank segment began
+      pHadLine: bool          # probe: a fresh threat line existed this segment
+      pBroke: bool            # probe: that line was broken this segment
+      pHp1Since: int          # probe: tick own hp became 1 (-1 = not at hp 1)
+    shieldRushDone: bool      # shieldRush: latched once we grabbed the opening shield OR
+                              # gave up (mate took it) — stops re-detouring mid-run
+    comboGrabDone: bool       # comboGrab: latched once the ComboGrabSeat holds BOTH the
+                              # shield and the can — stops re-detouring after that (same
+                              # shape as shieldRushDone)
+    assaultUntil: int         # assaultThrough: near-ambush charge committed until
+                              # this tick (Battle Drill 4 — never turn your back
+                              # at knife range once the charge is on)
+    regroupReleaseUntil: int  # regroupPush: once the wave is grouped, the joint
+                              # push is committed until this tick (hysteresis so we
+                              # don't re-hold the rally as the pack naturally spreads)
+    regroupHoldUntil: int     # regroupPush: sticky rally-hold — set while holding so
+                              # pulling back below the trigger depth keeps holding
+                              # (continue at the shallower rally line) instead of
+                              # stuttering forward across the trigger line and back
+    holdLineReleaseUntil: int # holdLine: once local fire-superiority / a grouped wave
+                              # releases the line-hold, commit the joint push until this
+                              # tick (hysteresis, mirrors regroupReleaseUntil)
+    holdLineHoldUntil: int    # holdLine: sticky rally-hold (mirrors regroupHoldUntil)
+    ownHp: int                # our own hp last frame (MaxHp = full); 0 = unread
+    ownLives: int             # ⭐⭐ our own REMAINING lives (ffa4 lives audit,
+                              # 2026-08-17), read off the `lives <hp>hp x<lives>`
+                              # top-right HUD marker (selfLives) — a channel this
+                              # policy had never consumed before. 0 = unread/dead/
+                              # eliminated; lastLifeGuard acts when this reads 1.
+    surpriseShoutTick: int    # last tick we shouted "oh shit!" (own rate limit)
+    dieShoutTick: int         # last tick we shouted "die" (own rate limit)
+    orientPos: Vec            # a heard-shout / damage bearing to face for a beat
+    orientUntil: int          # keep the vision cone on orientPos until this tick
+    calloutPos: Vec           # SHOUT-REACTION GATE: nearest callout heard THIS
+    calloutTick: int          # frame — STAGED for the task gate (start of decide),
+                              # not yet acted on. The gate (once commitment state
+                              # is known) decides whether it earns a cone glance,
+                              # which reuses orientPos/orientUntil.
+    sentrySince: int          # SENTRY DISPLACE: tick this sentry settled on its
+                              # current post; a dwell past SentryDwellTicks with no
+                              # target triggers a lateral shift to the next vantage.
+    sentryShift: float        # current lateral offset (± along the watch face) the
+                              # sentry adds to its post; flips sign each displacement.
+    mateKoSeen: seq[tuple[pos: Vec, tick: int]]
+                              # mateKo*: own-colour KO marker spots already consumed,
+                              # with the tick. A damage-pop object id is RECYCLED from
+                              # a fixed pool, so unlike a corpse it cannot be deduped
+                              # by objectId — dedupe by PLACE for one marker's life,
+                              # which also lets a NEW death on the SAME spot re-stamp.
+    mateDeathPos: Vec         # v56 rearTurn/dangerPreAim: freshest MATE-corpse
+    mateDeathTick: int        # first-appearance fix ((-1,-1)/-100_000 = none),
+                              # matched to a remembered mate track so our own
+                              # lingering corpse scanned right after respawn
+                              # can't masquerade as a mate death
+    lastMateAlive: int        # last tick with positive evidence of a LIVE mate
+                              # (a seen mate, or a mate shout bubble that is not
+                              # our own); a mateDeathTick newer than this for
+                              # MateGoneTicks = we believe we are the last man
+    doorDeathY: array[HotDoorSlots, float]   # ⭐ hotDoor: ring of remembered
+    doorDeathTick: array[HotDoorSlots, int]  # deaths IN THE CROSSING BAND — our
+    doorDeathN: int                          # own (always known, survives our
+                              # respawn: resetTransient runs per ROUND, not per
+                              # life) plus mate corpses we actually saw. This is
+                              # the only camper evidence a fogged client has.
+    doorRerouteY: float       # hotDoor: committed alternate crossing height
+    doorRerouteUntil: int     # (-1 = none), held until this tick
+    waveGateUntil: int        # waveGate: this hold expires here (HARD cap)
+    waveGateHolding: bool     # waveGate: a hold is open right now (edge state, so
+                              # the cap is armed once per hold, frameAdvance-safe)
+    waveGateSpent: bool       # waveGate: this re-entry's ONE hold budget is
+                              # used; cleared once we are back in the enemy half
+                              # (or back deep home), so a hold can never repeat
+                              # itself into a statue
+    prevDepth: float          # depth into the enemy half last ALIVE frame; the
+    prevDepthSet: bool        # midline-crossing edge detector (probe + waveGate)
+    lastHitPos: Vec           # v56 dangerPreAim: most plausible source of the
+    lastHitTick: int          # last unseen hit (muzzle ring / freshest track /
+                              # behind-our-aim guess) — outlives the short
+                              # orient window so the cruise aim can pre-lay it
+    arcBreachUntil: int       # ARC BREACHER: once the designated seat commits to the
+                              # arc run (a line was live and we broke off for the pickup),
+                              # hold the commit until this tick so a FLICKERING line read
+                              # (localSc/heardPlay decay frame-to-frame) can't abort the
+                              # ~200px trek to the back-corner spawn mid-run. Movement-only.
+    arcLinePos: Vec           # ARC BREACHER convergence: last-known location of the called
+                              # line (own cluster centroid when we classify ScLine, or a
+                              # heard caller's bubble when we adopt RpLine). A disarmed dry
+                              # breacher charges HERE, not a blind me.y seam (the audit's
+                              # "cones an empty lane" fix) — so the armed cone converges on
+                              # the REAL cluster across fog. (-1,-1) = no line located yet.
+    arcLineTick: int          # tick arcLinePos was set; decays with CommsPlayTtl so a stale
+                              # location doesn't pull the breacher onto a line that's gone.
+    sawLineTick: int          # ARC BREACHER opponent-adaptivity: last tick ANY line was seen
+                              # (classified locally OR heard). The proactive pre-arm requires
+                              # this to be recent — so the breacher only trades its gun for the
+                              # arc vs opponents that ACTUALLY play defensive lines (h006-style).
+                              # vs an aggressive no-line field it stays a full gun (dormant),
+                              # never paying the disarm cost for a line that never comes.
+    arcBackTick: int          # ⭐ arcStandoff: last tick the back-off actually drove our feet.
+                              # Latch gives the retreat ring hysteresis (ArcStandoffLatch ticks)
+                              # so we don't flip-flop closing/backing at the ring boundary.
+    kitSpots: seq[Vec]        # ⭐⭐⭐ kitSel: OBSERVED med-kit spawn points. Banked
+                              # from sightings, never computed — the formula
+                              # medEcon uses (MedKitAX/AY, BX/BY) is a hand-authored
+                              # `arena` truth that the map GENERATOR does not honour,
+                              # so it addresses empty floor on the real board. A kit
+                              # spawn never moves within an episode (sim.resetMedKits
+                              # runs once), so one look is permanent map knowledge —
+                              # exactly the nadeDepots contract. Static per episode:
+                              # this is map knowledge, not a track.
+    kitDryUntil: seq[int]     # kitSel: parallel to kitSpots — tick until which
+                              # spot k is believed EMPTY, set when we stand on it
+                              # and see no sprite. 0 = believed stocked.
+    kitSeenTick: seq[int]     # kitSel: parallel to kitSpots — last tick we had
+                              # eyes on spot k. Separates "its sprite is in my cone
+                              # right now" (certain) from "I remember it" (likely).
+    shieldSpots: seq[Vec]     # ⭐⭐⭐ shieldAddr: OBSERVED shield spawn points. Banked from
+                              # sightings, never computed — the formula ownShieldSpawn uses is a
+                              # two-team `layoutSides` truth the map generator does not honour on
+                              # any other layout, and the policy's Team enum cannot even name
+                              # green or yellow. A shield spawn never moves within an episode
+                              # (sim.resetShields runs once), so one look is permanent map
+                              # knowledge. Static per episode: map knowledge, not a track.
+    shieldDryUntil: seq[int]  # shieldAddr: parallel to shieldSpots — tick until which spot k is
+                              # believed EMPTY, set when we stand on it and see no sprite.
+                              # 0 = believed stocked.
+    probeHadShield: bool      # -d:shprobe bookkeeping ONLY: last frame's iHaveShield, so the
+                              # probe can count shield ACQUISITIONS tune-INDEPENDENTLY — a
+                              # SHIELDADDR-unset run of the SAME binary is then the control,
+                              # the msHeals/wbprobe pattern. Never read by any decision.
+
+proc roleForSeat(seat: int, team: Team): Role =
+  ## Deterministic role spread over the 8 per-team seats. Seats 2 and 3 both
+  ## spawn at flag height, but the sim's un-mirrored +-6px spawn offset makes
+  ## seat 3 the closest spawn to the flag for Red and seat 2 for Blue — the
+  ## rusher takes whichever is closest so we win the opening pickup race.
+  ## Under fog the attack wave is six strong (a mid quad plus two flankers):
+  ## with no global flag tracking a carrier that slips the contest is hard to
+  ## reacquire, so committed offense converts steals into captures, and the
+  ## back line is one lane sniper plus the home defender.
+  when defined(rushAll):
+    # Shuffled-seat leagues deal this policy 1-2 agents onto random mixed
+    # teams: coordinated-wave roles waste the seat, and a single capture wins
+    # the episode outright, so every seat plays the flag-racing rusher.
+    MidTop
+  else:
+    # ⭐ PREFIX-BALANCED SPREAD. The old order allotted eight roles to eight
+    # seats and assumed we owned ALL of them — true in the 8v8 league, false in
+    # every paintbot variant. Paintbot seats four entrant policies per episode,
+    # so we hold a STRIDED SUBSET of our team: team-seats {0,2,4,6} on a 2-team
+    # board, {0,1,2,3} on a 16-seat four-team board, all eight only on 4ffa8.
+    # Under the old order those subsets came out as four attackers and NO
+    # defender and NO overwatch (and on 4ffa8 the div-2 clamp saturated and
+    # produced FOUR home defenders on a giant map).
+    #
+    # So the order is now balanced on the prefixes we actually get dealt, and
+    # the squad is self-sufficient instead of assuming the other half of the
+    # team complements it — we do not control those seats, and in 2v2 they are
+    # a different entrant with its own plan.
+    #   {0,2,4,6} -> MidTop, HomeDefender, MidBottom, Overwatch
+    #   {0,1,2,3} -> MidTop, MidBottom, HomeDefender, MidGuard
+    #   {0..7}    -> three mids, two flanks, guard, overwatch, defender
+    # Every one of those carries at least one body on our own heart, which in a
+    # free-for-all is existential: a capture ELIMINATES us outright (GV32).
+    # ⚠️ The prefix-balanced REORDER of this table was measured and REJECTED:
+    # seat-rotated 2v2 A/B, 8 seeds both seatings, kill differential armR -46 /
+    # armB +5 (seat-adjusted -20.5). It has to be positive on BOTH seatings to
+    # count, and it was strongly negative on one. Plausible mechanism: in a
+    # regime where captures almost never happen (1 in 13 games locally), the
+    # HomeDefender and Overwatch it buys have nothing to do, and it paid two
+    # attackers for them. The ORIGINAL order stands.
+    #
+    # What survives from that work is the SEAT INDEX below (slot div teams,
+    # the engine's own slotIdentityIndex) — that is a plain bug fix: the old
+    # div-2 reading ran past this table on a 32-seat four-team board and
+    # clamped four seats onto HomeDefender.
+    # ⛔ MEASURED AND REJECTED (2026-08-03): a free-for-all role spread that
+    # promoted seats to HomeDefender when GameTeams > 2, on the reasoning that
+    # you win a 4-team board by being last standing so survival dominates.
+    # Paired mixed-opponent 4ffa8, 3 seeds, our policy vs a different policy on
+    # the other three teams: mean change in alive-fraction 0.00, mean change in
+    # our-heart-retention 84 ticks WORSE. A wash. Offence was unchanged (both
+    # arms carried an enemy heart zero times) — the earlier "it gave up
+    # offence" read came from an unpaired run on a nondeterministic rig.
+    # The premise may still be right; this implementation of it bought nothing.
+    # ⭐ v47 audit: on a 16-seat 4-team board EVERY entrant's teamSeat is
+    # 0..3, so the table below never dealt a HomeDefender or Overwatch there —
+    # zero bodies on our own heart in the mode where a heart capture is
+    # ELIMINATION (GV32), and every defensive branch (the purpose-built FFA-4
+    # route intercept, chokeHold, dominatePost, sentryDisplace) was dead code.
+    # The 2026-08-03 rejection of "promote a defender when GameTeams > 2"
+    # (4ffa8, alive-fraction 0.00 / retention 84t worse) measured the role
+    # while its ENTIRE toolkit was broken: the intercept was role-unreachable,
+    # defendTeeth was off, homeSign was a parity coin-flip and the pedestal
+    # target sat 58px off the heart. v47 fixes all four, so the premise is
+    # re-tested WITH working machinery, not re-shipped blind. NODEF4=1 reverts.
+    # 2-team boards keep the ORIGINAL order untouched (the seat reorder there
+    # measured -20.5 and stays rejected).
+    if GameTeams > 2 and seat == 1 and getEnv("NODEF4").len == 0:
+      return HomeDefender  # the MidGuard trailer becomes the heart guard
+    # ⭐⭐ ONE-DOOR BREAK, lever 1 (2026-08-14). NODOOR1=1 reverts.
+    # This is a SWAP OF EXACTLY TWO SEATS (1 <-> 6), not the prefix-balanced
+    # REORDER that was measured and rejected above at -20.5: the eight-role
+    # multiset is byte-identical, no role is added, dropped or doubled, and
+    # seats 0/2/3/4/5/7 are untouched. What changes is WHICH seats hold
+    # MidGuard and FlankTop.
+    # Why: in "1v1 (8 per team)" paintbot we hold slots {0,2,4,6}, i.e.
+    # teamSeats {0,1,2,3} — the PREFIX. The old prefix was
+    #   FlankBottom, MidGuard, Mid, Mid   -> ZERO FlankTop
+    # so all four attacking seats route mid-or-low and every path matches:
+    # r1692 e20 put all 8 entries through one 16px slot at y 566-582 of a
+    # 638px board and daveey's slot 7 farmed five kills on it. FlankTop is the
+    # ONLY role that runs the LaneTop (y=40) wide corridor, so it is the one
+    # role whose absence collapses the entry-y spread. The new prefix is
+    #   FlankBottom, FlankTop, Mid, Mid   -> both wide lanes covered
+    # MidGuard (a near-pedestal trailer at stealTarget + (60,-26)) is the
+    # cheapest thing in the prefix to spend: seats 2/3/4 already supply the
+    # mid stack, and MidGuard survives at seat 6 for the full 8-seat deal.
+    # ⚠️⚠️ TWO-TEAM ONLY, and the seat dump is why. On a 4-team board seat 1 is
+    # already claimed by the NODEF4 heart guard ABOVE, which returns before this
+    # table — so a blind swap parks FlankTop on the one seat that can never
+    # deal it and DELETES the role from the 4ffa8 8-seat deal outright
+    # (measured: 4-team multiset went missing=[MidGuard] -> missing=[FlankTop]).
+    # That is exactly the silent seat-contract break this change exists to fix,
+    # so 4-team keeps the ORIGINAL table byte-for-byte: it keeps its v47
+    # HomeDefender (a 4-team capture is ELIMINATION) and keeps FlankTop at seat
+    # 6. The door evidence is 2-team; nothing is folded into 4ffa blind.
+    # Verify with players/baseline/eval/seatdump.nim.
+    let doorSeat =
+      if getEnv("NODOOR1").len > 0 or GameTeams > 2: seat
+      elif seat == 1: 6
+      elif seat == 6: 1
+      else: seat
+    # ⭐⭐ MID-QUAD BREAK, lever 1 (2026-08-14). NOSEAT4=1 reverts.
+    # Seat 4's MidBottom is a LITERAL DUPLICATE: seat 2 or 3 already deals
+    # MidBottom on every colour (the colour only decides WHICH of the pair), so
+    # the table spent four of eight seats on the mid family and dealt one mid
+    # role twice. The roster scan flags exactly those seats and no others — Ε
+    # (this seat) went +0.20 → −0.14 K−D/ep across the v55 ship against a squad
+    # that went +0.06, and its co-holder Γ went +0.40 → −0.35.
+    # Eight seats over SEVEN roles means SOME role must double; the question is
+    # only which double is cheapest. It must not be a mid (that is the finding),
+    # and it must not be Overwatch or HomeDefender — buying a second post with
+    # an attacker is precisely the prefix-balanced reorder measured at −20.5
+    # above, whose stated mechanism was that in a near-captureless regime the
+    # post it bought had nothing to do. That leaves the two flankers.
+    # ⚠️ Which flanker is NOT decided by the entry-y evidence any more: the
+    # "all eight entries through y 566-582, so we are saturated LOW" reading came
+    # from the refuted one-door write-up (ours measured at the door vs the
+    # opponent's at the midline), and a stock filler on the same map found a
+    # second door with no role change at all — routing is map-derived and this
+    # table cannot see it. FlankTop is taken for a reason that does not depend on
+    # that: it is the only role in the deal whose ordinal would otherwise be
+    # unique, so doubling it is the one choice that separates cleanly under
+    # roleSep (a blended lane at 55% depth), whereas doubling a POCKET role puts
+    # two bodies on one pedestal however you offset them.
+    # The two FlankTops therefore do NOT become clones — which is why levers 1
+    # and 2 are coupled and lever 1 must never ship without lever 2.
+    # ⚠️ TWO-TEAM ONLY, same reasoning as lever 1 of the one-door break: the
+    # 4-team deal is a different table (seat 1 is the NODEF4 heart guard, seat 6
+    # keeps FlankTop, MidGuard is absent) and all four flagged seats are 2-team
+    # readings. 4-team keeps its MidBottom at seat 4 byte-for-byte, and roleSep
+    # separates that duplicate instead. Verify with eval/seatdump.nim.
+    # ⚠️ SCOPE, stated plainly because it bounds every claim below: on a 2-team
+    # board the strided league subset is teamSeats 0..3, so SEAT 4 IS NOT DEALT
+    # TO US on the partnered board at all. Lever 1 reaches only the FULL-SQUAD
+    # 2-team deal. Lever 3 (midSpread) is the only one of the three that touches
+    # the partnered and ffa4 deals, because it changes the mid trail geometry
+    # rather than the seat table.
+    # ⚠️ SEAT4TEAM is an EVAL-ONLY seat-rotated A/B knob, never set in a shipped
+    # tune. The other two levers of this package are tune fields, so the harness
+    # can strip them from one colour and score a within-episode head-to-head;
+    # roleForSeat is a pure function and cannot be re-stamped, so the fork has
+    # to live here. Unset (production) it is inert, and this whole proc runs
+    # ONCE per bot per episode (out of buildNavGrid), so the read is free.
+    # ⭐ It must be SEAT-ROTATED — run red-armed and blue-armed and average — or
+    # it measures the side, not the lever. That is exactly how the −20.5
+    # rejection above was scored, and it is the reason it counted.
+    let seat4Arm = getEnv("SEAT4TEAM")
+    let seat4Armed =
+      if seat4Arm.len == 0: true
+      else: (seat4Arm == "red" and team == Red) or
+            (seat4Arm == "blue" and team == Blue)
+    # ⛔⛔ MEASURED AND REJECTED, DEFAULT OFF (2026-08-14). The PREMISE held —
+    # seat 4 was a literal duplicate of seat 2/3's MidBottom, and with the
+    # package off it is the WORST seat on the board in the mirror too (pooled
+    # K/D 0.54, K−D/ep −0.69, both colours, 8 games x 900t) exactly as the field
+    # roster scan reported for Ε. Arming it fixes THAT SEAT hard: K/D 0.54 →
+    # 1.07, K−D/ep −0.69 → +0.12, the largest per-seat gain on the board.
+    # But the SQUAD does not gain. A mirror A/B is zero-sum by construction (the
+    # per-seat deltas sum to +0.02), so the only decisive rig is the SEAT-ROTATED
+    # A/B this file already demands three paragraphs up — "it has to be positive
+    # on BOTH seatings to count". Armed-side kill differential over 10 games:
+    #     all three levers   red-armed −3   blue-armed −19   seat-adj −11
+    #     levers 1+2 only    red-armed −11  blue-armed −1    seat-adj −6
+    # Negative on FOUR of four armed runs and positive on none. The crowding it
+    # was aimed at did not move either: own-colour DAMAGE rate 5.21% vs 5.23%
+    # (n≈650/arm), and pairwise "inside one grenade" is dominated by a ~2pp SIDE
+    # effect (Red 18.6% vs Blue 20.6%) with no lever effect once you split armed
+    # from unarmed. So the seat-level win is a REDISTRIBUTION: seat 4 stops being
+    # the worst seat by taking kills the other seats used to take.
+    # ⚠️ That is not a refutation of the finding, only of this implementation of
+    # it — the mirror has no camper holding one door and no focus-fire wave, so
+    # it cannot reward spreading, and this squad is already locally outnumbered
+    # in 41.7% of contact frames (rallyWave exists to GROUP us). It needs hosted
+    # episodes against a strong opponent. Until then it ships OFF, held to the
+    # same bar that rejected the prefix-balanced reorder at −20.5.
+    # ROLEQUAD=1 arms all three levers; the NOxxx reverts still disable them
+    # individually on top of that, so every A/B in the commit message reproduces.
+    let quadArmed = getEnv("ROLEQUAD").len > 0
+    let seat4Role =
+      if GameTeams <= 2 and quadArmed and seat4Armed and
+          getEnv("NOSEAT4").len == 0: FlankTop
+      else: MidBottom
+    # ⭐⭐⭐ SEAT-7 CATCH-ALL FIX (2026-08-17), the 4ffa8 double-defender bug.
+    # NOMIDGUARD8=1 reverts.
+    # On GameTeams > 2 the door swap above is forced off (doorSeat == seat), so
+    # this `else` catch-all is reached ONLY by seat 7 — the one teamSeat value
+    # none of the `of 0..6` arms name. Seat 1 is ALREADY a dedicated
+    # HomeDefender on GameTeams > 2 (the NODEF4 heart guard far above, which
+    # `return`s before this table runs at all), so seat 7's HomeDefender was
+    # never a second post — it is a DUPLICATE of the first, bought by deleting
+    # MidGuard (the role seat 1 gave up to become the guard) from the table
+    # outright, with nothing gained. seatdump proved it before this fix:
+    # missing=[MidGuard], dupes=[HomeDefender x2, MidBottom x2], on every
+    # GameTeams > 2 board, every existing env arm.
+    # Unlike seat 4's MidBottom duplicate above (a considered, separately
+    # gated trade), this one buys a second HomeDefender for FREE. Un-doubling
+    # it restores this table's own stated design — seven roles, eight seats,
+    # exactly ONE accepted double (seat 4's) — for the first time on
+    # GameTeams > 2. That is a structural fix, not a composition judgment.
+    # ⚠️ SCOPE: doorSeat only reaches 7 when teamSeat runs 0..7, which is the
+    # 4ffa8 32-slot board alone (teamSeat = slot div GameTeams, so a 16-slot
+    # four-team board — the ffa4 board proper — never deals any entrant a
+    # teamSeat past 3). This fix is therefore INERT on the 16-slot ffa4 deal:
+    # every one of our four HELD seats there (0..3) is byte-identical to the
+    # pre-fix table, on purpose — verified with eval/seatdump.nim. The 16-slot
+    # composition (one HomeDefender, MidGuard absent, three attackers) is a
+    # SEPARATE, deliberate question this fix does not answer; the measured
+    # ffa4 win-shape decides that, not a mirror redistribution here.
+    # ⚠️ 2-team is untouched too: seat 7 there is the long-shipped HomeDefender
+    # choke guard ("choke guard before our capture column") and this whole
+    # block is gated on GameTeams > 2, so `seat7Role` degrades to plain
+    # HomeDefender whenever GameTeams <= 2 — byte-identical to before.
+    # ⚠️ Reviving MidGuard means MidGuard-gated branches that have NEVER run on
+    # a GameTeams > 2 board (spray/rally/holdLine/regroupPush eligibility, the
+    # carrier-screen/thief-hunt cases, the PARK-invariant anchor at
+    # stealTarget+(60,-26)) fire there for the first time — verify they act
+    # sanely (frames>0, travel>0, PARK==0) rather than assuming code that only
+    # ever ran on 2-team ports cleanly.
+    # MIDGUARD8TEAM=red|blue arms this fix on ONE team PARITY only (same
+    # caveat as SEAT4TEAM above: Team is Red/Blue PARITY on a GameTeams > 2
+    # board — team-index 0/2 read Red, 1/3 read Blue — so this arms two of the
+    # four teams, not one), forcing the other parity back to the
+    # double-defender table, for a within-episode seat-rotated A/B. Unset =
+    # every team gets the fix. Verify with eval/seatdump.nim and -d:roleprobe.
+    let mg8Arm = getEnv("MIDGUARD8TEAM")
+    let mg8Armed =
+      if mg8Arm.len == 0: true
+      else: (mg8Arm == "red" and team == Red) or
+            (mg8Arm == "blue" and team == Blue)
+    let seat7Role =
+      if GameTeams > 2 and mg8Armed and getEnv("NOMIDGUARD8").len == 0: MidGuard
+      else: HomeDefender
+    case doorSeat
+    of 0: FlankBottom      # wide bottom lane, get behind the contest
+    of 1: MidGuard         # third mid, trails offset high and cleans up
+    of 2: (if team == Blue: MidTop else: MidBottom)
+    of 3: (if team == Red: MidTop else: MidBottom)
+    of 4: seat4Role        # was "fourth mid: the second trailing attacker" — a
+                           # duplicate of seat 2/3's MidBottom. Now the second
+                           # wide-lane body (2-team); 4-team is unchanged.
+    of 5: Overwatch        # cover post flanking the ring: the lane sniper
+    of 6: FlankTop         # wide top lane, get behind the contest
+    else: seat7Role        # 2-team: choke guard before our capture column
+                           # (HomeDefender, unchanged). 4ffa8 (32-slot,
+                           # GameTeams > 2): MidGuard, un-doubling seat 1's
+                           # heart guard.
+
+proc roleOrdinal(seat: int, team: Team): int =
+  ## ⭐ MID-QUAD BREAK lever 2 support. How many seats BELOW `seat` are dealt the
+  ## same role as `seat`. 0 = I am the primary holder of my role; >0 = I am a
+  ## duplicate, and roleSep separates my lane/depth from the primary's.
+  ##
+  ## Eight seats over seven roles means the deal ALWAYS doubles something, and
+  ## the two holders used to run identical routes with identical offsets — a
+  ## clone rather than a second body, which is how four mids ended up in one
+  ## corridor. This is a pure function of roleForSeat, which is itself a pure
+  ## function of (seat, team, GameTeams): every bot knows all three about
+  ## ITSELF, so the ordinal needs no comms, no perception and no fog-crossing
+  ## read. It is also stable across the env reverts — flip NOSEAT4 or NODOOR1
+  ## and the ordinal follows the table it is reading, so the arms stay coherent.
+  result = 0
+  let mine = roleForSeat(seat, team)
+  for s in 0 ..< clamp(seat, 0, 8):
+    if roleForSeat(s, team) == mine:
+      inc result
+
+proc selectPlay(elapsed: int, ownStolen: bool): Play =
+  ## The team's shared play, computed from SHARED signals ONLY so all 8 bots
+  ## converge on it independently (no comms). `elapsed` = tick - gameStart is
+  ## identical across teammates; `ownStolen` is globally legible flag state.
+  ## Deliberately keys off NOTHING local (my own sightings) — a local read would
+  ## split the team. Own flag stolen => everyone knows to defend/recapture; else
+  ## the favored attack flank oscillates on the shared clock so the strong side
+  ## is unpredictable to an opponent without per-game entropy (which doesn't
+  ## exist — spawns are deterministic).
+  if ownStolen:
+    StackDefense
+  elif ((elapsed div PlayPeriod) and 1) == 0:
+    PushTop
+  else:
+    PushBottom
+
+when defined(phprobe):
+  # -d:phprobe ONLY (2026-07-29): the contingency phase machine's OCCUPANCY. Answers the
+  # two questions the v21 design doc left as guesses: which phases the team actually
+  # occupies, and how late the GV23 clock (MaxTicks 5000 + banked overtimeTicks) runs.
+  # Never compiled into the shipped player.
+  var phFrames*: array[TeamPhase, int]   # decide() frames spent in each phase
+  var phMaxElapsed* = 0                  # the latest elapsed round-tick any bot observed
+  # defendTeeth funnel: which freshness tier the recapture intercept resolved to. A tier
+  # that stays 0 NAMES the gating condition (the diagnostic the v26 fix never had).
+  var dtFresh* = 0                       # frames steered at a FRESH predicted thief fix
+  var dtStale* = 0                       # ...at the crossing guard on the last fix's lane
+  var dtBlind* = 0                       # ...no usable fix at all (the v26 fallback)
+  var dtPhase* = 0                       # frames in PhDefend at all (the population)
+  var dtNotCarry* = 0                    # ...and not carrying (the movement block's gate)
+  var dtAttacker* = 0                    # ...and holding an ATTACKER seat (the 6 hunters)
+  var dtOn* = 0                          # ...and defendTeeth is actually ON in the tune
+
+proc teamPhase(elapsed: int, ownStolen: bool, efState: EnemyFlagState,
+               pickEdge: bool, forceTick: int = ForceClockTick): TeamPhase =
+  ## ⭐⭐ THE CONTINGENCY STATE MACHINE. A PURE function of shared signals so all 8
+  ## bots pick the SAME phase independently (the "backstop the caller" design — no
+  ## unit must survive to hold the plan). Priority order IS the branch tree: the
+  ## higher-priority trigger always wins, so a phase transition is unanimous and
+  ## instant across the team (no thrash, no split-decide). Order:
+  ##   1. ownStolen        (globally legible)      → DEFEND  — flag safety first, always
+  ##   2. we carry the heart (globally legible)    → ESCORT  — the capture window, collapse
+  ##   3. clock late + no edge (shared clock)      → FORCE   — beat the −1 timeout draw
+  ##   4. local pick edge (comms-accelerated hint) → PRESS   — spend the man-advantage
+  ##   5. opening window (shared clock)            → OPEN    — win the first clash grouped
+  ##   6. otherwise                                → PROBE   — pressure the read, hold finish
+  ## pickEdge is the ONE local-approximated input (a fresh local kill-advantage); it is a
+  ## convergence ACCELERATOR, not load-bearing — with pickEdge always false the machine
+  ## still flows OPEN→PROBE→(ESCORT/DEFEND/FORCE) purely on shared signals.
+  ## `forceTick` is the FORCE trigger (default = the untuned ForceClockTick constant so an
+  ## unflagged caller is byte-identical); forceTiming passes the measured ForceClockTickTuned.
+  ## It stays a parameter rather than a tune read so the machine remains a pure function of
+  ## its inputs — every bot passes the same compiled-in value, so the phase stays unanimous.
+  if ownStolen:
+    PhDefend
+  elif efState == EfCarried:
+    PhEscort
+  elif elapsed >= forceTick:
+    PhForce
+  elif pickEdge:
+    PhPress
+  elif elapsed < OpenPhaseTicks:
+    PhOpen
+  else:
+    PhProbe
+
+# ── COMMS BUS core (C1/C2, 2026-07-22) ────────────────────────────────────────
+proc roundSalt(gameStart: int, team: Team, crypto: bool): int =
+  ## The per-round rotation offset for the codeword table. With commsCrypto ON
+  ## it is a hash of (roundStart, team, the compiled-in secret) — identical
+  ## across our 8 same-team bots (they share gameStart + team + salt) but opaque
+  ## to a clone that hand-copied a static token→play map (it can't derive our
+  ## rotation without the salt). OFF => 0 = a fixed table (still 2-char codes).
+  if not crypto:
+    return 0
+  var h = uint32((gameStart * 2654435761'i64) and 0xFFFFFFFF)
+  h = h xor uint32(((ord(team) + 1) * 40503 + CommsSalt * 2246822519'i64) and 0xFFFFFFFF)
+  h = h * 2246822519'u32
+  h = h xor (h shr 13)
+  int(h mod uint32(CommsTokenPool.len))
+
+proc commsToken(rp: ReactPlay, salt: int): char =
+  ## play → opaque glyph. The play ordinal is rotated by the round salt into the
+  ## glyph pool, so which letter means which play changes every round (C2).
+  let idx = (ord(rp) + salt) mod CommsTokenPool.len
+  CommsTokenPool[idx]
+
+proc decodeCommsToken(c: char, salt: int): ReactPlay =
+  ## glyph → play (the inverse table every same-team bot builds identically).
+  let pos = CommsTokenPool.find(c)
+  if pos < 0:
+    return RpNone
+  let ord0 = (pos - salt + CommsTokenPool.len * 4) mod CommsTokenPool.len
+  if ord0 > ord(high(ReactPlay)):
+    RpNone
+  else:
+    ReactPlay(ord0)
+
+proc scenarioToPlay(sc: Scenario, flank: Play): ReactPlay =
+  ## The shared SEAL contingency matrix: scenario → the play to broadcast/adopt.
+  ## FLIP carries the clock flank so a heard flip still names top/bottom.
+  case sc
+  of ScNone:  (if flank == PushTop: RpFlipTop else: RpFlipBottom)
+  of ScStack: RpStack
+  of ScWipe:  RpWipe
+  of ScPeel:  RpPeel
+  of ScLine:  RpLine
+
+proc selectScenarioPlay(bot: Bot, elapsed: int, ownStolen: bool,
+                        localSc: Scenario): Play =
+  ## The event-driven play layer above selectPlay. Folds THREE inputs through one
+  ## shared, deterministic matrix so two bots on the same picture agree and a bot
+  ## that heard nothing degrades to its own read + the clock fallback (never a
+  ## split, never worse than the clock playbook):
+  ##   1. own-flag-stolen (globally legible) → StackDefense, as today, always wins
+  ##   2. a live heard play (commsPlay) within CommsPlayTtl, OR our own localSc
+  ##   3. the clock flank (selectPlay) as the tiebreak/fallback
+  ## Returns a Play; STACK/WIPE/PEEL map onto the existing posture set (they bias
+  ## the SAME flank machinery — the executor levers grabGate/regroupPush/huntCarrier
+  ## do the actual stack-hold / rally / peel; this only SELECTS + SYNCs them).
+  let clock = selectPlay(elapsed, ownStolen)
+  if ownStolen:
+    return StackDefense
+  # our own fresh classification takes priority; else a fresh heard play; else clock.
+  var rp = scenarioToPlay(localSc, clock)
+  if lvC(0, rp in {RpFlipTop, RpFlipBottom} and bot.tune.commsPlay and
+      bot.heardPlay != RpNone and bot.tick - bot.heardPlayTick <= CommsPlayTtl):
+    rp = bot.heardPlay          # no local event of our own — adopt the mate's read
+    when defined(commsprobe):
+      inc csAdopt
+  case rp
+  of RpFlipTop:    PushTop
+  of RpFlipBottom: PushBottom
+  of RpPeel:       StackDefense # peel to the recapture race (huntCarrier executes)
+  of RpStack, RpWipe, RpLine, RpNone:
+    # STACK/WIPE/LINE don't change the flank posture (grabGate/regroupPush/holdLine +
+    # the grenade cluster-target execute off their own local triggers); keep the
+    # shared flank so the wave still coheres while those executors do the real work.
+    clock
+
+proc defaultCombatTune(): CombatTune =
+  ## The shipped baseline's combat knobs, verbatim from the module consts.
+  ## A Bot constructed without an explicit tune (every shipped seat) gets this,
+  ## so its fire/engage decisions are byte-identical to the pre-refactor code.
+  CombatTune(
+    fireSlackPx: FireSlackPx,
+    freshShotTicks: FreshShotTicks,
+    leadTicks: LeadTicks,
+    windupLead: 0.0,          # control: the turret keeps the range-scaled lead.
+    windupSelfLead: 0.0,      # control: the muzzle is assumed not to travel.
+    combatDeadband: CombatDeadband,
+    fireRange: FireRange,
+    carrierFireRange: CarrierFireRange,
+    rushEngageRange: RushEngageRange,
+    escortEngageRange: EscortEngageRange,
+    pocketRushRange: PocketRushRange,
+    commit: false,            # the pure-baseline control: re-pick nearest each frame.
+    commitBonus: CommitBonus,
+    stickyCommit: false,      # control: satCap/dangerScore can pull the gun off a committed kill.
+    forceBalance: false,      # control: always press, no numbers awareness.
+    outnumberMargin: OutnumberMargin,
+    unstuckEngaged: false,    # control: shipped disables the jink when engaged.
+    aimLock: false,           # control: aim resets to the move lane off-target.
+    huntSweep: false,         # control: no active acquisition sweep.
+    fireOnRealBody: false,    # control: fire gate uses the full lead phantom.
+    windupFf: false,          # control: NO friendly-fire veto on the gun trigger.
+    windupFfAxis: false,      # control: unused while windupFf is false.
+    windupFfLead: 0,          # control: unused while windupFf is false.
+    windupFfSelfLead: 0.0,    # control: unused while windupFf is false.
+    windupFfMateRange: 0.0,   # control: unused while windupFf is false.
+    windupFfUnion: false,     # control: unused while windupFf is false.
+    windupFfShadow: false,    # control: unused while windupFf is false.
+    threatFacingBonus: false, # control: danger score ignores enemy facing.
+    shout: false,             # control: never shout.
+    shoutCallout: false,      # control: no enemy callouts.
+    shoutSurprise: false,     # control: no "oh shit!".
+    shoutDie: false,          # control: no "die".
+    reactContact: false,      # control: ignore heard shouts.
+    commsBus: false,          # control: never emit scenario codewords.
+    commsPlay: false,         # control: ignore heard scenario codewords (clock playbook only).
+    stackConverge: false,     # control: a heard STACK is decoded and DISCARDED (the v55 void).
+    stackHoldGate: false,     # control: a heard STACK never gates this bot's own pocket dive.
+    playMove: false,          # control: a heard WIPE/LINE moves no feet, only a hold threshold.
+    playLatch: false,         # control: the heardPlay slot is overwritten by any later token,
+                              # and every classifier re-shouts a play already in the air.
+    eCallout: false,          # control: no enemy callouts emitted, none taken in.
+    commsCrypto: false,       # control: no codeword rotation.
+    damageAware: false,       # control: no orient-to-shooter reaction.
+    rearTurn: false,          # control: an unseen hit with no ring is ignored; sentries never
+                              # consume the orient bearing and always watch -homeSign.
+    hazardSense: false,       # control: puddle/barrage markers stay unread.
+    dangerPreAim: false,      # control: idle cruise aim just leads the feet.
+    mateKoAim: false,         # control: no KO-marker seed; the mate-death aim rung
+                              # stays exactly as dark as it has always shipped.
+    mateKoWatch: false,       # control: the last-man watch keeps its static vector.
+    mateKoDoor: false,        # control: hotDoor keeps only its own-death witness.
+    mateKoStale: false,       # control: a dead mate stays a fresh regroup buddy.
+    staleNade: false,         # control: the nade scan keeps the GUN's 24-tick gate, so a
+                              # known wall-camped cluster is untargetable by construction.
+    nadeSupply: false,        # control: grenades are only collected when SEEN (90px bubble).
+    antiBunch: false,         # control: mates settle at MateSpacing(40), inside one blast.
+    carrierFlee: false,       # control: carrier advances toward a point-blank enemy.
+      carrierSerpentine: false, # control: carrier runs a straight predictable line home.
+    carryAnyHeart: false,     # control: carry is only detected on the current raid target.
+    cornerDeep: false,        # control: a corner zone's target is its bounding-box centre.
+    carrierSprint: false,     # control: carrier fights (engage 110px) instead of running.
+    carrierScreen: false,     # control: escort screens remembered threats, not the cone.
+      dangerScore: false,       # control: flat facing tiebreak only (threatFacingBonus).
+    twoSpeedScan: false,      # control: sentry sweep rakes past the hot bearing.
+    boundingOverwatch: false, # control: advance across open ground even on cooldown.
+    holdVsGun: false,         # control: a solo gun-down bot strolls away from a live gun.
+    woundedBank: false,       # control: a 1-hp bot fights on with its posture unchanged.
+    pointOfDomination: false, # control: overwatch posts scored by raw line length.
+    tempoPress: false,        # control: always duck on cooldown, never press dead time.
+    fireSuperiority: false,   # control: no press-vs-break judgement.
+    calloutGate: false,       # control: a heard callout reorients anyone in earshot.
+    aimThreat: false,         # control: threat uses the coarse facingRight half-plane.
+    cornerPreAim: false,      # control: a blocked target's aim leads its hidden body.
+    sentryDisplace: false,    # control: sentries root at one post and only sweep aim.
+    topBias: false,           # control: a fogged thief is guessed on the mid lane.
+    playbook: false,          # control: fixed role lanes, no shared-clock flank flip.
+    escortRun: false,         # control: no midfield interpose; carrier runs home alone.
+    huntCarrier: false,       # control: drop the chase when the thief fix goes stale.
+    preSlew: false,           # control: no-shot aim holds the NEAREST enemy, not the winnable draw.
+    staggerFire: false,       # control: a bot bounds forward on its own gun state, ignoring the mate's.
+    regroupPush: false,       # control: a lone over-extended mid feeds the respawn wave, no rally.
+    grabTiming: false,        # control: a rusher dives the pedestal unarmed even into a stacked pocket.
+    holdLine: false,          # control: an over-extended mid pushes into a standing enemy line alone.
+    shapeHoldPx: ShapeHoldLinePx,  # only consulted when oneRunner is on.
+    oneRunner: false,         # control: all six attack roles push, no designated runner, no held line.
+    grabGate: false,          # control: a rusher opens the unarmed dive without a local numbers edge.
+    avoidDisarm: false,       # control: pathing walks over v7 sword/shield pickups and self-disarms.
+    shieldTank: false,        # control: an escort never grabs a shield to body-block as a tank.
+    shieldRush: false,        # control: the rusher never pre-grabs a shield to carry home at 6 HP.
+    planLayer: false,         # control: flat scenario→play matrix, no contingency phase machine.
+    aimLegacy: false,         # default = the GV40 continuous servo.
+    rallyWave: false,         # control: the mid-lane group pull is armed for PhOpen only.
+    hotDoor: false,           # control: the route never changes, however many die on it.
+    waveGate: false,          # control: single bodies trickle through the crossing.
+    defendTeeth: false,       # control: PhDefend intercepts the WRONG entity (mateCarryPos).
+    forceClockTick: ForceClockTickTuned,  # only consulted when forceTiming is on.
+    forceTiming: false,       # control: PhForce stays at 3800 — measured 0 firing frames.
+    swordAmbush: false,       # control: a boxed-in bot never grabs a sword for a melee kill.
+    medTopOff: false,         # control: a wounded bot never detours to a center med kit.
+    medEcon: false,           # control: no static-coord kit routing (fog-visible kits only).
+    medSee: false,            # control: medEcon's candidates are the two formula spots only.
+    satCap: false,            # control: a free gun dogpiles the nearest enemy, no saturation cap.
+    mateAimPos: false,        # control: the angular mate-aim ray (v44 behavior, byte-identical).
+    noMask: false,            # control: a mover walks through a mate's live gun-line.
+    assaultThrough: false,    # control: a surprise at knife range triggers the retreat/duck jink.
+    offCone: false,           # control: an attacker beelines straight down the enemy's gun axis.
+    fatalFunnel: false,       # control: an idle sentry two-speed-sweeps, never pre-lays the chokepoint.
+    aimRotRead: false,        # control: aim intel comes only from the dead "aim dot" labels (none on v9).
+    arcStandoff: false,       # control: feet walk into a disarmed arc-carrier's 136px kill cone.
+    arcAlways: false,         # control (and shipped): the breacher only arms on a real line read.
+    arcBreach: false,         # control: no bot ever grabs the plasma arc offensively to cone a line.
+    gv21Press: false,         # control: fire-superiority break uses the standard outnumberMargin.
+    touchCommit: false,       # control: inside GrabCommitRing the grenade/engage/duck/peek branches
+                              # still outrank the 12px touch (the 71.8%-vs-94.9% conversion gap).
+    anchorRelock: false,      # control: the five nav anchors never re-run off a corrected color.
+    spraySingle: false,       # control: the arc breacher never fires the cone on a lone target.
+    sprayConeFire: false,     # control: the fire gate stays the radial 128px + 12-brad pair, i.e.
+                              # 79% of the shots the weapon can actually take stay refused.
+    sprayFireFirst: false,    # control: a 250px cluster still preempts a shot already in the cone.
+    comboGrab: false,         # control: sprayGrab's iHaveShield gate stays, no can-carrier shield-seek.
+    aggro: 1.0,               # control: today's shipped posture exactly (every multiply is a no-op).
+    medPeel: false,           # control: medEcon's aimedAtUs veto is unranged, MedKitLightContactHp stays 1.
+    ffaMedSee: false,         # control: medEcon's ffa4 candidates stay the two formula spots only.
+    kitSel: false,            # control: the two formula spots stay in the candidate set on every
+                              # board, arbitration stays raw-euclidean-nearest, and a spot carries
+                              # no presence evidence until the bot is standing within 26px of it.
+    shieldAddr: false,        # control: shieldRush navigates to the (50, 3H/4) / (W-50, 3H/4)
+                              # two-team formula on every board and for every colour, banks no
+                              # sighting, forms no dry belief, and never refuses the errand.
+    medEncum: false,          # control: holding a shield or an unspent spray can cancels
+                              # medEcon's heal errand outright for the rest of the life.
+    lastLifeGuard: false,     # control: a last-life bot dives the pocket and heals like any other.
+    koRelease: false,         # control: no KO-marker read; a killed enemy's track ages out on its own.
+    tradeGate: false,         # control: fireSuperiority presses on "not badly outnumbered", not "hold an edge".
+    tradeGateSquare: false,   # control: tradeGate (if armed at all) keeps the ADDITIVE TradeMinEdge bar.
+    tradeGateContest: false,  # control: a three-way melee is scored exactly like a duel — no bystander term.
+    tradeGateSelfHp: false,   # control: self and every mate count as a WHOLE gun at any hp (enemies do not).
+    tradeGateShadow: false,   # control: the gate, when armed, actually acts (no evaluate-only mode).
+    tradeGateBurn: TradeContestBurn,  # inert while tradeGateContest is false.
+    nadeFfVeto: false,        # control: the lob has NO friendly check — any mate inside the 52px
+                              # blast at burst simply eats it (the shipped behaviour today).
+    sprayFfVeto: false,       # control: the cone has NO friendly check — any mate inside the
+                              # 170px wedge simply eats it (the shipped behaviour today).
+    raidFrame: false,         # control: the flank staging point and its behindLines release
+                              # stay on the ±x homeSign axis — the aliased, shipped-today
+                              # behaviour that puts the staging point in a third party's
+                              # Voronoi cell on 97-99.8% of ffa4 frames.
+    lockOne: false,           # control: every candidate inside the 60px re-election disc
+                              # collects the full CommitBonus and the StickyDangerCap
+                              # exemption, so the commit bonus can cancel against a second
+                              # track of the same enemy (or a genuine crowd) exactly when
+                              # the lock is needed most.
+  )
+
+# ════════════════════════════════════════════════════════════════════════
+# v60 SHIP EVIDENCE (2026-08-21) — the 13-branch v59-integrate bundle (12
+# merges into this branch; homesign's fix folds into raidFrame BEFORE that
+# merge, so it lands as one commit here) plus this file's own lockOne ->
+# CombatTune migration, on top of v58 (702701e). Recorded at the lever
+# itself — shippedCombatTune is the one place every one of these tunes gets
+# stamped — so the ship decision travels with the code, not a report only.
+#
+# NEWLY DEFAULT-ON below (opt-out only; arms with NO ENV SET, same idiom as
+# windupFf/arcStandoff/touchCommit — NEVER a container ENV, the v30 lesson):
+#   tradeGate                  NOVOLUME    the 4-team even-trade decline gate,
+#                               FLIPPED from opt-in (used to need VOLUME=1) to
+#                               shipped.
+#   raidFrame                  NORAIDFRAME flank staging off the raid axis,
+#                               not homeSign's +-x axis (the homeSign rig-
+#                               inversion fix is folded in).
+#   lockOne                    NOLOCKONE   single lock-owner across the 60px
+#                               re-election disc (THIS FILE migrates its
+#                               getEnv out of decide(), see the field doc).
+#   windupLead / windupSelfLead        NOWLEAD     gun windup aim lead.
+#   sprayConeFire / sprayFireFirst     NOSPRAYCONE / NOSPRAYFIRST
+#                               cone-geometry fire gate.
+# Everything else the 13 branches touched ships OFF BY DESIGN (opt-in only —
+# unproven or futility-bounded, not a bug): kitSel, shieldAddr, medEncum,
+# koRelease, mateKoAim/Watch/Door/Stale, tradeGateSquare/Contest/SelfHp/
+# Shadow. Each needs an explicit positive env value to arm; do not container-
+# ENV any of them in either direction.
+#
+# Evidence (branch maxwell/v59-integrate, full record in
+# ~/.ctf/knowledge/experiments/successful.md 2026-08-21):
+#   2-team, seat-rotated, n=30/arm, CONTROL_SHIPPED=1 SHIPBASE=1, null arms
+#   verified seed-by-seed: wins +11 RED (4.0 sigma) / +2 BLUE (0.7 sigma);
+#   enemy-inflicted deaths -11.3% / -3.3%; shots DOWN both seatings; hit
+#   rate +3.66 / +1.69pp; lives-at-end +135 / +43; FF 2.1% of deaths, mixed
+#   sign (decomposition clean).
+#   4-team, hosted ms1.json, per-team-vs-itself null: enemy-inflicted deaths
+#   NEGATIVE on ALL FOUR teams (-10/-33/-28/-12); lives-at-end positive on
+#   all four; wins +0/+9/+9/+4 (none negative); spray cans +6..+8 all four;
+#   FF 1.7% of null deaths, summed DOWN (-8). Game length moved OPPOSITE
+#   directions by board family (2-team +8-9%, 4-team -5-9%) — a per-game
+#   rate is only meaningful against the null of the SAME family.
+#   Mechanism, 5 instruments agree: FIRE LESS, HIT MORE, DIE LESS. grabprobe
+#   accuracy +6pp.
+#
+# Caveats carried forward, NOT resolved by this commit:
+#   - the gain is a WEAK-SEAT effect (T0 +0, strong BLUE +2) — not yet shown
+#     to hold on the strong seat.
+#   - no lever is individually outcome-scored on the hosted field; the
+#     per-lever NOxxx knobs above ARE the rollback granularity, not a claim
+#     that each lever was independently proven.
+#   - sprayFireFirst liveness is board-dependent, 2-of-4 boards (ms2/ms3
+#     diverge, ms1/ms4 do not) — a single-board null on it is underpowered,
+#     not a finding.
+# RESOLVED by this commit: lockOne's "un-seat-isolatable / invisible to the
+# lever-liveness tripwire" caveat — see the CombatTune field doc and the
+# migration commit's identity/liveness/seat-isolation proof block.
+#
+# Ships on Maxwell's scope go-ahead ("might as well go for v60" — scope
+# only; upload/submit still needs a separate explicit yes, never granted by
+# this commit). Revert target = Picasso:v58, pv
+# ae455958-c96d-4981-825f-ea25b4a1fc4b. Soft rollback = the per-lever NOxxx
+# knobs above (any subset); hard rollback = re-point the champion at v58 and
+# discard this image.
+# ════════════════════════════════════════════════════════════════════════
+
+proc shippedCombatTune(): CombatTune =
+  ## The tune the DEPLOYED player runs. Identical to the baseline default plus
+  ## target commitment + target-lock + the corner-grind unstick fix (the proven
+  ## Picasso gunfighter levers). `defaultCombatTune` stays the untouched control
+  ## the harness A/Bs against; this is what runBot actually plays.
+  result = defaultCombatTune()
+  result.commit = true
+  result.aimLock = true
+  result.unstuckEngaged = true
+  # WAKEUP DEADLOCK FIX (2026-07-16): recognize self-carry the instant we grab
+  # the heart standing ON the enemy pedestal, so the carrier routes home instead
+  # of camping the robbed pedestal until timeout. Seat-rotated self-play A/B
+  # (12g/side, paired seed 100) net +7 seat-adjusted, grab->cap up in BOTH
+  # seatings (Red 23.8% vs 13.0% baseline, Blue 26.3% vs 5.9%). Asymmetric fix
+  # (converts would-be-draws to wins for the fixed side) so the mirror measures
+  # it, unlike the six falsified combat levers.
+  # ⛔ 2026-08-20: the ARMING LINE `result.carrierGrabDetect = true` that used to
+  # sit here was DELETED — the field was STILLBORN (zero read sites in every
+  # shipped build; see the tombstone on the CombatTune declaration). The fix
+  # described above is real and still live, but it ships as the unconditional
+  # constant `CarrySelfRadius = 26.0`, and the A/B quoted above therefore
+  # measured that constant, NOT this flag. Nothing about behaviour changes here.
+  # ── SEAL/CQB v4 (2026-07-16): the six doctrine levers, now the PROVEN champion
+  # base. Corrected seat-rotated A/B (24g/side, seed 100, candidate = this + core
+  # vs control = v3 core alone) = +8 SEAT-ADJUSTED, positive on BOTH seatings
+  # (Run A Red +6, Run B Blue +10; true seat bias only ±2). Mechanism = the v4
+  # side out-GRABS and out-CAPTURES both seatings (fire-superiority press + tempo
+  # + danger-score threat pick win firefights near the objective → more wipes +
+  # heart-runs). ⚠️ LAB-vs-v3 only, NOT hosted-field-confirmed (Maxwell: skip the
+  # mixed-field step). Each is still individually harness-gated (DANGER/TWOSCAN/
+  # BOUND/DOMINATE/TEMPO/FIRESUP) so a regression can be bisected; CONTROL_SHIPPED
+  # now means v4, so the NEXT lever (shout gate) A/Bs cleanly on top of this.
+  result.dangerScore = true
+  result.twoSpeedScan = true
+  result.boundingOverwatch = true
+  result.pointOfDomination = true
+  # ⭐ tempoPress RETIRED (2026-07-29 audit), TEMPO=1 restores it for the A/B. Its stated
+  # premise is UNOBSERVABLE on this engine: "their reload is dead time too" needs to know an
+  # enemy is mid-cooldown, but firing is SILENT (RULES.md: the muzzle emits no signal), bullets
+  # are invisible, and the muzzle bloom is spectator-only. So the branch cannot test what it
+  # claims. What it ACTUALLY tests is "wounded OR turned away", where turned-away is the coarse
+  # facingRight half-plane — which GV24+ derives from the FUZZED sprite rotation. Result: it
+  # abandons cover to cross 150px (~55 ticks at 2.75px/tick) into a gun on a 12-tick cooldown,
+  # i.e. ~4 free trigger pulls, and it fires on a full-hp enemy whenever the flip mislabels it.
+  result.tempoPress = getEnv("TEMPO").len > 0
+  result.fireSuperiority = true
+  # ── AIM-DOT THREAT (2026-07-16, task #19). Shipped on Maxwell's EXPLICIT
+  # go-ahead ("we can swap champion to revert ... but let's upload") BEFORE the
+  # lab A/B finished — the seat-rotated A/B is still running; if it goes negative
+  # the revert is: DELETE this line, or swap the league champion back to the v4
+  # version. NOT yet proven; this is an early upload by request, not a proven
+  # champion. Replaces the coarse facingRight half-plane in the dangerScore block
+  # with a precise gun-on-me cone read from the enemy's aim-dot line.
+  result.aimThreat = true
+  # ── CARRIER FINISH + THIEF PURSUIT (2026-07-16). Two field-reported deadlocks
+  # fixed together: (1) carriers were wedging on the border-attached stub columns
+  # near the home edge because safestLaneY steered them to the extreme lanes
+  # (y≈40 / y≈619) that those stubs sit on — the "stuck on the last wall at the
+  # bottom of the map" report, CONFIRMED in the 0.7.8 grab/capture probe (a Blue
+  # carrier froze at (942,583) grinding the stub, 80px short of the open capture
+  # column, until the other team scored). (2) a defender that SAW the enemy
+  # carrying our flag would sidestep AWAY from it (the generic threat-jink) rather
+  # than hunt it — "we run away out of fear." Both are asymmetric finish fixes
+  # (turn would-be losses into captures / recaptures) so the self-play mirror can
+  # measure them.
+  result.carrierHomeStretch = true
+  result.chaseThief = true
+  # ⭐⭐ CARRIER-RUN SURVIVAL (2026-07-24, the grab->cap conversion leak). The audit found
+  # the dive fix moved deaths downfield: carriers now die MID-RUN because every mid-run
+  # survival lever was left at its OFF control value while only the FINISH fix
+  # (carrierHomeStretch) + the LOS-limited KILL escort (planLayer/PhEscort) shipped. Given
+  # CarrierSpeedPct=70 (a full-speed chaser always closes) + map-wide hitscan + no back-armor,
+  # "run home in a straight line, alone" is a death sentence — grab->cap (~THE win lever) leaks.
+  #   carrierFlee  — the carrier keeps NAV-ing home while taking the free on-line trade, instead
+  #                  of the else-branch that WALKS INTO a point-blank chaser (the biggest leak).
+  #   carrierSerpentine — the slowest, highest-value unit finally WEAVES across watched ground so
+  #                  the map-wide hitscan must re-slew each beat (carriers were exempt from weave).
+  #   escortRun    — a free escort interposes a body on the chaser->carrier RAY (friendly-fire ON
+  #                  → the bullet is EATEN; movement body-block is void but bullet-eat is real).
+  #   carrierScreen— screen the pocket-exit respawn cone as the carrier breaks contact.
+  # carrierFlee is asymmetric (converts a would-be carrier death into a capture) so the mirror
+  # measures it; the escort levers are coordination (mirror-cancels) → validate on the field.
+  result.carrierFlee = true
+  result.carrierSerpentine = true
+  result.escortRun = true
+  result.carrierScreen = true
+  # v26: the two "⭐⭐ CAPTURE CONVERSION" levers the first carrier flip MISSED — the whole-
+  # policy audit (carrier-play 72) found carrierFlee fixes the walk-into-the-nest MOVEMENT but
+  # the carrier still (a) EXPENDS fire pinning the respawner (engage stays carrierFireRange 110,
+  # not 0) and (b) keeps its y ON the respawner's E-W firing line. carrierSprint drops the combat
+  # branch entirely (engage 0 = pure nav home, mirror-A/B-measurable); carrierClearBand routes it
+  # vertically out of the pedestal-height respawn band before the home run.
+  result.carrierSprint = true
+  # ⛔ 2026-08-20: `result.carrierClearBand = true` DELETED with the field. v47
+  # retracted the premise and removed BOTH the lane veto and the vertical bugout,
+  # leaving an if/else whose two arms were byte-identical — so from v47 onward
+  # this lever could not change a single mask. See the carrierClearBand tombstone
+  # in the carrier-home branch. carrierSprint above is unaffected and still live.
+  # ── CORNER PRE-AIM (2026-07-16). Replay-reported miss ("we shoot the WALL our
+  # enemy hides behind, they step out, we miss by aiming at the wall, they kill
+  # us — daveey's shots land on the body"). Root cause: the peek/blocked branch
+  # pre-laid the turret on the target's predicted body BEHIND the wall, so the gun
+  # sat pointed at solid wall and had to traverse to catch the enemy after it
+  # emerged — surrendering the first shot. Fix: aim the EMERGENCE CORNER (the
+  # nearest cell the enemy can shoot us from), where its body actually appears, so
+  # our bullet is already on-bearing as it rounds the cover. Measured by the new
+  # per-team hit-rate metric (redHits/redShots) in the eval harness.
+  result.cornerPreAim = true
+  # ── SENTRY DISPLACE (2026-07-16). Replay/steering complaint: "our guys stay
+  # still far too much for navy seal training." The two sentry roles (overwatch,
+  # home defender) rooted at one post and only swept the aim — 2 of 8 bots frozen
+  # most of the game. SEAL doctrine is shoot-move-communicate: a sentry with no
+  # live target displaces to an adjacent covered vantage on a dwell timer, so it
+  # is never a static target and re-angles the crossing it commands (coverage is
+  # preserved — the shift is lateral along the watch face, not a retreat).
+  result.sentryDisplace = true
+  # ── COUNTER-DAVEEY TOP BIAS (2026-07-16). Field report: "daveey always goes to
+  # the top of the map." A fogged thief was guessed on LaneMid; bias that prior to
+  # LaneTop and post the idle home sentry high. Purely a DEFENSIVE prior on the
+  # reacquisition guess — no cost when wrong (a high post still rakes mid on its
+  # sweep), a gun on the runner's real lane when right. Asymmetric (converts a
+  # would-be enemy capture into a recapture race) so the mirror can measure it.
+  result.topBias = true
+  # ── SEAL PLAYBOOK (2026-07-16). Steering: "our guys stay still far too much for
+  # navy seal training" + "run the playbook." Observation-triggered team plays
+  # without comms: all 8 teammates share the SAME deterministic clock
+  # (elapsed = tick - gameStart) and the SAME flag STATE, so a play selected off
+  # those shared signals is consensus WITHOUT splitting the squad. selectPlay
+  # oscillates the pushed flank (PushTop / PushBottom) every PlayPeriod ticks and
+  # collapses to StackDefense when our own flag is stolen. Mid-lane feint holders
+  # (MidTop/MidBottom) stay to hold the center so the flip is a real pincer, not
+  # a whole-team drift. Local sightings deliberately do NOT drive the play (they
+  # would desync the team); only the shared clock/state do.
+  result.playbook = true
+  # ── VANITY SHOUTS (2026-07-16, KEPT — Maxwell: "they were finally tuned right").
+  # The v5 5% rarity gate (vanityRoll hash coin) throttles "oh shit!"/"die" to
+  # ~1-in-20 eligible windows so the board isn't a wall of bubbles. EMIT-ONLY and
+  # provably MASK-NEUTRAL (the emit block runs AFTER the button mask is finalized,
+  # only staging bot.shoutWant). daveey cloned this (his "copy softmaxwell" policy),
+  # which is confirmation it belongs, not a reason to drop it.
+  result.shout = true
+  result.shoutSurprise = true
+  result.shoutDie = true
+  # ── v7 SWORD/SHIELD ADAPTATION (2026-07-19, shipped on Maxwell's EXPLICIT
+  # go-ahead: "put all of those ideas that were proven in research into the
+  # policy … upload and submit if the policy is better"). The hosted league runs
+  # GameVersion 7 (sword/shield/med-kit); the champion had been BLIND to the new
+  # objects. Three levers, all field-relevant:
+  #   avoidDisarm — pure-downside fix: soft-repel from a sword/shield pickup we're
+  #     NOT collecting (auto-pickup on 12px touch sets canFire=false = silent
+  #     disarm). Mirror-measurable; proven-live (562/158 repel-frames in the A/B).
+  #   shieldTank  — a carrier-escort grabs a shield to body-block as a 6-HP wall.
+  #   swordAmbush — a boxed-in bot with no ranged shot grabs a sword for a 26px
+  #     guaranteed-kill melee swing.
+  # Ship rationale: the seat-rotated v7-bed A/B (24g/side, seed 100, candidate =
+  # this + all three vs control = full champion) is byte-even on the leaderboard
+  # metric — Red 14–10 on BOTH seatings, seat-adjusted delta 0 — so the composite
+  # is PROVABLY NON-REGRESSIVE on everything the mirror can score. avoidDisarm's
+  # downside removal is below the noise floor at this tune (~1–3 accidental grabs
+  # /24g on both arms); shieldTank fires 0× in self-play (tank-seek 0) because its
+  # deliberate-grab trigger is STRUCTURALLY field-only — a mate carrying past our
+  # endzone shield barely occurs against our own mirror. Its upside is only
+  # reachable on the hosted mixed field, which is why gating it off meant never
+  # finding out. Guards are conservative (narrow role/state/proximity gates) so it
+  # can't misfire into a harmful behavior. Each stays behind its harness knob
+  # (AVOIDDISARM/SHIELDTANK) for bisection.
+  #
+  # v15 ENGINE UPDATE (2026-07-21): the SWORD was REMOVED, replaced by the plasma
+  # arc — so swordAmbush is INERT (no "sword" pickup exists) and is DROPPED from
+  # the shipped bundle here (code kept, gated OFF, for the record). avoidDisarm is
+  # REPOINTED to the plasma arc (the only remaining disarm object; shield now =
+  # 6 HP + 3x-slow-fire, no gun loss). The captain-coordinated plasma OFFENSE is
+  # built + tested in Track B (the comms xreq image), not this lab bundle.
+  result.avoidDisarm = true
+  result.shieldTank = true
+  # ── v16 SEAL-lens bundle (aimRotRead/medTopOff/satCap/noMask/assaultThrough).
+  # RE-GATED + RE-BAKED on GameVersion 15 (2026-07-21 PM). The field moved 9→15
+  # (44 commits), VOIDING the v9 composite gate — so these were un-baked and
+  # re-gated as knobs vs the true v15 champion (avoidDisarm[plasma]+shieldTank).
+  # v15 GATE RESULT (60g/side/block, seat-rotated, seeds 100+300, all 60/60
+  # decisive): seat-adjusted vs the same-seat null (s100 RED−12/BLUE+12, s300 0/0)
+  # = +22 / −10 / −6 / +6, POOLED +12/240g (SD ~±15 → non-regressive, win-signal
+  # inside the noise floor). NO FUNNEL-shaped harm on any block (worst −10 = floor;
+  # the falsified fatalFunnel was −22/−18). The real signal is in CONVERSION (the
+  # mirror-win-blind metric): grab→cap on the seat-DISADVANTAGED BLUE arm lifted
+  # 5.9→15.6% (s100) and 9.5→14.6% (s300) while the strong RED arm held flat; K-D
+  # flipped positive on the candidate arm 3 of 4 blocks. Same ship rationale as the
+  # v15 precedent: mirror-non-regressive composite whose upside is field-only.
+  #   aimRotRead — REPAIR: aim intel rides soldier-rotation sprite ids (v7+); the
+  #     proven aimThreat cone / focus-fire rays / preSlew read the sprite-id
+  #     channel. Confirmed intact on v15 (PlayerSpriteBase=100, self 5100+rot).
+  #   medTopOff — wounded out-of-contact bot tops off at a visible center med kit.
+  #   satCap — past kill-sufficiency, a free gun re-assigns to the highest-danger
+  #     UNCOVERED enemy instead of dogpiling.
+  #   noMask — a mover soft-repels off a mate's live gun-line (mover-side).
+  #   assaultThrough — near-ambush: charge and fire down the bearing, never turn.
+  # grabTiming stays OFF here (mirror A/B sign-flipped within the null floor);
+  # it ships only in the Track B comms xreq image where clear-base builds on it.
+  # Each keeps its harness knob (AIMROT/MEDKIT/SATCAP/NOMASK/ASSAULT) for bisection.
+  result.aimRotRead = true
+  result.medTopOff = true
+  # ⭐⭐ medEcon BAKED ON (2026-07-28, Maxwell greenlit "upload and submit"). This is
+  # the first lever in this lineage whose PREMISE was measured on the real field
+  # rather than guessed in the lab: 20 live league episodes re-simulated with
+  # tools/extract_events showed the field consuming 42 med kits to our 11 (3.8x),
+  # while 8 of 13 losses were full WIPES and 81% of our kill deficit booked in ticks
+  # 1000-3000. medTopOff above already had the right doctrine but a gate that almost
+  # never opens mid-game (kit VISIBLE in the fog cone within 150px AND zero contact);
+  # medEcon routes to the kits' STATIC engine coords instead, widens the detour to
+  # 320, and lets a 1-hp bot break contact with a threat that is not aiming at it.
+  # GATES (all four, details in ~/.ctf/knowledge/experiments/successful.md):
+  #   funnel  -d:meprobe vs -d:mtprobe: the detour FIRES 284 -> 4261 frames (15x);
+  #           the old gate died at kitVisible 871, medEcon has no visibility stage.
+  #   heals   117 vs 41 pooled over both candidate arms (2.85x) vs a symmetric
+  #           0.89x null — the mechanism metric, and the one the field measured.
+  #   A/B     seat-rotated 30g/seating vs this champion: RED +6 wins/+12 K-D,
+  #           BLUE +6/+41, seat-adjusted +6.0/+26.5, POSITIVE ON BOTH SEATINGS
+  #           (null correctly specified as SHIPBASE=1 CONTROL_SHIPPED=1 = ~0).
+  #   gate    MEDECON=1 grabprobe @ the live 5000t cap: 3/3 decisive, 0 draws,
+  #           grabs 5 (vs 3), accuracy 59.6% unchanged — no kit-orbiting draw
+  #           machine, and it never touches the trigger.
+  # The +6 win delta alone sits UNDER the 60g noise floor (sigma ~7.7), so the case
+  # rests on the funnel + heal ratio + both-seatings K-D, per the null-calibration
+  # rule. Keeps its MEDECON knob for bisection.
+  result.medEcon = true
+  # ⭐ LEVER 1 DROPPED (2026-08-06, captain-brain audit course-correction): medSee
+  # was briefly baked ON here as "medkitSeek", but the med-kit ROUTING family is
+  # formally CLOSED — ~/.ctf/knowledge/experiments/hypotheses.md:507-516 records
+  # three designs (medTopOff/medEcon variants including medSee) that all LOST,
+  # medSee specifically costing the holder 13% of its kills (the FEET LAW: any
+  # lever that steers feet toward a computed destination taxes guns 13-44%).
+  # Reverted to env-armed-only, unproven, off by default — exactly as it shipped
+  # before tonight. MEDSEE=1 still arms it per-process for anyone re-measuring.
+  result.medSee = getEnv("MEDSEE").len > 0
+  # ⭐ satCap RETIRED (2026-07-29 audit), SATCAP=1 restores it. Past "enough guns are already
+  # on this target" it re-assigns a free gun to the highest-danger UNCOVERED enemy — but the
+  # saturation read is GEOMETRIC (is a mate's aim ray near the target), and that ray is now
+  # fuzzed: at the old 700px trust radius the displacement was ~236px against a 22px slack, so
+  # "covered" was noise. Worse, it fires against the win condition: it abandons a WOUNDED
+  # target (forfeiting the hp-focus and focus-fire credit, a ~415px priority swing) at the one
+  # moment finishing is cheapest, and on this engine a fled 1-hp enemy respawns at FULL 3/3
+  # after 72 ticks. Spreading damage across enemies who then reset is exactly the measured
+  # tick-1000..3000 deficit. MateAimRayLen is now honest (90px), which also shrinks satCap's
+  # input to almost nothing — retiring it is the same decision stated once.
+  # satCap: the audit's case against it is strong on paper (it abandons a WOUNDED target — a
+  # ~415px priority swing — at the moment finishing is cheapest, and a fled 1-hp enemy respawns
+  # at full 3/3 in 72 ticks), but I did NOT get a clean isolated measurement of it, and the one
+  # bundle it rode in was a null. Shipping it OFF would be shipping an UNMEASURED change.
+  # Stays ON (= v28 behaviour) so v30 is a genuine single-variable delta; NOSATCAP=1 turns it
+  # off for the isolation run that has to happen before it can ship either way.
+  result.satCap = getEnv("NOSATCAP").len == 0
+  # ⭐ MATE-POS PROXY (2026-08-07, v45, Audit 2 finding — LEVER-CLASS, gated
+  # OFF by default pending its own A/B). MATEPOS=1 arms it per-process. See
+  # the mateAimPos field doc for the full mechanism/citation.
+  result.mateAimPos = getEnv("MATEPOS").len > 0
+  result.noMask = true
+  result.assaultThrough = true
+  # ⭐ fireOnRealBody MEASURED AND REJECTED (2026-07-29). The audit ranked it a top fix — the
+  # aim leads 6 ticks on a HITSCAN gun whose bearing locks at the pull, so in theory the lead
+  # phantom falls outside the 11px slack while the real body is dead on our line, and this
+  # opens the trigger on a shot that would land. The reasoning was sound and the measurement
+  # refuted it: 24g seed 100 paired off ONE binary, enabling it took 460 MORE shots
+  # (5334 -> 5794, +8.6%) for ELEVEN FEWER hits — the marginal accuracy of the extra shots is
+  # ~0.0, and accuracy fell 62.6% -> 57.4%. Each wasted shot also books a 12-tick cooldown, so
+  # this is worse than neutral. The real-body gate re-checks the corridor but NOT the 5-tick
+  # windup: by the time the bullet leaves, the juking body it was aimed at has moved on.
+  # REALBODY=1 re-enables it for anyone who wants to re-measure; it ships OFF.
+  result.fireOnRealBody = getEnv("REALBODY").len > 0
+  # ⭐⭐⭐ wuff — the WINDUP-AWARE FRIENDLY-FIRE VETO (2026-08-19).
+  #
+  # THE HOLE. The shipped gun trigger has NO friendly-fire veto. `wantFire` is set
+  # by perpMiss <= max(fireSlackPx, 17.0) and nothing else; the friendlyBlocked
+  # call a few lines below sits INSIDE `if bot.tune.fireOnRealBody:`, a block that
+  # can only ever set wantFire = TRUE (it OPENS the trigger, it cannot close it),
+  # and fireOnRealBody ships false anyway. The one shipped friendlyBlocked call is
+  # at target SELECTION and its verb is `continue` — it re-picks a target, it never
+  # stops a shot. So there is exactly zero trigger-side friendly-fire logic.
+  #
+  # FIELD MEASUREMENT (346 hosted ffa4 team-Episodes, per-tick frames, 549 gun FF
+  # hits). We deal 2.431 friendly damage per team-Episode = 0.810 LIVES at 3hp,
+  # against a paired death gap of +1.287 vs real rivals. daveey deals 0.188; the
+  # SCRIPTED FILLER deals 1.257, so we are 1.93x a bot with no policy at all.
+  #
+  # IT IS NOT SPACING. Paired inside the same Episodes, "a mate is in our fired
+  # corridor at the trigger tick" is 2.78% of our triggers vs relh 3.15%, richard
+  # 2.76%, Baseline 2.31%, daveey 1.18% — relh is MORE exposed than us. The
+  # outlier is CONVERSION: P(FF hit | mate in corridor) = 41.9% for us vs 25.7%,
+  # 20.8%, 15.5%, 10.8%. We do not stand badly; we pull the trigger anyway.
+  #
+  # ⭐ WHY A T0 CHECK CANNOT FIX IT. The bearing locks at the pull and the bullet
+  # leaves WuffLeadTicks (5) later. Victim perpendicular offset from the ray that
+  # actually fires, same 549 hits:
+  #     T0, both bodies frozen (what ANY T0 check sees) : 15.0px, 49.4% in corridor
+  #     victim advanced only                            : 10.8px, 80.5%
+  #     shooter advanced only                           : 12.9px, 64.7%
+  #     T+5 release, both advanced (the REAL bullet)    :  9.2px, 99.8%
+  # Both bodies converge onto the line during the lock (victim 10.6px, shooter
+  # 7.1px median). 32.4% of ALL friendly-fire hits are "the mate was outside the
+  # corridor on BOTH candidate rays at the decision frame and moved into the
+  # bullet afterwards" — invisible to a T0 veto BY CONSTRUCTION. Blindness is
+  # REFUTED as a cause (0.3% of hits: the mate was unperceivable within 36 ticks).
+  #
+  # Ships OFF. WUFF=1 arms, NOWUFF=1 force-reverts (a rollback is a re-run with
+  # different env, never a rebuild). Each sub-behaviour toggles independently so
+  # the A/B can attribute the gain to the AXIS vs the LEAD:
+  #   WUFFAXIS=0        test the SELECTION ray instead of bradsDir(estAim)
+  #   WUFFLEAD=<ticks>  mate lead (default WuffLeadTicks=5; 0 = no prediction, T0)
+  #   WUFFSELF=<ticks>  own-muzzle lead (default WuffLeadTicks=5; 0 = muzzle at T0)
+  #   WUFFMATERANGE=<px> along-track gate on the MATE (0 = none, the default)
+  #   WUFFSHADOW=1      evaluate + record, never suppress (the futility bound)
+  # ⚠️ This lever is FRIENDLY FIRE ONLY. It contains no wall / LOS re-check, on
+  # purpose: the T0 fire-axis lever measured ~94% WALL vetoes, so a bundled
+  # version cannot state a friendly-fire gain without the wall term riding along.
+  #
+  # ⭐⭐⭐ SHIPPED HOT (v58, 2026-08-19, on the user's explicit go-ahead), DEFAULT ON
+  # IN CODE with a NOxxx opt-out — the arcStandoff / touchCommit shape, and it is
+  # that shape for a REASON this tree paid for. v30 armed the field-proven
+  # touchCommit latch with a container `ENV TOUCH=1` on a throwaway image that
+  # never entered git, and every git-built image after it ran with that lever
+  # SILENTLY DARK for nine days; v46 exists only to recover from it. So: NEVER gate
+  # a shipped lever on container env. NOWUFF=1 is the opt-out and it is the
+  # rollback path — proven byte-identical to base 64a0ea9 on 32/32 seeds by the
+  # FNV-over-every-emitted-button-mask fingerprint.
+  result.windupFf = getEnv("NOWUFF").len == 0
+  result.windupFfAxis = getEnv("WUFFAXIS") != "0"
+  result.windupFfLead =
+    if getEnv("WUFFLEAD").len > 0: parseInt(getEnv("WUFFLEAD"))
+    else: int(WuffLeadTicks)
+  result.windupFfSelfLead =
+    if getEnv("WUFFSELF").len > 0: parseFloat(getEnv("WUFFSELF"))
+    else: WuffLeadTicks
+  result.windupFfMateRange =
+    if getEnv("WUFFMATERANGE").len > 0: parseFloat(getEnv("WUFFMATERANGE"))
+    else: 0.0
+  # ⭐⭐ THE UNION IS THE SHIPPED VARIANT, not the mate+muzzle-lead test alone.
+  # Measured paired on 96 team-Episodes (24 seeds x 4 teams, identical seeds):
+  # reach 100/118 = 84.75% of gun friendly fire vs D's 94/118 = 79.66%; realised
+  # friendly hits 97 -> 16 (-83.5%) vs D's 97 -> 27 (-72.2%); shots +0.82% vs
+  # D's +4.37%; and it cuts the close-range GEOMETRY regression the veto causes
+  # (held fire re-fires closer, so more shots die on terrain) to +0.38pp per shot
+  # against D's +1.18pp. It dominates D on every axis this rig can measure.
+  # NOWUFFUNION=1 falls back to D alone without a rebuild.
+  result.windupFfUnion = getEnv("NOWUFFUNION").len == 0
+  result.windupFfShadow = getEnv("WUFFSHADOW").len > 0
+  # ⭐⭐⭐ wlead — THE WINDUP LEAD ON THE FIRE BEARING (2026-08-20).
+  #
+  # THE DEFECT. 1,376 hosted Elite ffa4 Episodes, build 0.7.231: our gun hit
+  # rate UNDER 100px is 0.499 against Ron 0.728, relh 0.773, the field 0.604 —
+  # and the SCRIPTED FILLER's 0.710. It replicates on a second league and a
+  # second build. It is NOT a range-mix artifact (standardising Ron's per-bin
+  # rates onto our shot mix explains only −6.3%), and the 2026-08-04 range-
+  # scaled LEAD fix shipped straight into it and the crater survived.
+  #
+  # THE MECHANISM, measured on 1,416 hash-perfect re-simulated 0.7.231 Episodes
+  # (201,827 released gun shots, tools/pb_shot_probe). The engine accepts a
+  # centred body inside PlayerHalf(6)+BulletHalfWidth(8) = 14px of PERPENDICULAR
+  # miss AT THE RELEASE TICK, at ANY range — the pooled response function has a
+  # cliff exactly there (P(hit) 0.607 at 12-14px, 0.262 at 14-16px). Regress the
+  # lay error at the PULL on the target's true 5-tick perpendicular travel: a
+  # policy that leads the windup scores −1, one that aims at NOW scores 0.
+  #     under 100px      slope      inside 14px @pull -> @release
+  #     Ron @ SWGY       −0.813        0.767  ->  0.752   (loses nothing)
+  #     Jordan           −0.570        0.846  ->  0.768
+  #     uponup-labs-sys  −0.537        0.833  ->  0.791
+  #     US               +0.094        0.796  ->  0.639   (loses 15.7 points)
+  # We lay the turret BETTER than Ron at the pull and throw it away in the 5
+  # ticks that follow. Our slope only goes negative past 300px — exactly where
+  # `leadScale = clamp(rawRange/300, 0.15, 1.0)` stops throttling the lead. At
+  # 60px that scale leaves 0.9 ticks of lead against a 6-tick horizon.
+  #
+  # ⭐ AND OUR OWN MUZZLE TRAVELS. selectFireTarget traces the ray from the
+  # shooter's centre AT RELEASE with the heading locked at the PULL, so our own
+  # perpendicular travel is a straight perp-miss: 4.32px mean at point blank
+  # (Ron 3.2). Nothing in the aim path models it. Hit rate falls monotonically
+  # with our own speed (0.735 standing, 0.603 at 2-3px/tick). windupFf already
+  # advances the MUZZLE for the friendly-fire corridor test (WuffSelfStepCapPx)
+  # — this is the same geometry on the aim instead of the veto.
+  #
+  # FUTILITY BOUND (counterfactual heading, fire decision and lay error held
+  # fixed, transported through the 201k-shot engine response function):
+  #     bin        actual  muzzle-lead  target-lead  BOTH   Ron
+  #     0-100px     0.647     0.667        0.664     0.720  0.762
+  #     100-200     0.599     0.657        0.634     0.691  0.750
+  #     200-300     0.558     0.610        0.601     0.621  0.690
+  #     300-500     0.533     0.580        0.570     0.580  0.613
+  #     ALL         0.573     0.617        0.605     0.637
+  # Robust to only 80% of the target lead being realizable off a fogged track
+  # (0.715 at point blank). ⚠️ It pays LESS than it looks: d(rival lives)/d(own
+  # kills) is 0.053, so score this on ITS OWN INSTRUMENT (hit rate by RANGE BIN
+  # with shots-fired as a guard), never on attrition.
+  #
+  # ⚠️ TURRET ONLY. `aim` still drives the FEET (advance = norm(aim - me)) and
+  # the target ledger; only the bearing handed to the traverse and the perp-miss
+  # gate moves. That keeps this one lever instead of a movement change riding in.
+  #
+  # Ships DEFAULT ON in code with a NOWLEAD=1 opt-out (never a container ENV —
+  # see the v30 nine-days-dark note above). WLEADTICKS / WLEADSELF move the two
+  # horizons; WLEADTEAM=<raw engine team 0..3> is the eval-only isolation.
+  let wleadOn = getEnv("NOWLEAD").len == 0
+  result.windupLead =
+    if not wleadOn: 0.0
+    elif getEnv("WLEADTICKS").len > 0: parseFloat(getEnv("WLEADTICKS"))
+    else: WLeadTicks
+  result.windupSelfLead =
+    if not wleadOn: 0.0
+    elif getEnv("WLEADSELF").len > 0: parseFloat(getEnv("WLEADSELF"))
+    else: WLeadSelfTicks
+  # counterArc (Play C, GameVersion 15 plasma arc): prioritize a DISARMED enemy
+  # arc-carrier (gun off for life while holding) beyond its 136px cone — a free
+  # kill that deletes the enemy's whole AoE play. Ships on the SAME field-only
+  # precedent as shieldTank/avoidDisarm: caprobe shows detection LIVE (arcAttrib
+  # 316/8g) but the retarget is STRUCTURALLY mirror-inert (bump 0 — arc-carriers
+  # only reach engage range after closing inside 136px in self-play), so the
+  # non-regression A/B came out BYTE-IDENTICAL candidate-vs-control (provably 0
+  # cost). The upside is hosted-only (opponents that grab the arc + advance it into
+  # the open). Retarget-only (no movement branch — that's the future arcStandoff);
+  # 240 credit sits below CommitBonus(400) so it never drops a locked kill. Keeps
+  # its COUNTERARC harness knob for bisection.
+  result.counterArc = true
+  # arcStandoff (2026-08-07, the MOVEMENT companion to counterArc): counterArc only
+  # RETARGETS a disarmed enemy arc-carrier — our feet still walk into its 136px kill cone.
+  # This ships hot (default ON) on the same field-only precedent as counterArc/shieldTank:
+  # with no arc foe present the A/B is BYTE-IDENTICAL (provably zero cost absent the
+  # trigger), and the upside is hosted-only (opponents that grab the arc and advance it).
+  # Measured on GV22 (asoprobe + the ARCFOE rig): in-cone exposure OFF -> ON across three
+  # seeds, 52.1%->39.1%, 99.4%->40.0%, 76.5%->32.8% (3/3 better, backOff 0 -> fires).
+  # NOARCSTANDOFF=1 opts out, matching the NOxxx convention this tree uses for shipped-hot
+  # levers (NOSATCAP/NOANCHORRELOCK/NOSPRAYSINGLE/NOCOMBOGRAB/NOMEDPEEL).
+  result.arcStandoff = getEnv("NOARCSTANDOFF").len == 0
+  # ── ANTI-h006 POSITIONING SET + COMMS BUS (2026-07-22, Track B, shipped on
+  # Maxwell's explicit go-ahead: "ship them with the policy, we know they work if
+  # you code it right … improve the policy to beat Alex Smith"). The new #1
+  # ctf-h006:v1 ("Alex Smith", 0.875) beats us by POSITIONING, not aim (accuracy
+  # ~50% for everyone): it forms a LINE in its own half and farms our over-extend —
+  # we die 39% of the time in the ENEMY half vs its ~14%, and 72–82% of our carriers
+  # die AT the enemy pedestal (grabbed even/behind = the suicide-grab). Its whole
+  # doctrine is "win the attrition on your OWN ground, refuse to over-commit, grab
+  # only when up bodies." These five levers are the direct counter, ALL previously
+  # gated OFF, ALL movement-intent only (never touch the turret / carry / defense
+  # states), each still behind its harness knob for bisection:
+  #   holdLine   — over-extended into a fresh enemy LINE while locally outgunned →
+  #                rally the mid wave shallow and hit the line together, don't
+  #                trickle in to be farmed. (TURTLE probe FIRED 71; mirror ~flat.)
+  #   grabGate   — RELATIVE numbers gate on the unarmed pedestal dive: open when
+  #                (me + inbound support) can beat the defense, hold at the standoff
+  #                ring when genuinely outgunned = the h006 "grab only +bodies"
+  #                discipline. (TURTLE FIRED 61; mirror no-regression CONFIRMED — the
+  #                seat-100 "loss" is 100% Blue-seat bias, byte-identical to the null.)
+  #   grabTiming — anti-stacked-dive sibling (ABSOLUTE stack ≥2 + mate inbound): a
+  #                solo unarmed dive into a stacked pocket is shot on the touch (96%
+  #                of carrier deaths, 0% cap in losses). Delays/sequences, never abandons.
+  #   regroupPush— post-wipe consolidation (the v14 squander fix): a lone mid over-
+  #                extended into a cleared vacuum with support inbound holds a shallow
+  #                rally until the trio re-forms, then pushes deep TOGETHER instead of
+  #                feeding the ~72t respawn wave one body at a time.
+  # These are ASYMMETRIC-OPPONENT levers — their triggers (a standing line, a stacked
+  # pocket, a squander vacuum) cannot form in the symmetric mirror, so a self-play A/B
+  # proves NO-REGRESSION only; the real edge is the hosted field vs h006 (field-only
+  # ship precedent, same class as counterArc/shieldTank). Verified: shipped champion
+  # builds clean + grabprobe not-blind on GV17 (19 grabs / 3 caps / 58% acc, seed 100).
+  result.holdLine = true
+  result.regroupPush = true
+  # ⭐⭐ SMART GRAB (2026-07-24, THE dive-death fix) REPLACES grabGate+grabTiming. Those were
+  # hard-threshold gates with a lone-body-dives-NOW carve-out that IS the pointless suicide
+  # dive (>half our deaths, 0 damage). smartGrab is the adaptive Captain-brain commit: hold at
+  # a firing standoff + suppress the pocket from range UNLESS we have a real advantage (pickEdge
+  # local numbers edge / PhForce grouped all-in / a mate covering in place); armedRush keeps the
+  # gun UP on any defended touch so we never disarm into fire; holdVsGun stops a solo gun-down
+  # bot presenting its back to a live gun; stickyCommit keeps the gun finishing a committed kill.
+  # grabGate/grabTiming left OFF (code kept for the record + their harness knobs).
+  result.smartGrab = true
+  result.armedRush = true
+  result.holdVsGun = true
+  result.stickyCommit = true
+  # ⭐⭐ THE TOUCH LATCH (2026-07-29) — the COMPANION to smartGrab, not a rollback of it.
+  # smartGrab fixed the APPROACH (no lone suicide dive into a stacked pocket) and it works.
+  # It left the LAST 60px unfixed: GrabCommitRing marked "we are committed" but set no flag,
+  # so four LIVE branches still beat the 12px touch once a bot was already there. Field
+  # ground truth, 123 GV26 episodes: we reach <40px of the enemy heart as often as the field
+  # (71 vs 79 eps) but convert to a steal 71.8% vs THEIR 94.9%; 20 episodes had a bot sitting
+  # 5-39px from it, never taking it. Since a steal swings the episode from 26.4% to 66.7%,
+  # that unconverted approach is the single largest recoverable loss in the policy.
+  # TOUCHOFF=1 turns the latch back off so the eval rig can A/B candidate vs control from ONE
+  # binary — a separate control build is a second variable, and the null-calibration lesson is
+  # that a 60-game win delta is already at the noise floor without adding one.
+  # ⭐ THE TOUCH LATCH ships GATED OFF in v30, on purpose. The FIELD premise is the strongest
+  # in the lineage (123 GV26 episodes: we reach <40px of the enemy heart as often as the field,
+  # 71 vs 79 eps, but convert to a steal 71.8% vs THEIR 94.9%; 20 episodes had a bot 5-39px
+  # from a 12px pickup radius; 445-vs-90 deaths in the 60-260px standoff ring), and the latch
+  # verifiably ARMS (310-514 frames/24g) and removes the preemptions it targets (engage 4 -> 0
+  # once armedRush got its range floor). But a MIRROR cannot score it: the change is symmetric,
+  # so both sides get the same latch and the marginal advantage cancels — measured as a null
+  # that flips sign across seatings. Same category as medEcon/shieldTank/avoidDisarm, whose
+  # upside was field-only. TOUCH=1 armed it for the hosted ASYMMETRIC A/B that is the correct
+  # gate — and that gate PASSED (v30, 2026-07-30: 800-ep hosted field A/B, +2.7pp win rate,
+  # caps +29%, positive in 4/4 cells; see tournaments/submissions.md + the results ledger).
+  # v30 then shipped it via a container `ENV TOUCH=1` in a THROWAWAY /tmp build context that
+  # never entered git — so every git-built image since the 07-22 import ran with this lever
+  # silently DARK (discovered by the 2026-08-08 progression audit: image env inspection of
+  # picasso:v44/v45 shows no TOUCH). Promotion earned, promotion executed: default ON in
+  # code, NOTOUCH=1 is the opt-out. Never gate a shipped lever on container env again.
+  result.touchCommit = getEnv("NOTOUCH").len == 0
+  # ⭐ woundedBank (plan #13): the hp-keyed wounded survival posture. UNPROVEN —
+  # stays ENV-ARMED ONLY until the pre-registered A/B passes (the contaminated-
+  # control trap, failed.md: never bake an unproven lever into the champion
+  # tune). WBANK=1 arms it per-process for the env-server A/B rig.
+  result.woundedBank = getEnv("WBANK").len > 0
+  # ⭐⭐ carryAnyHeart + cornerDeep (plan #17): the four-team carry blindness and the
+  # corner-zone threshold target. UNPROVEN — ENV-ARMED ONLY until the pre-registered
+  # A/B passes (the contaminated-control trap, failed.md: never bake an unproven lever
+  # into the champion tune). FOURCARRY=1 / CORNERDEEP=1 arm them per-process for the
+  # env-server A/B rig. Both are four-team-only by construction.
+  # BAKED 2026-08-05 (v40 candidate). 75-game cfg_4ffa A/B, 4 colour rotations +
+  # a 15-game NULL arm, one frozen binary: iCarry 5.5% -> 100%, captures/colour-game
+  # 0.817 vs 0.044, ELIMINATED 31.1% -> 1.7%, wins 15.0% vs 2.8% (NULL 0.0%),
+  # cos(v, own endzone) +0.637 vs +0.086, run-home closed 73.7% vs 29.2%, deaths
+  # -28.4%; positive on ALL FOUR colour rotations. Provably INERT on 2-team boards
+  # (byte-identical deterministic gate with the knobs on). FOURCARRY / CORNERDEEP
+  # remain as per-process overrides for the A/B rig.
+  result.carryAnyHeart = getEnv("NOFOURCARRY").len == 0
+  result.cornerDeep = getEnv("NOCORNERDEEP").len == 0
+  # ── COMMS BUS (C1/C2 + the WIPE coupling). Event-driven team plays over the one
+  # shout channel: a bot classifies a LIVE scenario from its own fresh local reads
+  # and broadcasts an opaque rotating 2-char codeword; teammates in earshot adopt it
+  # as MOVEMENT INTENT only (never a turret bearing — the REF-comms v1/v2 lesson) and
+  # fold it with their own read through one shared matrix, so the squad converges
+  # WITHOUT a captain and degrades to the clock playbook if it hears nothing. Emit is
+  # mask-neutral (rides shoutWant AFTER the button mask is finalized, like the vanity
+  # shouts). The ⭐ payload coupling: a HEARD wipe arms a trailing mid's regroupPush
+  # rally even when that mid never saw the vacuum — the ONE thing the shared clock /
+  # legible flag state cannot sync across fog (flip is already clock-consensus, peel
+  # is already empty-pedestal-legible), so without it the bus would be inert transport.
+  # commsCrypto rotates the token→play table per round off a compiled-in salt so a
+  # clone that hand-copied a static map can't read our codewords. Mirror-INVISIBLE by
+  # construction (both teams get the bus symmetrically → it cancels), so per Maxwell
+  # we ship it coded-correct rather than lab-testing it; the edge only exists on the
+  # asymmetric hosted field. commsPlay turns playbook on (it extends that machinery).
+  result.commsBus = true
+  result.commsPlay = true
+  # ⭐⭐ v56 PLAY EXECUTORS (2026-08-14). The comms-forensics pass over 310 league
+  # episodes / 3,526 v55 P-calls settled the "nobody reacts to our shouts" question:
+  # not earshot (2.86 mean hearers, 7.6% starved), not decode (v53+ wire is provably
+  # salt-0-coherent) — ADOPTION. A quarter of the channel (Pq/STACK) had no reader at
+  # ALL, and the other three quarters (Px/Pw) only lowered a hold threshold, so the
+  # designed reaction to a play call was to stand still. Four levers, four reverts,
+  # every one movement-intent only (a codeword still never touches the turret):
+  #   stackConverge  NOSTACKCONV  heard STACK pulls a second gun onto the caller
+  #   stackHoldGate  NOSTACKGATE  heard STACK gates the listener's own fogged dive
+  #   playMove       NOPLAYMOVE   heard WIPE pulls into the cleared lane / heard LINE
+  #                               shoves out of the fed one (the one-door conveyor)
+  #   playLatch      NOPLAYLATCH  TTL latch vs 41% mid-window token flips + emit
+  #                               dedupe vs 58% echoes (frees the slot for E)
+  result.stackConverge = getEnv("NOSTACKCONV").len == 0
+  result.stackHoldGate = getEnv("NOSTACKGATE").len == 0
+  result.playMove = getEnv("NOPLAYMOVE").len == 0
+  result.playLatch = getEnv("NOPLAYLATCH").len == 0
+  # ⭐ E-CALLOUTS RESTORED (NOECALL). v55 emitted ZERO of them — every shout window
+  # went to a play codeword — while the rival lineage emitted 13,077 over the same
+  # 310 episodes. This re-opens the enemy-cell callout on BOTH ends (emit + the
+  # cross-fog track intake) while deliberately NOT re-arming the two things that
+  # made shoutCallout a net cost: the carrier "C" heartbeat (a position tell about
+  # our own carrier) and the heard-callout cone reorient (REF-comms v2: a report
+  # never swings the turret). Both stay gated on shoutCallout / reactContact, which
+  # remain OFF. The emit dedupe above is what actually frees the slot for it.
+  result.eCallout = getEnv("NOECALL").len == 0
+  # ⛔ commsCrypto OFF (v47 audit, 2026-08-12). Its round salt keys on
+  # bot.gameStart — a PER-PROCESS frame-receipt counter our 4 separate seat
+  # processes do NOT share (connects straggle through a 250ms retry loop, and
+  # frameAdvance coercion counts differently per process). So the emitter and
+  # every listener rotate the token table by DIFFERENT offsets: a heard
+  # codeword decodes under the wrong salt into a wrong-but-valid play ~6/8 of
+  # the time — the only cross-fog sync channel becomes active misdirection.
+  # The in-process eval harness steps all seats on one frame stream, which is
+  # why "coded-correct" review never caught it. A fixed table (salt 0) is
+  # still opaque-ish; re-enable only with a salt derived from SHARED state
+  # (map params hash), never a local counter.
+  result.commsCrypto = false
+  # ⭐ defendTeeth ON (v47 audit, NOTEETH opt-out). The v29 RECAPTURE TEETH fix
+  # was written, funnel-instrumented (96% of recapture frames resolve blind-tier)
+  # and then NEVER enabled — shippedCombatTune set ~60 levers but not this one,
+  # so production ran the default whose own comment says it "intercepts the
+  # WRONG entity (mateCarryPos)": on a steal, every attacker walked to map
+  # centre at its current y (a mid rally, not a recapture), or worse steered
+  # the wave onto our OWN carrier's lane. Matched 2v2 defense fell 76->56pp
+  # over the window this was live.
+  result.defendTeeth = getEnv("NOTEETH").len == 0
+  result.playbook = true  # commsPlay adopts flank plays through the playbook matrix
+  # ── ⭐⭐ CONTINGENCY STATE MACHINE (planLayer, v20 candidate, 2026-07-23). The
+  # architectural fix for "chess not checkers": teamPhase drives a shared-state plan
+  # (OPEN→PROBE→PRESS→ESCORT→DEFEND→FORCE) so the team flows branch→branch unanimously
+  # instead of the flat reactive matrix that bleeds lives when countered. Directly
+  # attacks the measured deficit — we lose the opening clash 14-6 (PhOpen groups it),
+  # trickle carriers to their death (PhEscort full-collapses), and stall into the −1
+  # timeout (PhForce commits before the clock). Movement-intent only; pure fn of shared
+  # signals (the backstop-the-caller design — no unit must survive to hold the plan).
+  result.planLayer = true
+  # ⭐ rallyWave (plan #squad-1 / issue #20): PhOpen's mid-lane group pull, armed for the
+  # RE-ENTRY MARCH as well as the opening. UNPROVEN — ENV-ARMED ONLY until the
+  # pre-registered A/B passes (the contaminated-control trap, failed.md: never bake an
+  # unproven lever into the champion tune). RALLY=1 arms it per-process for the env-server
+  # A/B rig; the in-process harness would arm BOTH sides, so any harness measurement of it
+  # is a mirror unless the driver re-stamps per team (RALLYTEAM, the SPINTEAM pattern).
+  result.aimLegacy = getEnv("OLDAIM").len > 0
+  result.rallyWave = getEnv("RALLY").len > 0
+  # ── ⭐ ARC BREACHER (anti-line offense) + enemy-shield awareness. The plasma arc
+  # is a MULTIKILL cone and a line is a cluster: when a line is called, the fixed
+  # breacher seat (MidGuard) grabs the arc and cones the seam while the wave is base-
+  # of-fire. Trades that one bot's gun for its life (a deliberate specialist swap),
+  # gated to the breacher seat + a live line only, so it can't misfire team-wide.
+  # Enemy-shield awareness ships unconditionally in the reader (Actor/Track.hasShield
+  # from the "shield carried" marker) — the fire model now knows a shielded enemy is
+  # a 6-HP tank (the pip bar lies 3/3), needs more guns (satNeed), and weighs more in
+  # the break math (ShieldGunWeight); no flag, it's a straight correctness repair.
+  #
+  # ⚠️ arcBreach: OFF in the default shipped tune, but the pre-A/B audit's 3 kill-shots were
+  # all against the REACTIVE LONE-WOLF breacher — and the 2026-07-24 reframe turned each into
+  # a Captain-coordinated design that the arcprobe funnel confirms fixes it:
+  #   1. GEOMETRY (was ~485t reactive round trip): PROACTIVE ARM while shallow (ArcArmMaxDepth)
+  #      off a Captain PhProbe/PhPress read — the own-corner arc is a cheap one-leg grab, then
+  #      the armed cone is carried forward. A deep breacher never starts the retreat.
+  #   2. DISARM (was gunless 82% of the time): OPPONENT-ADAPTIVE (sawLineTick/ArcLineMemoryTicks)
+  #      — pre-arm only if a real line was seen this game, so the breacher WAKES vs a line-player
+  #      and stays a DORMANT full gun vs an aggressive no-line field; min-cluster gate never cones
+  #      a singleton; when dry it holds the seam as a threat, never feeds the gunless body in.
+  #   3. DOCTRINE/REDUNDANCY: LINE-LOCATION relay converges it on the real cluster (mean cone
+  #      2.98 / fattest 5 vs a line); it's COMBINED ARMS with the grenade (one-shot lob over
+  #      walls) not a duplicate — the arc is the SUSTAINED repeatable follow-up cone.
+  # -d:arcOn bakes it ON for the hosted-A/B CANDIDATE image (base image = this flag off = the
+  # v21 champion on GV22). The mirror can't score the win-credit; the A/B decides bake-vs-gate.
+  when defined(arcOn):
+    result.arcBreach = true
+  # ── gv21Press (v18) — FALSIFIED 2026-07-23. Hosted A/B vs h006: v18 24-55, WORSE than
+  # v17's 30-50. Pressing harder just extended the grind (endTick 2600→3400) and fed
+  # deaths without raising our kills — the problem is not caution, it's that we LOSE the
+  # duels and (the real lever) never CONVERT steals to captures (34 steals / 4 caps =
+  # 12% vs h006). Reverted; kept behind the GV21PRESS knob only. See JOURNAL 07-23 PM3/PM4.
+  # result.gv21Press = true
+  # ── ⭐⭐ SHIELD-RUSH (v19 candidate, 2026-07-23) — attacks the REAL deficit: grab→cap
+  # conversion (34 steals / 4 caps = 12% vs h006; carriers die at midfield on the run
+  # home). The rusher pre-grabs OUR OWN endzone shield (home-side, cheap detour) and
+  # carries the heart home at 6 HP — survives 6 hits vs 3. Co-carry + capture-while-
+  # shielded both confirmed legal on GV21; first-mover mechanic (h006 doesn't use it).
+  # Mirror-MEASURABLE (per-team HP → grab→cap), so lab-screened before the hosted A/B.
+  result.shieldRush = true
+  result.sprayGrab = true
+  # GV36 aim-mechanics levers (2026-08-05, from Maxwell's replay observations:
+  # wrong-direction grenades + field-wide turret spin). A/B 12g seat-rotated,
+  # per-process env rig: kills +64%, deaths -40%, positive both seatings;
+  # gated-off path byte-identical to v38; nade release err >6 brads 4% -> 0%.
+  result.nadeLob = true
+  # ⛔⛔ spinCap IS UNREACHABLE ON THE CURRENT ENGINE — armed, but its guarded
+  # branch was evaluated 0 times in 768,992 bot-frames across BOTH board families
+  # (lever-liveness audit 2026-08-20). ROOT CAUSE, and it is not in spinCap:
+  # the whole spin-budget family lives inside the `elif desiredAim >= 0:` GV36
+  # SLOT SERVO arm, which only runs when `aimSlotWorld` is true — i.e. when the
+  # observed aim step is a multiple of 8 brads AND >= 8 (a 32-slot lattice).
+  # GV40 (2026-08-06) RESTORED CONTINUOUS TURRET AIM: `AimTurnRate = 5`
+  # brads/tick (src/ctf/sim_types.nim:424), so `bot.aimStepBrads` is 5, `5 >= 8`
+  # is false, and every frame takes the CONTINUOUS servo arm instead. spinCap is
+  # correct code for an engine that no longer exists.
+  # ⚠️ THE RIG CANNOT REACH IT EITHER, and for a DIFFERENT reason than the one
+  # harness_engine.nim documents: that comment warns that at `aimTurnRate = 1`
+  # (the engine default) "the whole spin-budget family is INERT" and tells you to
+  # override to the league value 5. At 5 it is inert TOO — 5 is not a slot rate.
+  # NEITHER rate reaches this lever; only a GV36-style slot engine does.
+  # LEFT ARMED DELIBERATELY: flipping it off would be a behaviour change with no
+  # bound behind it (it cannot execute either way), and leaving it armed means
+  # that if the engine ever flips back to a slot lattice the lever wakes up as
+  # its authors intended. tests/test_arc_reach.nim asserts the engine is still a
+  # continuous-aim world, so a flip surfaces as a failing test, not as silence.
+  result.spinCap = true
+  # ⭐ spinCap RANGE FORK (issue #8 residual, 2026-08-05). Measured on the shipped
+  # trees: the 4-tick budget parks the turret at a ≤2-slot residual, and because
+  # perpMiss = D·sin(err) the 17px corridor then only opens inside ~87px — v39's
+  # shot-release range collapsed (median 247→113px, share beyond 300px 42%→19%)
+  # while the CQB arena A/B that proved the lever could not sample that axis. Two
+  # per-process knobs so ONE frozen binary can serve every arm of the giant-terrain
+  # A/B (the ab_aimfix.sh pattern — no in-process tune contamination):
+  #   NOSPINCAP=1   → drop the budget entirely (the v38 exact-plan servo).
+  #   SPINRANGE=<px>→ the LOGIC FORK: budget inside <px>, exact plan beyond it.
+  # Default stays Inf (plain v39) until the A/B pays for a change. [[REF-slack]]
+  # forbids tuning the fire-gate KNOB; this is the range-conditioned logic fork it
+  # prescribes instead, and it touches the TRAVERSE, not the trigger.
+  result.spinCapRangePx = Inf
+  if getEnv("NOSPINCAP").len > 0:
+    result.spinCap = false
+  let spinRange = getEnv("SPINRANGE")
+  if spinRange.len > 0:
+    result.spinCapRangePx = parseFloat(spinRange)
+  # ⭐⭐ ANCHOR RELOCK + SPRAY SINGLE (4-team audit fixes, 2026-08-06). Both are pure
+  # bug fixes (relock is a no-op whenever the first guess was already right; spraySingle
+  # only fires when the fallback today is silence), so both ship DEFAULT ON — same class
+  # as medEcon/carrierFlee, not an UNPROVEN plan-#N lever. NOANCHORRELOCK=1 /
+  # NOSPRAYSINGLE=1 hold each OFF (the pre-fix behavior) so a frozen binary can A/B them.
+  result.anchorRelock = getEnv("NOANCHORRELOCK").len == 0
+  result.spraySingle = getEnv("NOSPRAYSINGLE").len == 0
+  # ⭐⭐⭐ SPRAY CONE GEOMETRY + FIRE-BEFORE-CHARGE (2026-08-20). Same class as
+  # spraySingle/anchorRelock and shipped the same way: DEFAULT ON IN CODE with a
+  # NOxxx opt-out, NEVER armed by container env — the Dockerfile sets only PATH,
+  # which is how tradeGate sat dark in every image ever built. Both are pure
+  # corrections (one makes the gate the engine's own wedge instead of two stale
+  # hand-tuned numbers; the other stops an out-of-reach cluster from preempting a
+  # shot already inside the cone), and neither can fire on a frame the old code
+  # would have fired on and declined — they only ADD presses. NOSPRAYCONE=1 /
+  # NOSPRAYFIRST=1 hold the pre-fix behaviour so ONE frozen binary serves both
+  # arms; grabprobe's SPRAYCONETEAM/SPRAYFIRSTTEAM isolate a RAW ENGINE TEAM
+  # INDEX (0..3) for the paired within-block A/B.
+  result.sprayConeFire = getEnv("NOSPRAYCONE").len == 0
+  result.sprayFireFirst = getEnv("NOSPRAYFIRST").len == 0
+  # ⭐⭐⭐ COMBO GRAB (2026-08-06): see the comboGrab field doc — ONE designated
+  # seat (ComboGrabSeat) runs a sequenced shield-then-can grab with a done-
+  # latch; every other seat is untouched. Default ON; NOCOMBOGRAB=1 turns it
+  # off for the A/B.
+  result.comboGrab = getEnv("NOCOMBOGRAB").len == 0
+  # ⭐⭐ AGGRO SCALAR — REVERTED to 1.0 (2026-08-07, v45, impl-v44ab arm A/B).
+  # The v44 aggro=0.5 home-ground posture (below, kept for the record) was
+  # shipped on the Andre study's premise but never isolated from v44's other
+  # changes. impl-v44ab's arm A (aggro=0.5, this champion as-shipped) vs arm B
+  # (identical build, AGGRO=1.0 override — the ONLY delta) came back
+  # DECISIVE: arm A win rate 40.0%, arm B 52.2% at DEAD PARITY, K/D exactly
+  # 1.000. aggro=0.5 is a regression, not a posture win — the shorter
+  # engagement/commit ranges cost more than the home-ground framing gained.
+  # arcStandoff is EXONERATED by the same A/B (unaffected, both arms carry it
+  # ON) and stays on. Reverting the default to 1.0 (byte-identical to
+  # defaultCombatTune's aggroScale=1.0/bankHpThreshold=1 no-op) undoes the
+  # regression the live v44 champion is currently carrying. AGGRO=<float>
+  # keeps working exactly as before for any future re-measurement.
+  # ⭐⭐ AGGRO SCALAR (2026-08-07, v44 home-ground posture, SUPERSEDED above):
+  # the Andre study confirmed the home-ground meta (88.3% defense rate,
+  # 89-97% own-half dwell, boundary fights = fighting inside your own cover
+  # network), so the shipped default moved from 1.0 to 0.5: aggroScale=
+  # (0.7+0.3*0.5)/1.3≈0.77 (~23% shorter engagement/commit ranges — fight
+  # nearer home cover, don't chase) and bankHpThreshold=min(MaxHp-1,
+  # round(1/0.5))=2 (wounded bots peel at 2hp instead of 1 — survive, reach
+  # kits, refight). Both were intended as posture, not side effects — the A/B
+  # above shows the net effect was negative regardless of intent.
+  result.aggro = 1.0
+  block aggroEnvParse:
+    let aggroEnv = getEnv("AGGRO")
+    if aggroEnv.len == 0: break aggroEnvParse
+    try:
+      result.aggro = parseFloat(aggroEnv)
+    except ValueError:
+      result.aggro = 1.0
+  # ⭐⭐ MEDPEEL (2026-08-07): see the medPeel field doc — Alex Smith forensics,
+  # directional evidence only (n=7-8 peels). Default ON; NOMEDPEEL=1 turns it
+  # off for the A/B.
+  result.medPeel = getEnv("NOMEDPEEL").len == 0
+  # ⭐⭐ v56 AWARENESS PACKAGE (2026-08-14, Maxwell replay notes). Three
+  # independent levers, one env opt-out each:
+  # 1) REAR-GUARD TURN-ON-HIT — "our last-man-back got shot from behind and
+  #    never turned; all his mates were dead, danger was provably forward of
+  #    him". Note damageAware itself was shipped OFF, so the whole hp-drop
+  #    sense was inert; rearTurn arms it AND adds the no-ring fallback + the
+  #    sentry orient consumption + the last-man field watch. NOTURN=1 reverts.
+  result.rearTurn = getEnv("NOTURN").len == 0
+  # 2) STATED-HAZARD READS — "we still don't react to end-of-game perimeter
+  #    bombs, we die to them a lot". The engine states puddle boxes and the
+  #    barrage shell ring outright; both label families had ZERO readers.
+  #    NOHAZARD=1 reverts.
+  result.hazardSense = getEnv("NOHAZARD").len == 0
+  # 3) DANGER-BEARING PRE-AIM — "shots on target = positioned + looking where
+  #    the enemy WILL be". NOPREAIM=1 reverts.
+  result.dangerPreAim = getEnv("NOPREAIM").len == 0
+  # ⭐⭐ THE THREE DARK MATE-DEATH BRANCHES, SHIPPED OFF AND SEPARATELY ARMABLE.
+  # Each has NEVER run in shipped play, so none is "restored behaviour" — they
+  # are three UNTESTED levers and must be bounded one at a time (arming all
+  # three at once is unattributable). Opt-IN to arm + NO* kill switch, the same
+  # shape hotDoor uses. NEVER via container ENV: the Dockerfile sets only PATH,
+  # which is exactly how three levers sat dark in every shipped image.
+  result.mateKoAim = getEnv("MATEKOAIM").len > 0 and getEnv("NOMATEKOAIM").len == 0
+  result.mateKoWatch = getEnv("MATEKOWATCH").len > 0 and getEnv("NOMATEKOWATCH").len == 0
+  result.mateKoDoor = getEnv("MATEKODOOR").len > 0 and getEnv("NOMATEKODOOR").len == 0
+  result.mateKoStale = getEnv("MATEKOSTALE").len > 0 and getEnv("NOMATEKOSTALE").len == 0
+  # ⭐⭐ v56 NADE PACKAGE (2026-08-14, play-layer-analysis §3). Three
+  # independent levers, one env opt-out each:
+  # 1) STALE-TRACK WALL GRENADE — "the wall-camper grenade is impossible by
+  #    construction": nade targeting skips any track older than the GUN's
+  #    FreshShotTicks=24, so a known-but-currently-fogged bunker cluster can
+  #    never be a target. NOSTALENADE=1 reverts.
+  result.staleNade = getEnv("NOSTALENADE").len == 0
+  # 2) ROLE-RESTRICTED NADE SUPPLY — measured 38 pickups vs their 68. Grenade
+  #    spawns are STATIC known points, so the flank/trailer seats navigate to
+  #    the coordinate instead of waiting to SEE one. NOSUPPLY=1 reverts.
+  result.nadeSupply = getEnv("NOSUPPLY").len == 0
+  # 3) ANTI-BUNCH SPACING — 56% of enemy nade impacts that damaged us caught
+  #    2+ of ours; MateSpacing(40) < NadeBlast(52). NOBUNCH=1 reverts.
+  result.antiBunch = getEnv("NOBUNCH").len == 0
+  # ⛔ v56 ONE-DOOR BREAK, levers 2 + 3 — HELD OFF (2026-08-14/17). Forensics in
+  # the const block (replay r1692 e20); lever 1 is the seat swap inside
+  # roleForSeat (NODOOR1=1) and lever 4 is the arcBreach seat divisor
+  # (NOSEATFIX=1) — those two SHIP, these two do NOT.
+  # Both are MOVEMENT-TARGET ONLY and arm on OUR OWN side of the midline
+  # (pre-contact by construction, so neither taxes the turret — the FEET LAW).
+  # ⚠️ WHY THEY ARE OFF: the door implementer's own validation sweep (c533f23,
+  # "levers 2/3 read inert on this map") found the armed and disarmed arms
+  # differing ONLY IN THEIR COUNTERS, with no behavioural change — a lever that
+  # ticks a counter but never moves a foot LOOKS alive and is not. Shipping two
+  # inert levers beside a real one contaminates attribution for the whole
+  # package, so they are held until that verdict lands.
+  # Arm them for further study with HOTDOOR=1 / WAVEGATE=1 (the SHAPE pattern
+  # below); NOHOTDOOR=1 / NOWAVEGATE=1 remain explicit force-offs so the
+  # documented revert still exists and still works.
+  result.hotDoor = getEnv("HOTDOOR").len > 0 and getEnv("NOHOTDOOR").len == 0
+  result.waveGate = getEnv("WAVEGATE").len > 0 and getEnv("NOWAVEGATE").len == 0
+  # ⛔ v56 SHAPE — ONE RUNNER, SEVEN HOLD: BUILT, FIRED, AND REJECTED (2026-08-14).
+  # Shipped OFF. It reached the field of play (-d:shapefire: 30,993 armed frames,
+  # 25,142 of them the hold actually clamped a target — 91% of holder-alive frames,
+  # and 0 on the control side, so the SHAPETEAM isolation was real and not a mirror),
+  # and what it produced was the LOSING shape, not the winning one: the shaped side
+  # fell to 2.0 midline crossings per episode (control 16.5) and meanDeep 0.04
+  # (control 0.68), with 95.7% of its deaths in its own half (control 66%) — a
+  # near-exact reproduction of the replay we LOST. Seat-rotated on seed 100 the
+  # shaped side lost on BOTH seatings, including flipping a control-mirror result.
+  # Mechanism, measured not guessed: the designated runner is alive for only 6.2%
+  # of armed frames against an even share of 12.5%, i.e. it dies about twice as
+  # fast as an average seat. Seven bodies held at home do not buy the eighth a
+  # corridor; they concede the midline and the fight relocates into our half.
+  # Known additional defect if anyone re-opens this: both med kits sit exactly ON
+  # the centre line (MedKitAX = MapW div 2), so a hold line home-ward of centre
+  # starves every holder of both kits. Fix that BEFORE re-measuring.
+  # SHAPE=1 re-arms it for further study; NOSHAPE=1 is an explicit force-off.
+  result.oneRunner = getEnv("SHAPE").len > 0 and getEnv("NOSHAPE").len == 0
+  let shapePxEnv = getEnv("SHAPEPX")
+  if shapePxEnv.len > 0:
+    result.shapeHoldPx = parseFloat(shapePxEnv)
+  # ⭐⭐ v56 MID-QUAD BREAK (2026-08-14, Maxwell's roster scan). Levers 2 and 3
+  # of three; lever 1 is the seat-4 de-duplication inside roleForSeat
+  # (NOSEAT4=1). Both are MOVEMENT-TARGET ONLY and both sit behind the existing
+  # pocket-range gates, so the touch itself is byte-identical in every arm.
+  # ⛔ DEFAULT OFF — measured and rejected on the seat-rotated A/B (negative on
+  # four of four armed runs; see the ledger in roleForSeat). ROLEQUAD=1 arms the
+  # package, the NOxxx names still revert each lever individually on top of it.
+  let quadArmed = getEnv("ROLEQUAD").len > 0
+  result.roleSep = quadArmed and getEnv("NOROLESEP").len == 0
+  result.midSpread = quadArmed and getEnv("NOMIDSPREAD").len == 0
+  # ⭐⭐ FFA4 LIVES PACKAGE (2026-08-17, "SEAL team: best at attacking, best at
+  # flag capturing, ALL GAME MODES COVERED" audit, 347 re-simulated ffa4
+  # episodes). ffa4 is a LAST-TEAM-STANDING elimination game (3 lives/agent,
+  # 3rd death permanent) scored on lives-spent-by-half-time far more than K/D
+  # (early deaths predict the winner 76.4%, early kills 45.1% = noise). Both
+  # levers are GATED AT THE CALL SITE on GameTeams > 2 (not here — GameTeams
+  # is unknown until the init markers land, well after this function runs),
+  # so a 2-team game is byte-identical regardless of these two flags. See the
+  # ffaMedSee / lastLifeGuard field docs for the full measurement.
+  result.ffaMedSee = getEnv("NOFFAMEDSEE").len == 0
+  # ⭐⭐⭐ kitSel — FEASIBILITY-AWARE KIT SELECTOR (2026-08-20). ⛔ SHIPS OFF.
+  # Armed HERE, at RUNTIME, and never in the Dockerfile: that image sets only
+  # PATH, which is how tradeGate sat DARK in every container ever built. The
+  # NOKITSEL force-revert is checked in the SAME expression so a revert run
+  # cannot be re-armed by a stale KITSEL in the environment, and grabprobe's
+  # KITSELTEAM isolation knob keeps NOKITSEL authoritative over it too (the
+  # NOWUFF-over-WUFFTEAM precedent). Unlike ffaMedSee/lastLifeGuard this is NOT
+  # gated on GameTeams > 2 at the call site — the phantom address is wrong on
+  # 2-team generated boards as well (arena.nim coin-flips a y-drawn pair that
+  # H/3 only grazes), and the placebo study measured our 2-team approach at the
+  # same zero as ffa4. It therefore CHANGES 2-team behaviour when armed and must
+  # be measured on both boards; see the tune-field doc.
+  result.kitSel = getEnv("KITSEL").len > 0 and getEnv("NOKITSEL").len == 0
+  # ⭐⭐⭐ shieldAddr — LEARNED SHIELD ADDRESS (2026-08-20). ⛔ SHIPS OFF.
+  # ⭐ MED-KIT GEAR VETO (medEncum) — ⛔ SHIPS OFF.
+  # Both armed HERE, at RUNTIME, and never in the Dockerfile: that image sets only
+  # PATH, which is how tradeGate sat DARK in every container ever built. Each NO*
+  # force-revert is checked in the SAME expression so a revert run cannot be
+  # re-armed by a stale arm variable in the environment, and it stays authoritative
+  # over the *TEAM isolation knobs too (the NOWUFF-over-WUFFTEAM precedent).
+  # NEITHER is gated on GameTeams at the call site. shieldAddr's address defect is
+  # 100% on four-team boards but also 18.6% on two-team (the symRot180 draw puts
+  # Blue's address on Blue's SPRAY CAN spawn, 330px from its shield), and medEncum's
+  # veto fires on both (17.5% / 12.1% of wounded ticks). They therefore CHANGE
+  # two-team behaviour when armed and must be measured on both board families.
+  # They are separate flags on purpose: a shield is +3.0 absorbed damage but costs
+  # a 3x fire slowdown, while a med kit is +1.62 and costs nothing, so the two
+  # consumables must never be attributed together.
+  result.shieldAddr = getEnv("SHIELDADDR").len > 0 and getEnv("NOSHIELDADDR").len == 0
+  result.medEncum = getEnv("MEDENCUM").len > 0 and getEnv("NOMEDENCUM").len == 0
+  # ⛔ lastLifeGuard DEFAULT OFF (2026-08-17 gate). The perception half — the
+  # ownLives readback — is PROVEN LIVE (selfLives() parsed 204,566 of 204,566
+  # decide frames on the gen 4-team rig, distribution x3/x2/x1 = 54591/66578/83397)
+  # and stays wired unconditionally, because it costs nothing and is the only
+  # channel that states our remaining lives. The BEHAVIOUR half is not proven and
+  # is not in any ship claim: L3a's dive veto fired 0 times in one 10-episode
+  # armed arm and 447 in another on the same rig, so its fire rate is not even
+  # stable, let alone its effect. Its L3b sibling (the widened detour) is deleted
+  # outright — see its tombstone at MedKitEconDetour. LASTLIFE=1 arms L3a for the
+  # eval rig; NOLASTLIFE=1 still force-offs on top (the HOTDOOR/NOHOTDOOR double
+  # gate), so the documented revert name keeps working either way.
+  result.lastLifeGuard = getEnv("LASTLIFE").len > 0 and getEnv("NOLASTLIFE").len == 0
+  # ⭐⭐ L2/L4 ffa4 TEMPO MANDATE (2026-08-17, "we are SEAL team — best at
+  # attacking, best at flag capturing, ALL GAME MODES COVERED"). Both levers
+  # are structurally gated to `GameTeams > 2` at every call site (the volume
+  # gate inside the fireSuperiority block, the clock inside wantPocketRush /
+  # touchLatch / holdGrab) — a 2-team game reads getEnv same as always but the
+  # gate condition is false by construction, so this is a provable no-op
+  # there (proven: candidate vs control grabprobe output is BYTE-IDENTICAL on
+  # a 2-team board). See the tune-field comments above for the measured
+  # premise and each constant's own comment for its calibration.
+  # ⭐⭐⭐ FLIPPED TO DEFAULT ON (v59, 2026-08-20, on the coordinator's explicit
+  # go-ahead). Everything below this line down to `result.tradeGate` is the
+  # HISTORICAL note kept verbatim, because it records why the lever sat OFF; what
+  # changed is not the lever, it is the ARMING. The failure was NOT that the gate
+  # was wrong — it was that `VOLUME` is a container-ENV flag and the shipped image
+  # carries only PATH, so the gate was DARK in production for the whole time it
+  # was "shipped". That is v30/touchCommit, exactly: the lever was in the source,
+  # the source was in the image, and the image never saw the variable. The house
+  # rule that came out of v30 is the one applied here — a lever ships DEFAULT ON
+  # IN CODE with a NOxxx opt-out (windupFf/NOWUFF, nadeFfVeto/NONADEFF,
+  # arcStandoff, defendTeeth), never on an env var somebody has to remember to set
+  # on a container.
+  #
+  # THE MEASURED CASE (coordinator, 4,244 team-Episodes, 15.7σ — not re-derived
+  # here): fitting P(finish first) on own vs mean-rival lives spent by tick 1200
+  # gives  logit = -1.233 - 0.4053*own + 0.3618*rival.  A DEATH COSTS 3.4x WHAT A
+  # KILL GAINS, so an even 1-for-1 trade nets -0.2847 logit (z = -15.7) — it is not
+  # a wash, it is one of the largest single negative terms we can name. Our early
+  # reciprocated-trade RATE matches the leaders; our VOLUME is ~1.9x theirs
+  # (3.53/team-Ep vs relh 1.82, richard 2.05, daveey 2.13). 216 of our 455 early
+  # deaths (47.5%, 2.483 lives/team-Ep) happen on an OFFENSE seat with a fresh
+  # enemy inside RetreatRadius and NO local mate edge — which is precisely and
+  # only the state this gate reads. Realistic recovery 1.22-1.59 lives/team-Ep
+  # => +1.2pp to +5.1pp win rate.
+  # ⚠️ The discriminating window is ticks 200-400, NOT 40s — so ARMS-LATE is the
+  # failure that would silently void the whole lever. MEASURED, not asserted
+  # (-d:tempoprobe WHEN row, EVAL_TEAMS=4 EVAL_MAP=gen, no env): firstFireTick
+  # 228, buckets [0-199] 0 / [200-399] 4 / [400-799] 7. The empty first bucket is
+  # STIMULUS, not a clock — the branch is evaluated from tick 0 (4,590 eval frames
+  # inside the first 400 ticks) and simply has no fresh enemy inside
+  # RetreatRadius until ~228. Nothing in the entry path is timed: no gameStart
+  # term, no tick threshold, no warm-up. The gate covers the window.
+  # ⚠️ Its effect is delivered THROUGH the engage branch's `declining` bypass — do
+  # NOT sum its bound with any separate engage-branch lever.
+  # NOVOLUME=1 is the opt-out and it is the WHOLE rollback path: a rollback is a
+  # re-run with different env, never a rebuild. VOLUME=1 still parses and is now
+  # simply redundant.
+  #
+  # ⛔ HISTORICAL — the DEFAULT-OFF note this lever shipped with (kept verbatim):
+  # ⛔ DEFAULT OFF (HOTDOOR/WAVEGATE precedent, not touchCommit/arcStandoff).
+  # tradeGate's BEHAVIOURAL fire is proven and clean — armed on one team over 10
+  # gen 4-team episodes it declined 1871 of 33949 press-worthy frames (5.5%), and
+  # 8224/56397 (14.6%) in an all-armed mirror — and its secondary profile is the
+  # best of the package (most captures of any team in its arm, deaths equal to
+  # its controls, best net P(escape|hp==1) of any single lever). But the OUTCOME
+  # claim is UNCONFIRMED: lives spent by a FIXED tick 1500 moved -0.37 net of the
+  # +0.53 seat-position baseline over n=10, far inside the 0.7-1.8 spread among
+  # the three control teams. It also cuts against a measured field fact — holding
+  # early deaths FIXED, more early kills is worth +32 to +42pp of win rate on our
+  # own 346 hosted ffa4 episodes, and declining a trade forgoes the kill. Per
+  # this file's own rule (never bake an unproven lever into the champion tune) it
+  # stays ARMED-ONLY pending a hosted A/B. VOLUME=1 arms it; NOVOLUME=1 still
+  # force-offs on top (same double gate as HOTDOOR/NOHOTDOOR above), so the
+  # documented revert name keeps working either way.
+  # ⭐⭐⭐ TGEV — the ffa4 TRADE-EV GATE (2026-08-20). Three INDEPENDENT extensions
+  # of the tradeGate above (never a parallel mechanism: same decision site, same
+  # gun tally, same declineUntil timer, same "keep the gun, drop the walk" act
+  # path). Each is separately armable and separately force-revertible, because a
+  # regression in one must be rollable back without touching the others — the
+  # CQBLOS/NOCQBLOS and WUFF/NOWUFF shape:
+  #   TGSQ  / NOTGSQ    A — the square-law bar replaces the additive one
+  #   TGCON / NOTGCON   B — the contested-melee bystander term
+  #   TGHP  / NOTGHP    C — symmetric hp weighting of self and mates
+  #   TGSHADOW          evaluate + count + ledger, never act (control-identical)
+  #   TGCONBURN=<f>     re-pin c without a rebuild
+  # TGEV=1 is a CONVENIENCE that arms the whole package (tradeGate itself
+  # included, since A/B/C are structurally unreachable without it); every NOxxx
+  # still overrides it, so `TGEV=1 NOTGCON=1` is the A+C arm.
+  #
+  # ⛔ DEFAULT OFF, and it stays off until a HOSTED A/B. Not because the
+  # arithmetic is shaky — it is the cleanest derivation in this file — but
+  # because the parent lever's own note records the counter-evidence: holding
+  # early deaths FIXED, MORE early kills is worth +32 to +42pp of win rate on our
+  # 346 hosted ffa4 episodes, and every decline forgoes a kill. The suppression
+  # cost is real and is measured (TGSTATE / TGCOST rows under -d:tempoprobe),
+  # never assumed away.
+  #
+  # ⚠️ A BARE flag is a MIRROR on the local rig: all bots share ONE process env,
+  # so TGEV=1 arms all four teams and the A/B measures nothing. Use grabprobe's
+  # TGEVTEAM=<n>[,<n>] team-isolation knob for any measurement.
+  #
+  # ⛔ NO CLOCK TERM, deliberately, and this is a refusal not an omission. The
+  # attrition gap opens entirely before T=1200, so a "first 40s only" window is
+  # the obvious fourth lever — and it is UNBUILDABLE in the shipped image for two
+  # reasons this file already paid for: (1) the only episode clock a bot has is
+  # bot.tick - bot.gameStart, a PER-PROCESS frame-receipt counter, and production
+  # runs our four seats as four separate processes that never share it (the
+  # commsCrypto kill and the flagClock tombstone are both this); (2) hosted ffa4
+  # length is min 1340 / median 3087 / p90 7130, so one absolute tick means
+  # "87% through" in one episode and "17%" in another. T=1200 is the METRIC, not
+  # an input. The gate is time-free on purpose.
+  let tgEv = getEnv("TGEV").len > 0
+  result.tradeGate = getEnv("NOVOLUME").len == 0
+  result.tradeGateSquare = (getEnv("TGSQ").len > 0 or tgEv) and
+    getEnv("NOTGSQ").len == 0
+  result.tradeGateContest = (getEnv("TGCON").len > 0 or tgEv) and
+    getEnv("NOTGCON").len == 0
+  result.tradeGateSelfHp = (getEnv("TGHP").len > 0 or tgEv) and
+    getEnv("NOTGHP").len == 0
+  result.tradeGateShadow = getEnv("TGSHADOW").len > 0
+  if getEnv("TGCONBURN").len > 0:
+    try:
+      result.tradeGateBurn = parseFloat(getEnv("TGCONBURN"))
+    except ValueError:
+      result.tradeGateBurn = TradeContestBurn
+  # ⭐⭐ KILL RELEASE ON THE KO MARKER (2026-08-20) — see the tune field for the
+  # wire proof that the v48 `corpse ` scan is dead code while alive, and for the
+  # field numbers. ⛔ DEFAULT OFF pending a hosted A/B. KOREL=1 arms it;
+  # NOKOREL=1 force-offs on top, so the revert name works either way.
+  result.koRelease = getEnv("KOREL").len > 0 and getEnv("NOKOREL").len == 0
+  # ── ⭐⭐ AoE FRIENDLY-FIRE VETO (2026-08-19). SHIPS OFF, RUNTIME-GATED. `when
+  # defined(...)` gates are compiled OUT of the shipped champion, so a build-time
+  # gate is not a gate at all — these must be getEnv, like every lever above.
+  # Two INDEPENDENT flags (a grenade regression must be rollable back without
+  # touching spray, and vice versa) each with its own force-revert, the
+  # HOTDOOR/NOHOTDOOR double-gate shape: a rollback is a re-run with different
+  # env, never a rebuild.
+  #   NONADEFF=1   opts the grenade blast veto out
+  #   NOSPRAYFF=1  opts the spray cone veto out
+  # ⚠️ A BARE flag is a MIRROR on the local rig: every bot shares ONE process env,
+  # so arming here arms all four teams and the A/B measures nothing. Use
+  # grabprobe's NADEFFTEAM / SPRAYFFTEAM team-isolation knobs for any measurement.
+  #
+  # ⭐⭐⭐ SHIPPED HOT (v58, 2026-08-19, on the user's explicit go-ahead), DEFAULT ON
+  # IN CODE with NOxxx opt-outs, same v30/touchCommit lesson as windupFf above:
+  # never gate a shipped lever on container env. Two INDEPENDENT flags on purpose —
+  # a grenade regression must be rollable back without touching spray, and vice
+  # versa. ⚠️ BOTH SHIP UNMEASURED ON THIS RIG, and that is stated rather than
+  # hidden: over 12 full episodes the local 4-team rig produced 341 candidate
+  # grenade impact points with ZERO mates in any burst at any slack level, and 50
+  # spray presses with ZERO mates in any wedge. Neither cost nor benefit is
+  # observable here; both are field-only claims resting on the shared trackAhead
+  # geometry the gun veto DID score.
+  result.nadeFfVeto = getEnv("NONADEFF").len == 0
+  result.sprayFfVeto = getEnv("NOSPRAYFF").len == 0
+  # ⭐⭐⭐ THE RAID FRAME (2026-08-20) — see the CombatTune field doc for the full
+  # measurement. SHIPS DEFAULT ON IN CODE with a NOxxx opt-out, the arcStandoff /
+  # touchCommit / v58 shape. ⚠️ NEVER arm a shipped lever from container ENV: the
+  # Dockerfile sets only PATH, and v30 armed touchCommit with a throwaway
+  # `docker commit --change 'ENV TOUCH=1'` that never entered git — every image
+  # built after it ran that lever SILENTLY DARK for nine days. NORAIDFRAME=1 is
+  # the opt-out AND the rollback path (a rollback is a re-run with different env,
+  # never a rebuild); it is proven byte-identical to base 702701e by the
+  # FNV-over-every-emitted-button-mask fingerprint.
+  result.raidFrame = getEnv("NORAIDFRAME").len == 0
+  # ⭐⭐⭐ ONE LOCK OWNER (2026-08-20) — MIGRATED INTO THE TUNE STAMP. See the
+  # CombatTune field doc for the full measurement and the reason it moved: a
+  # per-frame `getEnv("NOLOCKONE")` inside decide() was invisible to the
+  # lever-liveness tripwire and common-mode across every bot in one process, so
+  # no rig could ever isolate it. Same shape as raidFrame/sprayConeFire right
+  # above: SHIPS DEFAULT ON IN CODE with a NOLOCKONE=1 opt-out, never a
+  # container ENV. NOLOCKONE=1 is proven byte-identical to base 702701e by the
+  # FNV-over-every-emitted-button-mask fingerprint — the migration only moves
+  # WHERE the env is read (here, once, instead of in decide(), every frame),
+  # not the truth table.
+  result.lockOne = getEnv("NOLOCKONE").len == 0
+
+
+when defined(doorprobe):
+  # ── ⭐ ONE-DOOR PROBE (-d:doorprobe ONLY, pure instrumentation, never in the
+  # shipped player). Measures the ONE number this whole package is aimed at:
+  # ENTRY-Y STDEV — the y at which each seat crosses the midline INTO the enemy
+  # half. Ours in the field is 5-31px vs daveey's 148-242px; the target is >100.
+  # Per-(team, teamSeat) so the STRIDED LEAGUE SUBSET (teamSeats 0..3) can be
+  # scored on its own — grabprobe seats all 8 of our roles, the league does not.
+  const DpMaxEntries = 512
+  var dpEntryY*: array[2, array[8, array[DpMaxEntries, float]]]
+  var dpEntryN*: array[2, array[8, int]]
+  # ⭐ THE DOOR IS NOT THE MIDLINE — reading only the midline understates the
+  # defect by an order of magnitude. Re-simulating r1692 e20 (the case study
+  # itself, hash-checked faithful) with a depth sweep on our four seats:
+  #     depth   0 (midline)   n=14  STDEV 81.6  span 211px
+  #     depth  45             n=8   STDEV 23.5  span  75px
+  #     depth  90 (the door)  n=9   STDEV  6.8  span  22px  <- the reported 16px
+  #     depth 135             n=5   STDEV  1.3  span   3px
+  # We DO spread at the line and are funnelled into one gap ~90px past it. Those
+  # two readings want different fixes, so record BOTH edges.
+  const DpDoorDepth = 90.0
+  var dpDoorY*: array[2, array[8, array[DpMaxEntries, float]]]
+  var dpDoorN*: array[2, array[8, int]]
+  # Per-seat liveness: a seat with 0 acting frames is the "2 of 6 bots stood
+  # perfectly still with zero errors" failure. Counted from decide()'s TAIL, so
+  # it only ticks when the frame actually produced a decision.
+  var dpAliveFrames*: array[2, array[8, int]]
+  var dpTravel*: array[2, array[8, float]]     # px walked (alive-frame deltas)
+                              # ("green and yellow travelled exactly 0px across a
+                              # whole episode" is the statue signature)
+  var dpRole*: array[2, array[8, int]]         # ord(role) last seen, -1 = unseated
+  # Lever fire counts — a compiled-but-never-triggered lever is the repeated
+  # failure mode, so every lever gets a non-zero-or-it-did-not-ship counter.
+  var dpHotDoorFire*: array[2, array[8, int]]  # frames the reroute MOVED target.y
+  var dpHotDoorArm*: array[2, array[8, int]]   # frames a hot door was detected
+  var dpDoorDeaths*: array[2, array[8, int]]   # crossing-band deaths remembered
+  var dpWaveHold*: array[2, array[8, int]]     # frames held at the staging line
+  var dpWaveRelease*: array[2, array[8, int]]  # holds ended by a mate arriving
+  var dpWaveExpire*: array[2, array[8, int]]   # holds ended by the HARD cap
+  # NOSEATFIX: frames the divisor-formula fix actually resolved a DIFFERENT
+  # teamSeat than the buggy `slot div 2` read. Provably 0 on any board with
+  # GameTeams<=2 (max(GameTeams,2)==2 makes the two formulas byte-identical by
+  # construction) — this counter's job is to catch the day someone runs this
+  # probe on a 4-team board and confirm the fix actually resolves a seat.
+  var dpSeatFixDiff*: int
+  # ── PER-SLOT LIVENESS. team/teamSeat collide on a 4-team board (Team is a
+  # Red/Blue PARITY there), so the "did every seat act?" proof is indexed by the
+  # unambiguous physical SLOT.
+  var dpSlotFrames*: array[32, int]
+  var dpSlotTravel*: array[32, float]
+  var dpSlotRole*: array[32, int]
+  var dpSlotSeat*: array[32, int]
+  var dpSlotEntries*: array[32, int]
+  proc dpNoteEntry*(team, seat: int, y: float) =
+    if team notin 0 .. 1 or seat notin 0 .. 7: return
+    if dpEntryN[team][seat] >= DpMaxEntries: return
+    dpEntryY[team][seat][dpEntryN[team][seat]] = y
+    inc dpEntryN[team][seat]
+
+  proc dpNoteDoor*(team, seat: int, y: float) =
+    if team notin 0 .. 1 or seat notin 0 .. 7: return
+    if dpDoorN[team][seat] >= DpMaxEntries: return
+    dpDoorY[team][seat][dpDoorN[team][seat]] = y
+    inc dpDoorN[team][seat]
+
+
+when defined(roleprobe):
+  # ── ⭐ MID-QUAD PROBE (-d:roleprobe ONLY, pure instrumentation, never in the
+  # shipped player). Two jobs, and the second is the one that has burned us:
+  #   1) LEVER FIRE. roleSep only does anything to a bot whose role is dealt
+  #      twice, and midSpread only touches the two trail branches. A lever that
+  #      compiles but never triggers reads exactly like a lever that does not
+  #      work, so each gets a counter that must be non-zero in the ON arm and
+  #      ZERO in its own revert arm.
+  #   2) SEPARATION and FRIENDLY FIRE. Entry-y cannot score this package (this
+  #      rig's baseline is already 140-205px where the field shows 5-31px, and
+  #      the field comparison that motivated it was itself refuted), so the
+  #      crowding target is measured two ways instead: sampled (frame, pair)
+  #      events with two live teammates inside one grenade, and — the one the
+  #      FIELD reports — the own-colour share of kills and damage. Friendly fire
+  #      is ON in this engine, so own-colour damage is not a proxy for crowding,
+  #      it IS crowding. Field reading: 8.1% of half4 deaths own-colour.
+  #      ⚠️ RESULT: it did not move. Own-colour DAMAGE 5.21% armed vs 5.23%
+  #      unarmed (n≈650 each, the best-powered reading); own-colour KILLS 7.54%
+  #      vs 5.56% on n=15/10, which is noise and if anything the wrong way. And
+  #      the pair metric is dominated by a ~2pp SIDE effect (Red 18.6%, Blue
+  #      20.6%) that survives every arm — a control worth keeping, because it is
+  #      exactly how a side-confounded metric fakes a lever effect.
+  var rpSepFrames*: array[2, array[8, int]]   # frames the roleSep branch moved a target
+  var rpMidFrames*: array[2, array[8, int]]   # frames a mid trail offset was applied
+  var rpMidTrailSum*: array[2, array[8, float]] # Σ|trail y| over those frames — the
+                              # midSpread arms differ in this SUM even though neither
+                              # takes a distinguishable branch (it is a value change,
+                              # not a code path, so a plain counter cannot prove it)
+
+  proc rpSepFire*(team: Team, seat: int) =
+    let t = clamp(ord(team), 0, 1)
+    if seat notin 0 .. 7: return
+    inc rpSepFrames[t][seat]
+
+  proc rpMidFire*(team: Team, seat: int, trailY: float) =
+    let t = clamp(ord(team), 0, 1)
+    if seat notin 0 .. 7: return
+    inc rpMidFrames[t][seat]
+    rpMidTrailSum[t][seat] += abs(trailY)
+
+  var rpPark*: array[2, array[8, int]]  # ⚠️ THE PARK INVARIANT. The mid branch
+                              # re-asserts its anchor on every frame the >90px
+                              # gate is open, so an anchor that is itself further
+                              # than 90px from the steal target is a bot that
+                              # arrives and then never leaves — it never touches
+                              # the pedestal, and it looks perfectly healthy
+                              # (frames > 0, travel > 0, zero errors). Three of
+                              # the six widened anchors in the first draft of
+                              # this package were exactly that. This counter must
+                              # be ZERO in every arm; a non-zero is a lever that
+                              # silently deletes the touch on the seats it was
+                              # supposed to help.
+  proc rpAnchorCheck*(team: Team, seat: int, target, steal: Vec, stealD: float) =
+    ## The exact parking condition, not a proxy: the anchor keeps the >90px gate
+    ## OPEN (so this branch will re-assert the same anchor next frame) AND it is
+    ## no closer to the pedestal than we already are (so arriving at it makes no
+    ## progress). A far-stage anchor at 143px read from 210px away is fine — the
+    ## bot closes to 143 and re-stages. The same anchor read from 143px away is
+    ## the trap.
+    let t = clamp(ord(team), 0, 1)
+    if seat notin 0 .. 7: return
+    # `dist` is declared further down the file than this probe block, so the
+    # hypot is inlined rather than moving the block (which would push it into
+    # the sibling-owned doorprobe region and conflict on every merge).
+    let dx = target.x - steal.x
+    let dy = target.y - steal.y
+    let anchorD = sqrt(dx * dx + dy * dy)
+    if anchorD > 90.0 and anchorD >= stealD - 1.0: inc rpPark[t][seat]
+
+
+when defined(rngprobe):
+  # ── RANGED-CORRIDOR PROBE (pure instrumentation, identical in every tree).
+  # Bands: 0=<150px 1=150-300 2=300-600 3=600-1000 4=>=1000
+  var
+    rpFrames*: array[2, array[5, int]]
+    rpOpen*: array[2, array[5, int]]
+    rpFire*: array[2, array[5, int]]
+    rpErrSum*: array[2, array[5, int]]
+    rpDistSum*: array[2, array[5, float]]
+    rpBand* = -1
+    rpSide* = 0
+    rpNextDump* = 0
+    rpCalls* = 0
+    rpCap*: array[2, int]
+    rpCapErr*: array[2, int]
+  proc rpBandOf*(d: float): int =
+    if d < 150.0: 0
+    elif d < 300.0: 1
+    elif d < 600.0: 2
+    elif d < 1000.0: 3
+    else: 4
+
+proc vec(x, y: float): Vec =
+  Vec(x: x, y: y)
+
+proc `+`(a, b: Vec): Vec = vec(a.x + b.x, a.y + b.y)
+proc `-`(a, b: Vec): Vec = vec(a.x - b.x, a.y - b.y)
+proc `*`(a: Vec, s: float): Vec = vec(a.x * s, a.y * s)
+
+proc len(a: Vec): float =
+  hypot(a.x, a.y)
+
+proc dist(a, b: Vec): float =
+  len(a - b)
+
+proc norm(a: Vec): Vec =
+  let l = a.len()
+  if l < 1e-6: vec(0, 0) else: a * (1.0 / l)
+
+proc dot(a, b: Vec): float =
+  a.x * b.x + a.y * b.y
+
+proc cross(a, b: Vec): float =
+  a.x * b.y - a.y * b.x
+
+proc octantBits(d: Vec): uint8 =
+  ## D-pad bits for the 8-way direction nearest to `d`. The worst-case aim
+  ## error is 22.5 degrees, safely inside the 25-degree firing cone.
+  if d.len() < 1e-6:
+    return 0
+  let octant = (int(round(arctan2(d.y, d.x) / (PI / 4))) + 8) mod 8
+  case octant
+  of 0: ButtonRight
+  of 1: ButtonRight or ButtonDown
+  of 2: ButtonDown
+  of 3: ButtonDown or ButtonLeft
+  of 4: ButtonLeft
+  of 5: ButtonLeft or ButtonUp
+  of 6: ButtonUp
+  else: ButtonUp or ButtonRight
+
+proc bradsOf(d: Vec): int =
+  ## The aim angle in brads pointing along `d`: 0 = east (+x), increasing
+  ## counter-clockwise on screen (64 = north; map y grows downward).
+  if d.len() < 1e-6:
+    return 0
+  (int(round(arctan2(-d.y, d.x) * float(AimBrads div 2) / PI)) +
+    AimBrads) mod AimBrads
+
+proc bradsDir(brads: int): Vec =
+  ## The unit vector of one aim angle in brads (the true fire axis).
+  let angle = float(brads) * PI / float(AimBrads div 2)
+  vec(cos(angle), -sin(angle))
+
+proc bradsErr(desired, current: int): int =
+  ## The signed shortest arc from `current` to `desired` in -128..127:
+  ## positive means rotate counter-clockwise (hold B).
+  (desired - current + AimBrads + AimBrads div 2) mod AimBrads -
+    AimBrads div 2
+
+proc spawnAim(team: Team): int =
+  ## The spawn/respawn aim angle: toward the enemy side.
+  if team == Red: 0 else: AimBrads div 2
+
+proc chessCell(p: Vec): string =
+  ## Encodes a map point as a chess-style cell "F9": file A..Z across the
+  ## width (~47px each), rank 1..14 down the height. A short, replay-legible
+  ## address that pins an enemy to a ~47px neighborhood — plenty to turn a
+  ## teammate's turret onto it (its own vision/tracking reacquire from there).
+  let
+    fw = float(MapW) / float(ChessFiles)
+    rh = float(MapH) / float(ChessRanks)
+    f = clamp(int(p.x / fw), 0, ChessFiles - 1)
+    r = clamp(int(p.y / rh), 0, ChessRanks - 1)
+  $chr(ord('A') + f) & $(r + 1)
+
+proc chessDecode(cell: string): Vec =
+  ## Inverse of chessCell: the CENTER of the named cell, or (-1,-1) if the
+  ## address is malformed (an out-of-range file letter or non-numeric rank).
+  if cell.len < 2 or cell[0] notin {'A' .. 'Z'}:
+    return vec(-1, -1)
+  var rank: int
+  try:
+    rank = parseInt(cell[1 .. ^1])
+  except ValueError:
+    return vec(-1, -1)
+  let f = ord(cell[0]) - ord('A')
+  if f >= ChessFiles or rank < 1 or rank > ChessRanks:
+    return vec(-1, -1)
+  let
+    fw = float(MapW) / float(ChessFiles)
+    rh = float(MapH) / float(ChessRanks)
+  vec((float(f) + 0.5) * fw, (float(rank - 1) + 0.5) * rh)
+
+proc slotFromUrl(url: string): int =
+  ## Reads the `slot` query parameter from the websocket URL.
+  let key = "slot="
+  let at = url.find(key)
+  if at < 0:
+    return 0
+  var i = at + key.len
+  var digits = ""
+  while i < url.len and url[i] in {'0' .. '9'}:
+    digits.add(url[i])
+    inc i
+  if digits.len == 0: 0 else: digits.parseInt()
+
+proc mapPos(client: ProtocolClient, o: SpriteObjectInfo): Vec =
+  ## Map-space center of a sprite object (the map object sits at the origin,
+  ## so the camera offset is zero; keep it for exactness). The wire carries
+  ## RenderScale-scaled coordinates with sprites centered on scaled map
+  ## points, so the division is exact for every entity the bot reads.
+  vec(
+    float((o.x + o.width div 2) div RenderScale + client.mapCameraX),
+    float((o.y + o.height div 2) div RenderScale + client.mapCameraY)
+  )
+
+proc activeColors(): int =
+  ## How many team colors are actually in play this episode.
+  max(GameTeams, 2)
+
+proc colorScanCount(): int =
+  ## How many colour tokens to sweep when LOOKING FOR PLAYERS (ours or
+  ## theirs). Deliberately NOT activeColors().
+  ##
+  ## In a free-for-all the stated team count and the colour SLOT a seat was
+  ## dealt are different numbers, and only the second one appears in a label.
+  ## Sweeping `activeColors()` there is how a policy fails to find its own
+  ## `self` marker and stands still for the episode. Whenever the ring marker
+  ## says we are in a free-for-all, sweep the WHOLE vocabulary: the cost is a
+  ## few exact-match label lookups on a frame, and the alternative is being
+  ## blind to seats we simply guessed wrong about.
+  if FfaRing.have: TeamColorNames.len else: activeColors()
+
+proc tradeEdgeMul(teams: int, burn: float): float =
+  ## ⭐⭐⭐ TGEV / TradeSquareLaw. The MULTIPLICATIVE effective-gun bar a fight has
+  ## to clear before we commit our FEET to it, on an N-team board.
+  ##
+  ## Two steps, both derived (see the TradeContestBurn block above):
+  ##   1. EV.       Engage only if p >= (N-1+c)/N, where p is our chance of
+  ##                winning the exchange and c is what the fight burns among the
+  ##                RIVALS if we walk away (0 unless the fight is contested).
+  ##   2. LANCHESTER SQUARE. Aimed fire: two sides of effective strength A and B
+  ##                give p = A^2 / (A^2 + B^2). Substituting and solving for A:
+  ##                     A >= B * sqrt(p / (1-p))
+  ##
+  ## So the whole gate is one number:  friendGuns >= enemyGuns * mul.
+  ##   teams=2, c=0    -> p=0.500 -> mul 1.000   (a duel: parity is enough — this
+  ##                                              is why the 2-team board cannot
+  ##                                              move even before the GameTeams
+  ##                                              guard at the call site)
+  ##   teams=4, c=0    -> p=0.750 -> mul 1.732
+  ##   teams=4, c=0.5  -> p=0.875 -> mul 2.646
+  ##
+  ## ⚠️ WHY MULTIPLICATIVE AND NOT TradeMinEdge's +1.0. The additive bar is
+  ## mis-shaped at the low end, where it matters most: a LONE 1-hp enemy is
+  ## already weighted 1/3 of a gun by the tally, so the additive test reads
+  ## 1.0 - 0.333 = 0.667 < 1.0 and DECLINES A FREE FINISHING KILL. The square-law
+  ## bar asks 1.0 >= 0.333*1.732 = 0.577 and PRESSES. It is also STRICTER than
+  ## the additive bar against big piles (2 fresh enemies: additive wants 3 guns,
+  ## square wants 3.46). Same lever, better shape, and it is the shape the EV
+  ## algebra actually implies.
+  let n = max(2, teams).float
+  let c = clamp(burn, 0.0, 0.9)          # c -> 1 is "never fight", clamp well short
+  let p = (n - 1.0 + c) / n
+  sqrt(p / max(1e-6, 1.0 - p))
+
+proc enemyColorFor(myColor: string): string =
+  ## The color of our RAID TARGET — the heart we try to steal.
+  ##
+  ## On a 2-team board this is simply the other side, exactly as before. On a
+  ## 4-team board there are THREE enemy hearts and picking one matters: we take
+  ## the rival whose stated endzone sits furthest from ours along x, because the
+  ## whole mirrored-arena advance is written east-west and a north/south target
+  ## degenerates it. Falls back to the next color round the deal if the endzone
+  ## markers are missing.
+  if activeColors() <= 2:
+    return (if myColor == "red": "blue" else: "red")
+  var
+    home = vec(float(CenterX), float(CenterY))
+    haveHome = false
+  for z in EndzoneMarks:
+    if z.color == myColor:
+      home = vec(float(z.x0 + z.x1) * 0.5, float(z.y0 + z.y1) * 0.5)
+      haveHome = true
+      break
+  if haveHome:
+    # ⭐ RAID THE NEAREST RIVAL, not the furthest.
+    #
+    # This used to take the endzone with the largest HORIZONTAL offset, so the
+    # old east-west advance math could not degenerate on a north/south
+    # neighbour. That reason is gone — the geometry now comes from the stated
+    # zones and the observed pedestals — and on a giant board it was actively
+    # awful: it sent the bottom-left team diagonally across 2245px of a
+    # 2496x2496 map, past its own neighbour, through three other teams, to
+    # reach the furthest heart on the board. Measured: nobody ever arrived.
+    #
+    # Nearest is strictly better here. The trip is shorter, the exposure is
+    # shorter, and a capture is worth the same whoever it lands on — GV32 makes
+    # any capture ELIMINATE that team, so there is no bonus for picking a
+    # particular rival, only a cost for walking further to reach one.
+    # Two passes: prefer a rival whose heart is actually THERE to take. Falling
+    # back to plain nearest keeps this inert before the first frame of banner
+    # data, and on any map where the scan comes up empty.
+    for requireHeart in [true, false]:
+      var
+        best = ""
+        bestD = 1e18
+      for z in EndzoneMarks:
+        if z.color == myColor:
+          continue
+        let ci = TeamColorNames.find(z.color)
+        if requireHeart and (ci < 0 or not HeartHome[ci]):
+          continue
+        let d = dist(vec(float(z.x0 + z.x1) * 0.5, float(z.y0 + z.y1) * 0.5), home)
+        if d < bestD:
+          bestD = d
+          best = z.color
+      if best.len > 0:
+        return best
+  let mine = TeamColorNames.find(myColor)
+  TeamColorNames[(max(mine, 0) + activeColors() div 2) mod activeColors()]
+
+proc ownAimBrads(client: ProtocolClient): int =
+  ## The engine-stated own-aim angle from the `own aim <brads>` HUD marker,
+  ## or -1 when the marker is absent (pre-marker engines) or unparsable.
+  for o in client.spriteObjects():
+    if o.label.startsWith(LabelPrefixOwnAim):
+      let tail = o.label[LabelPrefixOwnAim.len .. ^1]
+      try:
+        return parseInt(tail)
+      except ValueError:
+        return -1
+  -1
+
+proc findSelf(
+    client: ProtocolClient, color: string): tuple[alive: bool, pos: Vec] =
+  ## Our avatar via the distinct self marker, only drawn while we are alive.
+  for facingRight in [true, false]:
+    let label = "self " & color & (if facingRight: " right" else: " left")
+    for o in client.spriteObjectsWithLabel(label):
+      return (alive: true, pos: client.mapPos(o))
+
+proc plantedPedestalPos(client: ProtocolClient, o: SpriteObjectInfo): Vec =
+  ## The TRUE pedestal point under a planted-banner sprite. ⚠️ ENGINE DRIFT,
+  ## v47 audit 2026-08-12: the OLD engine bottom-anchored this sprite (object
+  ## top = flag.y - (PlantedFlagH - 2)), so this proc anchored on the bottom
+  ## edge to land the heart. Engine commits 67e9f8c + f6b9f42 (2026-08-08,
+  ## before GV43 shipped, so the hosted build has them) re-anchored placement
+  ## to x = flag.x - W/2, y = flag.y - CanvasH/2 with a REGRESSION TEST that
+  ## sprite CENTER == grab point. The bottom-edge formula therefore aimed
+  ## (CanvasH/2 - 2) = 58px SOUTH of the heart — outside the 34px pickup ring
+  ## from every approach, and inside GrabCommitRing(60) it actively walked a
+  ## bot standing ON the heart 58px off it. Anchor on the sprite CENTER, the
+  ## contract the engine now tests for.
+  vec(
+    float((o.x + o.width div 2) div RenderScale + client.mapCameraX),
+    float((o.y + o.height div 2) div RenderScale + client.mapCameraY)
+  )
+
+proc rotFromSpriteId(spriteId: int): int =
+  ## aimRotRead: the aim rotation step baked into a v9 soldier sprite id, or
+  ## -1 when the id is outside the soldier rotation pools. The engine lays the
+  ## pool out as PlayerSpriteBase + ord(skin)*64 + ord(team)*16 + rot over
+  ## 2 skins x 4 teams (ids 100..227) — and both offsets are multiples of
+  ## RotSteps(16), so `mod RotSteps` cancels them all. ⚠️ v47 audit: the old
+  ## window covered 2*RotSteps = Red+Blue/DefaultSkin only, so green/yellow
+  ## seats and every CrownSkin (league-#1 shimmer) opponent read aim-unknown —
+  ## and medPeel/holdVsGun SKIP aim-unknown enemies, so a wounded bot would
+  ## turn its back and peel under the strongest opponent's live gun. Widen to
+  ## the engine's full 2*4*RotSteps pool.
+  if spriteId >= RotPlayerSpriteBase and
+      spriteId < RotPlayerSpriteBase + 2 * 4 * RotSteps:
+    return (spriteId - RotPlayerSpriteBase) mod RotSteps
+  # Self pool spans the 2 skins only (the outlined self is always own-color):
+  # widen [base, base+16) -> [base, base+32) so a CrownSkin self still decodes.
+  if spriteId >= RotSelfSpriteBase and
+      spriteId < RotSelfSpriteBase + 2 * RotSteps:
+    return (spriteId - RotSelfSpriteBase) mod RotSteps
+  -1
+
+proc rotBrads(rot: int): int =
+  ## Center bearing (brads) of one soldier rotation step. The engine quantizes
+  ## soldierRotIndex to the NEAREST step, so the true aim is within ±RotBrads
+  ## PerStep/2 (±8) of this — coarser than the retired dots (~±2) but alive.
+  rot * RotBradsPerStep
+
+proc selfRotAim(client: ProtocolClient, color: string): int =
+  ## aimRotRead: our own aim from the self soldier sprite's rotation id
+  ## (RotSelfSpriteBase + rot). The outlined self marker is only ever drawn
+  ## for the viewer, so there is no attribution ambiguity. -1 when dead.
+  result = -1
+  for facingRight in [true, false]:
+    let label = "self " & color & (if facingRight: " right" else: " left")
+    for o in client.spriteObjectsWithLabel(label):
+      let rot = rotFromSpriteId(o.spriteId)
+      if rot >= 0:
+        return rotBrads(rot)
+
+proc observedAim(client: ProtocolClient, me: Vec, color: string): int =
+  ## Our actual aim read back from our own rendered aim-indicator dots: the
+  ## farthest "aim dot <color>" object within the indicator radius points
+  ## along the aim. Returns -1 when no dot is close enough (teammate dots
+  ## share our color but hug their own player). Resolution is ~2 brads —
+  ## an absolute fix that caps dead-reckoning drift.
+  result = -1
+  var bestD = 0.0
+  for o in client.spriteObjectsWithLabel("aim dot " & color):
+    let
+      p = client.mapPos(o)
+      d = dist(p, me)
+    if d <= AimDotRadius and d > bestD:
+      bestD = d
+      result = bradsOf(p - me)
+
+proc parseHpParts(label: string): tuple[hp, maxHp, shield: int] =
+  ## "hp <n>/<m>[ shield <s>]" -> (n, m, s); zeros on any parse failure.
+  ## The 2026-08-08 engine widened the hp vocabulary to per-seat denominators
+  ## and a shield tail — parse the whole family, never exact-match one shape.
+  result = (0, 0, 0)
+  if not label.startsWith("hp "):
+    return
+  let rest = label[3 .. ^1]
+  let slash = rest.find('/')
+  if slash <= 0:
+    return
+  try:
+    result.hp = parseInt(rest[0 ..< slash])
+    let words = rest[slash + 1 .. ^1].split(' ')
+    result.maxHp = parseInt(words[0])
+    if words.len >= 3 and words[1] == "shield":
+      result.shield = parseInt(words[2])
+  except ValueError:
+    result = (0, 0, 0)
+
+proc parseHpLabel(label: string): int =
+  ## Effective paint-to-drop for a rendered pip bar: hp plus unbroken shield
+  ## (a shielded 3/3+2 needs 5 hits — report the durability the gun will meet,
+  ## so target-value ranking stops reading tanks as unknowns).
+  let (hp, _, shield) = parseHpParts(label)
+  if hp <= 0: 0 else: hp + shield
+
+proc actorsFor(client: ProtocolClient, color: string,
+    rotRead = false): seq[Actor] =
+  ## Visible players of one color in map coordinates plus horizontal facing
+  ## and hit points. The overhead "hp <n>/<max>" pip bar is fog-culled with
+  ## its player, so whenever the player is visible its hp is too: attach the
+  ## nearest pip bar within HpPipRadius. With rotRead (aimRotRead), the gun
+  ## bearing comes from the soldier sprite's rotation id — per-object, so no
+  ## attribution step and no close-pair ambiguity, unlike the retired dots.
+  for facingRight in [true, false]:
+    let label = "player " & color & (if facingRight: " right" else: " left")
+    for o in client.spriteObjectsWithLabel(label):
+      var ab = -1
+      if rotRead:
+        let rot = rotFromSpriteId(o.spriteId)
+        if rot >= 0:
+          ab = rotBrads(rot)
+      result.add(Actor(pos: client.mapPos(o), facingRight: facingRight,
+        colorId: int8(TeamColorNames.find(color) + 1), aimBrads: ab))
+  # ⚠️ PREFIX-parse the pip bar (v47 audit): the engine label became
+  # "hp <n>/<maxHp>[ shield <s>]" on 2026-08-08 — per-seat denominators
+  # (armor 4, handicap 2) and a shield tail. The old exact match on
+  # "hp <n>/3" returned an EMPTY SEQ for every non-vanilla seat: shielded
+  # enemies (the 6hp tanks we most need to read) and armored/handicapped
+  # seats were hp-invisible all episode, silently. Parse by prefix instead.
+  for (o, lbl) in client.spriteObjectsWithLabelPrefix("hp "):
+    let hp = parseHpLabel(lbl)
+    if hp <= 0:
+      continue
+    let p = client.mapPos(o)
+    var best = -1
+    var bestD = HpPipRadius
+    for i in 0 ..< result.len:
+      let d = dist(result[i].pos, p)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      result[best].hp = hp
+  # Plasma-arc possession: a carrier renders a "plasma arc carried" marker ABOVE
+  # its head (higher than the hp pip). The label carries NO color, so — like the
+  # hp pip — attribute it to the nearest actor of THIS color (this proc is called
+  # per color; our own marker hugs us, an enemy's hugs the enemy). A carrier's
+  # 1300px gun is disabled for life, so this flags a disarmed high-value target.
+  for o in client.spriteObjectsWithLabel(LabelSprayCanCarried):
+    let p = client.mapPos(o)
+    var best = -1
+    var bestD = ArcCarryRadius
+    for i in 0 ..< result.len:
+      let d = dist(result[i].pos, p)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      result[best].hasArc = true
+      when defined(caprobe): inc caArcAttrib
+  # Shield possession: a carrier renders a "shield carried" marker over its head
+  # (same attribution as the arc — the label carries no color, this proc runs per
+  # color so the nearest same-color actor owns it). A shielded player has 6 HP (vs
+  # the 3-hp cog the pip bar always shows) and fires 3x slower — a tank we must put
+  # more guns on but whose slow fire is a free-shot window.
+  for o in client.spriteObjectsWithLabel(LabelShieldCarried):
+    let p = client.mapPos(o)
+    var best = -1
+    var bestD = ArcCarryRadius
+    for i in 0 ..< result.len:
+      let d = dist(result[i].pos, p)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      result[best].hasShield = true
+  # Aim bearing: each living player renders a short "aim dot <color>" line from
+  # its center along its gun angle. Attribute each dot to the nearest actor and
+  # keep the FARTHEST attributed dot per actor — its bearing from the actor is
+  # the gun direction (same absolute readback observedAim/mateAimBrads use). Two
+  # actors closer than 2*AimDotRadius can't be told apart, so leave both at -1.
+  var farDot = newSeq[float](result.len)          # 0 = no dot yet
+  for o in client.spriteObjectsWithLabel("aim dot " & color):
+    let p = client.mapPos(o)
+    var best = -1
+    var bestD = AimDotRadius
+    for i in 0 ..< result.len:
+      let d = dist(result[i].pos, p)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0 and bestD > farDot[best]:
+      farDot[best] = bestD
+      result[best].aimBrads = bradsOf(p - result[best].pos)
+  # Ambiguity guard: if two actors sit within 2*AimDotRadius their dot lines
+  # overlap and attribution is unreliable — drop both to unknown.
+  for i in 0 ..< result.len:
+    for j in i + 1 ..< result.len:
+      if dist(result[i].pos, result[j].pos) <= 2.0 * AimDotRadius:
+        result[i].aimBrads = -1
+        result[j].aimBrads = -1
+
+proc actorsForEnemies(client: ProtocolClient, myColor: string,
+    rotRead = false): seq[Actor] =
+  ## Every visible player who is NOT on our team.
+  ##
+  ## The 2-team policy scanned exactly ONE enemy color, which on a free-for-all
+  ## board leaves two of the three rival teams invisible to the entire combat
+  ## layer — never tracked, never shot at, never ducked. In a FFA everyone who
+  ## is not us is hostile, so the scan is the union over the active colors. On
+  ## a 2-team board this is exactly the old behavior.
+  for c in TeamColorNames.toOpenArray(0, colorScanCount() - 1):
+    if c == myColor:
+      continue
+    result.add client.actorsFor(c, rotRead)
+
+proc selfHp(client: ProtocolClient, me: Vec, color: string): tuple[have: bool, hp: int] =
+  ## Our own current hit points, read from the overhead pip bar the engine
+  ## always sends the viewer for itself. The bar sits within HpPipRadius of our
+  ## avatar; a mate's bar shares the label but hugs its own player, so match the
+  ## nearest bar to us. A drop between frames is proof we were just hit.
+  ## v47: PREFIX-parse (see actorsFor) — the exact "hp <n>/3" match went blind
+  ## the moment our own seat carried a shield, armor (n/4) or handicap (n/2)
+  ## bar, freezing ownHp at 0 and disabling the whole med-kit chain for us.
+  ## Wounded gates compare against MaxHp(3), so scale a foreign denominator
+  ## onto the 3-scale (2/2 full -> 3, 2/4 half -> 1) instead of feeding raw n.
+  result = (have: false, hp: 0)
+  var bestD = HpPipRadius
+  for (o, lbl) in client.spriteObjectsWithLabelPrefix("hp "):
+    let (hp, maxHp, _) = parseHpParts(lbl)
+    if hp <= 0 or maxHp <= 0:
+      continue
+    let d = dist(client.mapPos(o), me)
+    if d < bestD:
+      bestD = d
+      let scaled = clamp((hp * MaxHp + maxHp - 1) div maxHp, 1, MaxHp)
+      result = (have: true, hp: scaled)
+
+proc selfLives(client: ProtocolClient): tuple[have: bool, hp: int, lives: int] =
+  ## ⭐⭐ Our own REMAINING lives (ffa4 lives audit, 2026-08-17), from the
+  ## top-right HUD marker `lives <hp>hp x<lives>` (labels.nim LabelPrefixLives;
+  ## `lives <n>hp x<n>` in tests/label_manifest.txt) — a channel this policy
+  ## had never read before this. Self-only + screen-space HUD, unlike the pip
+  ## bar `selfHp` reads: it is never sent for another player and needs no
+  ## proximity match, so (like ownAimBrads) the first match IS the answer.
+  ## `hp` here reads PAST the base MaxHp cap (a shield carrier shows 6) per
+  ## the label's own doc — callers that want the clamped 0..MaxHp gauge
+  ## should keep using selfHp, this is for `lives` only.
+  result = (have: false, hp: 0, lives: 0)
+  for o in client.spriteObjects():
+    if o.label.startsWith(LabelPrefixLives):
+      let tail = o.label[LabelPrefixLives.len .. ^1]   # "<hp>hp x<lives>"
+      let cut = tail.find("hp x")
+      if cut < 0:
+        return
+      try:
+        return (have: true, hp: parseInt(tail[0 ..< cut]),
+                lives: parseInt(tail[cut + "hp x".len .. ^1]))
+      except ValueError:
+        return
+
+proc mateAimBrads(client: ProtocolClient, mate, me: Vec, color: string): int =
+  ## A visible mate's aim angle read from ITS rendered aim-indicator dots
+  ## (the same absolute readback observedAim does for our own turret).
+  ## Returns -1 when the mate is too close to us to attribute dots safely.
+  if dist(mate, me) <= 2.0 * AimDotRadius:
+    return -1
+  result = -1
+  var bestD = 0.0
+  for o in client.spriteObjectsWithLabel("aim dot " & color):
+    let
+      p = client.mapPos(o)
+      d = dist(p, mate)
+    if d <= AimDotRadius and d > bestD and dist(p, me) > AimDotRadius:
+      bestD = d
+      result = bradsOf(p - mate)
+
+proc mateGunDown(client: ProtocolClient, mate: Vec): bool =
+  ## staggerFire (v8): true when a "muzzle bloom" flash sits on this mate's
+  ## body — the server draws the bloom at the shooter's origin for exactly
+  ## ShotFxTicks (12) ticks, which equals FireCooldownTicks (12), so a bloom on
+  ## a mate means its gun FIRED within the reload window and is DOWN right now.
+  ## Fog-gated with the mate (the bloom is fov-culled), so we only read it for a
+  ## mate we can actually see. The bloom is colorless and small (7px), so match
+  ## it to THIS mate by proximity; another player's bloom sits on that player.
+  for stage in 0 ..< 4:
+    for o in client.spriteObjectsWithLabel("muzzle bloom stage " & $stage):
+      if dist(client.mapPos(o), mate) <= float(MuzzleBloomSize):
+        return true
+  false
+
+proc walkableAt(client: ProtocolClient, x, y: int): bool =
+  if x < 0 or y < 0 or x >= client.walkabilityWidth or
+      y >= client.walkabilityHeight:
+    return false
+  client.walkabilityMask[y * client.walkabilityWidth + x]
+
+proc footprintFits(client: ProtocolClient, x, y: int): bool =
+  ## True when the player's solid box centered at (x, y) is all walkable,
+  ## mirroring canOccupy in the sim.
+  for dy in -PlayerHalf .. PlayerHalf:
+    for dx in -PlayerHalf .. PlayerHalf:
+      if not client.walkableAt(x + dx, y + dy):
+        return false
+  true
+
+proc cellOf(p: Vec): int =
+  let
+    cx = clamp(int(p.x) div NavCell, 0, GridW - 1)
+    cy = clamp(int(p.y) div NavCell, 0, GridH - 1)
+  cy * GridW + cx
+
+proc cellCenter(cell: int): Vec =
+  vec(
+    float((cell mod GridW) * NavCell + NavCell div 2),
+    float((cell div GridW) * NavCell + NavCell div 2)
+  )
+
+proc pixelRayClear(client: ProtocolClient, a, b: Vec): bool =
+  ## True when no wall pixel blocks the segment; mirrors lineOfSightClear in
+  ## the sim (walls are exactly the non-walkable pixels).
+  let
+    ax = int(a.x)
+    ay = int(a.y)
+    bx = int(b.x)
+    by = int(b.y)
+    steps = max(abs(bx - ax), abs(by - ay))
+  if steps == 0:
+    return true
+  for s in 1 .. steps:
+    if not client.walkableAt(ax + (bx - ax) * s div steps,
+                             ay + (by - ay) * s div steps):
+      return false
+  true
+
+proc rayClearCoarse(client: ProtocolClient, a, b: Vec, step: float): bool =
+  ## Coarsely-sampled walkability raycast for cover scoring and exposure
+  ## costing, where an occasional missed thin corner is an acceptable trade.
+  let
+    d = b - a
+    l = d.len()
+  if l < 1e-6:
+    return true
+  let n = max(1, int(l / step))
+  for s in 1 .. n:
+    let p = a + d * (float(s) / float(n))
+    if not client.walkableAt(int(p.x), int(p.y)):
+      return false
+  true
+
+proc openLineLen(client: ProtocolClient, a, dir: Vec, maxLen, step: float): float =
+  ## Length of the wall-free ray from `a` along unit `dir`, capped at maxLen.
+  ## Sizes sniper firing lines and arrow-snipe rays under the map-wide gun.
+  var l = step
+  while l <= maxLen:
+    let p = a + dir * l
+    if not client.walkableAt(int(p.x), int(p.y)):
+      return l - step
+    l += step
+  maxLen
+
+when defined(hscensus):
+  proc homeSignRaw(team: Team): float =
+    ## -1 toward Red's home edge (left), +1 toward Blue's (right).
+    if team == Red: -1.0 else: 1.0
+
+  ## ⭐ DAMAGE CENSUS ONLY (-d:hscensus, never in the shipped image).
+  ## `homeSign` becomes a template so `instantiationInfo` reports the CALL
+  ## SITE's own source line — one edit instruments all 58 call sites exactly,
+  ## with no risk of mis-numbering a hand-placed counter. The census build's
+  ## emitted behaviour is identical (homeSignRaw is the same pure function);
+  ## the mask hash is reported beside the counts so that is proven, not
+  ## asserted.
+  var hsHit*: array[13000, int]                 ## reach count, by source line
+  var hsHitC*: array[13000, array[4, int]]      ## ...split by our colour index
+  var hcFrames*, hcCorners*, hcPlus* = 0
+  var hcByColor*: array[4, int]
+  var hcCosSum* = 0.0
+  var hcHomeFlipped*, hcHomeFlippedC*, hcHomeFlippedP*, hcHomeOff45* = 0
+  var hcHomeFlippedByColor*: array[4, int]
+  var hcTP*, hcFP*, hcFN*, hcTN* = 0
+  var hcDepthWrongC*, hcDepthWrongP* = 0
+  ## 2-team CONTROL of the same two estimators (never interleave a measurement
+  ## without a control you did not change — the axis is CORRECT by construction
+  ## on 2 teams, so these must come out ~perfect or the instrument is wrong).
+  var h2Frames* = 0
+  var h2CosSum* = 0.0
+  var h2HomeFlipped*, h2HomeOff45*, h2Wrong* = 0
+  ## holdLine gate attribution + role histogram on ffa4.
+  var hgRole*: array[8, int]
+  var hgTune*, hgICarry*, hgMateCarry*, hgOwnStolen*, hgRetreat*, hgDecline*,
+      hgPushOut*, hgNotMid*, hgPocket*, hgOpen* = 0
+  ## CONSEQUENCE: whose Voronoi cell the emitted opening-nav target lands in.
+  ## [0]=ours [1]=the raid target's [2]=an uninvolved THIRD party's.
+  var hsFlankCell*, hsMidCell*, hsBodyCell*: array[3, int]
+  ## THE SIGN CLAIM, decided per colour. [ci][0] = frames where homeSign
+  ## agrees with the side our OWN stated zone actually sits on; [ci][1] =
+  ## INVERTED; [ci][2] = our zone is on the midline (no side to be wrong about).
+  ## THE FLANK STAGING POINT, per slot, so the harness can ask engine-truth
+  ## questions about it: where it was written, when, and where the seat was
+  ## standing when it was written (the start of the walk toward it).
+  var hsStgPos*: array[32, Vec]
+  var hsStgFrom*: array[32, Vec]
+  var hsStgTick*: array[32, int]        ## -1 = never written
+
+  var hsStgLive*: array[32, bool]       ## written THIS frame
+  var hsMyColor*: array[32, string]
+  var hsRaidColor*: array[32, string]
+  var hsDeaths*, hsDeaths24*, hsDeathsAway*, hsDeathsAtStg*, hsDeathsEnRoute* = 0
+  var hsStgEngTick*: array[32, int]     ## engine tick of the last staging write
+  var hsDeathsUnderStg*, hsDeathsUnderStg24*, hsDeathsUnderStgAway* = 0
+  var hsStgFrames*: array[3, int]       ## staging target written, by window:
+                                        ## [0] t<200 [1] 200..400 [2] 400..1200
+  var hsSign*: array[4, array[3, int]]
+  for i in 0 ..< 32:
+    hsStgTick[i] = -1
+    hsStgEngTick[i] = -10_000
+  var hsTeamRed*: array[4, int]   ## per colour: frames with bot.team == Red
+  ## ⭐⭐ IS THE STAGING POINT ACTUALLY DRIVING THE FEET? "It was written" is not
+  ## "it moved anybody" — the whole lever dies cleanly if the answer is no, and
+  ## this project has already paid once for a lever whose 88.7% bind rate said
+  ## nothing about outcomes. Filled by the harness from ENGINE TRUTH: for every
+  ## frame the staging target is written, did the body get CLOSER to it by the
+  ## next tick, and by how much. The ENGAGE branch owns the feet on contact
+  ## frames (advance = norm(aim - me) discards `target` outright), so a large
+  ## FAR/FLAT share here is the refutation, not a nuisance.
+  var hsStgClose*, hsStgFar*, hsStgFlat* = 0
+  var hsStgClosePx* = 0.0        ## Σ signed closure (+ = toward), px
+  var hsStgSpeedPx* = 0.0        ## Σ distance actually travelled, px
+  template homeSign(team: Team): float =
+    block:
+      let hsL = instantiationInfo(fullPaths = false).line
+      if hsL >= 0 and hsL < 13000:
+        inc hsHit[hsL]
+        let hsCi = TeamColorNames.find(SelfColor)
+        if hsCi >= 0 and hsCi < 4: inc hsHitC[hsL][hsCi]
+      homeSignRaw(team)
+else:
+  proc homeSign(team: Team): float =
+    ## -1 toward Red's home edge (left), +1 toward Blue's (right).
+    if team == Red: -1.0 else: 1.0
+
+## ── ⭐⭐⭐ THE RAID FRAME (2026-08-20) ────────────────────────────────────────
+## `homeSign` answers "which way is home" with a SIGN on the x axis. On two
+## bases that is exact. On four it is an ALIAS: the hosted corners board seats
+## Red(186,99) Blue(1048,99) Green(186,559) Yellow(1048,559), the two colours
+## that SHARE a home x are exactly the two nearest-rival pairs, and under
+## nearest-rival raid targeting the raid axis is purely ±y on 100% of boards.
+## So an x-only sign cannot tell our own base from the base we raid, and the
+## flank staging point it computes lands in an UNINVOLVED THIRD PARTY's Voronoi
+## cell on 97.3-99.8% of the frames it is written.
+##
+## The replacement carries no team-count case analysis and no new constant. It
+## builds an orthonormal frame from the two points the raid is actually between:
+##
+##   o     = (ownHome + stealTarget)/2        the raid corridor's midpoint
+##   f     = norm(stealTarget - ownHome)      forward, TOWARD the base we raid
+##   perp  = (-f.y, f.x)                      the lane axis, f rotated +90°
+##   fwd   = dot(me - o, f)                   how far past the corridor's middle
+##   stage = o + f*depth + perp*(laneY - CenterY)
+##
+## ⭐ ON TWO TEAMS THIS IS THE OLD EXPRESSION, ALGEBRAICALLY. A symmetric
+## two-base board has ownHome/stealTarget mirrored about the centre, so
+## o == (CenterX, CenterY) and f == vec(-homeSign(team), 0); then
+##   stage == vec(CenterX, CenterY) + vec(-homeSign*depth, 0) + vec(0, laneY-CenterY)
+##         == vec(CenterX - homeSign*depth, laneY)                    [identical]
+##   fwd   == dot(me - (CenterX,CenterY), vec(-homeSign,0))
+##         == -homeSign * (me.x - CenterX)                            [identical]
+## tests/test_home_sign_parity.nim asserts both to the last float bit on the
+## stock arena and on 4 mirrored generated-map geometries. Both call sites are
+## ALSO gated on GameTeams > 2, so 2-team play is untouched twice over.
+##
+## ⚠️ THE LANE OFFSET IS THE ONE PLACE THE ROTATION IS NOT FREE. LaneTop/
+## LaneBottom sit ~LaneTop px from the board's top/bottom edges, i.e. ±(MapH/2 -
+## LaneTop) off the corridor. Rotated onto a VERTICAL raid axis that runs up the
+## x=186 column, `-290` in x is x = -104 — off the board, in a wall, and the nav
+## grid would clamp it somewhere arbitrary. So the staged point is clamped into
+## the same [LaneTop, extent-LaneTop] band the lanes themselves already live in.
+## ⭐ THE CLAMP IS A NO-OP ON THE 2-TEAM REDUCTION BY CONSTRUCTION: there the
+## point is (CenterX - homeSign*depth, laneY) with laneY ∈ {LaneTop, MapH-LaneTop}
+## and depth < CenterX - LaneTop, so it is already inside the band. That is
+## asserted, not assumed.
+proc raidStagePoint(ownHome, stealTarget: Vec, depth, laneY: float): Vec =
+  ## The flank staging point, in the raid frame. Falls back to the pre-lever
+  ## expression's shape if the two bases coincide (a degenerate board, or a
+  ## frame before either pedestal is known).
+  let d = stealTarget - ownHome
+  if d.len() < 1.0:
+    return vec(float(CenterX), laneY)
+  let
+    f = norm(d)
+    o = (ownHome + stealTarget) * 0.5
+  # ⚠️ THE PERPENDICULAR MUST BE CANONICAL, NOT rot90(f). The design as first
+  # written took perp = (-f.y, f.x) unmodified — and that FLIPS with f, so the
+  # team raiding in the -f direction gets its lane MIRRORED: FlankTop and
+  # FlankBottom swap which corridor they run. Two consequences, both measured,
+  # neither acceptable:
+  #   (a) it BREAKS the 2-team reduction outright. Blue's f is (-1,0), so
+  #       rot90(f) is (0,-1) and the staged y comes out 2*CenterY - laneY, the
+  #       mirrored lane, not laneY. (Caught by raidprobe: 464/1440 bit-exact,
+  #       max deviation 1633px — not a rounding story, a mirrored lane.)
+  #   (b) `laneY` is a GLOBAL board coordinate and so is everything downstream
+  #       that shares it (the playbook's PushTop/PushBottom bias, the dup blend
+  #       toward LaneMid). A lane whose sense depends on our own approach
+  #       heading is incoherent with all of them.
+  # So: take rot90(f), then pin its SENSE — it always points down-screen, and
+  # for a perfectly vertical raid axis (rot90 lands on the x axis, where the
+  # down-test is a tie) it always points right. Same corridor, same seat, on
+  # every board and for every colour.
+  var perp = vec(-f.y, f.x)
+  if perp.y < 0.0 or (perp.y == 0.0 and perp.x < 0.0):
+    perp = perp * -1.0
+  var p = o + f * depth + perp * (laneY - float(CenterY))
+  p.x = clamp(p.x, LaneTop, float(MapW) - LaneTop)
+  p.y = clamp(p.y, LaneTop, float(MapH) - LaneTop)
+  p
+
+proc raidFwd(me, ownHome, stealTarget: Vec): float =
+  ## Signed progress along the raid corridor, measured from its midpoint —
+  ## the `behindLines` release quantity. MUST move with raidStagePoint: a
+  ## staging point on the ±y raid axis released by an x-keyed gate is a flanker
+  ## that walks to its anchor, re-reads a gate its x can never satisfy,
+  ## re-asserts the same anchor, and PARKS FOR THE REST OF THE ROUND.
+  let d = stealTarget - ownHome
+  if d.len() < 1.0:
+    return 0.0
+  dot(me - (ownHome + stealTarget) * 0.5, norm(d))
+
+var SelfStrategyTeam = Red
+  ## This process's own team, mirrored into a module global so the
+  ## team-parameterised geometry procs can tell "ours" from "theirs" without
+  ## threading the Bot through every call site (one bot per process).
+
+var CornerDeepOn = false
+  ## `tune.cornerDeep`, mirrored for the free geometry procs. RE-STAMPED at the
+  ## top of every decide() from bot.tune, exactly like SelfColor — the
+  ## in-process eval harness runs all 16 bots in ONE process, so a once-per-lock
+  ## global would hold the LAST bot's tune (gotchas 2026-08-04).
+
+proc cornerDeepPoint(x0, y0, x1, y1: float): Vec =
+  ## ⭐ A `corner` capture zone is a DIAGONAL L1 region — everything within
+  ## `diagLimit` of the team's MAP CORNER (arena.nim captureZone/layoutCorners,
+  ## inCaptureZone: |x-cornerX| + |y-cornerY| <= diagLimit) — but the engine
+  ## states only its BOUNDING BOX. The box centre is therefore at
+  ## L1 = diagLimit/2 + diagLimit/2 = diagLimit EXACTLY: dead on the scoring
+  ## hypotenuse, margin 0, the farthest point of the zone from safety. Measured
+  ## with tools/ez_probe.nim over seeds 301-312 x 4 teams: 36 of 48 team-targets
+  ## sat ON THE EDGE (every corner team), 12 inside (the `arm` layout, margin
+  ## 82), 0 outside. Aim at L1 = diagLimit/2 instead — margin diagLimit/2, and
+  ## the crossing still happens en route, so it costs no extra travel.
+  ##
+  ## The map corner is whichever box corner touches the board edge (the engine
+  ## asserts the limit is never clamped, so the box is exactly diagLimit square).
+  let
+    lim = max(x1 - x0, 1.0)
+    onLeft = x0 <= 1.0
+    onTop = y0 <= 1.0
+    cx = (if onLeft: x0 else: x1)
+    cy = (if onTop: y0 else: y1)
+  vec(cx + (if onLeft: lim * 0.25 else: -lim * 0.25),
+      cy + (if onTop: lim * 0.25 else: -lim * 0.25))
+
+proc statedZone(color: string): tuple[
+    have: bool, compact: bool, c: Vec, x0, y0, x1, y1: float] =
+  ## One team's capture region as the ENGINE states it, from the per-team
+  ## endzone init marker. `compact` marks the archetypes that bound y as well
+  ## as x (square / disc / corner / arm) — the classic `column` runs the full
+  ## height, which is what all the old mirrored-arena math assumed.
+  for z in EndzoneMarks:
+    if z.color == color:
+      return (have: true,
+              compact: z.shape != LabelEndzoneShapeColumn,
+              c: (if lvC(157, CornerDeepOn and z.shape == LabelEndzoneShapeCorner):
+                    cornerDeepPoint(float(z.x0), float(z.y0),
+                                    float(z.x1), float(z.y1))
+                  else: vec(float(z.x0 + z.x1) * 0.5, float(z.y0 + z.y1) * 0.5)),
+              x0: float(z.x0), y0: float(z.y0),
+              x1: float(z.x1), y1: float(z.y1))
+
+when defined(hscensus):
+  proc hsClassifyCell(acc: var array[3, int], p: Vec, mine, raid: string) =
+    ## Which team's Voronoi cell does point `p` fall in? [0]=ours, [1]=the raid
+    ## target's, [2]=an UNINVOLVED third party's. Nearest stated endzone centre.
+    var best = ""
+    var bestD = 1e18
+    for c in TeamColorNames.toOpenArray(0, max(GameTeams, 2) - 1):
+      let z = statedZone(c)
+      if not z.have: continue
+      let d = dist(p, z.c)
+      if d < bestD:
+        bestD = d
+        best = c
+    if best.len == 0: return
+    if best == mine: inc acc[0]
+    elif best == raid: inc acc[1]
+    else: inc acc[2]
+
+proc homeDeepX(team: Team): float =
+  ## The x a carrier drives to in order to SCORE.
+  ##
+  ## This used to be a flat 150px off the home edge — correct only for the
+  ## classic full-height home column. Generated maps pull half their bases
+  ## well OFF the home edge and wrap them in a disc or square, which turns
+  ## that border strip into ordinary wilderness: measured on 8 generated
+  ## seeds, x=150 fell OUTSIDE the real capture zone on 3 of them, so a steal
+  ## on those maps could never be converted no matter how well it was escorted.
+  ## The engine states every zone up front, so use it.
+  let
+    z = statedZone(if team == SelfStrategyTeam: SelfColor else: SelfEnemyColor)
+    tuned = (if team == Red: 150.0 else: float(MapW - 1) - 150.0)
+  # A COMPACT zone is the case the tuned depth gets outright wrong — it sits in
+  # wilderness there. A full-height COLUMN zone is the case the tuned depth was
+  # MEASURED for, so leave it alone: the zone centre is ~47px deeper on the
+  # stock arena, which is further into our own spawn pocket for no gain. Only
+  # fall back to the centre if a narrow column would put the tuned point
+  # outside the stated box.
+  if z.have and z.compact:
+    return z.c.x
+  if z.have and (tuned < z.x0 or tuned > z.x1):
+    return z.c.x
+  tuned
+
+proc captureAim(team: Team, me: Vec, laneY: float): Vec =
+  ## Where a carrier should actually steer to score. A compact endzone bounds
+  ## BOTH axes, so holding the old lane height (LaneTop/LaneBottom sit at the
+  ## board edges) walks the carrier past the zone entirely — there, aim at the
+  ## stated centre. A column zone is full-height, so the tuned lane choice
+  ## still applies and only x matters.
+  let z = statedZone(if team == SelfStrategyTeam: SelfColor else: SelfEnemyColor)
+  if z.have and z.compact:
+    return z.c
+  vec(homeDeepX(team), laneY)
+
+proc enemy(team: Team): Team =
+  ## The opposing team.
+  if team == Red: Blue else: Red
+
+proc flagHome(team: Team): Vec =
+  ## The STATIC pedestal position of one team's flag: the center of the
+  ## team's protected spawn pocket (matches flagHome in src/ctf/sim.nim).
+  if team == Red: vec(186, 329) else: vec(1049, 329)
+
+const ChokeOffset = 204.0
+  ## How far the defender posts OFF its own pedestal, toward the field. The
+  ## stock arena's tuned pair was pedestal x=186 / choke x=390.
+
+proc chokeSpot(team: Team): Vec =
+  ## Defender hold point between our heart and the field it is threatened from.
+  ##
+  ## This used to be the arena's mirrored constant, which only ever knew Red and
+  ## Blue. On a four-team board green and yellow got BLUE's post: measured on a
+  ## 2496x2496 board, green's defender held station 2503px from the heart it
+  ## exists to guard, yellow's 1809px. Half our four-team seats therefore left
+  ## their heart completely unguarded — and losing the heart is not a setback
+  ## there, it is ELIMINATION (GV32).
+  ##
+  ## Derived instead from the team's own stated home, offset toward the board
+  ## centre so the post sits on the approach. On the stock arena this reproduces
+  ## the tuned value: pedestal (186,329) + 204px toward centre = (390,329).
+  let z = statedZone(if team == SelfStrategyTeam: SelfColor else: SelfEnemyColor)
+  if z.have:
+    let
+      centre = vec(float(CenterX), float(CenterY))
+      away = centre - z.c
+      d = away.len()
+    if d > 1.0:
+      return z.c + away * (ChokeOffset / d)
+    return z.c
+  if team == Red: vec(390, 340) else: vec(float(MapW - 1) - 390.0, 340)
+
+proc ownShieldSpawn(team: Team): Vec =
+  ## Our team's endzone shield spawn — a STATIC known point (sim resetShields:
+  ## inset x = ArenaBorder(10)+GrenadeSpawnInset(40) = 50, y = 3/4 map height),
+  ## mirrored across center. Known like the pedestals, so a rusher navigates to
+  ## it WITHOUT needing line-of-sight (VisionBubble is only 90px — the shield sits
+  ## behind the spawn cone and is never "seen"; that's why the see-it scan fired 0).
+  ##
+  ## ⚠️ MEASURED WRONG, 2026-08-20. This is the classic `layoutSides` two-team
+  ## formula and the engine's own placement (src/ctf/sim.nim shieldSpawnPoints)
+  ## is layout- AND symmetry-dependent, then nudged to the nearest walkable
+  ## floor. On 600 hosted four-team boards it lands inside the 12px pickup range
+  ## on 0 of 2400 team-addresses (Red/Blue 395px out, Green 1136.9px, Yellow
+  ## 65px); on two-team it is right 81.4% of the time and on the symRot180 draw
+  ## it addresses Blue's SPRAY CAN spawn instead. `shieldAddr` replaces it with a
+  ## sighting memory; this proc survives as that lever's cold start and as the
+  ## byte-identical control path. See the ShieldSpotSeenPx const block.
+  let y = float(3 * MapH div 4)
+  if team == Red: vec(50, y) else: vec(float(MapW - 50), y)
+
+proc inOwnStatedZone(team: Team, p: Vec): bool =
+  ## ⭐⭐⭐ shieldAddr: does `p` lie inside the box the ENGINE states for our own
+  ## endzone? The stated marker is the only per-team geometry that is correct for
+  ## green and yellow — `chokeSpot` above already leans on it to repair exactly
+  ## this defect for the defender post, where the same Red/Blue formula parked
+  ## green's defender 2503px from the heart it exists to guard.
+  ##
+  ## Used as a NECESSARY condition on the cold-start formula, never as the
+  ## address itself: the shield always sits inside its own team's endzone
+  ## (verified on the corpus for every layout/symmetry pair), so a formula point
+  ## OUTSIDE our stated box provably cannot be our shield and the errand is
+  ## refused. A point inside may still be off (green's 65px case), but then it is
+  ## inside our own base, inside the 90px vision bubble of the real spawn, and
+  ## the sighting pass converts it on arrival.
+  ##
+  ## ⚠️ FAILS OPEN, deliberately. With no stated zone yet (the endzone init
+  ## markers have not landed) this returns TRUE, so the cold start falls back to
+  ## the old formula instead of refusing. Refusing here would be a LATCHING
+  ## mistake: the caller sets shieldRushDone on a refusal, so one frame of
+  ## missing markers would kill the errand for the whole life. Refuse only on
+  ## POSITIVE evidence that the point is not ours.
+  let z = statedZone(if team == SelfStrategyTeam: SelfColor else: SelfEnemyColor)
+  if not z.have:
+    return true
+  p.x >= z.x0 and p.x <= z.x1 and p.y >= z.y0 and p.y <= z.y1
+
+proc arcSpawn(team: Team): Vec =
+  ## Our team's plasma-arc spawn — the STATIC point vertically OPPOSITE the shield
+  ## (sim plasmaArcSpawnPoints: same inset x=50 back column, but y=1/4 map height —
+  ## arcs high, shields low). Deep in our OWN back corner, so a SAFE grab route on
+  ## our side, but it sits ~200px behind a forward breacher and WAY outside the 90px
+  ## vision bubble: the breacher must navigate to the known coordinate, it can never
+  ## SEE the sprite to home on it (the fires-0 bug the LOS-gated seek had). The pickup
+  ## respawns 30s after a grab, so a fresh one is essentially always waiting here.
+  let y = float(MapH div 4)
+  if team == Red: vec(50, y) else: vec(float(MapW - 50), y)
+
+proc nearestOpenCell(bot: Bot, cell: int): int =
+  ## The nearest walkable nav cell, searched in expanding rings.
+  if bot.cellWalkable[cell]:
+    return cell
+  let
+    cx = cell mod GridW
+    cy = cell div GridW
+  for r in 1 .. 16:
+    for dy in -r .. r:
+      for dx in -r .. r:
+        if abs(dx) != r and abs(dy) != r:
+          continue
+        let
+          nx = cx + dx
+          ny = cy + dy
+        if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+          continue
+        if bot.cellWalkable[ny * GridW + nx]:
+          return ny * GridW + nx
+  cell
+
+proc snapToCover(bot: Bot, p: Vec): Vec =
+  ## The nearest cover cell within a few cells of a point, else the point.
+  let
+    c0 = bot.nearestOpenCell(cellOf(p))
+    cx = c0 mod GridW
+    cy = c0 div GridW
+  var bestD = 1e18
+  result = p
+  for dy in -6 .. 6:
+    for dx in -6 .. 6:
+      let
+        nx = cx + dx
+        ny = cy + dy
+      if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+        continue
+      let nc = ny * GridW + nx
+      if not bot.coverCell[nc]:
+        continue
+      let d = dist(cellCenter(nc), p)
+      if d < bestD:
+        bestD = d
+        result = cellCenter(nc)
+
+proc scanPost(
+    bot: Bot, client: ProtocolClient, eSign, wantY: float
+): tuple[hold, peek: Vec, ready: bool] =
+  ## Finds one overwatch sniper post for the side whose guns point along
+  ## `eSign`: a cover cell hugging the center ring, shielded from the front,
+  ## with a sideways peek cell that owns the LONGEST clear firing line — the
+  ## map-wide gun makes the lane length the post's value.
+  var bestScore = 1e18
+  for cy in 0 ..< GridH:
+    for cx in 0 ..< GridW:
+      let c = cy * GridW + cx
+      if not bot.coverCell[c]:
+        continue
+      let
+        p = cellCenter(c)
+        fwd = eSign * (p.x - float(CenterX))
+      if fwd > -40.0 or fwd < -160.0:
+        continue                         # this side of the ring, hugging it
+      if rayClearCoarse(client, p, p + vec(eSign * CoverShieldDist, 0.0), 4.0):
+        continue                         # nothing shields us from the front
+      var
+        peek: Vec
+        peekLine = 0.0
+      for dyc in [-2, 2, -1, 1]:
+        let ny = cy + dyc
+        if ny < 0 or ny >= GridH or not bot.cellWalkable[ny * GridW + cx]:
+          continue
+        let q = cellCenter(ny * GridW + cx)
+        let line = openLineLen(client, q, vec(eSign, 0.0), FireRange, 6.0)
+        if line > peekLine:
+          peekLine = line
+          peek = q
+      if peekLine < PeekLineDist:
+        continue
+      # The firing-line length dominates; the position terms break near-ties
+      # toward the wanted flank height and hugging the flag ring.
+      let score = abs(p.y - wantY) + abs(fwd + 90.0) * 0.7 - peekLine * 0.7
+      if score < bestScore:
+        bestScore = score
+        result.hold = p
+        result.peek = peek
+        result.ready = true
+
+proc findFunnelThroat(bot: Bot) =
+  ## fatalFunnel (backlog #5, FM 90-10-1 App K): the THROAT of the enemy's
+  ## approach to our pedestal — the narrowest walkable vertical gap between the
+  ## center line and our flag, inside the pedestal's y-band. A raider coming
+  ## for our heart MUST cross it; it is pure deterministic map geometry (the
+  ## walkability grid), identical for every seat, so no comms are involved.
+  ## Scan each grid column between the pedestal and the center ring; per
+  ## column, find the longest contiguous walkable y-run that overlaps the
+  ## pedestal band; the column whose best run is NARROWEST is the funnel, and
+  ## the throat is that run's center.
+  bot.funnelReady = false
+  # ⭐ STATED ZONE, NOT flagHome (audit finding #3): flagHome returns the classic
+  # arena's hardcoded (186,329)/(1049,329) pedestal — meaningless on a generated
+  # 4-team board up to ~2496px. Same observed-first-fallback pattern as the
+  # "PEDESTALS ARE OBSERVED, NOT ASSUMED" block below: prefer the engine-stated
+  # endzone centre for our own colour, falling back to flagHome only when no
+  # marker was ever read (e.g. the classic 2-team arena, which byte-preserves
+  # the old behavior since it never emits endzone markers).
+  let
+    sign = homeSign(bot.team)
+    homeZone = statedZone(bot.myColor)
+    ped = (if homeZone.have: homeZone.c else: flagHome(bot.team))
+    x0 = cellOf(vec(min(ped.x + sign * 40.0, float(CenterX)), 0.0)) mod GridW
+    x1 = cellOf(vec(max(ped.x + sign * 40.0, float(CenterX)), 0.0)) mod GridW
+  var bestWidth = int.high
+  for cx in min(x0, x1) .. max(x0, x1):
+    if cx < 0 or cx >= GridW:
+      continue
+    var runStart = -1
+    var colBestW = int.high
+    var colBestY = -1
+    for cy in 0 .. GridH:                # sentinel row closes the last run
+      let open = cy < GridH and bot.cellWalkable[cy * GridW + cx]
+      if open and runStart < 0:
+        runStart = cy
+      elif not open and runStart >= 0:
+        let
+          runEnd = cy - 1
+          loY = cellCenter(runStart * GridW + cx).y
+          hiY = cellCenter(runEnd * GridW + cx).y
+        # the run must overlap the pedestal band (the approach axis)
+        if hiY >= ped.y - FunnelBand and loY <= ped.y + FunnelBand:
+          let w = cy - runStart
+          if w < colBestW:
+            colBestW = w
+            colBestY = (runStart + runEnd) div 2
+        runStart = -1
+    if colBestY >= 0 and colBestW < bestWidth:
+      bestWidth = colBestW
+      bot.funnelThroat = cellCenter(colBestY * GridW + cx)
+      bot.funnelReady = true
+
+proc pickPost(bot: Bot, client: ProtocolClient) =
+  ## Chooses our own overwatch post (the overwatch seat only): fire from the
+  ## peek, duck back to the hold during cooldown.
+  bot.postReady = false
+  if bot.role != Overwatch:
+    return
+  let
+    eSign = -homeSign(bot.team)
+    wantY = float(CenterY) + 60.0
+  let post = bot.scanPost(client, eSign, wantY)
+  if post.ready:
+    bot.postHold = post.hold
+    bot.postPeek = post.peek
+    bot.postReady = true
+
+proc findEnemyPosts(bot: Bot, client: ProtocolClient) =
+  ## Precomputes the standing virtual threats every carrier run has to
+  ## respect, fed into exposure costing and lane choice: the mirrored ENEMY
+  ## overwatch post (a stationary, hidden killer) and the ENEMY spawn
+  ## pocket — every kill respawns an armed, spawn-protected enemy at the
+  ## pedestal aiming our way, so the pocket mouth (and its mid lane) is
+  ## permanently watched ground even when no track remembers anyone there.
+  bot.enemyPosts.setLen(0)
+  let post = bot.scanPost(client, homeSign(bot.team), float(CenterY) + 60.0)
+  if post.ready:
+    bot.enemyPosts.add(post.peek)
+  # ⭐ STATED ZONE, NOT flagHome (audit finding #3): same observed-first-fallback
+  # pattern as the "PEDESTALS ARE OBSERVED, NOT ASSUMED" block — the rival's
+  # colour is resolved the same way SelfEnemyColor is (enemyColorFor), not
+  # read off a possibly-stale global, since this can run before decide() has
+  # stamped one for the frame (the first buildNavGrid call, and the anchorRelock
+  # re-run happens before the per-frame flag bookkeeping that would refresh it).
+  let enemyZone = statedZone(enemyColorFor(bot.myColor))
+  bot.enemyPosts.add(if enemyZone.have: enemyZone.c else: flagHome(enemy(bot.team)))
+
+proc dominateApproach(): array[6, (float, float)] =
+  ## #7: the ground an intruder MUST cross to reach our pedestal — waypoints on
+  ## the three lanes at the mid line and just inside our half, mirrored per team
+  ## via homeSign. These are where the occupancy heatmap shows enemy travel
+  ## concentrates (mid crossings feeding the pedestal pocket). A proc, not a
+  ## const, because the lanes are map-derived now (adoptMapSize).
+  [(0.0, LaneTop), (0.0, LaneMid), (0.0, LaneBottom),      # the mid crossing
+   (170.0, LaneTop), (170.0, LaneMid), (170.0, LaneBottom)] # just inside our half
+
+proc pickDominatePost(bot: Bot, client: ProtocolClient) =
+  ## #7 POINT OF DOMINATION (home defender): rather than sit on a fixed choke
+  ## spot, hold the cover cell on our side of the ring that COMMANDS the most of
+  ## the ground an intruder has to cross to reach our pedestal — the cell whose
+  ## clear firing lines cover the largest count of the enemy-approach waypoints
+  ## (the mid-lane crossings the heatmap shows enemies funnel through). Under a
+  ## map-wide gun, the seat that sees the most approach lanes kills the thief
+  ## before it reaches the pocket. Computed once at nav build; a tiebreak keeps
+  ## it near the classic choke so it does not wander off our capture column.
+  bot.dominateReady = false
+  if bot.role != HomeDefender:
+    return
+  let
+    sign = homeSign(bot.team)
+    choke = chokeSpot(bot.team)
+    # Anchor the approach waypoints into map space for this team.
+    lo = int((float(CenterX) + sign * DominateGuardBand) / float(NavCell))
+    hi = int(float(CenterX) / float(NavCell))
+    (x0, x1) = (min(lo, hi), max(lo, hi))
+  var bestScore = -1e18
+  for cy in 0 ..< GridH:
+    for cx in x0 .. x1:
+      if cx < 0 or cx >= GridW:
+        continue
+      let c = cy * GridW + cx
+      if not bot.coverCell[c]:
+        continue
+      let p = cellCenter(c)
+      # Must sit on OUR side of the ring, not out past the center line.
+      if sign * (p.x - float(CenterX)) < 0.0:
+        continue
+      var covered = 0
+      for w in dominateApproach():
+        let wp = vec(float(CenterX) + sign * w[0], w[1])
+        if dist(p, wp) <= FireRange and client.pixelRayClear(p, wp):
+          inc covered
+      if covered == 0:
+        continue
+      # Lanes commanded dominate; break near-ties toward the classic choke so
+      # the defender still screens our own capture column.
+      let score = float(covered) * 1000.0 - dist(p, choke)
+      if score > bestScore:
+        bestScore = score
+        bot.dominatePost = p
+        bot.dominateReady = true
+
+proc adoptMapSize(client: ProtocolClient) =
+  ## The walkability sprite spans the whole arena: adopt its dimensions as THE
+  ## map size and rederive everything position-shaped. Paintbot draws a fresh
+  ## map every episode, so the size must be read off the wire, never assumed.
+  MapW = client.walkabilityWidth
+  MapH = client.walkabilityHeight
+  CenterX = MapW div 2
+  CenterY = MapH div 2
+  GridW = (MapW + NavCell - 1) div NavCell
+  GridH = (MapH + NavCell - 1) div NavCell
+  LaneMid = float(CenterY)
+  LaneBottom = float(MapH) - LaneTop
+  # The gun is a FIXED config.gunRange on every board since GV34 (1300px in
+  # every paintbot variant). Engage at the gun's reach, capped by the board's
+  # own diagonal so a small map never inflates the cap.
+  FireRange = min(GunRangePx, sqrt(float(MapW * MapW + MapH * MapH)))
+  NadeMaxRange = float(MapW div 5)      # sim GrenadeMaxRange
+  ShoutHeardRange = float(MapW div 5)   # sim ShoutRange
+  MedKitAX = float(MapW div 2)
+  MedKitAY = float(MapH div 3)
+  MedKitBX = float(MapW div 2)
+  MedKitBY = float(2 * MapH div 3)
+
+proc adoptGameParams(client: ProtocolClient) =
+  ## Reads the stated episode parameters off the init marker
+  ## `game teams <count> map <width>x<height>` (LabelPrefixGameParams). The
+  ## team count is the marker's unique intel; the size restates the
+  ## walkability sprite, which adoptMapSize already took.
+  for o in client.spriteObjects():
+    if o.label.startsWith(LabelPrefixGameParams):
+      let parts = o.label[LabelPrefixGameParams.len .. ^1].split(' ')
+      if parts.len == 3:
+        try:
+          # Clamped to the COLOUR VOCABULARY, not to 4. The old bound predates
+          # battle royale: it silently reported a 16-team episode as a 4-team
+          # one, so `slot mod GameTeams` handed us a colour that is not ours —
+          # the policy mis-identified its OWN duo before it ever saw a rival.
+          GameTeams = clamp(parseInt(parts[0]), 2, TeamColorNames.len)
+        except ValueError:
+          discard
+      break
+
+proc adoptEndzones(client: ProtocolClient) =
+  ## Reads every team's stated home capture region off the per-team init
+  ## markers `endzone <color> <shape> <x0>,<y0> <x1>,<y1>`. The shape token is
+  ## validated against the closed LabelEndzoneShapes vocabulary, which also
+  ## skips the spectator-only `endzone <color> power <n>` glow labels.
+  EndzoneMarks.setLen(0)
+  for o in client.spriteObjects():
+    if not o.label.startsWith(LabelPrefixEndzone):
+      continue
+    let parts = o.label[LabelPrefixEndzone.len .. ^1].split(' ')
+    if parts.len != 4 or parts[1] notin LabelEndzoneShapes:
+      continue
+    let
+      lo = parts[2].split(',')
+      hi = parts[3].split(',')
+    if lo.len != 2 or hi.len != 2:
+      continue
+    try:
+      EndzoneMarks.add (
+        color: parts[0], shape: parts[1],
+        x0: parseInt(lo[0]), y0: parseInt(lo[1]),
+        x1: parseInt(hi[0]), y1: parseInt(hi[1]))
+    except ValueError:
+      discard
+
+proc adoptHazards(client: ProtocolClient) =
+  ## v56 hazardSense: reads every stated paint-puddle bounding box off the
+  ## `puddle <x0>,<y0> <x1>,<y1>` init markers (same tail contract as the
+  ## trench/endzone markers; zero markers on 4-team maps and puddle-less
+  ## boards, never an empty-box marker). Standing inside a box rolls 20%/s of
+  ## 1 damage; crossing in motion is nearly free — so these boxes veto STAND
+  ## targets only, never routing.
+  PuddleMarks.setLen(0)
+  for o in client.spriteObjects():
+    if not o.label.startsWith(LabelPrefixPuddle):
+      continue
+    let parts = o.label[LabelPrefixPuddle.len .. ^1].split(' ')
+    if parts.len != 2:
+      continue
+    let
+      lo = parts[0].split(',')
+      hi = parts[1].split(',')
+    if lo.len != 2 or hi.len != 2:
+      continue
+    try:
+      PuddleMarks.add (
+        x0: float(parseInt(lo[0])), y0: float(parseInt(lo[1])),
+        x1: float(parseInt(hi[0])), y1: float(parseInt(hi[1])))
+    except ValueError:
+      discard
+
+when defined(seatprobe):
+  # -d:seatprobe (2026-08-07, diagnostic only — v45 seat-identity fix
+  # verification): per-(team, teamSeat) tallies of the wantPocketRush
+  # suppression, so the probe can show the comboGrab-seat suppression is
+  # CONFINED to the designated seat (not leaking onto every same-role bot,
+  # the v44 bug) and that other attacker seats' pocket-rush desire is
+  # unaffected by comboGrabDone state.
+  var
+    spWantTrue: array[Team, array[8, int]]      # wantPocketRush evaluated true
+    spWantFalse: array[Team, array[8, int]]     # wantPocketRush evaluated false
+    spSuppressedByCombo: array[Team, array[8, int]] # false SPECIFICALLY because
+                                                     # of the comboGrab-seat term
+
+proc buildNavGrid(bot: Bot, client: ProtocolClient) =
+  ## Erodes the pixel walkability mask into a footprint-safe nav grid, then
+  ## derives the cover model (cover cells, overwatch post, defender choke).
+  adoptMapSize(client)
+  # ⭐⭐ FIRERANGE RESYNC BUG FIX (2026-08-06, captain-brain audit finding,
+  # independent of the aggro lever): `bot.tune.fireRange` is copied from the
+  # module var FireRange ONCE, at Bot() construction (shippedCombatTune, before
+  # any map is known) — the hardcoded 1250.0 literal. adoptMapSize just
+  # recomputed the REAL module FireRange for THIS episode's map (paintbot draws
+  # a fresh size every game, `min(GunRangePx, boardDiagonal)`), and every other
+  # geometry read in this file (post scoring, nav cost, etc.) already reads
+  # that live module var directly — only the actual COMBAT engage-range
+  # decision (`bot.tune.fireRange`, the default case in the maxEngage select)
+  # was silently stuck on the stale construction-time value for the bot's
+  # whole process lifetime. Resync here, once per episode, right after the
+  # value it copies is freshened.
+  bot.tune.fireRange = FireRange
+  adoptGameParams(client)
+  adoptEndzones(client)
+  adoptHazards(client)         # v56: stated puddle boxes (init snapshot)
+  # ⭐⭐ THE STATUE FIX. A 4-team board deals seats round the teams (slot mod
+  # teams, roster.teamForSlot), so the classic red/blue parity guess is wrong
+  # for half of them — and a wrong color makes EVERY label scan blind,
+  # including findSelf, which then reports us dead and returns a zero input
+  # mask forever. Measured: green and yellow travelled exactly 0px across a
+  # whole episode. Re-deal the color now that the team count is stated; the
+  # self marker confirms or corrects it on the first alive frame.
+  if GameTeams > 2 and not bot.colorLocked:
+    bot.myColor = TeamColorNames[bot.slot mod GameTeams]
+  # Our rank WITHIN our own team is slot div teams (the engine's own
+  # slotIdentityIndex): seats deal round the active teams. The old slot-div-2
+  # reading is only correct on a 2-team board, and on a 32-seat four-team board
+  # it ran off the end of the role table and clamped four seats onto
+  # HomeDefender.
+  bot.teamSeat = clamp(bot.slot div max(GameTeams, 2), 0, 7)
+  bot.role = roleForSeat(bot.teamSeat, bot.team)
+  # ⭐ Recomputed HERE, beside the role, and never cached anywhere else: this
+  # site re-runs when the 4-team colour re-lock changes bot.team, and a stale
+  # ordinal would silently hand a primary the duplicate's route.
+  bot.roleOrd = roleOrdinal(bot.teamSeat, bot.team)
+  when defined(seatprobe):
+    # Runs once per bot (guarded by the `not bot.navBuilt` caller below) — the
+    # full seat/role/designation identity table the v45 seat-identity fix is
+    # supposed to produce.
+    let comboDesignated = bot.teamSeat == ComboGrabSeat
+    let shieldRushDesignated = bot.teamSeat == ShieldRushSeat
+    let sprayRoleOk = bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom}
+    echo "SEATPROBE slot=" & $bot.slot & " team=" & $bot.team &
+      " teamSeat=" & $bot.teamSeat & " role=" & $bot.role &
+      " comboDesignated=" & $comboDesignated &
+      " sprayEligible=" & $(sprayRoleOk and not (bot.tune.comboGrab and comboDesignated)) &
+      " shieldRushDesignated=" & $shieldRushDesignated
+  bot.cellWalkable = newSeq[bool](GridW * GridH)
+  for cy in 0 ..< GridH:
+    for cx in 0 ..< GridW:
+      bot.cellWalkable[cy * GridW + cx] = client.footprintFits(
+        cx * NavCell + NavCell div 2, cy * NavCell + NavCell div 2)
+  bot.coverCell = newSeq[bool](GridW * GridH)
+  for cy in 0 ..< GridH:
+    for cx in 0 ..< GridW:
+      let c = cy * GridW + cx
+      if not bot.cellWalkable[c]:
+        continue
+      block adjacency:
+        for dy in -1 .. 1:
+          for dx in -1 .. 1:
+            if dx == 0 and dy == 0:
+              continue
+            let
+              nx = cx + dx
+              ny = cy + dy
+            if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+              continue
+            if not bot.cellWalkable[ny * GridW + nx]:
+              bot.coverCell[c] = true
+              break adjacency
+  when defined(homeprobe):
+    echo "INIT slot=", bot.slot, " col=", bot.myColor, " parity=", bot.team,
+      " teams=", GameTeams, " map=", MapW, "x", MapH,
+      " grid=", GridW, "x", GridH, " marks=", EndzoneMarks.len
+    for z in EndzoneMarks:
+      echo "  MARK ", z.color, " ", z.shape, " ", z.x0, ",", z.y0,
+        "..", z.x1, ",", z.y1
+    flushFile(stdout)
+  bot.exposure = newSeq[bool](GridW * GridH)
+  bot.navDist = newSeq[int32](GridW * GridH)
+  bot.navGoal = -1
+  bot.pickPost(client)
+  bot.findEnemyPosts(client)
+  bot.pickDominatePost(client)
+  bot.chokeHold = bot.snapToCover(chokeSpot(bot.team))
+  bot.findFunnelThroat()
+  bot.navBuilt = true
+  bot.navBuiltColor = bot.myColor      # anchorRelock's baseline for comparison
+
+const NavNeighbors = [
+  (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)
+]
+
+proc rebuildExposure(bot: Bot, client: ProtocolClient) =
+  ## Marks nav cells the freshest remembered enemies — plus the mirrored
+  ## enemy sniper posts, which are stationary hidden threats all game —
+  ## could shoot into (inside gun range with a coarsely-clear line). Used as
+  ## a soft path cost.
+  for i in 0 ..< bot.exposure.len:
+    bot.exposure[i] = false
+  var
+    threatSpots: seq[Vec] = bot.enemyPosts
+    threats = 0
+  for t in bot.enemies:                  # already sorted freshest-first
+    if threats >= ExposureThreats or bot.tick - t.lastSeen > ExposureTrackTtl:
+      break
+    inc threats
+    threatSpots.add(t.pos)
+  for spot in threatSpots:
+    let
+      x0 = max(0, int(spot.x - ExposureRange) div NavCell)
+      x1 = min(GridW - 1, int(spot.x + ExposureRange) div NavCell)
+      y0 = max(0, int(spot.y - ExposureRange) div NavCell)
+      y1 = min(GridH - 1, int(spot.y + ExposureRange) div NavCell)
+    for cy in y0 .. y1:
+      for cx in x0 .. x1:
+        let c = cy * GridW + cx
+        if bot.exposure[c] or not bot.cellWalkable[c]:
+          continue
+        let p = cellCenter(c)
+        if dist(p, spot) <= ExposureRange and
+            rayClearCoarse(client, spot, p, 8.0):
+          bot.exposure[c] = true
+
+proc computeFieldInner(bot: Bot, client: ProtocolClient, goal: int) =
+  ## Cost field (Dijkstra) over the nav grid toward one goal cell. Steps cost
+  ## StepCost/DiagCost and entering a threat-exposed cell adds ExposedCost, so
+  ## paths prefer segments that keep obstacles between us and known enemies.
+  ## Diagonal steps require both orthogonal neighbors open (no corner cuts).
+  bot.rebuildExposure(client)
+  for i in 0 ..< bot.navDist.len:
+    bot.navDist[i] = -1
+  var heap = initHeapQueue[(int32, int32)]()
+  bot.navDist[goal] = 0
+  heap.push((0'i32, int32(goal)))
+  while heap.len > 0:
+    let
+      (dcur, cur32) = heap.pop()
+      cur = int(cur32)
+    if dcur > bot.navDist[cur]:
+      continue
+    let
+      cx = cur mod GridW
+      cy = cur div GridW
+    for (dx, dy) in NavNeighbors:
+      let
+        nx = cx + dx
+        ny = cy + dy
+      if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+        continue
+      let nc = ny * GridW + nx
+      if not bot.cellWalkable[nc]:
+        continue
+      if dx != 0 and dy != 0 and
+          not (bot.cellWalkable[cy * GridW + nx] and
+               bot.cellWalkable[ny * GridW + cx]):
+        continue
+      var step = (if dx != 0 and dy != 0: DiagCost else: StepCost)
+      if bot.exposure[nc]:
+        step += ExposedCost
+      let nd = bot.navDist[cur] + step
+      if bot.navDist[nc] < 0 or nd < bot.navDist[nc]:
+        bot.navDist[nc] = nd
+        heap.push((nd, int32(nc)))
+
+proc gridRayClear(bot: Bot, a, b: Vec): bool =
+  ## True when the eroded nav grid is open along the whole segment.
+  let
+    d = b - a
+    steps = int(d.len() / 4.0) + 1
+  for s in 0 .. steps:
+    let p = a + d * (float(s) / float(steps))
+    if not bot.cellWalkable[cellOf(p)]:
+      return false
+  true
+
+proc computeField(bot: Bot, client: ProtocolClient, goal: int) =
+  when defined(perfprobe):
+    let t0 = getMonoTime()
+    bot.computeFieldInner(client, goal)
+    ppFieldNs += (getMonoTime() - t0).inNanoseconds
+    inc ppFields
+  else:
+    bot.computeFieldInner(client, goal)
+
+proc navSteer(bot: Bot, client: ProtocolClient, me, target: Vec): Vec =
+  ## Direction along the cost-field path toward `target`, with waypoint
+  ## lookahead. Falls back to a beeline before the grid exists or when
+  ## unreachable.
+  if not bot.navBuilt:
+    return target - me
+  let goal = bot.nearestOpenCell(cellOf(target))
+  if goal != bot.navGoal or bot.tick - bot.navStamp >= RepathTicks:
+    bot.computeField(client, goal)
+    bot.navGoal = goal
+    bot.navStamp = bot.tick
+  let start = bot.nearestOpenCell(cellOf(me))
+  if bot.navDist[start] < 0:
+    return target - me
+  if bot.navDist[start] == 0:
+    return target - me
+  var
+    node = start
+    waypoint = cellCenter(start)
+    haveClear = false
+  for _ in 0 ..< LookaheadCells:
+    var next = -1
+    var bestD = bot.navDist[node]
+    let
+      cx = node mod GridW
+      cy = node div GridW
+    for (dx, dy) in NavNeighbors:
+      let
+        nx = cx + dx
+        ny = cy + dy
+      if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+        continue
+      let nc = ny * GridW + nx
+      if bot.navDist[nc] < 0 or bot.navDist[nc] >= bestD:
+        continue
+      if dx != 0 and dy != 0 and
+          not (bot.cellWalkable[cy * GridW + nx] and
+               bot.cellWalkable[ny * GridW + cx]):
+        continue
+      bestD = bot.navDist[nc]
+      next = nc
+    if next < 0:
+      break
+    node = next
+    if bot.gridRayClear(me, cellCenter(node)):
+      waypoint = cellCenter(node)
+      haveClear = true
+    else:
+      break
+  if not haveClear:
+    waypoint = cellCenter(node)
+  waypoint - me
+
+proc findDuckCell(bot: Bot, client: ProtocolClient, me, threat: Vec): int =
+  ## The nearest directly-reachable cell around us whose center the threat
+  ## cannot see; -1 when no nearby cover breaks the line.
+  result = -1
+  let
+    c0 = cellOf(me)
+    cx0 = c0 mod GridW
+    cy0 = c0 div GridW
+  var bestD = 1e18
+  for dy in -DuckSearchCells .. DuckSearchCells:
+    for dx in -DuckSearchCells .. DuckSearchCells:
+      let
+        nx = cx0 + dx
+        ny = cy0 + dy
+      if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+        continue
+      let nc = ny * GridW + nx
+      if not bot.cellWalkable[nc]:
+        continue
+      let p = cellCenter(nc)
+      if not bot.gridRayClear(me, p):
+        continue
+      if client.pixelRayClear(p, threat):
+        continue                          # the threat can still see this cell
+      let d = dist(p, me)
+      if d < bestD:
+        bestD = d
+        result = nc
+
+proc findBankCell(bot: Bot, client: ProtocolClient, me: Vec,
+                  threats: seq[Vec]): int =
+  ## woundedBank (plan #13 §1.2): the BANK cell — a directly-reachable cell
+  ## that breaks the fresh threat lines. Equal top speeds mean radial retreat
+  ## holds the gap constant while the map-scale hitscan keeps landing (the
+  ## arcStandoff finding: you cannot outrun; you out-GEOMETRY), so the search
+  ## prefers ANY LOS-breaking cell over any open one:
+  ##   tier 2  breaks EVERY fresh threat line
+  ##   tier 1  breaks the nearest threat's line
+  ##   tier 0  open floor, admitted only with >= BankStandoffGain standoff GAIN
+  ## Within a tier: nearest cell wins, kit-gravity tiebreak toward the nearest
+  ## static kit spot (kits are hurt-only and heal to full — the disengage-to-
+  ## heal synergy). Never a cell deeper into enemy territory (the regroup
+  ## home-side rule). -1 when nothing qualifies.
+  result = -1
+  if threats.len == 0:
+    return
+  var nearIdx = 0
+  var nearD = 1e18
+  for i in 0 ..< threats.len:
+    let d = dist(threats[i], me)
+    if d < nearD:
+      nearD = d
+      nearIdx = i
+  let
+    kitA = vec(MedKitAX, MedKitAY)
+    kitB = vec(MedKitBX, MedKitBY)
+    c0 = cellOf(me)
+    cx0 = c0 mod GridW
+    cy0 = c0 div GridW
+  var bestTier = -1
+  var bestCost = 1e18
+  for dy in -BankSearchCells .. BankSearchCells:
+    for dx in -BankSearchCells .. BankSearchCells:
+      let
+        nx = cx0 + dx
+        ny = cy0 + dy
+      if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+        continue
+      let nc = ny * GridW + nx
+      if not bot.cellWalkable[nc]:
+        continue
+      let p = cellCenter(nc)
+      if not bot.gridRayClear(me, p):
+        continue                          # not directly reachable
+      if homeSign(bot.team) * (p.x - me.x) < -20.0:
+        continue                          # deeper into enemy territory
+      var tier = 0
+      if not client.pixelRayClear(p, threats[nearIdx]):
+        tier = 1
+        var breaksAll = true
+        for t in threats:
+          if client.pixelRayClear(p, t):
+            breaksAll = false
+            break
+        if breaksAll:
+          tier = 2
+      elif dist(p, threats[nearIdx]) < nearD + BankStandoffGain:
+        continue                          # open floor with no real standoff gain
+      let cost = dist(p, me) +
+        BankKitLambda * min(dist(p, kitA), dist(p, kitB))
+      if tier > bestTier or (tier == bestTier and cost < bestCost):
+        bestTier = tier
+        bestCost = cost
+        result = nc
+
+proc findPeekCell(bot: Bot, client: ProtocolClient, me, aim: Vec): int =
+  ## The nearest directly-reachable cell that opens a firing line to `aim`
+  ## within gun range; -1 when no sidestep grants the shot.
+  result = -1
+  let
+    c0 = cellOf(me)
+    cx0 = c0 mod GridW
+    cy0 = c0 div GridW
+  var bestD = 1e18
+  for dy in -PeekSearchCells .. PeekSearchCells:
+    for dx in -PeekSearchCells .. PeekSearchCells:
+      let
+        nx = cx0 + dx
+        ny = cy0 + dy
+      if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+        continue
+      let nc = ny * GridW + nx
+      if not bot.cellWalkable[nc]:
+        continue
+      let p = cellCenter(nc)
+      if dist(p, aim) > FireRange or not bot.gridRayClear(me, p):
+        continue
+      if not client.pixelRayClear(p, aim):
+        continue
+      let d = dist(p, me)
+      if d < bestD:
+        bestD = d
+        result = nc
+
+proc enemyEmergeAim(bot: Bot, client: ProtocolClient, me, foe: Vec): Vec =
+  ## Where a wall-blocked enemy's body FIRST appears when it peeks to shoot us:
+  ## the walkable cell NEAREST its hidden body that already has a clear pixel line
+  ## to `me`. The enemy steps the shortest distance to get its shot, so that cell
+  ## is the highest-probability emergence point — pre-aiming it means our bullet is
+  ## already on-bearing as it rounds the corner (vs aiming the body behind the wall
+  ## and having to traverse after it shows). Returns a sentinel (x < 0) when no such
+  ## corner is within a few cells (the target is deep behind cover, not peeking).
+  result = vec(-1, -1)
+  let
+    c0 = cellOf(foe)
+    cx0 = c0 mod GridW
+    cy0 = c0 div GridW
+  var bestD = 1e18
+  for dy in -PeekSearchCells .. PeekSearchCells:
+    for dx in -PeekSearchCells .. PeekSearchCells:
+      let
+        nx = cx0 + dx
+        ny = cy0 + dy
+      if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
+        continue
+      let nc = ny * GridW + nx
+      if not bot.cellWalkable[nc]:
+        continue
+      let p = cellCenter(nc)
+      if not client.pixelRayClear(me, p):
+        continue                         # this cell can't yet see us: not an exit
+      let d = dist(p, foe)               # nearest exit to the body = first peek
+      if d < bestD:
+        bestD = d
+        result = p
+
+proc updateTracks(bot: Bot, tracks: var seq[Track], seen: seq[Actor]) =
+  ## Matches this frame's sightings to remembered tracks and prunes stale
+  ## ones. Velocity is a blended px/tick estimate used to lead shots.
+  var claimed = newSeq[bool](tracks.len)
+  for a in seen:
+    var
+      best = -1
+      bestD = TrackMatchDist
+    for i in 0 ..< tracks.len:
+      if claimed[i]:
+        continue
+      let d = dist(tracks[i].pos, a.pos)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      let
+        dt = float(max(1, bot.tick - tracks[best].lastSeen))
+        v = (a.pos - tracks[best].pos) * (1.0 / dt)
+      tracks[best].vel = vec(
+        clamp((tracks[best].vel.x + v.x) * 0.5, -3.0, 3.0),
+        clamp((tracks[best].vel.y + v.y) * 0.5, -3.0, 3.0)
+      )
+      tracks[best].pos = a.pos
+      tracks[best].facingRight = a.facingRight
+      if a.colorId > 0: tracks[best].colorId = a.colorId  # freshest read wins
+      tracks[best].lastSeen = bot.tick
+      if a.hp > 0:
+        tracks[best].hp = a.hp
+      tracks[best].aimBrads = a.aimBrads   # -1 when this frame's dots unreadable
+      if a.hasArc: tracks[best].hasArc = true  # arc is permanent-for-life: sticky
+      # Shield tracks the live marker (a carrier can burn it down / it drops on
+      # death); refresh both ways so a track that lost its shield stops reading tank.
+      tracks[best].hasShield = a.hasShield
+      inc tracks[best].sightings
+      claimed[best] = true
+    else:
+      tracks.add(Track(
+        pos: a.pos, lastSeen: bot.tick, facingRight: a.facingRight, hp: a.hp,
+        colorId: a.colorId,
+        aimBrads: a.aimBrads, hasArc: a.hasArc, hasShield: a.hasShield,
+        sightings: 1))
+      claimed.add(true)
+  var kept: seq[Track]
+  for t in tracks:
+    if bot.tick - t.lastSeen <= TrackTtl:
+      kept.add(t)
+  kept.sort(proc(a, b: Track): int = cmp(b.lastSeen, a.lastSeen))
+  if kept.len > TrackCap:                # there are only eight real players
+    kept.setLen(TrackCap)
+  tracks = kept
+
+proc nadeCamper(bot: Bot, t: Track): bool =
+  ## staleNade: does this REMEMBERED track have the wall-camper shape a
+  ## grenade exists to punish? Three properties, all of them the camper's own:
+  ##   * still remembered at all (inside NadeStaleTicks, under TrackTtl);
+  ##   * seen at least TWICE — a brand-new track carries vel (0,0) by
+  ##     construction, so a single glimpse of a sprinting body is
+  ##     indistinguishable from a parked one until the second sighting; and
+  ##   * stationary when last seen (the blended vel estimate).
+  ## Says nothing about walls or clustering; the caller adds those.
+  bot.tick - t.lastSeen <= NadeStaleTicks and t.sightings >= 2 and
+    t.vel.len() <= NadeStaleVelPx
+
+proc resetTransient(bot: Bot) =
+  ## Drops per-game memory between rounds (lobby / game-over interstitials).
+  bot.colorLocked = false      # re-earn the lock from the next game's self
+                               # marker; the dealt guess persists as the seed
+  bot.anchorsRelocked = false  # re-earn the anchorRelock check next game too
+  bot.navBuiltColor = ""
+  bot.stealPedSeen = false     # pedestals are per-episode geometry
+  bot.ownPedSeen = false
+  bot.plantUntil = 0
+  bot.prevStatedAim = -1
+  # Default to the CONTINUOUS step (GV40). The failure modes are asymmetric:
+  # too SMALL a step just turns slower and still converges, while too LARGE
+  # overshoots forever. Seed with the safe one and let the inference raise it
+  # if we are on a slot engine.
+  if bot.aimStepBrads <= 0:
+    bot.aimStepBrads = (if bot.tune.aimLegacy: 40 else: AimRate)
+  bot.enemies.setLen(0)
+  bot.mates.setLen(0)
+  bot.nadeCharge = 0
+  bot.nadeLockAim = -1
+  bot.nadeHold = 0
+  bot.nadeFfHold = 0
+  bot.nadeStaleArm = false
+  bot.nadeDepots.setLen(0)   # nadeSupply: paintbot draws a fresh map per
+                             # episode, so depot geometry is re-derived, never
+                             # carried across the interstitial
+  bot.nadeDryUntil.setLen(0)
+  bot.kitSpots.setLen(0)     # ⭐⭐⭐ kitSel: same contract as nadeDepots above —
+  bot.kitDryUntil.setLen(0)  # paintbot draws a fresh map every episode, and the
+  bot.kitSeenTick.setLen(0)  # kit orbit is re-drawn with it, so a spawn learned
+                             # last game is this game's empty floor. Re-derive
+                             # from sightings, never carry across the interstitial.
+  bot.shieldSpots.setLen(0)     # ⭐⭐⭐ shieldAddr: same contract as nadeDepots above —
+  bot.shieldDryUntil.setLen(0)  # paintbot draws a fresh map every episode and the shield
+                                # orbit is re-drawn with it, so a spawn learned last game is
+                                # this game's empty floor. Re-derive from sightings, never
+                                # carry across the interstitial.
+  bot.mateFixTick = 0
+  bot.shoutWant = ""
+  bot.lastShoutTick = 0
+  bot.heardPlay = RpNone
+  bot.heardPlayTick = 0
+  bot.heardPlayPos = vec(-1, -1)
+  bot.lastCommsTick = 0
+  bot.carrierSeen = -100_000
+  bot.corpseSeen.setLen(0)     # corpse objectIds are per-episode
+  bot.koReleased.setLen(0)     # ...and so are KO-marker death spots
+  bot.lastEnemySeen = bot.tick
+  bot.gameStart = bot.tick
+  bot.firedLast = false
+  bot.estAim = spawnAim(bot.team)
+  bot.rotSign = 0
+  bot.wasDead = false
+  bot.scanHigh = false
+  bot.stuckTicks = 0
+  bot.jinkUntil = 0
+  bot.behindLines = false
+  bot.navGoal = -1
+  bot.lockUntil = -100_000
+  bot.aimLockUntil = -100_000
+  bot.retreatUntil = -100_000
+  bot.declineUntil = -100_000
+  bot.bankCell = -1
+  bot.bankCellTick = -100_000
+  bot.bankBlindSince = bot.tick
+  when defined(wbprobe):
+    bot.pWasBanking = false
+    bot.pBankEnter = 0
+    bot.pHadLine = false
+    bot.pBroke = false
+    bot.pHp1Since = -1
+  bot.shieldRushDone = false
+  bot.comboGrabDone = false
+  bot.assaultUntil = -100_000
+  bot.arcBreachUntil = -100_000
+  bot.arcLinePos = vec(-1, -1)
+  bot.arcLineTick = -100_000
+  bot.sawLineTick = -100_000
+  bot.arcBackTick = -100_000  # arcStandoff: no back-off latched on a fresh life
+  bot.ownHp = 0
+  bot.ownLives = 0            # ⭐ ownLives is a LATCHED perception read — it is only
+                              # ever written when the `lives <hp>hp x<n>` marker parses,
+                              # so without this a fresh ROUND opens carrying the previous
+                              # round's value. NOT reachable as a stale read in the
+                              # shipped loop (resetTransient fires only on the
+                              # not-mapCameraReady interstitial, where decide() — and so
+                              # livesSense — never runs, and the first playing frame
+                              # re-reads before onLastLife is computed). Kept as a guard
+                              # against reordering, and for consistency with ownHp above.
+  bot.surpriseShoutTick = -100_000
+  bot.dieShoutTick = -100_000
+  bot.orientUntil = -100_000
+  bot.sentrySince = bot.tick
+  bot.sentryShift = 0.0
+  bot.mateDeathPos = vec(-1, -1)         # v56: per-round awareness state
+  bot.mateDeathTick = -100_000
+  bot.mateKoSeen.setLen(0)               # ...and KO-marker spots are per-round too
+  bot.lastMateAlive = bot.tick           # fresh round: mates alive until proven dead
+  bot.lastHitPos = vec(-1, -1)
+  bot.lastHitTick = -100_000
+  # ⭐ ONE-DOOR BREAK: door memory is per-ROUND (it must SURVIVE our own
+  # respawn — that is the whole point; a camper is only legible across lives).
+  bot.doorDeathN = 0
+  for i in 0 ..< HotDoorSlots:
+    bot.doorDeathTick[i] = -100_000
+    bot.doorDeathY[i] = -1.0
+  bot.doorRerouteY = -1.0
+  bot.doorRerouteUntil = -100_000
+  bot.waveGateUntil = -100_000
+  bot.waveGateSpent = false
+  bot.waveGateHolding = false
+  bot.prevDepth = 0.0
+  bot.prevDepthSet = false
+
+proc noteDoorDeath(bot: Bot, p: Vec) =
+  ## ⭐ ONE-DOOR BREAK, lever 2 substrate. Remember a friendly death that
+  ## happened AT THE CROSSING (|x - CenterX| <= HotDoorBandPx) — our own (always
+  ## known, and the memory deliberately outlives the respawn) or a mate corpse
+  ## we actually saw. A death deep in the enemy pocket is a fight we lost, not a
+  ## covered entrance, so the x band is the whole discriminator: without it the
+  ## ring fills with pocket deaths and the reroute fires on noise.
+  ## Ring buffer, oldest slot overwritten — no allocation on the hot path.
+  if p.x < 0.0: return
+  if abs(p.x - float(CenterX)) > HotDoorBandPx: return
+  var slot = bot.doorDeathN mod HotDoorSlots
+  # Prefer an already-stale slot so a burst of pocket-adjacent deaths cannot
+  # evict a still-hot door reading.
+  for i in 0 ..< HotDoorSlots:
+    if bot.tick - bot.doorDeathTick[i] > HotDoorMemory:
+      slot = i
+      break
+  bot.doorDeathY[slot] = p.y
+  bot.doorDeathTick[slot] = bot.tick
+  inc bot.doorDeathN
+  when defined(doorprobe):
+    inc dpDoorDeaths[clamp(ord(bot.team), 0, 1)][clamp(bot.teamSeat, 0, 7)]
+
+proc hotDoorNear(bot: Bot, y: float): bool =
+  ## Is the crossing height `y` covered? True once HotDoorMinDeaths remembered,
+  ## still-fresh door deaths sit within HotDoorRadius of it. One death is noise
+  ## (we lose plenty of even fights); the case study had FIVE on one point.
+  var n = 0
+  for i in 0 ..< HotDoorSlots:
+    if bot.doorDeathTick[i] < 0: continue
+    if bot.tick - bot.doorDeathTick[i] > HotDoorMemory: continue
+    if abs(bot.doorDeathY[i] - y) <= HotDoorRadius: inc n
+  n >= HotDoorMinDeaths
+
+proc coldDoorY(bot: Bot, y: float): float =
+  ## Pick a crossing height in the OTHER y-half that is not itself hot and is at
+  ## least HotDoorSepPx from `y` (else it is the same door with extra steps).
+  ## Candidates are the three map-derived lanes plus the mirror of `y` about
+  ## CenterY, ordered farthest-first so we genuinely change wall.
+  let mirror = clamp(2.0 * float(CenterY) - y, LaneTop, LaneBottom)
+  var best = -1.0
+  var bestD = HotDoorSepPx
+  for cand in [mirror, LaneTop, LaneBottom, LaneMid]:
+    let d = abs(cand - y)
+    if d < HotDoorSepPx: continue
+    if bot.hotDoorNear(cand): continue
+    if d > bestD:
+      bestD = d
+      best = cand
+  best
+
+proc scanAim(bot: Bot, watch: Vec, me: Vec = vec(-1, -1)): int =
+  ## The scan-sweep aim while holding a position: rake the vision cone back
+  ## and forth across the arc around the `watch` heading with real rotation.
+  ## Flip the sweep direction whenever the current end is nearly reached.
+  let center = bradsOf(watch)
+  # #3 TWO-SPEED SCAN: a sentry's sweep should DWELL on the one bearing that
+  # matters — the nearest fresh (recently-remembered) threat whose direction
+  # falls inside the scan arc — instead of raking straight past it and letting
+  # it close in the blind half of the cycle. The turret turns at a fixed rate,
+  # so "slow near the danger" means: while such a threat exists, hold the cone
+  # on its bearing (dwell); resume the full sweep once it fogs out. Only when a
+  # position (`me`) is supplied and the lever is on.
+  if lvC(1, bot.tune.twoSpeedScan and me.x >= 0):
+    var
+      best = -1
+      bestD = ScanDwellRange
+    for i in 0 ..< bot.enemies.len:
+      if bot.tick - bot.enemies[i].lastSeen > ScanDwellTtl:
+        continue
+      let bearing = bradsOf(bot.enemies[i].pos - me)
+      if abs(bradsErr(bearing, center)) > ScanArc:
+        continue                         # outside the arc we are responsible for
+      let d = dist(bot.enemies[i].pos, me)
+      if d < bestD:
+        bestD = d
+        best = i
+    if best >= 0:
+      return bradsOf(bot.enemies[best].pos - me)
+  var goal = (center + (if bot.scanHigh: ScanArc else: -ScanArc) +
+    AimBrads) mod AimBrads
+  if abs(bradsErr(goal, bot.estAim)) <= CombatDeadband:
+    bot.scanHigh = not bot.scanHigh
+    goal = (center + (if bot.scanHigh: ScanArc else: -ScanArc) +
+      AimBrads) mod AimBrads
+  goal
+
+proc safestLaneY(bot: Bot, me: Vec): float =
+  ## The carrier's lane home: fewest remembered enemies AND the best cover
+  ## continuity — under map-wide guns a lane whose run has no cover nearby is
+  ## a shooting gallery even when it looks empty.
+  var
+    bestLane = LaneMid
+    bestScore = 1e18
+  for lane in [LaneTop, LaneMid, LaneBottom]:
+    var score = abs(me.y - lane) / 500.0     # mild bias toward the nearest lane
+    for t in bot.enemies:
+      let towardHome =
+        if bot.team == Red: t.pos.x < me.x + 200
+        else: t.pos.x > me.x - 200
+      if towardHome and abs(t.pos.y - lane) < 120:
+        score += 1.0
+    for post in bot.enemyPosts:
+      # The mirrored enemy sniper posts are standing threats on the run home
+      # even when nobody has been seen there.
+      if abs(post.y - lane) < 120:
+        score += 1.0
+    if bot.navBuilt:
+      # Cover continuity: sample the run home along the lane and charge each
+      # sample with no cover cell in its 3x3 nav neighborhood.
+      let
+        goalX = homeDeepX(bot.team)
+        stepX = (if goalX > me.x: 32.0 else: -32.0)
+      var
+        x = me.x
+        samples = 0
+        bare = 0
+      while (stepX > 0.0 and x < goalX) or (stepX < 0.0 and x > goalX):
+        inc samples
+        let
+          c = cellOf(vec(x, lane))
+          cx = c mod GridW
+          cy = c div GridW
+        block covered:
+          for dy in -1 .. 1:
+            for dx in -1 .. 1:
+              let
+                nx = cx + dx
+                ny = cy + dy
+              if nx >= 0 and ny >= 0 and nx < GridW and ny < GridH and
+                  bot.coverCell[ny * GridW + nx]:
+                break covered
+          inc bare
+        x += stepX
+      if samples > 0:
+        score += float(bare) / float(samples) * 2.0
+    if score < bestScore:
+      bestScore = score
+      bestLane = lane
+  bestLane
+
+proc vanityRoll(slot, tick, salt: int): bool =
+  ## Deterministic per-(slot, tick) coin for the vanity-shout rarity gate.
+  ## Returns true on ~VanityShoutChance% of frames. Deliberately does NOT touch
+  ## the shared rand() stream so the button mask stays byte-identical (the
+  ## vanity shouts are proven mask-neutral only because the emit block never
+  ## perturbs movement/aim jitter). A cheap integer hash gives per-bot,
+  ## per-tick decorrelated draws without any global state.
+  var h = uint32(slot * 2654435761'i64 and 0xFFFFFFFF)
+  h = h xor uint32((tick * 40503 + salt * 2246822519'i64) and 0xFFFFFFFF)
+  h = h * 2246822519'u32
+  h = h xor (h shr 15)
+  int(h mod 100'u32) < VanityShoutChance
+
+proc friendlyBlocked(bot: Bot, me, aim: Vec, enemyDist: float): bool =
+  ## True when a remembered teammate could eat the shot: the bullet is a
+  ## corridor hitscan (~14px half width) along the aim ray and the server
+  ## kills the NEAREST player inside it, friend or foe — 8v8 puts many
+  ## teammates downrange. The fire axis is the exact angle the turret would
+  ## fire at right now.
+  let dir = bradsDir(bradsOf(aim - me))
+  for t in bot.mates:
+    let age = float(bot.tick - t.lastSeen)
+    if age > 36:
+      continue
+    let
+      rel = t.pos - me
+      d = rel.len()
+      along = dot(rel, dir)
+    if along <= 0 or d < 1e-6:
+      continue
+    if along >= enemyDist + 14.0:
+      continue                          # beyond the target: the target dies first
+    if abs(cross(rel, dir)) < CorridorHalfWidth + age * 0.35:
+      return true
+  false
+
+proc trackAhead(t: Track, nowTick, aheadTicks: int): tuple[at: Vec, pad: float] =
+  ## ⭐⭐ THE SHARED MATE-MOTION ESTIMATOR (2026-08-19). ONE answer to "where will
+  ## this remembered body BE when my weapon actually lands", used by every
+  ## friendly-fire test so the three weapons can never drift apart — the gun's
+  ## windup corridor, the grenade's blast disc and the spray cone's wedge all
+  ## call THIS proc and no other. There is exactly one definition on purpose: a
+  ## second estimator is a second thing to keep in sync.
+  ##
+  ## This is the largest single term in the friendly-fire finding: at the
+  ## DECISION tick only 49.4% of victims are on the weapon's line, at the RELEASE
+  ## tick 99.8% are — both bodies converge onto it during the lock (victim ~10.6px
+  ## median, shooter ~7.1px). A test evaluated on `t.pos` alone therefore clears a
+  ## mate who is standing on the impact by the time it happens. The grenade is the
+  ## worst case: 10 ticks of fuse on top of 3-24 ticks of charge.
+  ##
+  ## There is NO oracle for mate velocity. `Track.vel` is an EMA of SUCCESSIVE
+  ## OBSERVED POSITIONS (updateTracks: v = (a.pos - t.pos)/dt, blended
+  ## (old + v)*0.5 and clamped to +-3 px/tick), which is the only honest source —
+  ## and it has two known defects this proc handles EXPLICITLY rather than
+  ## pretending they do not exist:
+  ##   * sightings < 2  => vel is (0,0) by construction, not measured. Hold the
+  ##     position and pay a BOUNDED isotropic pad for the unknown direction,
+  ##     rather than assert a velocity we never observed.
+  ##   * the EMA LAGS. A body that just started moving reads at half speed, so the
+  ##     predicted displacement is padded by a fraction of itself.
+  ## `pad` is returned SEPARATELY from `at` so a radial test (blast) can add it to
+  ## its radius and a corridor/wedge test (gun, cone) can add it perpendicular —
+  ## the same estimate, two shapes.
+  let
+    age = float(nowTick - t.lastSeen)
+    span = age + float(aheadTicks)
+  if t.sightings >= 2:
+    let step = t.vel * span
+    result.at = t.pos + step
+    result.pad = age * FfStaleGrowPx + FfEmaLagFrac * step.len()
+  else:
+    result.at = t.pos
+    result.pad = age * FfStaleGrowPx +
+      min(FfUnknownMotionCapPx, FfMaxSpeedPx * span)
+
+proc windupFfBlocked(bot: Bot, origin, dir: Vec, enemyDist: float,
+                     aheadTicks: int, predict: bool, mateRange: float
+                     ): tuple[hit: bool, stale: bool, along: float] =
+  ## ⭐⭐⭐ The WINDUP-AWARE friendly-fire corridor test — friendlyBlocked run on
+  ## the geometry the BULLET meets, not the geometry at the decision frame.
+  ##
+  ## ⚠️ FRIENDLY FIRE ONLY. There is deliberately NO wall / line-of-sight
+  ## re-check in here. A sibling measurement of the T0 fire-axis lever found ~94%
+  ## of its vetoes were WALL vetoes and only ~6% mate vetoes (per-team-episode
+  ## veto/wall/mate 34/32/2, 62/59/4, 131/130/1, 83/80/6) — i.e. a wall lever
+  ## wearing a friendly-fire label. Keeping the two on separate flags is the only
+  ## way to state a friendly-fire gain without the wall term riding along, so
+  ## this proc tests bodies and nothing else.
+  ##
+  ## Three differences from friendlyBlocked, each independently switchable at the
+  ## call site so an A/B can attribute the gain to one of them:
+  ##
+  ## 1. AXIS. `dir` is passed in as a unit vector rather than derived from an aim
+  ##    POINT, so the caller can hand it bradsDir(bot.estAim) — the exact bearing
+  ##    startFireWindup will lock — instead of the ray to the aim point that
+  ##    target selection cleared. Perp-miss is a LINEAR tolerance on an ANGULAR
+  ##    error, so those two rays diverge hard up close: the trigger's own 17px
+  ##    slack is 1.4 deg at 400px but 16.5 deg at 60px, and the mate we hit sits
+  ##    at a median 47px along the ray.
+  ##
+  ## 2. MATE LEAD (`predict` + `aheadTicks`). Every fresh mate is put through
+  ##    trackAhead — the SHARED estimator ported from the AoE veto — which returns
+  ##    where the body will be at release AND, separately, how much it does not
+  ##    know. The uncertainty is spent PERPENDICULAR here, widening the corridor,
+  ##    which is exactly the shape a hitscan corridor wants. `predict = false`
+  ##    reproduces friendlyBlocked's geometry EXACTLY (observed position, corridor
+  ##    widened by age * FfStaleGrowPx) and is the T0 control arm.
+  ##
+  ## 3. STALE TRACKS are trackAhead's business, not this proc's: it dead-reckons
+  ##    across the age as well as the windup and charges a pad for both the age
+  ##    and the EMA's known lag, and a ONE-SIGHTING track (vel (0,0) by
+  ##    construction) gets a bounded isotropic pad instead of a fabricated
+  ##    velocity. That is the single behaviour all three weapons share.
+  ##
+  ## The along-track window keeps friendlyBlocked's backstop (a mate BEHIND the
+  ## target is safe — the target's body stops the bullet first) and adds an
+  ## optional gate on the MATE's own along-track distance. It is deliberately NOT
+  ## a gate on the target's range: the field census puts the target at a median
+  ## 190px and the mate we hit at 47px, so gating on the target discards about
+  ## two thirds of the population the veto exists for.
+  ##
+  ## Returns (hit, stale, along) — `stale` and `along` are diagnostics for the
+  ## probe and are meaningless when `hit` is false.
+  for t in bot.mates:
+    let age = float(bot.tick - t.lastSeen)
+    if age > FfMateFreshTicks:
+      continue
+    let (at, pad) =
+      if predict: trackAhead(t, bot.tick, aheadTicks)
+      else: (t.pos, age * FfStaleGrowPx)
+    let
+      rel = at - origin
+      d = rel.len()
+      along = dot(rel, dir)
+    if along <= 0 or d < 1e-6:
+      continue
+    if along >= enemyDist + 14.0:
+      continue                          # beyond the target: the target dies first
+    if mateRange > 0.0 and along > mateRange:
+      continue
+    if abs(cross(rel, dir)) < CorridorHalfWidth + pad:
+      return (true, age > WuffStaleAge, along)
+  (false, false, 0.0)
+
+proc friendlyInBlast(bot: Bot, impact: Vec, aheadTicks: int,
+                     slackPx: float): bool =
+  ## ⭐⭐ GRENADE friendly veto. True when a remembered teammate would be caught
+  ## by a burst at `impact` in `aheadTicks` ticks. The blast is a DISC at a
+  ## destination point, not a corridor along a ray: it ignores walls entirely
+  ## (sim.explodeGrenade does no LOS test at all, unlike the cone), so there is
+  ## deliberately NO pixelRayClear gate here — a mate behind a wall 30px from the
+  ## burst still eats it.
+  ##
+  ## Flight time is the whole point: the fuse is a FIXED 10 ticks, so the mate we
+  ## must test is the one at BURST, not at release. Extrapolate each track
+  ## forward by (age + flight) on its last read velocity — the same
+  ## `pos + vel*age` the grenade's own enemy scan uses — then widen by a residual
+  ## drift margin. Mate freshness and the staleness widening are friendlyBlocked's
+  ## conventions verbatim, so all three weapons veto off one track set.
+  for t in bot.mates:
+    let age = float(bot.tick - t.lastSeen)
+    if age > FfMateFreshTicks:
+      continue
+    let (at, pad) = trackAhead(t, bot.tick, aheadTicks)
+    if dist(at, impact) <= NadeFfBlastPx + NadeFfDriftPx + pad + slackPx:
+      return true
+  false
+
+proc friendlyInCone(bot: Bot, client: ProtocolClient, me: Vec, aimBrads: int,
+                    slackPx: float): bool =
+  ## ⭐⭐ SPRAY friendly veto. True when a remembered teammate sits inside the
+  ## forward WEDGE the cone would cover if we pressed attack on `aimBrads`.
+  ## Mirrors sim.selectArcVictims term for term (forward cap, linearly widening
+  ## half-width, drawn-body radius, paintPathClear) with three additions:
+  ##   * the cone's ORIGIN rides its owner for PlasmaArcActiveTicks while victims
+  ##     are re-picked every tick, so both bodies get ArcFfRidePx of slack;
+  ##   * bot.estAim is an ESTIMATE of the aimBrads the engine locks, so the wedge
+  ##     is padded by one tick of turret lag (ArcFfAimPadSlope);
+  ##   * friendlyBlocked's staleness widening applies to old tracks.
+  ## The LOS gate is kept because the engine keeps it (paintPathClear): a mate
+  ## behind a wall inside the wedge is NOT a victim, and vetoing on it would be a
+  ## pure false positive. pixelRayClear is the policy's own analogue, used the
+  ## same way three lines below for enemies.
+  let dir = bradsDir(aimBrads)
+  for t in bot.mates:
+    let age = float(bot.tick - t.lastSeen)
+    if age > FfMateFreshTicks:
+      continue
+    # Advance to the MIDDLE of the activation window: the cone is resolved on
+    # every one of its PlasmaArcActiveTicks, so the mate that matters is not the
+    # one standing there at the press. ArcFfRidePx then covers the half-window
+    # either side, for both the mate AND the owner the cone origin rides with.
+    let
+      (at, pad) = trackAhead(t, bot.tick, ArcFfActiveTicks div 2)
+      rel = at - me
+      forward = dot(rel, dir)
+      perp = abs(cross(rel, dir))
+    if forward <= 0.0:
+      continue                          # behind us: the can points forward
+    if forward > ArcFfReachPx + ArcFfBodyPx + ArcFfRidePx + pad + slackPx:
+      continue                          # past the reach cap
+    if perp > forward * (ArcFfSlope + ArcFfAimPadSlope) + ArcFfBodyPx +
+        ArcFfRidePx + pad + slackPx:
+      continue                          # outside the widening wedge
+    if not client.pixelRayClear(me, at):
+      continue                          # walled off: the sim would not hit them
+    return true
+  false
+
+proc arcConeCovers(client: ProtocolClient, me: Vec, aimBrads: int,
+                   p: Vec): bool =
+  ## ⭐⭐ THE ENEMY-SIDE TWIN of friendlyInCone: would a press RIGHT NOW, on the
+  ## bearing we already hold, put `p` inside the cone the engine will cut?
+  ##
+  ## sim.selectArcVictims is a WEDGE, not a disc: forward in (0, reach + body],
+  ## perpendicular <= forward * slope + body, then paintPathClear. The shipped
+  ## fire gate approximated that wedge with a RADIAL `dist <= ArcBreachFireReach
+  ## (128)` plus a fixed `err <= ArcBreachConeBrads (12)` — two hand-tuned
+  ## numbers derived from the STALE PlasmaArcReachPx(136), and strictly TIGHTER
+  ## than the weapon at every range:
+  ##   * radial 128 vs a forward cap of 187 (170 + 17): the whole 128..187 band
+  ##     is refused even dead ahead;
+  ##   * 12 brads = 16.9deg vs a half-angle of atan((forward*0.25 + 17)/forward),
+  ##     which is 19.3deg at forward 170 and 28deg at forward 60 — the wedge is
+  ##     WIDER than the gate everywhere inside the reach.
+  ## Field-measured over 1,421 re-simulated Elite ffa4 episodes (n = 3,609 ready
+  ## carry-ticks where the sim's OWN test would have damaged a fresh enemy at
+  ## the bearing we already held): only 21.0% passed the two constants; 71.3%
+  ## were refused by the radial reach ALONE and 6.8% by the brads gate alone.
+  ##
+  ## Deliberately NO ride/lag padding — that is where this differs from
+  ## friendlyInCone. That one must be GENEROUS (a mate wrongly cleared costs a
+  ## whole friendly life); this one must be HONEST (an enemy wrongly admitted
+  ## costs one wasted press off a 25-tick recharge). Padding the enemy wedge
+  ## would be tuning; matching the engine is a correctness repair.
+  let
+    dir = bradsDir(aimBrads)
+    rel = p - me
+    forward = dot(rel, dir)
+    perp = abs(cross(rel, dir))
+  if forward <= 0.0:
+    return false                        # behind us: the can points forward
+  if forward > ArcFfReachPx + ArcFfBodyPx:
+    return false                        # past the reach cap (170 + 17)
+  if perp > forward * ArcFfSlope + ArcFfBodyPx:
+    return false                        # outside the linearly widening wedge
+  client.pixelRayClear(me, p)           # the policy's paintPathClear analogue
+
+proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
+  ## Core policy for one frame.
+  when defined(statue):
+    return 0'u8                          # test dummy: stand still all game
+  # ── THE RING SCHEDULE, taken once ──────────────────────────────────────
+  # Stated in the init snapshot and never restated, so this reads until it
+  # lands and then stops. It has to run BEFORE the colour lock below, because
+  # `FfaRing.have` is also what tells the colour scans they are in a
+  # free-for-all and must sweep the whole palette vocabulary rather than the
+  # team-count prefix.
+  if not FfaRing.have:
+    for (_, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixRing):
+      let parts = label[LabelPrefixRing.len .. ^1].split(' ')
+      # `center <x>,<y> start <r> floor <r> shrink <sec> damage <ticks>`
+      if parts.len < 10 or parts[0] != "center":
+        continue
+      let xy = parts[1].split(',')
+      if xy.len != 2:
+        continue
+      try:
+        FfaRing.cx = parseInt(xy[0])
+        FfaRing.cy = parseInt(xy[1])
+        FfaRing.startR = parseInt(parts[3])
+        FfaRing.floorR = parseInt(parts[5])
+        FfaRing.shrinkSec = parseInt(parts[7])
+        FfaRing.dmgTicks = parseInt(parts[9])
+        FfaRing.have = FfaRing.startR > 0 and FfaRing.shrinkSec > 0
+      except ValueError:
+        discard
+      break
+  # ⭐⭐ COLOR TRUTH. The self marker is the ONE sprite only we ever see, so it
+  # is the authoritative statement of our own color. Sweep the active team
+  # colors until one answers, then LOCK it: a wrong color makes findSelf
+  # return "not alive", which makes decide() return a zero input mask, which
+  # is a bot that stands on its pedestal for the whole episode. Locking off
+  # the marker also means we no longer depend on the slot-parity guess being
+  # right — it only has to be a good first try.
+  var
+    myColor = (if bot.myColor.len > 0: bot.myColor
+               else: (if bot.team == Red: "red" else: "blue"))
+    probe = client.findSelf(myColor)
+  if not probe.alive and not bot.colorLocked:
+    for c in TeamColorNames.toOpenArray(0, colorScanCount() - 1):
+      if c == myColor:
+        continue
+      let alt = client.findSelf(c)
+      if alt.alive:
+        myColor = c
+        probe = alt
+        break
+  if probe.alive and not bot.colorLocked:
+    bot.myColor = myColor
+    bot.colorLocked = true
+    SelfColor = myColor
+    # Our color also fixes which team we are on for the mirrored-arena math:
+    # colors past blue have no 2-team analogue, so they keep the parity team
+    # and lean on the endzone markers for geometry instead.
+    if myColor == "red":
+      bot.team = Red
+    elif myColor == "blue":
+      bot.team = Blue
+    SelfStrategyTeam = bot.team
+  SelfColor = myColor
+  SelfEnemyColor = enemyColorFor(myColor)
+  SelfStrategyTeam = bot.team
+  CornerDeepOn = bot.tune.cornerDeep
+    # Re-stamped EVERY decide, not just at the colour lock: the eval harness
+    # runs all 16 bots in ONE process, so a once-per-lock global holds the
+    # LAST locked bot's team and the `team == SelfStrategyTeam` discrimination
+    # inside the geometry procs turns to garbage. Measured: a RED carrier
+    # hauled the stolen flag to the BLUE zone centre (homeDeepX returned 1131
+    # for a red seat) and parked there for 8000 ticks — every 10000-tick
+    # grab-no-cap DRAW in the v32-v35 gates was this artifact. Production has
+    # one bot per process and never sees it; the re-stamp makes the harness
+    # faithful and is a no-op live.
+  # ⭐⭐ ANCHOR RELOCK (audit finding #1, worst). buildNavGrid runs on the first
+  # walkabilityReady frame and resolves five tactical anchors — pickPost,
+  # findEnemyPosts, pickDominatePost, chokeHold (via chokeSpot(bot.team)), and
+  # findFunnelThroat — through bot.myColor / bot.team. On a 4-team board that
+  # first color is only the slot-mod-teams PARITY GUESS; the self-marker color
+  # lock above (the authoritative read) frequently lands a few frames LATER,
+  # once our own sprite is actually visible. bot.navBuilt never resets after
+  # that first build, so a green/yellow seat whose opening guess was wrong
+  # caches anchors pointed at a RIVAL's base for the rest of the episode. Once
+  # the lock is in and disagrees with the color the anchors were built for,
+  # re-run the five computations exactly once. Gated on colorLocked itself
+  # (not just navBuilt): the lock can land several frames AFTER navBuilt, and
+  # spending the one-shot guard before the lock arrives would consume it on
+  # the still-provisional parity guess and skip the real correction later.
+  # No-op on 2-team boards (the parity guess already matches the lock there)
+  # and a no-op once the anchors were already built with the correct color.
+  if lvC(2, bot.tune.anchorRelock and bot.navBuilt and bot.colorLocked and
+      not bot.anchorsRelocked):
+    bot.anchorsRelocked = true
+    if bot.navBuiltColor != bot.myColor:
+      bot.pickPost(client)
+      bot.findEnemyPosts(client)
+      bot.pickDominatePost(client)
+      bot.chokeHold = bot.snapToCover(chokeSpot(bot.team))
+      bot.findFunnelThroat()
+      bot.navBuiltColor = bot.myColor
+  let
+    alive = probe.alive
+    me = probe.pos
+  var enemyColor = enemyColorFor(myColor)
+  if lvC(3, bot.tune.carryAnyHeart and activeColors() > 2 and alive):
+    # ⭐⭐ THE FOUR-TEAM CARRY PIN (issue #17). `enemyColorFor` re-picks the raid
+    # target EVERY frame and prefers a rival whose heart is still on its pedestal
+    # (HeartHome). The instant we lift a heart, that team's HeartHome goes false
+    # and the target re-points to a different rival — whose planted banner is
+    # NEVER fogged, so `enemyPlanted.len > 0` below takes the "nobody carries"
+    # branch and iCarry stays FALSE for the whole carry. Measured on 8 four-team
+    # corners lab episodes: 631 of 668 physically-carrying frames (94.5%) had
+    # iCarry=false, and iCarry was true in EXACTLY the 37 frames where the held
+    # heart happened to still be the designated target. On the 2-team control the
+    # same code scored 1 of 90 (1.1%) — there `enemyColorFor` returns a constant
+    # and cannot re-point, which is why the bug is four-team-only.
+    #
+    # The fix is to pin the raid target to the heart we are physically holding.
+    # Nothing downstream changes: enemyPlanted then reads empty (that heart is
+    # off its pedestal), enemyFlags holds our own carried banner, and the
+    # existing iCarry test — including its "a mate closer to the banner is the
+    # real carrier" veto, re-applied there with FRESH tracks — behaves exactly as
+    # it does on a two-team board.
+    var
+      pinned = ""
+      pinnedD = CarrySelfRadius + 1.0
+    for ci in 0 ..< activeColors():
+      let c = TeamColorNames[ci]
+      if c == myColor:
+        continue
+      for o in client.spriteObjectsWithLabel(c & " flag"):
+        let
+          fp = client.mapPos(o)
+          d = dist(fp, me)
+        if d > CarrySelfRadius or d >= pinnedD:
+          continue
+        # A rival team may also carry a THIRD team's heart, which a two-team
+        # board can never produce ("only our side can hold the enemy flag").
+        # Reject the banner if any tracked actor from last frame is closer to it
+        # than we are; the downstream test then re-decides with fresh tracks.
+        var otherCloser = false
+        for t in bot.enemies:
+          if bot.tick - t.lastSeen <= 2 and dist(t.pos, fp) < d:
+            otherCloser = true
+            break
+        if not otherCloser:
+          for t in bot.mates:
+            if bot.tick - t.lastSeen <= 2 and dist(t.pos, fp) < d:
+              otherCloser = true
+              break
+        if otherCloser:
+          continue
+        pinned = c
+        pinnedD = d
+    bot.carryColor = pinned
+    if pinned.len > 0:
+      enemyColor = pinned
+      SelfEnemyColor = pinned
+  if not alive:
+    # Dead: the view is fully fogged (only our corpse renders) and inputs
+    # are ignored, so skip perception entirely.
+    # ⭐ ONE-DOOR BREAK, lever 2: bank OUR OWN death on the FIRST dead frame
+    # (`wasDead` is still false here — it is set just below and cleared on
+    # respawn, so this fires exactly once per life). Our own death is the one
+    # camper signal a fogged client can never miss, and bot.lastPos is the last
+    # ALIVE frame's position (the not-alive path returns before the tail that
+    # writes it). NOHOTDOOR=1 reverts.
+    if lvC(4, not bot.wasDead and bot.tune.hotDoor):
+      bot.noteDoorDeath(bot.lastPos)
+    bot.firedLast = false
+    bot.rotSign = 0
+    bot.wasDead = true
+    bot.prevDepthSet = false        # a life ends: no crossing edge across death
+    when defined(wbprobe):
+      if bot.pHp1Since >= 0:
+        inc wbHp1Segs
+        inc wbHp1Deaths
+        wbHp1Ticks += bot.tick - bot.pHp1Since
+        bot.pHp1Since = -1
+      if bot.pWasBanking:
+        inc wbBankDeaths
+        bot.pWasBanking = false
+    return 0
+  if bot.wasDead:
+    # Respawned: the server points the aim back at the enemy side.
+    bot.wasDead = false
+    bot.estAim = spawnAim(bot.team)
+    # ⭐ SHIELD RE-ARM (2026-08-04, force protection): the shield respawns 30s
+    # after being taken, and WE respawn inside our own endzone — the shield's
+    # own back column (GV25) — so re-arming after death is a near-zero detour
+    # from the spawn point. The old once-per-game latch left every later life
+    # bare: field carries 2.4 shields/game to our 1.3 on the arena, where our
+    # coordinates are right — the deficit is UPTAKE. Fire cost is nil for the
+    # seat that matters: slowdowns compose by MAX, and a carrier is already at
+    # 3x, so a shielded carrier pays nothing and gains 3 hp (the proven
+    # shieldRush premise, now per life instead of once).
+    bot.shieldRushDone = false
+    bot.comboGrabDone = false
+    bot.lifeStart = bot.tick
+  # Absolute turret fix: our own rendered aim-indicator dots show the actual
+  # aim every frame, capping any dead-reckoning drift (mask-apply races).
+  block resync:
+    # ⭐ THE ENGINE STATES OUR EXACT AIM (2026-08-04). The `own aim <brads>`
+    # HUD marker (LabelPrefixOwnAim, self-only, TRUE since GV26) states the
+    # turret angle outright every frame. This tree predates it and was
+    # resyncing off the rotation-SPRITE readback instead — quantized to ±8
+    # brads and only corrected past 16. ±8 brads at 100px is ~19px of ray
+    # error: MORE than a body radius, invisible to our own trigger gate
+    # (which checks estAim, not truth). Fits the field census exactly: our
+    # locked heading lands off-body on 27% of CQB shots vs the field's 13%.
+    let stated = client.ownAimBrads()
+    if stated >= 0 and bot.prevStatedAim >= 0 and bot.rotSign != 0 and
+        client.frameAdvance == 1:
+      # Infer the true per-tick step from consecutive stated aims across one
+      # held-rotate tick. GV36 reinterpreted aimTurnRate as SLOTS/tick, so the
+      # honest step is config-dependent and the config is not observable —
+      # but its effect is, every frame.
+      let d = bradsErr(stated, bot.prevStatedAim) * bot.rotSign
+      # ⭐ GV40 FIX (2026-08-06). This guard USED to be
+      # `d >= 8 and d <= 64 and d mod 8 == 0` — it could only ever learn a
+      # multiple of 8, because GV36's step always was one. GV40 restored
+      # CONTINUOUS aim at 5 brads/tick, and 5 fails BOTH clauses, so the
+      # "live step inference" silently never fired and aimStepBrads stayed at
+      # its compiled-in 40 — an 8x over-estimate that made the servo overshoot
+      # every target and, since the vision cone rides the turret, blinded us
+      # too. Accept any physical step so this survives the flip in EITHER
+      # direction; that is what the inference was always supposed to buy.
+      if lvC(5, bot.tune.aimLegacy):
+        if d >= 8 and d <= 64 and d mod 8 == 0: bot.aimStepBrads = d
+      elif d >= 1 and d <= 64:
+        bot.aimStepBrads = d
+    if stated >= 0:
+      bot.prevStatedAim = stated
+    if stated >= 0:
+      # Exact truth: adopt it outright. The old >AimResyncBrads(4) tolerance
+      # existed to stop QUANTIZED readbacks fighting healthy dead reckoning;
+      # tolerating 4 brads of known error is 10px of ray at 100px for nothing.
+      bot.estAim = stated
+      break resync
+    var seen = client.observedAim(me, myColor)
+    if lvC(6, seen < 0 and bot.tune.aimRotRead):
+      # v9: no dots exist — read our aim off the self soldier's rotation id
+      # instead. ±8 brad quantization vs AimResyncBrads=4: only correct a
+      # drift larger than one rotation step, else quantization noise would
+      # fight healthy dead reckoning.
+      let rotSeen = client.selfRotAim(myColor)
+      when defined(arprobe):
+        if rotSeen >= 0: inc arSelfRead
+      if rotSeen >= 0 and
+          abs(bradsErr(rotSeen, bot.estAim)) > RotBradsPerStep:
+        seen = rotSeen
+        when defined(arprobe): inc arResync
+    if seen >= 0 and abs(bradsErr(seen, bot.estAim)) > AimResyncBrads:
+      bot.estAim = seen
+  # ── RING SAFETY OVERRIDE (free-for-all shrink zone) ────────────────────
+  # The ring is the only hazard on the board that kills you for standing
+  # still, and it IS the mode's clock. It is expressed as an OVERRIDE — an
+  # early return above everything else — rather than as one more consideration
+  # the objective layer can outvote: a policy that weighs the ring against its
+  # plans dies holding a perfectly good plan.
+  #
+  # The live radius is NOT on the wire. The engine states the schedule once
+  # and integrates it internally (ffaRingRadiusAt: linear from start to floor
+  # over shrinkSec * 24 ticks, then constant), so we integrate the identical
+  # law here off our own clock. Two deliberate pessimisms keep an integration
+  # error on the safe side: RingElapsedBiasTicks (our clock starts no earlier
+  # than the real one) and RingLookaheadTicks (the edge is priced where it
+  # will be, not where it is).
+  #
+  # We run to the NEAREST safe point on our own bearing, not to the centre.
+  # The centre is the one place every surviving rival is also walking to, and
+  # arriving there with the whole lobby is not safety.
+  block ringSafety:
+    if not FfaRing.have:
+      break ringSafety
+    if bot.ringT0 < 0:
+      bot.ringT0 = bot.tick
+    let
+      elapsed = max(0, bot.tick - bot.ringT0) + RingElapsedBiasTicks
+      total = max(1, FfaRing.shrinkSec * FfaTicksPerSec)
+      step = clamp(elapsed, 0, total)
+      span = max(0, FfaRing.startR - FfaRing.floorR)
+      radius = float(FfaRing.startR - span * step div total)
+      lead = float(span * RingLookaheadTicks div total)
+      centre = vec(float(FfaRing.cx), float(FfaRing.cy))
+      d = dist(me, centre)
+      # Never demand more margin than the ring can give: at the floor the
+      # whole safe area may be smaller than two margins, and a target outside
+      # its own circle is worse than no target.
+      safeR = max(radius - (float(RingSafeMarginPx) + lead), radius * 0.5)
+    if d <= safeR:
+      break ringSafety
+    if d < 1.0:
+      break ringSafety                 # already dead centre; nothing to do
+    let
+      inward = (me - centre) * (safeR / d)
+      target = centre + inward
+      steer = bot.navSteer(client, me, target)
+    if steer.len() < 1e-6:
+      break ringSafety
+    when defined(ringProbe):
+      inc rpFires
+      if d > radius: inc rpOutside
+      stderr.writeLine("RINGFIRE tick=" & $bot.tick & " elapsed=" & $elapsed &
+        " r=" & $int(radius) & " safeR=" & $int(safeR) &
+        " d=" & $int(d) & " outside=" & $(d > radius) &
+        " me=" & $int(me.x) & "," & $int(me.y) &
+        " tgt=" & $int(target.x) & "," & $int(target.y))
+    bot.lastPos = me
+    return octantBits(steer)
+  # ── end ring safety ────────────────────────────────────────────────────
+  let
+    shotReady = client.spriteObjectsWithLabel(LabelFireIcon).len > 0
+    seenEnemies = client.actorsForEnemies(myColor, bot.tune.aimRotRead)
+    seenMates = client.actorsFor(myColor, bot.tune.aimRotRead)
+  FfaSeen = (stamped: true, alive: true, enemies: seenEnemies.len,
+             meX: me.x, meY: me.y)
+  when defined(arprobe):
+    if lvC(7, bot.tune.aimRotRead):
+      inc arFrames
+      for a in seenEnemies:
+        inc arEnemySeen
+        if a.aimBrads >= 0: inc arEnemyRead
+      for a in seenMates:
+        inc arMateSeen
+        if a.aimBrads >= 0: inc arMateRead
+  # Surprise sensing (read BEFORE updateTracks rewrites lastSeen): an enemy in
+  # our face that we were NOT already tracking freshly is a jump-scare — the
+  # corner-turn ambush. Drives the "oh shit!" shout.
+  # Nearest visible teammate: a genuine ambush is an ENEMY closer than any mate.
+  # In a clustered brawl the closest actor is usually a friendly, and a fleeing/
+  # dying enemy read a frame stale used to fire "oh shit!" while we were buried
+  # in teammates (Maxwell 2026-07-16). Require the surprising enemy to be
+  # strictly closer than our nearest mate so it only ever fires on an OPPONENT
+  # in our face, never a nearby friendly.
+  var nearestMateD = Inf
+  for m in seenMates:
+    let dm = dist(m.pos, me)
+    if dm < nearestMateD:
+      nearestMateD = dm
+  var surprisePos = vec(-1, -1)
+  var surpriseD = SurpriseRadius
+  var surpriseGunOnMe = false
+  for a in seenEnemies:
+    let d = dist(a.pos, me)
+    if d >= surpriseD or d >= nearestMateD:
+      continue
+    var trackedFresh = false
+    for t in bot.enemies:
+      if dist(t.pos, a.pos) <= TrackMatchDist and
+          bot.tick - t.lastSeen <= SurpriseGapTicks:
+        trackedFresh = true
+        break
+    if not trackedFresh:
+      surpriseD = d
+      surprisePos = a.pos
+      # assaultThrough: is the surpriser's gun ON us at the moment of contact?
+      # Full cone via the rotation-id bearing when readable, else the coarse
+      # facingRight half-plane (same fallback ladder as aimThreat).
+      # Widened by AimFuzzBrads (GV24): a point-blank ambusher whose gun reads "aside" on a
+      # fuzzed sample is exactly the case where being wrong is fatal — at knife range its
+      # next shot cannot miss, so assume the gun is on us unless it is clearly not.
+      if a.aimBrads >= 0:
+        surpriseGunOnMe =
+          abs(bradsErr(a.aimBrads, bradsOf(me - a.pos))) <=
+            AimOnConeBrads + AimFuzzBrads
+      else:
+        surpriseGunOnMe =
+          (a.facingRight and a.pos.x < me.x) or
+          (not a.facingRight and a.pos.x > me.x)
+  # assaultThrough: NEAR-AMBUSH → ASSAULT THROUGH (backlog #6, Battle Drill 4).
+  # Caught point-blank in a kill zone (untracked enemy inside SurpriseRadius,
+  # gun on us) with NO cover nearer than the enemy, the duck branch below would
+  # turn and crawl for cover we don't have — dying with our gun off-axis at a
+  # range where its next shot can't miss. Commit to close-and-fire instead:
+  # charging keeps our gun on-axis (the turret never has to slew off the fight)
+  # and shrinks our angular rate across ITS cone. ⚠️ REF-force guardrail: keyed
+  # ONLY to surprise + close range + gun-on-me — NEVER to head-count, and it
+  # never retreats; it merely swaps duck-for-charge in this one geometry.
+  if lvC(8, bot.tune.assaultThrough and surprisePos.x >= 0 and surpriseGunOnMe):
+    when defined(asprobe):
+      inc asGunOnMe
+    let duck = bot.findDuckCell(client, me, surprisePos)
+    if duck < 0 or dist(cellCenter(duck), me) >= surpriseD:
+      bot.assaultUntil = bot.tick + AssaultHold
+      when defined(asprobe):
+        inc asNoCover
+  when defined(asprobe):
+    if lvC(9, bot.tune.assaultThrough and surprisePos.x >= 0):
+      inc asSurprise
+  bot.updateTracks(bot.enemies, seenEnemies)
+  bot.updateTracks(bot.mates, seenMates)
+  if seenMates.len > 0:
+    bot.lastMateAlive = bot.tick         # v56: positive live-mate evidence
+  if seenEnemies.len > 0:
+    bot.lastEnemySeen = bot.tick
+
+  # ⭐ v48 KILL RELEASE (BLD-B3, audit-confirmed): the engine renders a
+  # "corpse <color>" sprite where a player died, and this policy never read
+  # it — a killed enemy's track stayed a live engage candidate for up to
+  # FreshShotTicks(24) more ticks, commit+aimLock protected the ghost from
+  # target switches, and 1-2 shots per kill fired into empty floor (the
+  # measured accuracy deficit: 60.4% vs the field's 66.3% while OUT-killing
+  # it). On a corpse sprite's FIRST appearance, expire the nearest fresh
+  # enemy track within one body of it; dedupe by objectId so a lingering
+  # corpse never expires a live enemy walking over it later. NORELEASE=1
+  # reverts.
+  if lvC(10, getEnv("NORELEASE").len == 0 or bot.tune.rearTurn):
+    for (o, clbl) in client.spriteObjectsWithLabelPrefix("corpse "):
+      if o.objectId in bot.corpseSeen:
+        continue
+      bot.corpseSeen.add o.objectId
+      if bot.corpseSeen.len > 256:
+        bot.corpseSeen.delete(0)
+      let cp = client.mapPos(o)
+      # ⭐ v56 MATE-DEATH FIX (rearTurn/dangerPreAim): "corpse <color> <side>"
+      # states WHOSE body this is, and the kill-release loop was throwing the
+      # colour away. A first-appearance corpse in OUR colour, matched to a
+      # remembered mate track, is a mate death: bank the fix (the killer is
+      # standing near it — the pre-aim ladder and the last-man belief both key
+      # on it) and age the mate track (a corpse is not a regroup buddy). The
+      # track match doubles as the own-corpse filter: right after OUR respawn
+      # the lingering own body scans as "first appearance", but no mate track
+      # ever stood on it.
+      let ctoks = clbl["corpse ".len .. ^1].split(' ')
+      if ctoks.len >= 1 and ctoks[0] == myColor:
+        # The mate-track match is hoisted out of the rearTurn gate so hotDoor
+        # (lever 2) can share it without inheriting rearTurn's on/off state —
+        # behaviour under rearTurn is byte-identical to before the hoist.
+        var mbest = -1
+        var mbestD = MateCorpseMatchDist
+        for i in 0 ..< bot.mates.len:
+          let d = dist(bot.mates[i].pos, cp)
+          if d < mbestD:
+            mbestD = d
+            mbest = i
+        # ⭐ ONE-DOOR BREAK, lever 2: a SEEN mate corpse in the crossing band is
+        # the second camper witness (our own deaths are the first). NOHOTDOOR=1.
+        if lvC(11, mbest >= 0 and bot.tune.hotDoor):
+          bot.noteDoorDeath(cp)
+        if lvC(12, bot.tune.rearTurn):
+          if mbest >= 0:
+            bot.mateDeathPos = cp
+            bot.mateDeathTick = bot.tick
+            bot.mates[mbest].lastSeen = bot.tick - TrackTtl - 1
+          continue                       # a mate corpse never expires an ENEMY track
+      if getEnv("NORELEASE").len > 0:
+        continue                         # kill-release off: the scan only fed the mate check
+      var best = -1
+      var bestD = 24.0
+      for i in 0 ..< bot.enemies.len:
+        let d = dist(bot.enemies[i].pos, cp)
+        if d < bestD:
+          bestD = d
+          best = i
+      if best >= 0:
+        # Age the track past every freshness gate rather than deleting it —
+        # deletion would shift indices under any cached engage index.
+        bot.enemies[best].lastSeen = bot.tick - TrackTtl - 1
+
+  # ⭐⭐ KILL RELEASE ON THE KO MARKER (koRelease, 2026-08-20). The v48 block
+  # above reads `corpse <color> <side>`, which global.nim draws ONLY for a ghost
+  # viewer — so while we are ALIVE it is dead code and a killed enemy stays a
+  # fresh engage candidate for FreshShotTicks. `damage pop <color> KO stage <n>`
+  # is the same information on a channel a live viewer does receive: planted at
+  # the VICTIM's centre in the VICTIM's colour, fog-honest, alive KillFxTicks(44).
+  # Read it and expire the nearest fresh enemy track within one body of it —
+  # exactly the v48 rule, on a label that arrives. See the tune field for the
+  # wire proof and the field measurement. NOKOREL=1 reverts.
+  if bot.tune.koRelease:
+    # Retire dedupe entries older than one marker's life before matching, so the
+    # list stays short and a NEW death on the SAME spot is released again.
+    var koKeep: seq[tuple[pos: Vec, tick: int]]
+    for e in bot.koReleased:
+      if bot.tick - e.tick <= KoDedupeTicks:
+        koKeep.add e
+    bot.koReleased = koKeep
+    for (o, klbl) in client.spriteObjectsWithLabelPrefix(LabelPrefixDamagePop):
+      let ktoks = klbl[LabelPrefixDamagePop.len .. ^1].split(' ')
+      # "<color> KO stage <n>" — a "-<n>" damage number is not a death.
+      if ktoks.len < 4 or ktoks[1] != KoPopToken:
+        continue
+      if ktoks[0] == myColor:
+        continue                       # our own colour: a MATE died, not a target
+      var kstage = 0
+      try:
+        kstage = parseInt(ktoks[3])
+      except ValueError:
+        continue
+      # The marker floats KoPopRisePx px UP across its life and the label states
+      # the age quartile, so add the rise back to recover the death spot.
+      let kp = client.mapPos(o) +
+        vec(0.0, float(KoPopRisePx * kstage) / float(KoPopStages))
+      var kseen = false
+      for e in bot.koReleased:
+        if dist(e.pos, kp) <= KoDedupePx:
+          kseen = true
+          break
+      if kseen:
+        continue
+      bot.koReleased.add((pos: kp, tick: bot.tick))
+      if bot.koReleased.len > 64:
+        bot.koReleased.delete(0)
+      var kbest = -1
+      var kbestD = KoMatchDist
+      for i in 0 ..< bot.enemies.len:
+        let d = dist(bot.enemies[i].pos, kp)
+        if d < kbestD:
+          kbestD = d
+          kbest = i
+      if kbest >= 0:
+        # Age the track past every freshness gate rather than deleting it —
+        # deletion would shift indices under any cached engage index (same
+        # reasoning as the v48 release above).
+        bot.enemies[kbest].lastSeen = bot.tick - TrackTtl - 1
+
+  # ⭐⭐ MATE DEATH, ON A LABEL A LIVE VIEWER ACTUALLY GETS (mateKo*, 2026-08-20).
+  # The scan above is the ONLY writer of mateDeathPos/mateDeathTick and it reads
+  # `corpse <color> <side>` — drawn ONLY for `viewerIsGhost = not player.alive`.
+  # We never see it alive, and the dead path returns long before this line, so
+  # those two fields have never held a value in shipped play and all three
+  # branches keyed on them are dark. This block seeds them from the victim's own
+  # KO marker instead, which a living viewer does receive and which is fog-honest.
+  #
+  # ⚠️ NOTHING LEARNED WHILE DEAD MAY SURVIVE RESPAWN. Two independent barriers,
+  # because the corpse channel's failure mode was precisely a ghost-window leak:
+  #   1. structural — `decide()` returns on the not-alive path above, so this
+  #      code cannot execute on a dead frame at all; and `fovVisibleAt` is
+  #      hard-false for a dead viewer, so a ghost is sent no pops to begin with
+  #      (both pinned in tests/test_live_viewer_death_channel.nim);
+  #   2. explicit — a marker whose implied PLANT tick predates this life's
+  #      respawn is refused below. A marker lives KoPopLifeTicks(44) and a
+  #      respawn takes ~70, so it normally expires first, but frameAdvance can
+  #      skip us over that and we do not rely on a race.
+  # The mate-TRACK match is kept from the corpse rule: it is what makes this a
+  # MATE death rather than our own body, and it is the same 48px radius.
+  let mkArmed = bot.tune.mateKoAim or bot.tune.mateKoWatch or
+    bot.tune.mateKoDoor or bot.tune.mateKoStale
+  when defined(mkprobe):
+    inc mkAliveFrames
+    const mkScanAlways = true
+  else:
+    const mkScanAlways = false
+  if mkArmed or mkScanAlways:
+    # Retire dedupe entries older than one marker's life first, so the list
+    # stays short and a NEW death on the SAME spot stamps again.
+    var koKeep: seq[tuple[pos: Vec, tick: int]]
+    for e in bot.mateKoSeen:
+      if bot.tick - e.tick <= KoPopLifeTicks:
+        koKeep.add e
+    bot.mateKoSeen = koKeep
+    for (o, klbl) in client.spriteObjectsWithLabelPrefix(LabelPrefixDamagePop):
+      let ktoks = klbl[LabelPrefixDamagePop.len .. ^1].split(' ')
+      # "<color> KO stage <n>" — a "-<n>" damage number is not a death.
+      if ktoks.len < 4 or ktoks[1] != KoPopToken:
+        continue
+      if ktoks[0] != myColor:
+        continue                         # an ENEMY died: that is koRelease's business
+      when defined(mkprobe):
+        inc mkKoLabels
+      var kstage = 0
+      try:
+        kstage = parseInt(ktoks[3])
+      except ValueError:
+        continue
+      # The label states the age QUARTILE, so the marker was planted at most
+      # one quartile-width ago and at least kstage of them. Use the EARLIEST
+      # tick consistent with the stage for the respawn barrier — the
+      # conservative end, which refuses more than it admits.
+      let plantedNoLaterThan = bot.tick - kstage * KoPopLifeTicks div KoPopStages
+      if plantedNoLaterThan < bot.lifeStart:
+        when defined(mkprobe):
+          inc mkRejRespawn
+        continue                         # planted before we respawned: ghost-era, refuse
+      # The marker floats KoPopRisePx up across its life and the stage states
+      # the age, so add the rise back to recover the death spot.
+      let kp = client.mapPos(o) +
+        vec(0.0, float(KoPopRisePx * kstage) / float(KoPopStages))
+      var kseen = false
+      for e in bot.mateKoSeen:
+        if dist(e.pos, kp) <= MateKoDedupePx:
+          kseen = true
+          break
+      if kseen:
+        when defined(mkprobe):
+          inc mkRejDedupe
+        continue
+      # Match a remembered mate to the spot. This is the own-body filter the
+      # corpse rule relied on (no mate track ever stood on our own corpse) and
+      # it is what makes the bearing mean "a mate died HERE", not "someone did".
+      var mbest = -1
+      var mbestD = MateCorpseMatchDist
+      for i in 0 ..< bot.mates.len:
+        let d = dist(bot.mates[i].pos, kp)
+        if d < mbestD:
+          mbestD = d
+          mbest = i
+      if mbest < 0:
+        when defined(mkprobe):
+          inc mkRejNoMate
+        continue
+      when defined(mkprobe):
+        inc mkStamps
+        if abs(kp.x - float(CenterX)) <= HotDoorBandPx:
+          inc mkDoorOpp
+      bot.mateKoSeen.add((pos: kp, tick: bot.tick))
+      if bot.mateKoSeen.len > 64:
+        bot.mateKoSeen.delete(0)
+      # THE SEED ITSELF IS INERT. mateDeathPos/mateDeathTick are read at exactly
+      # two places (dangerPreAim's first rung, the last-man watch) and both are
+      # gated below, so arming one consumer isolates that consumer and nothing
+      # else — which is the whole point of three flags instead of one.
+      when defined(mkprobe):
+        # Written unconditionally in a PROBE build so the consumer-opportunity
+        # counters below stay tune-independent. Inert: with every arm off, the
+        # only two readers are gated on their own flags and nothing else in the
+        # file touches these fields.
+        bot.mateDeathPos = kp
+        bot.mateDeathTick = bot.tick
+      if not mkArmed:
+        continue                         # probe-only scan: observe, change nothing
+      bot.mateDeathPos = kp
+      bot.mateDeathTick = bot.tick
+      # ⭐ CONSUMER: hotDoor's SECOND camper witness — a seen mate death in the
+      # crossing band. Its first witness (our own death) fires on the dead path
+      # and always worked; this is the half that never did.
+      if bot.tune.mateKoDoor:
+        bot.noteDoorDeath(kp)
+      # ⭐ CONSUMER: a corpse is not a regroup buddy — age the mate track past
+      # every freshness gate (aging, not deleting: deletion would shift indices
+      # under any cached index), exactly as the corpse rule did. This one is a
+      # behaviour change SHARED by nothing else, so it gets its own flag rather
+      # than riding along and confounding the other three arms.
+      if bot.tune.mateKoStale:
+        bot.mates[mbest].lastSeen = bot.tick - TrackTtl - 1
+
+  # ⭐ v56 BARRAGE MARKER READ (hazardSense): the stated escalation schedule,
+  # `grenade barrage depth <n> rate <n> start <n> sat <n>` — an invisible 1x1
+  # marker on both streams whenever the endgame mode is configured. Only the
+  # DEPTH is consumed: every map edge is lethal that many px deep right now.
+  # Refreshed per frame (the depth grows from 0 to the full board after the
+  # clock latches). Absence -> 0 (mode off / old engine).
+  if lvC(13, bot.tune.hazardSense):
+    BarrageDepthPx = 0.0
+    for (o, blbl) in client.spriteObjectsWithLabelPrefix(LabelPrefixBarrage):
+      let bparts = blbl[LabelPrefixBarrage.len .. ^1].split(' ')
+      if bparts.len >= 1:
+        try:
+          BarrageDepthPx = float(parseInt(bparts[0]))
+        except ValueError:
+          discard
+      break
+    when defined(barrprobe):
+      if BarrageDepthPx > 0.0:
+        inc bpDepthFrames
+        if BarrageDepthPx > bpMaxDepth: bpMaxDepth = BarrageDepthPx
+
+  # Damage awareness (SIGHT + SOUND): our own hp pip bar is always sent to us,
+  # so a drop since last frame means we were just hit. If no enemy is in front
+  # of us (nothing fresh in our cone), find the nearest "shot sound" muzzle
+  # ring — a fogged shooter firing at us — and orient toward that bearing so we
+  # stop getting shot in the back. Gated behind tune.damageAware.
+  block damageSense:
+    let (haveHp, hp) = client.selfHp(me, myColor)
+    if not haveHp:
+      break damageSense
+    let prevHp = bot.ownHp
+    bot.ownHp = hp
+    when defined(msprobe):
+      # plan #16 heal funnel, TUNE-INDEPENDENT so a MEDSEE-unset run of the SAME
+      # binary is the control. A death reads hp as unread (0) on the dead path, so
+      # a respawn cannot masquerade as a heal: only wounded -> full counts.
+      if hp in 1 ..< MaxHp: inc msWoundedFrames
+      if prevHp in 1 ..< MaxHp and hp >= MaxHp: inc msHeals
+    when defined(wbprobe):
+      # hp-1 SEGMENT FATE (tune-independent — a WBANK-unset run is the control):
+      # a segment opens the frame hp reads 1 and closes on a heal-to-full here
+      # or on death in the dead path above. Game-end truncations = opened −
+      # closed at the last dump.
+      inc wbAllFrames
+      if hp == 1 and bot.pHp1Since < 0:
+        bot.pHp1Since = bot.tick
+      elif hp >= MaxHp and bot.pHp1Since >= 0:
+        inc wbHp1Segs
+        inc wbHp1Heals
+        wbHp1Ticks += bot.tick - bot.pHp1Since
+        if bot.pWasBanking:
+          inc wbBankHeals
+        bot.pHp1Since = -1
+      if wbAllFrames mod 20000 == 0:
+        stderr.writeLine "WBPROBE frames=" & $wbAllFrames &
+          " entries=" & $wbEntries & " bankFrames=" & $wbFrames &
+          " finishSusp=" & $wbFinishSuspend & " lineSegs=" & $wbLineSegs &
+          " break60=" & $wbBreak60 & " bankDeaths=" & $wbBankDeaths &
+          " bankHeals=" & $wbBankHeals & " hp1Segs=" & $wbHp1Segs &
+          " hp1Heals=" & $wbHp1Heals & " hp1Deaths=" & $wbHp1Deaths &
+          " hp1Ticks=" & $wbHp1Ticks
+    # v56 rearTurn ARMS this intake: damageAware was shipped OFF, so the whole
+    # hp-drop sense (including the muzzle-ring orient it gates) was inert —
+    # exactly the "shot from behind and never turned" replay.
+    if lvC(14, not (bot.tune.damageAware or bot.tune.rearTurn) or prevHp <= 0 or
+        hp >= prevHp):
+      break damageSense                  # first read, respawn, or no damage
+    # We took a hit. Is a threat already in view? If so, combat handles it.
+    var haveFreshVisible = false
+    for a in seenEnemies:
+      if dist(a.pos, me) <= FireRange:
+        haveFreshVisible = true
+        break
+    if haveFreshVisible:
+      break damageSense
+    # Shot from an unseen direction: orient toward the nearest muzzle ring.
+    var ringPos = vec(-1, -1)
+    var ringD = ShotSoundRange
+    for o in client.spriteObjectsWithLabel(LabelShotImpact):
+      let p = client.mapPos(o)
+      let d = dist(p, me)
+      if d < ringD:
+        ringD = d
+        ringPos = p
+    if ringPos.x >= 0:
+      bot.orientPos = ringPos
+      bot.orientUntil = bot.tick + HpDropOrientTicks
+      bot.lastHitPos = ringPos           # v56: outlives the orient window for
+      bot.lastHitTick = bot.tick         # the dangerPreAim ladder
+    elif lvC(15, bot.tune.rearTurn):
+      # ⭐ v56 REAR-GUARD TURN-ON-HIT (Maxwell replay note): hit, NO visible
+      # enemy, NO audible muzzle ring — the old code did NOTHING here, and the
+      # last man back took the whole clip in the back without ever turning.
+      # The hit itself is still a bearing: the freshest remembered enemy is
+      # the most plausible shooter; with no memory at all the shooter is
+      # provably somewhere OUTSIDE the cone, and the single best guess is
+      # directly BEHIND our own aim.
+      var gb = -1
+      var gbT = -100_000
+      for i in 0 ..< bot.enemies.len:
+        if bot.enemies[i].lastSeen > gbT:
+          gbT = bot.enemies[i].lastSeen
+          gb = i
+      let guess =
+        if gb >= 0: bot.enemies[gb].pos
+        else: me + bradsDir((bot.estAim + AimBrads div 2) mod AimBrads) *
+          RearTurnGuessDist
+      bot.orientPos = guess
+      bot.orientUntil = bot.tick + HpDropOrientTicks
+      bot.lastHitPos = guess
+      bot.lastHitTick = bot.tick
+
+  # ⭐⭐ OWN-LIVES READBACK (ffa4 lives audit, 2026-08-17): the top-right HUD
+  # `lives <hp>hp x<lives>` marker states our REMAINING lives outright. Pure
+  # perception, unconditional like ownHp above — lastLifeGuard below is what
+  # actually acts on bot.ownLives. Screen-space + self-only, so unlike hp it
+  # reads the same whether we are alive or mid-respawn.
+  block livesSense:
+    let (haveLives, _, lives) = client.selfLives()
+    if haveLives:
+      bot.ownLives = lives
+    when defined(ffa4probe):
+      inc f4Frames
+      if GameTeams > 2: inc f4Ffa4
+      if haveLives:
+        inc f4LivesRead
+        if lives in 0 .. 4: inc f4LivesHist[lives]
+
+  # ⭐⭐ ffa4 lives audit (2026-08-17): the two new levers below (wantPocketRush's
+  # last-life veto, medKitEcon's ffaMedSee/widened detour) both gate on these,
+  # computed ONCE per frame right after the lives readback. GameTeams > 2 is
+  # the call-site scope — never baked into shippedCombatTune, since GameTeams
+  # is unknown until the init markers land — so a 2-team game is byte-identical
+  # regardless of ffaMedSee/lastLifeGuard. onLastLife is agent-local (this bot's
+  # own remaining lives), never a team-wide posture change.
+  let ffa4Board = GameTeams > 2
+  let onLastLife = bot.tune.lastLifeGuard and ffa4Board and bot.ownLives == 1
+  when defined(ffa4probe):
+    if onLastLife: inc f4OnLastLife
+  when defined(hscensus):
+    ## ⭐ THE FUTILITY BOUND, measured with NO invented constant. Every
+    ## homeSign site consumes ONE of two quantities:
+    ##   (1) a HOMEWARD DIRECTION, `vec(homeSign, 0)` — scored against the true
+    ##       home bearing `norm(ownZoneCentre - me)`;
+    ##   (2) an OVER-EXTEND DEPTH, `-homeSign*(x - CenterX)` compared to
+    ##       HoldLineTrigDepth — scored against the ground truth "whose yard am
+    ##       I standing in", i.e. is the NEAREST stated endzone centre mine.
+    ## Both references come from the endzone INIT markers, which state all four
+    ## zones from tick 0, are never fogged, and need no sighting.
+    if ffa4Board:
+      inc hcFrames
+      let ownZ = statedZone(myColor)
+      if ownZ.have:
+        # --- layout classification, from the stated zones themselves ---
+        var offMid = 0
+        for c in TeamColorNames.toOpenArray(0, max(GameTeams, 2) - 1):
+          let z = statedZone(c)
+          if z.have and abs(z.c.x - float(CenterX)) > 0.10 * float(MapW):
+            inc offMid
+        let cornersBoard = offMid >= 4
+        if cornersBoard: inc hcCorners else: inc hcPlus
+        let ci = TeamColorNames.find(myColor)
+        let ciIdx = (if ci >= 0 and ci < 4: ci else: 0)
+        inc hcByColor[ciIdx]
+        # --- (1) homeward direction error ---
+        let hv = ownZ.c - me
+        if hv.len() > 1.0:
+          let th = norm(hv)
+          let ax = vec(homeSignRaw(bot.team), 0.0)
+          let cosang = clamp(dot(th, ax), -1.0, 1.0)
+          hcCosSum += cosang
+          if cosang < 0.0:
+            inc hcHomeFlipped          # the "homeward" axis points AWAY from home
+            if cornersBoard: inc hcHomeFlippedC else: inc hcHomeFlippedP
+            inc hcHomeFlippedByColor[ciIdx]
+          if cosang < 0.7071: inc hcHomeOff45   # more than 45 deg wrong
+        # --- (2) over-extend depth: axis verdict vs Voronoi ground truth ---
+        var nearestRival = -1.0
+        for c in TeamColorNames.toOpenArray(0, max(GameTeams, 2) - 1):
+          if c == myColor: continue
+          let z = statedZone(c)
+          if not z.have: continue
+          let d = dist(me, z.c)
+          if nearestRival < 0.0 or d < nearestRival: nearestRival = d
+        if nearestRival >= 0.0:
+          let axisDeep = -homeSignRaw(bot.team) * (me.x - float(CenterX)) >=
+            HoldLineTrigDepth
+          let trulyDeep = dist(me, ownZ.c) > nearestRival    # in a rival's yard
+          if axisDeep and trulyDeep: inc hcTP
+          elif axisDeep and not trulyDeep: inc hcFP
+          elif (not axisDeep) and trulyDeep: inc hcFN
+          else: inc hcTN
+          if cornersBoard:
+            if axisDeep != trulyDeep: inc hcDepthWrongC
+          else:
+            if axisDeep != trulyDeep: inc hcDepthWrongP
+        hsClassifyCell(hsBodyCell, me, myColor, enemyColor)
+        if bot.slot >= 0 and bot.slot < 32:
+          hsMyColor[bot.slot] = myColor
+          hsRaidColor[bot.slot] = enemyColor
+        # THE SIGN CLAIM, per colour, against the engine-stated zone.
+        block:
+          let hs = homeSignRaw(bot.team)
+          let dx = ownZ.c.x - float(CenterX)
+          if bot.team == Red: inc hsTeamRed[ciIdx]
+          if abs(dx) <= 0.02 * float(MapW): inc hsSign[ciIdx][2]
+          elif (dx < 0.0 and hs < 0.0) or (dx > 0.0 and hs > 0.0):
+            inc hsSign[ciIdx][0]
+          else: inc hsSign[ciIdx][1]
+    else:
+      # 2-TEAM CONTROL, same two estimators, same code path.
+      inc h2Frames
+      let ownZ = statedZone(myColor)
+      let enZ = statedZone(SelfEnemyColor)
+      if ownZ.have:
+        let hv = ownZ.c - me
+        if hv.len() > 1.0:
+          let cosang = clamp(dot(norm(hv), vec(homeSignRaw(bot.team), 0.0)),
+                             -1.0, 1.0)
+          h2CosSum += cosang
+          if cosang < 0.0: inc h2HomeFlipped
+          if cosang < 0.7071: inc h2HomeOff45
+        if enZ.have:
+          let axisDeep = -homeSignRaw(bot.team) * (me.x - float(CenterX)) >=
+            HoldLineTrigDepth
+          let trulyDeep = dist(me, ownZ.c) > dist(me, enZ.c)
+          if axisDeep != trulyDeep: inc h2Wrong
+
+  # Flag bookkeeping (two flags; a carried flag rides its carrier's exact
+  # position). The enemy flag can only be carried by OUR team, so its sprite
+  # is never fogged and fully describes our attack (pedestal / on me / on a
+  # mate). Our own flag can only be carried by the enemy: on its pedestal it
+  # is safe, visible off-pedestal is a live thief fix, and ABSENT means a
+  # fogged thief is running it toward its home edge.
+  var
+    iCarry = false
+    mateCarry = false
+    mateCarryPos: Vec
+  let
+    # 0.7.8 renderer restore: the objective is a FLAG again, split into two
+    # distinct sprites — "<color> flag planted" is the always-visible pedestal
+    # banner (present ONLY while the flag sits home), "<color> flag" is the
+    # carried banner centered EXACTLY on its carrier (fogged with the carrier).
+    # The pre-0.7.8 single "<color> heart" sprite that floated CarriedFlagLift
+    # above the carrier is gone; the carried banner now sits ON the carrier.
+    enemyPlanted = client.spriteObjectsWithLabel(enemyColor & " flag planted")
+    enemyFlags = client.spriteObjectsWithLabel(enemyColor & " flag")
+    ownPlanted = client.spriteObjectsWithLabel(myColor & " flag planted")
+    ownFlags = client.spriteObjectsWithLabel(myColor & " flag")
+  # ⭐⭐ THE PEDESTALS ARE OBSERVED, NOT ASSUMED.
+  #
+  # This used to be `flagHome(enemy(bot.team))`, which returned the stock
+  # arena's coordinates — (186,329) and (1049,329) — on EVERY map. On a
+  # 2496x2496 four-team board that is a point from a different game: our
+  # attackers marched to open ground and the grab gate (which needs to be
+  # within PocketRushRange of the pedestal) never opened at all. Measured on a
+  # giant board: 32 agents, 6491 ticks, the closest ANY of them ever came to an
+  # enemy heart was 386px, median 772px, and not one flag was carried all game.
+  #
+  # RULES: "Always visible regardless of fog: ... both heart pedestals". The
+  # planted banner states the exact position every frame we can see it, so cache
+  # it the first time and keep it — a pedestal never moves during an episode.
+  # While a heart is being CARRIED its planted banner is absent, which is
+  # exactly when the cached fix matters.
+  # The planted banner is never fogged, so a colour with no banner either had
+  # its heart stolen or has been eliminated (GV33 retires a dead team's heart).
+  # Either way there is nothing there to raid.
+  for i in 0 ..< max(GameTeams, 2):
+    HeartHome[i] = client.spriteObjectsWithLabel(
+      TeamColorNames[i] & " flag planted").len > 0
+  if enemyPlanted.len > 0:
+    bot.stealPedPos = client.plantedPedestalPos(enemyPlanted[0])
+    bot.stealPedSeen = true
+  if ownPlanted.len > 0:
+    bot.ownPedPos = client.plantedPedestalPos(ownPlanted[0])
+    bot.ownPedSeen = true
+  let
+    stealTarget =
+      if bot.stealPedSeen: bot.stealPedPos
+      else:
+        let z = statedZone(enemyColor)      # stated endzone centre: their base
+        if z.have: z.c else: flagHome(enemy(bot.team))
+    ownHome =
+      if bot.ownPedSeen: bot.ownPedPos
+      else:
+        let z = statedZone(myColor)
+        if z.have: z.c else: flagHome(bot.team)
+  when defined(tgtprobe):
+    inc tpFrames
+    if tpFrames mod 120 == 0:
+      stderr.writeLine "TGT slot=" & $bot.slot & " color=" & myColor &
+        " enemyColor=" & enemyColor &
+        " pedSeen=" & $bot.stealPedSeen &
+        " stealTarget=" & $int(stealTarget.x) & "," & $int(stealTarget.y) &
+        " me=" & $int(me.x) & "," & $int(me.y) &
+        " distToSteal=" & $int(dist(me, stealTarget)) &
+        " role=" & $bot.role & " iCarry=" & $iCarry
+  if lvC(16, bot.tune.shout or bot.tune.reactContact or bot.tune.commsPlay):
+    # Team comms intake: teammates broadcast on the one shout channel — a
+    # 10-char message heard through walls/fog within ~247px. We read the label
+    # "<myColor> shout <addr>: <text>" and decode by leading token:
+    #   "C<cx> <cy>" carrier's own position (8px grid) — escort fix
+    #   "E <cell> <cell>.." enemy callouts on the chess grid — orient the cone
+    #   "oh shit!" / "die"  contact shouts — orient toward the shouter's bubble
+    #   "P<tok>"    COMMS BUS scenario codeword — adopt the play (movement only)
+    # The bubble's own jittered coordinates give the shouter's rough position,
+    # used only for the "orient toward the panic/fire" contact reaction.
+    let commsSalt = roundSalt(bot.gameStart, bot.team, bot.tune.commsCrypto)
+    for o in client.spriteObjects():
+      if not o.label.startsWith(myColor & " shout "):
+        continue
+      let sep = o.label.rfind(": ")
+      if sep < 0:
+        continue
+      let text = o.label[sep + 2 .. ^1]
+      if text.len == 0:
+        continue
+      # Shouter's rough (jittered) location — same map-space math as mapPos, but
+      # spriteObjects() yields a bare tuple (no SpriteObjectInfo), so inline it.
+      let bubblePos = vec(
+        float((o.x + o.width div 2) div RenderScale + client.mapCameraX),
+        float((o.y + o.height div 2) div RenderScale + client.mapCameraY))
+      # v56: any mate shout is positive live-mate evidence — but our OWN bubble
+      # renders too and sits on us; only one clearly off our body proves a MATE.
+      if dist(bubblePos, me) > 40.0:
+        bot.lastMateAlive = bot.tick
+      if lvC(17, text[0] == 'P' and text.len >= 2 and bot.tune.commsPlay):
+        # COMMS BUS: a mate's opaque scenario codeword. Decode with the shared
+        # rotating table and bank the play for CommsPlayTtl — adopted as MOVEMENT
+        # INTENT only (selectScenarioPlay), never a turret bearing (REF-comms v2).
+        let rp = decodeCommsToken(text[1], commsSalt)
+        # ⭐⭐ v56 TTL LATCH (playLatch). MEASURED: 41% of back-to-back calls inside
+        # the 90t CommsPlayTtl carried a DIFFERENT token (1,350 of 3,317), so the one
+        # heardPlay slot was being overwritten mid-window constantly and even the
+        # threshold nudges flapped. Every seat runs the same classifier with no
+        # authority bit, so a disagreeing token is a genuine second opinion — but a
+        # play that changes every few ticks is not a play. A freshly adopted call is
+        # therefore IMMUNE to a different-token overwrite for CommsPlayLatch ticks;
+        # after that the newer read wins, and a SAME-token echo (58% of traffic —
+        # emergent relay, the reason no affirm protocol is needed) always refreshes
+        # the window. Deliberately not a vote: no per-token tally survives the fog.
+        let latched = bot.tune.playLatch and bot.heardPlay != RpNone and
+          rp != bot.heardPlay and bot.tick - bot.heardPlayTick < CommsPlayLatch
+        if lvC(158, latched):
+          when defined(commsprobe):
+            inc csLatchDrop
+        elif rp != RpNone:
+          bot.heardPlay = rp
+          bot.heardPlayTick = bot.tick
+          # ⭐ v56: bank WHERE the call came from. A play call is only actionable if
+          # you know where it was called from — the caller's own (jittered) bubble is
+          # the only position the wire carries, and it is exactly the right anchor:
+          # the caller is AT the pocket it calls stacked, AT the vacuum it calls
+          # wiped, AT/just behind the line it calls. Our OWN bubble renders on us, so
+          # a call from inside 40px is our own echo and carries no new geometry.
+          bot.heardPlayPos =
+            if dist(bubblePos, me) > 40.0: bubblePos else: vec(-1, -1)
+          # ⭐ A heard LINE call carries the caller's rough (jittered) bubble position —
+          # the caller is AT/just-behind the line it's classifying, so its bubble is a
+          # good proxy for where the enemy cluster is. The arc breacher converges here
+          # instead of a blind seam, so its cone lands on the REAL line across fog.
+          if rp == RpLine:
+            bot.arcLinePos = bubblePos
+            bot.arcLineTick = bot.tick
+          when defined(commsprobe):
+            inc csHeard
+            if rp == RpStack: inc csStackHeardRaw
+      elif text[0] == 'C':
+        # Carrier heartbeat: fresher than any dead-reckoned escort estimate.
+        let parts = text[1 .. ^1].split(' ')
+        if parts.len == 2:
+          try:
+            bot.mateFixPos = vec(float(parseInt(parts[0]) * 8 + 4),
+              float(parseInt(parts[1]) * 8 + 4))
+            bot.mateFixTick = bot.tick
+          except ValueError:
+            discard
+      elif lvC(18, text[0] == 'E' and (bot.tune.reactContact or bot.tune.eCallout)):
+        # Enemy callout: seed a fresh track at each named cell we don't already
+        # have fresher eyes on, and orient the vision cone toward the nearest.
+        # ⭐ v56 (eCallout): the INTAKE half runs on eCallout alone. Seeding a track
+        # is pure perception — it feeds the local-balance reads (holdLine, pickEdge,
+        # the comms classifier) and the grenade target across fog, and costs nothing
+        # a cone diversion would. The REACTION half below stays on reactContact, so
+        # turning E back on does NOT re-import the v1/v2 cone-diversion loss.
+        var nearest = vec(-1, -1)
+        var nearestD = 1e18
+        for cell in text[1 .. ^1].split(' '):
+          if cell.len == 0:
+            continue
+          let p = chessDecode(cell)
+          if p.x < 0:
+            continue
+          if dist(p, me) < nearestD:
+            nearestD = dist(p, me)
+            nearest = p
+          # Only adopt if we have no track already near this cell.
+          # ⚠️ v56 RE-SEED FIX. This dedupe window used to be CalloutFreshTicks (20),
+          # but the track we stamp below is deliberately aged to tick-FreshShotTicks-1
+          # (25) so it reads as a LEAD and not a shot — i.e. the seed could never
+          # satisfy its own freshness test, while the shout BUBBLE that produced it
+          # stays on screen for ShoutTicks (72) and is re-read every single frame. So
+          # the intake re-seeded the same phantom every frame for the bubble's whole
+          # life: measured at 192,469 seeds in a 4-game probe run, ~one per bot-frame.
+          # With TrackCap = 8 (exactly the real opponent count) and the prune sorting
+          # by lastSeen, a 25-tick-old phantom outranks and EVICTS real enemy memory
+          # older than that. The bug was dormant only because reactContact (the old
+          # sole gate on this branch) has been off; eCallout wakes it. The window must
+          # cover the bubble's life, not the callout's freshness.
+          var known = false
+          for t in bot.enemies:
+            if bot.tick - t.lastSeen <= CalloutSeedTtl and
+                dist(t.pos, p) <= float(MapW) / float(ChessFiles):
+              known = true
+              break
+          if not known:
+            bot.enemies.add(Track(pos: p, vel: vec(0, 0),
+              lastSeen: bot.tick - FreshShotTicks - 1, hp: 0,
+              aimBrads: -1))  # a lead, not a shot — no gun bearing known
+            when defined(commsprobe):
+              inc csESeed
+        # ⭐ Seeding the track above is the ALWAYS-ON intel intake — even a
+        # committed carrier now KNOWS the called enemy. The REACTION (turn the
+        # cone / move the feet) is separate: with the gate on, only STAGE the
+        # nearest callout; the task-priority gate below (after all commitment
+        # states are known) decides whether to act on it. Gate off => the old
+        # indiscriminate reorient of anyone in earshot.
+        if lvC(19, bot.tune.reactContact and nearest.x >= 0 and nearestD <= ShoutHeardRange):
+          if lvC(20, bot.tune.calloutGate):
+            bot.calloutPos = nearest
+            bot.calloutTick = bot.tick
+          else:
+            bot.orientPos = nearest
+            bot.orientUntil = bot.tick + ContactWatchTicks
+      elif lvC(21, (text == "oh shit!" or text == "die") and bot.tune.reactContact):
+        # Contact shout from a mate in earshot: turn the vision cone toward the
+        # panic/fire so someone covers the ambush (turn-and-watch, not a rush).
+        if dist(bubblePos, me) <= ShoutHeardRange:
+          if lvC(22, bot.tune.calloutGate):
+            bot.calloutPos = bubblePos
+            bot.calloutTick = bot.tick
+          else:
+            bot.orientPos = bubblePos
+            bot.orientUntil = bot.tick + ContactWatchTicks
+  if enemyPlanted.len > 0:
+    discard                              # enemy flag sits home: nobody carries
+  elif enemyFlags.len > 0:
+    let fp = client.mapPos(enemyFlags[0])
+    # Self-carry test: the carried banner is centered EXACTLY on its carrier, so
+    # "am I the carrier" is "is the flag on ME and on nobody else" — a visible
+    # mate closer to it than us means the mate is the carrier. With the 0.7.8
+    # on-carrier banner (no +10px lift, and a separate "flag planted" pedestal
+    # sprite) there is no on-pedestal deadlock to special-case: seeing the
+    # carried banner at all means the flag is genuinely off its pedestal.
+    var mateCloser = false
+    let dSelf = dist(fp, me)
+    for t in bot.mates:
+      if bot.tick - t.lastSeen <= 2 and dist(t.pos, fp) < dSelf:
+        mateCloser = true
+        break
+    if dSelf <= CarrySelfRadius and not mateCloser:
+      iCarry = true
+    elif GameTeams <= 2 or mateCloser:
+      # "only a teammate can be carrying it" is a 2-TEAM truth. On a 4-team
+      # board a RIVAL can carry a third team's heart (v47 audit) — labelling
+      # that rival our carrier sent escorts converging on an ENEMY. With >2
+      # teams, require a recent mate track actually near the banner.
+      mateCarry = true
+      mateCarryPos = fp
+      bot.mateFixPos = fp
+      bot.mateFixTick = bot.tick
+  elif GameTeams <= 2:
+    # No planted banner and no carried banner in the frame: the flag is off its
+    # pedestal on a FOGGED carrier — and only OUR team can carry it, so a
+    # teammate is running it home right now even though we cannot see it.
+    # Without this inference the whole wave keeps pressing an empty pedestal
+    # instead of covering the run. Escort a dead-reckoned fix: the last sighting
+    # (or the pedestal it was lifted from) advanced homeward at carrier speed.
+    # ⚠️ v47 audit: 2-TEAM ONLY. On a 4-team board the premise is false — a
+    # RIVAL can carry the designated heart, and an eliminated team's heart is
+    # RETIRED (GV33), so this branch fabricated a phantom mate-carrier drifting
+    # toward a parity-guessed "home": every seat locked into PhEscort with
+    # engage capped at 320px against 400-800px guns, refusing the pedestal
+    # touch latch, for as long as the designated heart stayed absent. On >2
+    # teams a missing heart means re-designate, not escort a ghost.
+    mateCarry = true
+    var est =
+      if bot.mateFixTick > 0: bot.mateFixPos
+      else: stealTarget
+    let elapsed = float(bot.tick - max(bot.mateFixTick, bot.gameStart))
+    est.x += homeSign(bot.team) * min(
+      abs(ownHome.x - est.x),
+      elapsed * CarrierEstSpeed
+    )
+    mateCarryPos = est
+  when defined(homeprobe):
+    ## Ground-truth-free carry audit (issue #17): scan EVERY rival colour's
+    ## carried banner, not just the one designated `enemyColor`, and report
+    ## when a banner is centred on US while `iCarry` says otherwise.
+    block hpCarryAudit:
+      for ci in 0 ..< max(GameTeams, 2):
+        let c = TeamColorNames[ci]
+        if c == myColor:
+          continue
+        for o in client.spriteObjectsWithLabel(c & " flag"):
+          if dist(client.mapPos(o), me) <= CarrySelfRadius:
+            echo "CARRYAUDIT t=", bot.tick, " slot=", bot.slot,
+              " me=", myColor, " holding=", c,
+              " designatedEnemy=", enemyColor,
+              " iCarry=", iCarry,
+              " enemyPlanted=", enemyPlanted.len,
+              " enemyFlags=", enemyFlags.len,
+              " pos=", int(me.x), ",", int(me.y)
+            flushFile(stdout)
+            break hpCarryAudit
+  when defined(carryDebug):
+    if bot.tick mod 50 == 0 and (iCarry or mateCarry):
+      var fpS = "none"
+      if enemyFlags.len > 0:
+        let fp = client.mapPos(enemyFlags[0])
+        fpS = $int(fp.x) & "," & $int(fp.y) & " d=" & $int(dist(fp, me))
+      echo "CARRY t=", bot.tick, " slot=", bot.slot, " role=", bot.role,
+        " iCarry=", iCarry, " mateCarry=", mateCarry,
+        " me=", int(me.x), ",", int(me.y), " fp=", fpS,
+        " mateCarryPos=", int(mateCarryPos.x), ",", int(mateCarryPos.y)
+      flushFile(stdout)
+  var ownStolen = ownPlanted.len == 0
+  var sawThief = false
+  if ownPlanted.len > 0:
+    bot.carrierSeen = -100_000           # our flag is safely home on its pedestal
+  elif ownFlags.len > 0:
+    # The thief holding our flag is inside our vision: take a fresh fix. The
+    # carried banner is centered on the thief, so its position IS the thief's.
+    let fp = client.mapPos(ownFlags[0])
+    ownStolen = true
+    sawThief = true
+    bot.carrierPos = fp
+    bot.carrierVel = vec(0, 0)
+    for t in bot.enemies:
+      if dist(t.pos, fp) <= 8:
+        bot.carrierVel = t.vel
+        break
+    bot.carrierSeen = bot.tick
+
+  # (Shout EMIT is deferred to the end of decide(): the "die" pre-fire call
+  # needs this frame's fire decision, so all four messages are prioritized and
+  # emitted together once the button mask is known — see the emit block below.)
+
+  # Flank progress: sticky so lane-runners do not oscillate at the boundary.
+  if bot.role in {FlankTop, FlankBottom}:
+    # ⭐⭐⭐ RAID FRAME, half 2 of 2 — THE COUPLED RELEASE. This gate and the flank
+    # staging point below are ONE UNIT and must move together. The staging point
+    # is re-asserted on EVERY frame the gate is shut, so if the anchor moves onto
+    # the ±y raid axis while the release still keys on ±x, the flanker walks to
+    # its anchor, re-reads a gate its x can never satisfy, re-asserts the same
+    # anchor, and parks there for the rest of the round — it moved, it just
+    # stopped arriving, which leaves no error and no statue signature.
+    # Worked example on the hosted corners board, Red raiding Green: the staged
+    # point is (475,589); x-fwd there is -homeSign*(475-617) = -142, forever
+    # short of the FlankDepth-50 = 210 release. Raid-frame fwd is +260, so the
+    # release fires at y=539 as designed. tests/test_home_sign_parity.nim runs
+    # exactly that walk in both wirings and asserts the parked one parks.
+    let fwd =
+      if bot.tune.raidFrame and ffa4Board: raidFwd(me, ownHome, stealTarget)
+      else: -homeSign(bot.team) * (me.x - float(CenterX))
+    if fwd >= FlankDepth - 50.0:
+      bot.behindLines = true
+    elif fwd < 20.0:
+      bot.behindLines = false
+
+  # Endgame push: our flag is safe and nobody on OUR side has seen an enemy
+  # for a long while deep into the game. The survivors by then are usually
+  # the defensive seats, and holding their posts forever is a guaranteed
+  # tiebreak stalemate — break the posts and go win by capture (the enemy
+  # team pushes symmetrically, so somebody makes something happen).
+  let pushOut = not ownStolen and (
+    (bot.tick - bot.gameStart > PushOutMinGame and
+     bot.tick - bot.lastEnemySeen > PushOutTicks) or
+    # Late all-in: a timeout is a scoreless draw, so deep into a game with no
+    # capture the posts are worth nothing — break them and go win. Standoffs
+    # keep enemies in sight, so the quiet-field trigger above never fires
+    # against a peek-duck opponent; this one is on the clock.
+    bot.tick - bot.gameStart > LatePushTick
+  )
+
+  # ── COMMS BUS C1: classify the live team scenario from OUR OWN fresh local
+  # reads (globally-legible ownStolen/sawThief + local enemy/mate clustering).
+  # This is the read a bot BROADCASTS and folds into its own play; a mate that
+  # can't see it adopts the codeword instead. Movement-intent only downstream —
+  # the classifier never touches the turret. Computed only when the bus is wired
+  # (commsBus emit OR commsPlay adopt) to keep the shipped path byte-identical.
+  var localSc = ScNone
+  if lvC(23, (bot.tune.commsBus or bot.tune.commsPlay) and not iCarry):
+    if sawThief and ownStolen:
+      localSc = ScPeel                     # an exposed thief has our flag — peel
+    else:
+      # Count fresh enemy guns + fresh mates near the contested pocket / us, and sum
+      # the fresh-enemy positions so a called line carries its CENTROID (the breacher
+      # converges on the real cluster, not a blind seam).
+      var freshEnemyNear = 0
+      var freshMateNear = 0
+      var enemySum = vec(0, 0)
+      for t in bot.enemies:
+        if bot.tick - t.lastSeen <= LocalFreshTicks and
+            (dist(t.pos, stealTarget) <= CommsScanRange or
+             dist(t.pos, me) <= CommsScanRange):
+          inc freshEnemyNear
+          enemySum = enemySum + t.pos
+      for t in bot.mates:
+        if bot.tick - t.lastSeen <= LocalFreshTicks and dist(t.pos, me) <= CommsScanRange:
+          inc freshMateNear
+      let deep = -homeSign(bot.team) * (me.x - float(CenterX)) >= HoldLineTrigDepth
+      # ⭐ 2026-08-17 STACK-CONVERGE INVESTIGATION: if you're here because
+      # stackConverge/stackHoldGate read "fires: 0" on grabprobe, this condition is
+      # NOT the bug. A gate-by-gate waterfall (STACK-WATERFALL in grabprobe's
+      # -d:commsprobe report) shows the executor band (StackConvergeMin/Max,
+      # baseline.nim ~1341) is 100% correct whenever it gets input — 0 TOO-CLOSE, 0
+      # TOO-FAR, every BAND-OK frame produces a real ~140px move. The bottleneck is
+      # HERE, at classify+emit: a 2-team MIRROR self-play episode (both teams same
+      # policy) throws this condition far less often than real hosted play does — a
+      # 3-episode grabprobe sample reads a hard 0 EMIT-STACK, a 9-episode sample
+      # already catches one (which alone produced 161 downstream MOVE frames). The
+      # v55 REAL-FIELD corpus (comms-forensics-2026-08-14.md, 59 episodes) measured
+      # 840 STACK calls = 14.2/episode (23.8% of P-traffic) — two orders of
+      # magnitude above the mirror rate. Use n>=20+ episodes (or hosted data) before
+      # concluding this lever is dead; do not retune StackConvergeMin/Max/Pull off a
+      # small-n mirror sample, they aren't what's rejecting.
+      if freshEnemyNear >= CommsStackDefenders and
+          dist(me, stealTarget) <= CommsScanRange:
+        localSc = ScStack                  # stacked pocket in front of us
+      elif deep and freshEnemyNear <= CommsWipeMax and freshMateNear >= 1:
+        localSc = ScWipe                    # we cleared the enemy half — rally the wave
+      elif deep and freshEnemyNear >= CommsLineGuns and
+          dist(me, stealTarget) > CommsScanRange:
+        # ⭐ ANTI-h006 LINE: we've over-extended into the enemy half (deep) and >=2
+        # fresh enemy guns are clustered to our front, but we are NOT at the steal
+        # pocket (that's ScStack) — a standing defensive line farming our push. Call
+        # it so mates a lane away converge + a grenade carrier saturates the cluster.
+        localSc = ScLine
+        # Record the line's CENTROID for the arc breacher's convergence (own eyes here).
+        bot.arcLinePos = enemySum * (1.0 / float(freshEnemyNear))
+        bot.arcLineTick = bot.tick
+    when defined(commsprobe):
+      if localSc == ScStack: inc csStack
+      elif localSc == ScWipe: inc csWipe
+      elif localSc == ScPeel: inc csPeel
+      elif localSc == ScLine: inc csLine
+
+  # Local force balance: an attacker that finds itself outnumbered by fresh
+  # enemies inside RetreatRadius — more enemy guns than friendly guns, self
+  # included — breaks off and regroups instead of feeding a 1-vs-N duel.
+  # Gated behind tune.forceBalance (OFF in the shipped tune — FALSIFIED
+  # 2026-07-14 as a win lever, retained only so the harness BALANCE=1 knob
+  # still exercises it).
+  let offenseRole = bot.role in
+    {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom}
+  let onOffense = (bot.tune.forceBalance or bot.tune.fireSuperiority) and
+    offenseRole and
+    not iCarry and not mateCarry and not ownStolen and
+    dist(me, stealTarget) >= bot.tune.pocketRushRange
+  if onOffense:
+    if lvC(24, bot.tune.fireSuperiority):
+      # #9 PRESS-VS-BREAK ON FIRE SUPERIORITY (the corrected forceBalance —
+      # the head-count version was FALSIFIED because breaking on raw numbers
+      # fights the win mechanism: firefights won → wipes/cleared carrier lanes
+      # → captures). Break off ONLY when we are genuinely fire-INFERIOR, i.e.
+      # the enemy's REAL guns outweigh ours. A wounded enemy is a fractional
+      # gun (a 1-hp enemy is one of our trigger-pulls from gone), so weight each
+      # fresh local enemy by its remaining hp fraction; unknown hp counts full.
+      # Our side counts self + fresh local mates as whole guns. Press (never set
+      # retreatUntil) whenever that effective margin is within reach — audacity
+      # by default, withdraw only against a real overmatch.
+      var enemyGuns = 0.0
+      var friendGuns = 1.0               # ourselves, a whole gun
+      for t in bot.enemies:
+        if bot.tick - t.lastSeen <= LocalFreshTicks and
+            dist(t.pos, me) <= RetreatRadius:
+          # A shielded enemy is a 6-hp tank that outlasts a normal exchange — count
+          # it as more than one gun so we don't press a duel we can't finish. Else
+          # weight by hp fraction (a 1-hp enemy is a trigger-pull from gone).
+          enemyGuns += (if t.hasShield: ShieldGunWeight
+                        elif t.hp in 1 ..< MaxHp: t.hp.float / MaxHp.float
+                        else: 1.0)
+      for t in bot.mates:
+        if bot.tick - t.lastSeen <= LocalFreshTicks and
+            dist(t.pos, me) <= RetreatRadius:
+          friendGuns += 1.0
+      let breakMargin = (if bot.tune.gv21Press: Gv21OutnumberMargin
+                         else: bot.tune.outnumberMargin).float
+      # ⭐⭐ L2 VOLUME GATE (tradeGate): ffa4 only (GameTeams > 2 — a 2-team game
+      # keeps the exact breakMargin arithmetic above, byte-identical). A 1:1
+      # trade in a four-way pot burns both fighters' life pools while the two
+      # bystanders pay nothing, so DECLINE anything at or below parity instead
+      # of only breaking off when genuinely outnumbered — require a real edge
+      # (friendGuns - enemyGuns >= TradeMinEdge) to press.
+      # ⚠️⚠️ SHADOW MUST FALL THROUGH TO THE CONTROL BRANCH (bug found 2026-08-20 by
+      # the fingerprint, not by reading the code). The gate used to be the `if` of an
+      # if/elif whose `elif` sets bot.retreatUntil — so merely ENTERING the branch
+      # DISABLES the force-balance retreat, whether or not the gate then declines.
+      # A shadow arm that skipped only the declineUntil write therefore still
+      # silently deleted every retreat, and its "control-identical" fingerprint came
+      # back DIFFERENT (mask 0x453cee84… vs the control's 0x3e023e63…). The verdict is
+      # now computed first and the ACT is a separate statement, so shadow takes the
+      # elif exactly like the control does. This is precisely why the byte-level
+      # fingerprint exists: a counter would have shown the lever "not acting" and
+      # said nothing.
+      let tgActive = bot.tune.tradeGate and GameTeams > 2
+      var tgDecline = false
+      if lvC(25, tgActive):
+        # ⭐⭐⭐ TGEV (2026-08-20). Same site, same tally, same timer — only the BAR
+        # changes shape, and only on a >2-team board. See tradeEdgeMul for the
+        # derivation and the CombatTune fields for each flag's own reasoning.
+        #
+        # C — SYMMETRY. fireSuperiority hp-weights every enemy and then counts us
+        # and every mate as a whole gun at any hp. Computed into SEPARATE locals so
+        # the control `elif enemyGuns - friendGuns >= breakMargin` path below and
+        # the whole 2-team world stay byte-identical.
+        var tgFriend = friendGuns
+        if bot.tune.tradeGateSelfHp:
+          tgFriend = (if bot.ownHp in 1 ..< MaxHp: bot.ownHp.float / MaxHp.float
+                      else: 1.0)
+          for t in bot.mates:
+            if bot.tick - t.lastSeen <= LocalFreshTicks and
+                dist(t.pos, me) <= RetreatRadius:
+              tgFriend += (if t.hasShield: ShieldGunWeight
+                           elif t.hp in 1 ..< MaxHp: t.hp.float / MaxHp.float
+                           else: 1.0)
+        # B — CONTEST. How many DISTINCT rival colours are fresh inside the same
+        # radius the guns were tallied over? >= TradeContestMinTeams means the
+        # bystanders are already paying, so the outside option of walking away is
+        # worth something and the bar to join rises.
+        var tgContested = false
+        if bot.tune.tradeGateContest:
+          var seenColor: array[5, bool]
+          var nColors = 0
+          for t in bot.enemies:
+            if bot.tick - t.lastSeen > LocalFreshTicks or
+                dist(t.pos, me) > RetreatRadius:
+              continue
+            let ci = int(t.colorId)
+            if ci <= 0 or ci > 4:
+              when defined(tempoprobe): inc tgColorUnknown
+              continue
+            if not seenColor[ci]:
+              seenColor[ci] = true
+              inc nColors
+          tgContested = nColors >= TradeContestMinTeams
+        # A — SHAPE. The additive TradeMinEdge bar or the derived square-law one.
+        let tgMul = tradeEdgeMul(GameTeams,
+          if tgContested: bot.tune.tradeGateBurn else: 0.0)
+        tgDecline =
+          if bot.tune.tradeGateSquare: tgFriend < enemyGuns * tgMul
+          else: tgFriend - enemyGuns < TradeMinEdge
+        when defined(tempoprobe):
+          inc tgEval
+          let wouldPress = enemyGuns - friendGuns < breakMargin
+          if wouldPress: inc tgWouldPress
+          if tgContested: inc tgContestFrames
+          if tgDecline and wouldPress: inc tgDeclined
+          # The SHAPE contrast, from one run: where do the two bars disagree?
+          # SHAPE, isolated: the OLD bar fed the SAME tally, so any disagreement
+          # here is the bar's shape and nothing else. (With TGHP on, `friendGuns`
+          # and `tgFriend` differ — feeding the old bar friendGuns would blend two
+          # levers into one counter, the confound this project keeps paying for.)
+          let addDecline = tgFriend - enemyGuns < TradeMinEdge
+          if addDecline and not tgDecline: inc tgSquarePress
+          if tgDecline and not addDecline: inc tgSquareDecl
+          # ...and the hp-symmetry term's OWN effect, on the additive bar, so the
+          # two are never read off the same number.
+          if (friendGuns - enemyGuns < TradeMinEdge) != addDecline: inc tgHpFlip
+          # RISING EDGE = the actual decision. Held frames inside the RetreatHold
+          # hysteresis are the same decision counted 24 times, and a per-frame
+          # rate is exactly the "88.7% bind" number that meant nothing.
+          if tgDecline:
+            let wasDeclining =
+              if bot.tune.tradeGateShadow:
+                (bot.slot >= 0 and bot.slot < 32 and tgShadowUntil[bot.slot] >= bot.tick)
+              else: bot.declineUntil >= bot.tick
+            if not wasDeclining:
+              inc tgEnter
+              if tgContested: inc tgEnterContest
+              if tgFirstFire < 0 or tgTick < tgFirstFire: tgFirstFire = tgTick
+              let tgB =
+                if tgTick < 200: 0
+                elif tgTick < 400: 1
+                elif tgTick < 800: 2
+                elif tgTick < 1200: 3
+                elif tgTick < 2400: 4
+                else: 5
+              inc tgBucket[tgB]
+              tgEvt.add((tick: tgTick, slot: bot.slot,
+                         x: int(me.x), y: int(me.y),
+                         contested: tgContested, wouldPress: wouldPress))
+            if bot.tune.tradeGateShadow and bot.slot >= 0 and bot.slot < 32:
+              tgShadowUntil[bot.slot] = bot.tick + RetreatHold
+      if tgActive and not bot.tune.tradeGateShadow:
+        if tgDecline:
+          # NOT bot.retreatUntil — that field drives regroupTo's home-biased
+          # fallback (see its comment). declineUntil drives its own movement
+          # branch below that converges on a mate or breaks laterally, never
+          # home. Spending less time at home predicts WINNING, so tradeGate
+          # firing on every even matchup (far more often than genuine
+          # overmatch) must not become a de-facto pullback.
+          bot.declineUntil = bot.tick + RetreatHold  # decline the even/losing trade
+      elif enemyGuns - friendGuns >= breakMargin:
+        bot.retreatUntil = bot.tick + RetreatHold  # commit the fall-back (hysteresis)
+    else:
+      var localEnemies = 0
+      var localFriends = 1               # ourselves
+      for t in bot.enemies:
+        if bot.tick - t.lastSeen <= LocalFreshTicks and
+            dist(t.pos, me) <= RetreatRadius:
+          inc localEnemies
+      for t in bot.mates:
+        if bot.tick - t.lastSeen <= LocalFreshTicks and
+            dist(t.pos, me) <= RetreatRadius:
+          inc localFriends
+      if lvC(26, localEnemies - localFriends >= bot.tune.outnumberMargin):
+        bot.retreatUntil = bot.tick + RetreatHold  # hysteresis: commit the fall-back
+  # ⚠️⚠️ SECOND CONSEQUENCE OF THE v59 FLIP, named because it is not obvious.
+  # retreatUntil has exactly two writers, and both live inside the if/elif above:
+  # the `elif` the tradeGate branch pre-empts, and the `else` of `if
+  # fireSuperiority` (shipped true, so dead). With tradeGate now DEFAULT ON,
+  # `retreating` is therefore permanently FALSE on any GameTeams > 2 board — the
+  # flip does not merely ADD declining, it RETIRES the force-balance retreat on
+  # ffa4. That is safe and intended, and it was checked rather than assumed:
+  #   • COVERAGE — the decline bar (friendGuns - enemyGuns < 1) is strictly looser
+  #     than the retreat bar (enemyGuns - friendGuns >= 2..3), so every state that
+  #     WOULD have set retreatUntil now sets declineUntil. Every downstream guard
+  #     spelled `retreating or declining` still fires, including the act-site
+  #     "keep the gun, drop the walk" list.
+  #   • THE ONLY DELTA IS THE DESTINATION — regroupTo steps HOME when no fresh
+  #     mate is near; declineTo breaks away+lateral and holds our depth. Field:
+  #     relocating home measured death-NEGATIVE and low home-dwell predicts
+  #     winning, so trading the home-biased fallback for the lateral one is the
+  #     direction the evidence already points. 2-team play keeps retreatUntil
+  #     exactly as before (the branch is GameTeams > 2 gated).
+  let retreating = onOffense and bot.tick <= bot.retreatUntil
+  let declining = onOffense and bot.tick <= bot.declineUntil  # L2 volume gate (tradeGate)
+  # ── ⭐ WOUNDED BANK entry (plan #13 §1.1). The trigger is OWN hp state only:
+  # hp == 1, where we measured 100% death (n=160 lives, median 83t) — there is
+  # no won fight being thrown away at hp1 as a class, and headcount appears
+  # NOWHERE in entry/exit (the REF-force distinction). Suspended per-frame by:
+  #   • the finish-window — a fresh 1-hp enemy with our clear pixel line inside
+  #     FinishRange is one trigger pull from a won exchange (the AGG-E3 state);
+  #   • an imminent grab — inside GrabCommitRing the touch ends the episode
+  #     (grab→capture is the other proven lever family);
+  #   • carrying — carrierFlee + the fight-out ring own carriers (a banked
+  #     carrier forfeits the capture). Exit is implicit: a kit heals to FULL
+  #     (hp >= 2 fails the entry read next frame) and death re-reads 3.
+  # ⭐⭐ aggro — WOUNDED BANK DISENGAGE THRESHOLD (2026-08-06, captain-brain
+  # course-correction, tune-field tier): own hp is a DISCRETE 0..MaxHp value
+  # (3 on this engine), so a smooth multiplier can't move a boundary — this
+  # generalizes the fixed `ownHp == 1` entry gate to `ownHp <= bankHpThreshold`
+  # (1.0/aggro, rounded, capped at MaxHp-1). At aggro=1.0 (shipped default)
+  # threshold=round(1/1)=1, so this is BYTE-IDENTICAL to `== 1` — a true no-op.
+  # At AGGRO=0.65 (defHold) threshold=round(1/0.65)=2, so a defHold bot also
+  # disengages-to-heal at hp=2 (any wound), not only at the critical hp=1 —
+  # earlier retreat, exactly the defHold framing.
+  let bankHpThreshold = min(MaxHp - 1, int(round(1.0 / bot.tune.aggro)))
+  var banking = false
+  var peeling = false   # v48: medEcon/medPeel committed a kit target this frame
+                        # — the act chain steers feet to it even while engaged
+                        # (gun stays on the threat), the tier woundedBank was
+                        # meant to own before it was env-gated out of production
+  if lvC(27, bot.tune.woundedBank and bot.ownHp in 1 .. bankHpThreshold and not iCarry and
+      dist(me, stealTarget) > GrabCommitRing):
+    banking = true
+    for t in bot.enemies:
+      if bot.tick - t.lastSeen <= TempoFreshTicks and t.hp == 1 and
+          dist(t.pos, me) <= FinishRange and
+          client.pixelRayClear(me, t.pos):
+        banking = false                    # finish-window: convert, don't bank
+        when defined(wbprobe):
+          inc wbFinishSuspend
+        break
+  # BANK sub-mode clock: bankBlindSince = the last tick a fresh threat held a
+  # clear pixel ray to us. Blind for >= BankBlindTicks => HOLD (park at the
+  # bank cell, aim the re-emergence bearing). medEcon's aimedAtUs veto passes
+  # exactly once the line is broken, so kit routing takes over — banking is
+  # the missing under-the-gun tier medEcon deliberately refuses to handle.
+  var bankLineOnUs = false
+  if banking:
+    for t in bot.enemies:
+      if bot.tick - t.lastSeen <= HoldVsGunTtl and
+          dist(t.pos, me) <= HoldVsGunRange and
+          client.pixelRayClear(me, t.pos):
+        bankLineOnUs = true
+        break
+    if bankLineOnUs:
+      bot.bankBlindSince = bot.tick
+  elif lvC(28, bot.tune.woundedBank):
+    bot.bankBlindSince = bot.tick          # not banking: keep the blind clock idle
+  when defined(wbprobe):
+    if banking:
+      inc wbFrames
+      if not bot.pWasBanking:
+        inc wbEntries
+        bot.pBankEnter = bot.tick
+        bot.pHadLine = false
+        bot.pBroke = false
+      if bankLineOnUs:
+        if not bot.pHadLine:
+          bot.pHadLine = true
+          inc wbLineSegs
+      elif bot.pHadLine and not bot.pBroke:
+        bot.pBroke = true
+        if bot.tick - bot.pBankEnter <= 60:
+          inc wbBreak60
+    bot.pWasBanking = banking
+  # The fall-back point: regroup on the nearest fresh mate who is NOT deeper in
+  # enemy territory than we are (two guns beat the 1-vs-N), else withdraw toward
+  # our own side.
+  # ⭐ v48 audit fix: "withdraw toward our own side" was homeSign — a 2-team
+  # parity guess. A green/yellow ffa4 seat (parity Red/Blue, real home a
+  # CORNER) "broke contact" by marching along an axis that is not its own,
+  # often INTO a rival's country — a correct fire-superiority call converted
+  # into a feed, in the mode where our defense measures 45%. Retreat along
+  # the vector to ownHome (observed pedestal/statedZone, already color-true);
+  # 2-team boards keep the exact old geometry (ownHome is west/east there).
+  var homeDir =
+    if GameTeams > 2:
+      let d = ownHome - me
+      if dist(ownHome, me) > 1.0: norm(d) else: vec(0.0, 0.0)
+    else:
+      vec(homeSign(bot.team), 0.0)
+  var regroupTo = me + homeDir * RetreatStep
+  if retreating:
+    var bestD = RegroupRadius
+    for t in bot.mates:
+      if bot.tick - t.lastSeen > LocalFreshTicks:
+        continue
+      # "further into the jaws" = deeper along the AWAY-from-home direction
+      if dot(t.pos - me, homeDir) < -20.0:
+        continue
+      let d = dist(t.pos, me)
+      if d < bestD:
+        bestD = d
+        regroupTo = t.pos
+    regroupTo.x = clamp(regroupTo.x, 20.0, float(MapW - 20))
+    regroupTo.y = clamp(regroupTo.y, 20.0, float(MapH - 20))
+  # ⭐⭐ L2 VOLUME GATE, movement half (tradeGate/declining). Deliberately NOT
+  # regroupTo: that fallback steps toward HOME (homeDir * RetreatStep) whenever
+  # no fresh mate is near, and tradeGate fires on every even matchup — far more
+  # often than genuine overmatch — so reusing it would turn "decline the coin-
+  # flip" into a de-facto team pullback. Spending less time at home predicts
+  # WINNING field-wide (we already sit below the field's own home-dwell share),
+  # so this converges on a mate exactly like regroupTo (two guns beat 1-vs-N),
+  # but when no mate is near it creates separation from the SPECIFIC enemy that
+  # made this a coin-flip — away + lateral, zero home bias — holding our depth
+  # in the field instead of marching home.
+  var declineTo = me
+  if declining:
+    var bestD = RegroupRadius
+    var haveMate = false
+    for t in bot.mates:
+      if bot.tick - t.lastSeen > LocalFreshTicks:
+        continue
+      if dot(t.pos - me, homeDir) < -20.0:
+        continue
+      let d = dist(t.pos, me)
+      if d < bestD:
+        bestD = d
+        declineTo = t.pos
+        haveMate = true
+    if not haveMate:
+      var nearestE = vec(-1.0, -1.0)
+      var nearestD = 1e18
+      for t in bot.enemies:
+        if bot.tick - t.lastSeen > LocalFreshTicks or dist(t.pos, me) > RetreatRadius:
+          continue
+        let d = dist(t.pos, me)
+        if d < nearestD:
+          nearestD = d
+          nearestE = t.pos
+      if nearestE.x >= 0.0:
+        let away = norm(me - nearestE)
+        var side = vec(-away.y, away.x)
+        if not bot.gridRayClear(me, me + side * 24.0):
+          side = side * -1.0
+        let dirv = norm(away + side * 0.8)
+        let fb = me + dirv * DeclineStep
+        declineTo = vec(fb.x, fb.y)
+    declineTo.x = clamp(declineTo.x, 20.0, float(MapW - 20))
+    declineTo.y = clamp(declineTo.y, 20.0, float(MapH - 20))
+
+  # Movement target from role and flag situation.
+  var target: Vec
+  if retreating:
+    # Outnumbered locally: pull back to regroup. The combat block below still
+    # fires at anything already lined up while we withdraw (a free trade on the
+    # way out is fine) — we just stop ADVANCING into the losing cluster.
+    target = regroupTo
+  elif declining:
+    # Decline the even/losing trade WITHOUT a home bias — converge on a mate or
+    # break laterally away from the specific threat (see declineTo above). The
+    # combat block below still fires back at anything already lined up.
+    target = declineTo
+  elif iCarry:
+    # Run the stolen enemy flag home along the emptiest lane; the exposure
+    # cost in the path field keeps the route hugging cover past remembered
+    # enemies.
+    var laneY = bot.safestLaneY(me)
+    # ⛔⛔ carrierClearBand TOMBSTONE (flag deleted 2026-08-20; history kept
+    # because it is the reason this branch looks so plain).
+    #
+    # v47 audit: the ORIGINAL premise was retracted by the ENGINE before the
+    # lever was even written. It read "every kill respawns an armed,
+    # SPAWN-PROTECTED (thus unkillable) enemy at this pedestal aimed E-W across
+    # pedestal height" — but ab27fc8 (2026-07-22) DELETED spawn protection
+    # entirely, and GV25 (72fd075) made respawns land UNIFORMLY over the whole
+    # endzone, not in a pedestal-height band. So BOTH halves of the lever were
+    # steering the carrier off a firing line that does not exist:
+    #   * the LANE VETO (kick safestLaneY off LaneMid whenever
+    #     |laneY-CenterY| < 84 — always true for LaneMid), which overrode a real
+    #     multi-factor cover scorer with fiction; and
+    #   * the pure-vertical "spawn-cone BUGOUT", which additionally keyed on
+    #     flagHome's stock-arena pedestal x, so on generated maps it fired in
+    #     open midfield around a PHANTOM x and stalled the run.
+    # v47 deleted both bodies — but left the `if tune.carrierClearBand and
+    # arenaExit: ... else: ...` shell standing with two BYTE-IDENTICAL arms, plus
+    # an `arenaExit` (`GameTeams <= 2 and not compact-endzone`) and a
+    # `statedZone(SelfEnemyColor)` call computed only to feed it.
+    #
+    # ⚠️ MEASUREMENT NOTE, so nobody re-derives it: the 2026-08-20 lever-liveness
+    # audit recorded 1,008 fires on 2-team and 0 of 1,851 evaluations on 4-team,
+    # and read that as "a live lever that is 4-team-inert by construction". It is
+    # not. From v47 onward NEITHER board family could be affected — every one of
+    # those 1,008 fires selected between two identical statements. This is the
+    # canonical "it FIRED != it could have CHANGED the outcome" case: a fire
+    # counter cannot see an if whose arms agree. The question "do we want 4-team
+    # support for carrierClearBand?" is therefore MOOT — there is no body to port.
+    # If the respawn-band idea is ever revived it needs a NEW premise measured
+    # against the CURRENT respawn distribution, not this flag switched back on.
+    target = captureAim(bot.team, me, laneY)
+    if lvC(30, bot.tune.carrierHomeStretch):
+      # ⭐ FINISH FIX: within CarrierFinishBand of our home edge the entire
+      # capture column (x < ArenaCaptureClear = 210, mirrored for Blue) is
+      # PROTECTED open floor at EVERY y — a capture scores the instant our
+      # center-x crosses the threshold, regardless of height. So once we're
+      # this close, stop steering toward an extreme lane (y≈40 / y≈619) whose
+      # rows carry the border-attached stub columns near home — that diagonal
+      # walks the carrier's corner straight into a stub and wedges it 80px short
+      # (the confirmed "stuck on the last wall, bottom of the map" deadlock).
+      # Drive STRAIGHT for the column at our current height: the shortest, wall-
+      # free line into the score zone.
+      # Only a COLUMN zone is protected open floor at every y; a compact
+      # endzone would have us drive along our current height straight past it.
+      let hz = statedZone(SelfColor)
+      if (not (hz.have and hz.compact)) and
+          abs(me.x - homeDeepX(bot.team)) < CarrierFinishBand:
+        when defined(hsprobe):
+          inc hsFireCount
+          if abs(target.y - me.y) > 0.5: inc hsMovedCount
+        target = vec(homeDeepX(bot.team), me.y)
+  elif banking:
+    # ⭐ WOUNDED BANK movement (plan #13 §1.2): out-GEOMETRY, not out-run.
+    # Route to the bank cell — the nearest reachable cell that breaks the
+    # fresh threat lines (kit-gravity tiebreak, never deeper into enemy
+    # territory). Position after the carrier arm and before every role/steal
+    # arm: a 1-hp attacker is a fed life, not an attacker, so steal pursuit,
+    # roles and pickups are overridden while banking (§1.5); the imminent-grab
+    # exemption already kept a bot inside GrabCommitRing out of BANK. The gun
+    # is NOT touched here — the engage branch still fires the free trade while
+    # the feet withdraw, and aimLock/orient keep the cone on the chaser.
+    var bankThreats: seq[Vec]
+    var bankNear = vec(-1.0, -1.0)
+    var bankNearD = 1e18
+    var bankRemembered = vec(-1.0, -1.0)   # any-age nearest track (re-emergence)
+    var bankRememberedD = 1e18
+    for t in bot.enemies:
+      let d = dist(t.pos, me)
+      if d < bankRememberedD:
+        bankRememberedD = d
+        bankRemembered = t.pos
+      if bot.tick - t.lastSeen > HoldVsGunTtl or d > HoldVsGunRange:
+        continue
+      bankThreats.add t.pos
+      if d < bankNearD:
+        bankNearD = d
+        bankNear = t.pos
+    if bankThreats.len > 0 and
+        (bot.bankCell < 0 or bot.tick - bot.bankCellTick > BankRecalc):
+      bot.bankCell = bot.findBankCell(client, me, bankThreats)
+      bot.bankCellTick = bot.tick
+    let bankHold = bot.tick - bot.bankBlindSince >= BankBlindTicks
+    if bankHold:
+      # HOLD: no fresh line on us for BankBlindTicks. Park at/near the bank
+      # cell and aim the RE-EMERGENCE bearing (the threat's last position —
+      # the cornerPreAim idea) via the orient mechanism; medEcon below is free
+      # to override the target toward a kit (its aimedAtUs veto now passes).
+      target = (if bot.bankCell >= 0: cellCenter(bot.bankCell) else: me)
+      if bankRemembered.x >= 0:
+        bot.orientPos = bankRemembered
+        bot.orientUntil = bot.tick + 2
+    elif bot.bankCell >= 0:
+      target = cellCenter(bot.bankCell)    # SEEK: break the line via cover
+    elif bankNear.x >= 0:
+      # Open-map fallback (§5.4 caveat): DIAGONAL withdraw, the press-branch
+      # pattern mirrored — away + perpendicular-with-clearance, biased toward
+      # our side. Radial-only is the measured-useless shape.
+      let away = norm(me - bankNear)
+      var side = vec(-away.y, away.x)
+      if not bot.gridRayClear(me, me + side * 24.0):
+        side = side * -1.0
+      var dirv = away + side * 0.8
+      dirv.x += homeSign(bot.team) * 0.4
+      let fb = me + norm(dirv) * 96.0
+      target = vec(clamp(fb.x, 20.0, float(MapW - 20)),
+                   clamp(fb.y, 20.0, float(MapH - 20)))
+    else:
+      target = me                          # no threat known: hold; medEcon routes
+  elif lvC(31, ownStolen and (bot.role == HomeDefender or
+      (bot.role == Overwatch and
+       bot.tick - bot.carrierSeen <= (if bot.tune.huntCarrier: HuntCarrierStaleTtl
+                                      else: ThiefFixTtl)) or
+      (defined(swarm) and not iCarry and not mateCarry and
+       bot.tick - bot.carrierSeen <= ThiefFixTtl))):
+    # swarm: in shuffled-seat leagues this policy fields only 2-3 agents and
+    # their roles are seat-lottery — when our flag is stolen with a fresh fix,
+    # whoever sees it hunts, or an enemy capture ends the episode against us.
+    # The back line intercepts the thief running OUR flag toward ITS home
+    # edge; attackers keep pressing the enemy pedestal so the capture race
+    # stays on. With a fresh fix, converge on the predicted route; without
+    # one the thief is fogged but MUST cross mid toward its home edge, so
+    # the defender guards the crossing on the lane nearest the last fix and
+    # sweeps its vision — reacquisition takes eyes, not magic.
+    if bot.tick - bot.carrierSeen <= ThiefFixTtl:
+      # Converge on the thief's predicted path toward the enemy capture edge.
+      var predicted = bot.carrierPos +
+        bot.carrierVel * float(18 + bot.tick - bot.carrierSeen)
+      predicted.x += -homeSign(bot.team) * 40.0
+      target = vec(clamp(predicted.x, 20.0, float(MapW - 20)),
+                   clamp(predicted.y, 20.0, float(MapH - 20)))
+    elif lvC(32, bot.tune.huntCarrier and bot.carrierSeen > -100_000 and
+        bot.tick - bot.carrierSeen <= HuntCarrierStaleTtl):
+      # HUNT CARRIER (round-624 OUT-RACE fix): the fix is stale but the flag is
+      # STILL out there and the enemy is racing it home. Do NOT park on a static
+      # lane guess (the old behavior that let their carrier run EXPOSED 518 ticks
+      # unchallenged) and do NOT extrapolate a stale velocity into an off-map
+      # phantom — race to the INTERCEPT. The enemy carrier MUST reach its own
+      # capture edge (enemy home x), so head for that edge on the lane we last saw
+      # it, standing off HuntCarrierStandoff px toward center so we cut the corner
+      # and MEET the runner instead of trailing its tail. This is the defensive half
+      # of the capture race that pairs with carrierHomeStretch (our finish speed).
+      # ⚠️ NOTE (A/B 2026-07-17): this branch NEVER fires in the self-play mirror —
+      # the 41–240t stale-fix window it needs is a FIELD-only scenario (self-play
+      # kills enemy carriers before the fix goes stale). Validate hosted, not in lab.
+      # ⭐ STATED ZONE, NOT flagHome (audit finding #3): reuse `stealTarget`, the
+      # same observed-pedestal/statedZone/flagHome fallback chain the "PEDESTALS
+      # ARE OBSERVED" block already computed this frame for our own raid target.
+      # On a 2-team board the thief can only be the one enemy, so this is exactly
+      # the value `enemy(bot.team)` names. On a 4-team board there is no signal
+      # that identifies WHICH rival stole our flag (bot.carrierPos is a bare
+      # position fix, no colour attribution), so this is the best available
+      # proxy — the same approximation the GameTeams>2 branch just below makes
+      # ("cover the two most probable [zones] by seat parity").
+      let capEdgeX = stealTarget.x
+      target = vec(clamp(capEdgeX + homeSign(bot.team) * HuntCarrierStandoff,
+                         20.0, float(MapW - 20)),
+                   clamp(bot.carrierPos.y, 20.0, float(MapH - 20)))
+    elif GameTeams > 2:
+      # ⭐ MULTI-TEAM ROUTE INTERCEPT (FFA-4, 2026-08-03). The 2-team fallback
+      # below guards the map centre at an arena lane height — on a 4-team board
+      # that is a random midfield point. But a stolen heart can only be CAPTURED
+      # at one of exactly three STATED places (the rival endzones, init
+      # markers), and it starts from one KNOWN place (our pedestal). Post on
+      # the route: measured before this branch existed, our heart was carried
+      # 1094 ticks while our nearest bot drifted from 668px to 1239px AWAY.
+      #
+      # Which zone? Unknowable without a sighting, so cover the two most
+      # probable by seat parity (all bots agree — pure function of shared
+      # state): nearest zone to our pedestal first (shortest carry, and the
+      # rival we contact most), second-nearest for the odd seats. Stand at the
+      # route midpoint, not in their zone — their spawn pocket is a grinder.
+      var zones: seq[Vec]
+      for z in EndzoneMarks:
+        if z.color != SelfColor:
+          zones.add vec(float(z.x0 + z.x1) * 0.5, float(z.y0 + z.y1) * 0.5)
+      if zones.len > 0:
+        let anchor = (if bot.ownPedSeen: bot.ownPedPos
+                      else: vec(float(CenterX), float(CenterY)))
+        for i in 0 ..< zones.len:     # nearest-first, tiny fixed-size sort
+          for j in i + 1 ..< zones.len:
+            if dist(zones[j], anchor) < dist(zones[i], anchor):
+              swap(zones[i], zones[j])
+        let pick = zones[min((bot.slot div GameTeams) mod 2, zones.len - 1)]
+        target = anchor + (pick - anchor) * 0.55
+      else:
+        target = vec(float(CenterX), float(CenterY))
+    else:
+      # No fix this life: guess the lane. Default mid; COUNTER-DAVEEY top-bias
+      # guesses LaneTop against a top-heavy field. A stale prior fix (seen earlier
+      # this life) still wins over the guess — snap to the lane nearest that.
+      var laneY = (if bot.tune.topBias: LaneTop else: LaneMid)
+      if bot.carrierSeen > -100_000:
+        var bestD = 1e18
+        for lane in [LaneTop, LaneMid, LaneBottom]:
+          if abs(bot.carrierPos.y - lane) < bestD:
+            bestD = abs(bot.carrierPos.y - lane)
+            laneY = lane
+      target = vec(float(CenterX) - homeSign(bot.team) * 60.0, laneY)
+  elif lvC(33, mateCarry and bot.tune.carrierScreen and
+      bot.role in {MidBottom, FlankBottom, MidGuard}):
+    # ⭐⭐⭐ CONE SCREEN: the killer of a fresh carrier is the INVULNERABLE
+    # respawner at the robbed pedestal, shooting straight E-W (spawn aim) at the
+    # carrier's y. It is not a "remembered enemy" (it just spawned), so the old
+    # nearest-threat screen never sees it. Body-block the ray instead: sit at
+    # the carrier's EXACT y, one body toward the enemy pocket the shot comes
+    # from — selectFireTarget stops at the first body (friendly fire ON), so the
+    # escort eats the shot meant for the carrier. Only while the carrier is
+    # still in the danger corridor near the pocket; past that, normal escort.
+    let
+      # v47 audit: was flagHome(enemy()) — the STOCK ARENA's hard-coded
+      # pedestal (186/1049, 329), "a point from a different game" on every
+      # generated map, so the screen armed around a phantom x and stood down
+      # before the real pocket. Use the OBSERVED pedestal cache (never fogged,
+      # cached the moment the grab happens) like every migrated site.
+      pocket = (if bot.stealPedSeen: bot.stealPedPos
+                else: flagHome(enemy(bot.team)))
+      pocketDist = abs(mateCarryPos.x - pocket.x)
+    if pocketDist < PocketClearX * 3.0:
+      # -homeSign points from the carrier back toward the enemy pocket.
+      target = vec(mateCarryPos.x - homeSign(bot.team) * 30.0, mateCarryPos.y)
+    else:
+      target = mateCarryPos + vec(homeSign(bot.team) * 40.0, 0.0)
+  elif mateCarry:
+    case bot.role
+    of MidTop, FlankTop:
+      target = mateCarryPos + vec(homeSign(bot.team) * 46.0, -30.0)
+    of MidBottom, FlankBottom:
+      # Rear guard: sit between the carrier and the enemy pocket it just
+      # robbed — respawners chase from there, and the gun kills the NEAREST
+      # player in the cone, so a body on the ray shields the carrier.
+      target = mateCarryPos + vec(
+        -homeSign(bot.team) * 42.0,
+        (if bot.role == MidBottom: 22.0 else: -22.0)
+      )
+    of MidGuard:
+      # Screen the carrier from the nearest remembered threat.
+      var threat = -1
+      var threatD = 1e18
+      for i in 0 ..< bot.enemies.len:
+        let d = dist(bot.enemies[i].pos, mateCarryPos)
+        if d < threatD:
+          threatD = d
+          threat = i
+      if threat >= 0:
+        target = mateCarryPos + norm(bot.enemies[threat].pos - mateCarryPos) * 30.0
+      else:
+        target = mateCarryPos + vec(-homeSign(bot.team) * 32.0, 0.0)
+    of Overwatch:
+      when defined(swarm):
+        # Only 2-3 of our agents exist: a completed capture ends the episode,
+        # so even the back line escorts the run home.
+        target = mateCarryPos + vec(homeSign(bot.team) * 40.0, 24.0)
+      else:
+        # The posts already overwatch the carrier's retreat across mid.
+        target =
+          if bot.postReady: bot.postHold
+          else: mateCarryPos + vec(-homeSign(bot.team) * 32.0, 0.0)
+    of HomeDefender:
+      when defined(swarm):
+        target = mateCarryPos + vec(homeSign(bot.team) * 40.0, -24.0)
+      else:
+        target =
+          if lvC(34, bot.tune.pointOfDomination and bot.dominateReady): bot.dominatePost
+          else: bot.chokeHold      # #7: command the crossing while we attack
+    # ESCORT RUN (round-624 KILL-case fix): the role offsets above TRAIL the
+    # carrier; they leave no body on the ray of a threat closing from the SIDE or
+    # FRONT in open midfield — exactly how the 624 carrier died (minDist=280, alone,
+    # past carrierScreen's pocket-cone reach). When a remembered enemy is genuinely
+    # closing on the carrier and this bot is a nearby escort, override the trailing
+    # offset and INTERPOSE one body onto the threat->carrier ray (friendly fire ON =
+    # the first body in the cone eats the shot). Only overrides when a threat is
+    # actually near — normal trailing escort is preserved otherwise.
+    if lvC(35, bot.tune.escortRun and dist(me, mateCarryPos) < EscortRunMateRange):
+      var thr = -1
+      var thrD = EscortRunThreatRange
+      for i in 0 ..< bot.enemies.len:
+        let d = dist(bot.enemies[i].pos, mateCarryPos)
+        if d < thrD:
+          thrD = d
+          thr = i
+      if thr >= 0:
+        # One body toward the threat from the carrier, onto the incoming ray.
+        target = mateCarryPos + norm(bot.enemies[thr].pos - mateCarryPos) * EscortRunGap
+  elif bot.role == HomeDefender and not pushOut:
+    # Hold the choke on our pedestal approach; break off to chase the nearest
+    # intruder on our half (every steal has to come through here).
+    var intruder = -1
+    var intruderD = 1e18
+    for i in 0 ..< bot.enemies.len:
+      let onOurHalf =
+        if bot.team == Red: bot.enemies[i].pos.x < float(CenterX) + 60
+        else: bot.enemies[i].pos.x > float(CenterX) - 60
+      if not onOurHalf:
+        continue
+      let d = dist(bot.enemies[i].pos, me)
+      if d < intruderD:
+        intruderD = d
+        intruder = i
+    if intruder >= 0:
+      target = bot.enemies[intruder].pos + bot.enemies[intruder].vel * 6.0
+    elif lvC(36, bot.tune.pointOfDomination and bot.dominateReady):
+      # #7 POINT OF DOMINATION: hold the cover cell that commands the most of the
+      # ground an intruder must cross, not a fixed choke — see the thief coming
+      # down any lane and kill it before the pocket.
+      target = bot.dominatePost
+    else:
+      target = bot.chokeHold
+    # COUNTER-DAVEEY: no intruder in sight — bias the idle post HIGH toward the
+    # lane the field favours, so a gun already looks down the top crossing the
+    # thief usually takes. Only when holding a fixed choke (not while actively
+    # chasing an intruder or on a domination post already scored for coverage).
+    if lvC(37, bot.tune.topBias and intruder < 0 and target.y > LaneTop + 40.0):
+      target = vec(target.x, max(LaneTop, target.y - 120.0))
+  elif bot.role == Overwatch and not pushOut:
+    if bot.postReady:
+      # Peek-and-shoot cycle: hold behind the post; with the gun up and a
+      # remembered enemy in reach, sidestep to the peek cell to open the
+      # line (the combat block below takes the shot and ducks us back).
+      target = bot.postHold
+      if shotReady:
+        for t in bot.enemies:
+          if bot.tick - t.lastSeen <= 24 and
+              dist(t.pos, bot.postHold) < FireRange + 30.0:
+            target = bot.postPeek
+            break
+    else:
+      target = vec(float(CenterX) + homeSign(bot.team) * 70.0, float(CenterY))
+  else:
+    # Attackers: route to the ENEMY pedestal — a fixed, known position by
+    # team side. The lead rusher races it dead straight (its seat spawns at
+    # pedestal height), the second mid trails behind and offset so one enemy
+    # cone cannot kill the pair; flankers run the extreme lanes deep past
+    # mid, then hit the pedestal pocket from behind.
+    target = stealTarget
+    # ⭐⭐ MID-QUAD BREAK, levers 2 and 3 (2026-08-14). NOROLESEP=1 / NOMIDSPREAD=1.
+    # `dup` = I am NOT the primary holder of my role (a lower seat has it too).
+    # Eight seats over seven roles always doubles one role, and until now the
+    # two holders ran the SAME route with the SAME offsets. That is how four
+    # bodies ended up in one 16px door and how 58.4% of the grenades that hurt
+    # us caught two of ours at once. Both levers are APPROACH-only: they live
+    # entirely inside the existing >90px / >170px gates, so once a bot is in the
+    # pocket the target is byte-identical to the shipped champion and the touch
+    # (our known conversion lever, 71.8% vs 94.9%) is untouched.
+    let dup = bot.tune.roleSep and bot.roleOrd > 0
+    let stealD = dist(me, stealTarget)
+    # ⚠️⚠️ THE ANCHOR MUST LIE INSIDE THE RELEASE GATE. This branch re-asserts
+    # its anchor on every frame where `stealD > 90`, so an anchor whose own
+    # distance from stealTarget EXCEEDS 90 is a bot that walks to it, re-reads
+    # the same gate, and parks there for the rest of the round — never closing
+    # on the pedestal, with no error and no statue signature (it moved, it just
+    # stopped arriving). The original offsets are safe by luck: |(34,26)| = 43
+    # and |(60,−26)| = 65. Widening y to 72 puts MidGuard at 94 and the
+    # duplicate offsets at 143/166 — all three OUTSIDE the gate.
+    # So the spread is a two-stage approach, not a bigger anchor: wide while we
+    # are still walking (beyond MidSpreadRange), then the ORIGINAL narrow anchor
+    # for the run-in, then stealTarget itself inside 90. Each stage is strictly
+    # closer than the one before, so it is monotone inward and cannot oscillate,
+    # and the final two stages are byte-identical to the shipped champion —
+    # which is the point: touch conversion (71.8% vs 94.9%) is our known lever
+    # and nothing here is allowed to tax it.
+    let spreadFar = stealD > MidSpreadRange
+    let trailY = (if bot.tune.midSpread and spreadFar: MidTrailWideY
+                  else: MidTrailNarrowY)
+    let sepX = (if dup and spreadFar: RoleSepTrailPx else: 0.0)
+    let sepFlip = dup and spreadFar
+    case bot.role
+    of MidBottom:
+      if stealD > 90:
+        # A duplicate MidBottom (the 4-team seat 4, and the 2-team seat 4 when
+        # NOSEAT4=1 reverts lever 1) mirrors the trail into the HIGH half and
+        # sits deeper, so on the walk in it can neither clone its co-holder nor
+        # land on MidGuard's mirrored post.
+        target = stealTarget + vec(
+          homeSign(bot.team) * (34.0 + sepX),
+          (if sepFlip: -trailY else: trailY))
+        when defined(roleprobe):
+          rpMidFire(bot.team, bot.teamSeat, trailY)
+          rpAnchorCheck(bot.team, bot.teamSeat, target, stealTarget, stealD)
+          if sepFlip: rpSepFire(bot.team, bot.teamSeat)
+        when defined(hscensus):
+          if ffa4Board: hsClassifyCell(hsMidCell, target, myColor, enemyColor)
+    of MidGuard:
+      if stealD > 90:
+        target = stealTarget + vec(
+          homeSign(bot.team) * (60.0 + sepX),
+          (if sepFlip: trailY else: -trailY))
+        when defined(roleprobe):
+          rpMidFire(bot.team, bot.teamSeat, trailY)
+          rpAnchorCheck(bot.team, bot.teamSeat, target, stealTarget, stealD)
+          if sepFlip: rpSepFire(bot.team, bot.teamSeat)
+    of FlankTop, FlankBottom:
+      # Run the wide lane deep, then turn straight in for the grab so the
+      # flankers hit the pocket together with the mid trio instead of
+      # trickling in.
+      var laneY = (if bot.role == FlankTop: LaneTop else: LaneBottom)
+      var depth = FlankDepth
+      if dup:
+        # The SECOND holder of a lane role takes the band between its namesake
+        # lane and LaneMid — both endpoints are map-derived open corridors, so
+        # the blend is inside the walkable band the map declares, not a guessed
+        # y — and turns in early. Separated in height AND in arrival beat.
+        # No parking risk here: unlike the mid anchors this branch's gate (170px)
+        # releases on RANGE TO THE PEDESTAL, and its target is a staging point on
+        # our OWN side of centre, so the bot is always walking toward the gate.
+        laneY = laneY + (LaneMid - laneY) * RoleSepLaneMix
+        depth = FlankDepth * RoleSepDepthMul
+      if not bot.behindLines and stealD > 170.0:
+        # ⭐⭐⭐ RAID FRAME, half 1 of 2 — THE FLANK STAGING POINT (the n≈13k/board
+        # site, and the whole reason the lever exists). `vec(CenterX -
+        # homeSign*depth, laneY)` is an x-only expression on a board whose raid
+        # axis is ±y; it put this point in an uninvolved third party's Voronoi
+        # cell on 97.3-99.8% of the frames it was written, against a 6.8-10.1%
+        # body-position baseline. Recomputed in the frame of the raid we are
+        # actually running: same depth, same lane, correct axis. Moves as ONE
+        # UNIT with the behindLines release above.
+        target =
+          if bot.tune.raidFrame and ffa4Board:
+            raidStagePoint(ownHome, stealTarget, depth, laneY)
+          else:
+            vec(float(CenterX) - homeSign(bot.team) * depth, laneY)
+        when defined(roleprobe):
+          if dup: rpSepFire(bot.team, bot.teamSeat)
+        when defined(hscensus):
+          ## ⭐ CONSEQUENCE, not reach: WHOSE YARD does the emitted staging
+          ## point land in? Own = fine. The raid target's = intended. A THIRD
+          ## party's = a fight we never chose, in the opening, which is the
+          ## measured ffa4 mechanism (contact volume). Classified by nearest
+          ## stated endzone centre — the same board-wide init-marker geometry
+          ## every team has from tick 0.
+          if ffa4Board:
+            hsClassifyCell(hsFlankCell, target, myColor, enemyColor)
+            if bot.slot >= 0 and bot.slot < 32:
+              hsStgPos[bot.slot] = target
+              hsStgFrom[bot.slot] = me
+              hsStgTick[bot.slot] = bot.tick
+              hsStgLive[bot.slot] = true
+    else:
+      discard
+
+    # PLAYBOOK: mass the wave on the favored flank. The play (PushTop/PushBottom)
+    # is computed from the shared round clock, so all 8 attackers agree on the
+    # strong side without comms and it flips every PlayPeriod ticks — an opponent
+    # can't pre-stack a fixed lane. Two designated feint holders (the two mids that
+    # spawn at flag height) keep the OFF lane so the pedestal is still pressured;
+    # the other four attackers bias toward the strong flank on the APPROACH only
+    # (not once in the pocket, where everyone must converge on the pedestal).
+    if lvC(38, bot.tune.playbook and not iCarry and dist(me, stealTarget) > 150.0):
+      # With the comms bus wired, fold our own scenario read + a heard mate play
+      # through the shared matrix; otherwise the plain shared-clock flank (the
+      # shipped path is byte-identical — selectScenarioPlay reduces to selectPlay
+      # when no scenario fires and no play was heard).
+      let play =
+        if lvC(39, bot.tune.commsPlay or bot.tune.commsBus):
+          selectScenarioPlay(bot, bot.tick - bot.gameStart, ownStolen, localSc)
+        else:
+          selectPlay(bot.tick - bot.gameStart, ownStolen)
+      let feintHolder = bot.role in {MidTop, MidBottom}   # the two flag-height mids
+      if play == PushTop and not feintHolder:
+        target = vec(target.x, max(LaneTop, target.y - PlayFlankPull))
+      elif play == PushBottom and not feintHolder:
+        target = vec(target.x, min(LaneBottom, target.y + PlayFlankPull))
+
+    # ⭐⭐ v56 HEARD-PLAY MOVEMENT EXECUTORS (the comms-forensics fix). Until now the
+    # ONLY thing a heard play could move was the flank bias above — and only for the
+    # two flip tokens, which are structurally unemittable (emit requires a live
+    # localSc, and no classifier ever produces ScNone). So the three tokens that DO
+    # ride the wire had exactly one behavioural outlet each: STACK had NONE at all
+    # (23.8% of traffic, decoded and dropped), WIPE and LINE lowered a hold threshold
+    # (75.5% of traffic whose designed reaction was to stand still). This block is the
+    # missing half: a fresh call from a known origin now bends the APPROACH.
+    #
+    # Design rules, all inherited from prior burns:
+    #   • movement intent ONLY — the turret is never diverted by a codeword (v1/v2
+    #     cone-diversion loss, REF-comms).
+    #   • APPROACH only (dist to the pocket > 150) — inside the pocket everyone
+    #     converges on the pedestal and the touch latch outranks every play.
+    #   • never on a carrier / escort / recapture — those states own the feet.
+    #   • bounded pull toward/away from a POINT, clamped to the lane corridor, so
+    #     the worst case is a lane offset, never a walk into geometry.
+    #   • it decays with CommsPlayTtl like every other adoption.
+    # Runs AFTER the clock flank so an EVENT beats the clock — which is the whole
+    # point of an event-driven play layer.
+    # ⚠️ localSc == ScNone is the SAME precedence rule selectScenarioPlay already
+    # enforces one block up ("our own fresh classification takes priority; else a
+    # fresh heard play; else clock"). Without it these executors would fight the
+    # local levers — a bot that classifies ScLine itself is being held at a rally by
+    # holdLine while a heard WIPE tried to drag its lane elsewhere. A bot with a live
+    # local read is AT the picture and is the CALLER; a bot with none is the listener,
+    # and the listener is who this block is for. It also lines the population up with
+    # the geometry: ScStack needs the pocket, ScWipe/ScLine need depth, so the bots
+    # this leaves are exactly the ones still on the approach.
+    let heardFresh = bot.tune.commsPlay and bot.heardPlay != RpNone and
+      localSc == ScNone and
+      bot.tick - bot.heardPlayTick <= CommsPlayTtl and bot.heardPlayPos.x >= 0.0
+    if heardFresh and not iCarry and not mateCarry and not ownStolen and
+        not retreating and not declining and dist(me, stealTarget) > 150.0:
+      let callD = dist(bot.heardPlayPos, me)
+      let before = target
+      if lvC(40, bot.heardPlay == RpStack and bot.tune.stackConverge):
+        when defined(commsprobe):
+          inc csStackFreshEntry
+          if callD < StackConvergeMin: inc csStackTooClose
+          if callD > StackConvergeMax: inc csStackTooFar
+          if callD >= StackConvergeMin and callD <= StackConvergeMax: inc csStackBandOk
+        # ⭐ Pq/STACK — THE SECOND GUN. The caller is at a contested pocket with >=2
+        # fresh guns on it and is about to be told (by smartGrab) to hold at standoff
+        # until it has an advantage. The advantage it is waiting for is US: one more
+        # body at the pocket flips its `coverMates`/`pickEdge` read and opens the
+        # touch. So pull our approach point toward the caller, bounded — this is the
+        # convergence the C1 doctrine comment promised and no code ever performed.
+        if callD >= StackConvergeMin and callD <= StackConvergeMax:
+          let d = dist(bot.heardPlayPos, target)
+          when defined(commsprobe):
+            if d <= 1.0: inc csStackNoDelta
+          if d > 1.0:
+            let step = min(StackConvergePull, d)
+            target = target + norm(bot.heardPlayPos - target) * step
+            target = vec(target.x, clamp(target.y, LaneTop, LaneBottom))
+            when defined(commsprobe):
+              if dist(before, target) > 1.0:
+                inc csStackMove
+                csStackMovePx += dist(before, target)
+      elif lvC(41, bot.heardPlay == RpWipe and bot.tune.playMove):
+        # ⭐ Px/WIPE — PUSH THROUGH THE HOLE. A wipe call means the caller is deep and
+        # the enemy in front of it is GONE. regroupPush already lets a forward mid
+        # hold a rally on that news; nothing ever pointed a body at the hole. Pull our
+        # approach LANE (y only — the x commitment stays the role's) toward the
+        # caller's lane, so the wave arrives where the vacuum actually is.
+        if callD <= StackConvergeMax:
+          let dy = clamp(bot.heardPlayPos.y - target.y, -WipeLanePull, WipeLanePull)
+          target = vec(target.x, clamp(target.y + dy, LaneTop, LaneBottom))
+          when defined(commsprobe):
+            if dist(before, target) > 1.0:
+              inc csWipeMove
+              csWipeMovePx += dist(before, target)
+      elif lvC(42, bot.heardPlay == RpLine and bot.tune.playMove):
+        # ⭐ Pw/LINE — DON'T FEED THE DOOR. A line call names where the enemy is
+        # STANDING, waiting. Today the only adoptions are to hold (holdLine) or to
+        # converge an arc breacher onto it; a plain gun carrier just kept walking in.
+        # The play-layer study measured what that costs: our entry-y stdev vs the #1
+        # is 5-31px against his 148-242, all eight crossings through ONE door where a
+        # single camper took five kills. So when the called line sits in OUR approach
+        # lane, shove the lane to the far half of the map — the door he is not on.
+        # (holdLine's rally still owns anyone already over-extended; this is the
+        # APPROACH, before we are in his fire.)
+        # The direction is deliberately NOT "away from me" but "the half of the map
+        # opposite the line": every listener on the same call diverts the SAME way, so
+        # the wave re-forms in one new lane instead of splitting into two trickles —
+        # which is the exact failure (one body at a time) the funnel study measured.
+        if callD <= StackConvergeMax and
+            abs(bot.heardPlayPos.y - target.y) <= LineDivertBand:
+          let away = (if bot.heardPlayPos.y >= float(CenterY): -1.0 else: 1.0)
+          target = vec(target.x,
+            clamp(target.y + away * LineDivertPush, LaneTop, LaneBottom))
+          when defined(commsprobe):
+            if dist(before, target) > 1.0:
+              inc csLineMove
+              csLineMovePx += dist(before, target)
+
+  # ⭐⭐ CONTINGENCY STATE MACHINE (planLayer). Layers the shared-plan PHASE posture
+  # on top of the flank bias above. The phase is a pure fn of shared signals so all 8
+  # bots agree and flow branch→branch unanimously. Drives movement HERE and the
+  # engage/combat aggression BELOW (botPhase is hoisted so the combat block reads it).
+  var botPhase = PhProbe        # function-scope so the combat block can key maxEngage on it
+  var pickEdge = false          # function-scope: the Captain's LOCAL man-advantage read, reused
+                                # by the pocket-commit gate (commit the dive only WITH advantage)
+  if lvC(43, bot.tune.planLayer):
+    # Enemy heart state — globally legible. Only OUR team can carry it, so it is either
+    # on its pedestal or being carried by us (iCarry => we carry).
+    let efState = (if iCarry or mateCarry: EfCarried else: EfPedestal)
+    # pickEdge: a LOCAL man-advantage (more fresh mates than fresh enemies near me) — the
+    # non-load-bearing accelerator; the machine flows on shared signals without it.
+    var freshM = 0
+    var freshE = 0
+    for t in bot.mates:
+      if bot.tick - t.lastSeen <= LocalFreshTicks and dist(t.pos, me) <= PickEdgeRange: inc freshM
+    for t in bot.enemies:
+      if bot.tick - t.lastSeen <= LocalFreshTicks and dist(t.pos, me) <= PickEdgeRange: inc freshE
+    pickEdge = freshM > freshE and freshM >= 1
+    botPhase = teamPhase(bot.tick - bot.gameStart, ownStolen, efState, pickEdge,
+      (if bot.tune.forceTiming: bot.tune.forceClockTick else: ForceClockTick))
+    when defined(phprobe):
+      # -d:phprobe ONLY (2026-07-29): phase OCCUPANCY — how many decide() frames the
+      # team actually spends in each phase, and how late the clock actually runs. This
+      # is the empirical premise the v21 design doc guessed at ("games end ~2500t so
+      # PhForce at 3800 rarely fires"); GV23's action-clock floor (overtimeTicks) makes
+      # the guess even more suspect, so MEASURE before tuning the constant.
+      inc phFrames[botPhase]
+      if botPhase == PhDefend: inc dtPhase
+      let el = bot.tick - bot.gameStart
+      if el > phMaxElapsed: phMaxElapsed = el
+      # WS-path emit (2026-08-03): the tallies above only ever printed through the
+      # in-process eval harness, which is 2-team-only — on a real 4-team server
+      # game the counters incremented and nothing reported them. Same counters,
+      # periodic stderr line, so the probe works on ANY board.
+      var phTot = 0
+      for ph in TeamPhase: phTot += phFrames[ph]
+      if phTot mod 100 == 0:
+        var line = "PHOCC slot=" & $bot.slot & " tot=" & $phTot
+        for ph in TeamPhase:
+          line &= " " & ($ph)[2..^1] & "=" & $phFrames[ph]
+        line &= " ownStolenNow=" & $ownStolen
+        # ⭐ 2026-08-14: print the RESOLVED force trigger, not the constant we assume.
+        # ForceClockTickTuned=2000 reads like the shipped value in the source, but
+        # `forceTiming` is never set outside defaultCombatTune, so what actually runs
+        # is ForceClockTick=3800. Print it so the next reader measures instead of
+        # inferring (maxElapsed alongside it says whether 3800 is even reachable).
+        line &= " forceTiming=" & $bot.tune.forceTiming &
+          " forceTickInUse=" &
+          $(if bot.tune.forceTiming: bot.tune.forceClockTick else: ForceClockTick) &
+          " maxElapsed=" & $phMaxElapsed
+        stderr.writeLine line
+  if lvC(44, bot.tune.planLayer and not iCarry):
+    let phase = botPhase
+    let attacker = bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom}
+    case phase
+    of PhOpen:
+      # Win the opening clash as a GROUP: pull attackers toward the shared mid lane so
+      # the first contact lands together, not eight bots trickling up separate lanes.
+      if attacker and dist(me, stealTarget) > PocketRushRange:
+        let midPull = clamp(float(CenterY) - me.y, -OpenGroupPull, OpenGroupPull)
+        target = vec(target.x, clamp(me.y + midPull, LaneTop, LaneBottom))
+    of PhPress:
+      # Up a body locally: press the objective — bias deeper toward the pocket to spend
+      # the man-advantage before the downed enemy respawns (regroupPush executes the rally).
+      if attacker and dist(me, stealTarget) > PocketRushRange:
+        target = vec(target.x + homeSign(bot.team) * -PlayFlankPull * 0.5, target.y)
+    of PhEscort:
+      # WE carry: every free gun collapses onto the carrier's home lane to suppress its
+      # chasers (body-block is void — CollisionW=1 — so escort = KILL the chaser). Move
+      # toward the carrier's Y so the wave shields the run home; combat handles the kill.
+      if attacker and dist(me, mateCarryPos) <= EscortCollapseRange:
+        target = vec(target.x, clamp(mateCarryPos.y, LaneTop, LaneBottom))
+    of PhForce:
+      # Clock late, no decisive edge: commit a grouped all-in on the pedestal — a
+      # "good enough" hit beats stalling into the −1 timeout draw. v26: the two DEFENSIVE
+      # seats (Overwatch/HomeDefender) join the all-in too — camping a post into a −1
+      # timeout draw is the worst outcome, so EVERY seat commits to the enemy pedestal.
+      target = stealTarget
+    of PhDefend:
+      # v26 (defense-recapture 62 → the marquee phase was an inert `discard`): a real
+      # FULL-TEAM recapture collapse. Our heart is stolen; the thief runs it toward the
+      # ENEMY half, so free ATTACKER seats (the 6 that would otherwise keep pressing the
+      # enemy pedestal) turn around and converge on the intercept lane between the thief's
+      # last-known spot and the enemy capture edge — body-block is void, so this is to KILL
+      # the carrier (combat teeth below raise their engage). The home defenders already hold
+      # the pedestal (ownStolen branches); this adds the 6 hunters the phase always promised.
+      # ⭐ v48 (audit "PhDefend outranks PhEscort"): a MUTUAL-CARRY race used to
+      # strip every escort off our own live capture run the instant a rival
+      # stole from us — trading a capture in flight for a broken chase. A seat
+      # already escorting our carrier STAYS on the escort; the rest hunt.
+      # NOESCSTAY=1 reverts.
+      let escStay = mateCarry and attacker and
+          dist(me, mateCarryPos) <= EscortCollapseRange and
+          getEnv("NOESCSTAY").len == 0
+      if escStay:
+        target = vec(target.x, clamp(mateCarryPos.y, LaneTop, LaneBottom))
+      when defined(phprobe):
+        inc dtNotCarry
+        if attacker: inc dtAttacker
+        if lvC(45, attacker and bot.tune.defendTeeth): inc dtOn
+      if attacker and not escStay:
+        if lvC(46, bot.tune.defendTeeth):
+          # ⭐ v29 RECAPTURE TEETH — the fix v26 got WRONG. v26 aimed the collapse at
+          # `mateCarryPos`, which is where OUR mate carries the ENEMY heart: the wrong
+          # entity entirely, and (0,0) whenever no mate carries, so the `> 0.5` guard fell
+          # through to `me.y` and the "converge on the thief's lane" collapse resolved to
+          # "walk to mid at whatever height I already am" — a mid rally, not a recapture.
+          # The thief's real position is `bot.carrierPos` @ `carrierSeen` (the own-flag
+          # banner is centered on its carrier), the same read the HomeDefender intercept
+          # and huntCarrier already trust. Three tiers by fix freshness:
+          if bot.tick - bot.carrierSeen <= ThiefFixTtl:
+            when defined(phprobe): inc dtFresh
+            # FRESH fix: lead the thief toward ITS capture edge and cut it off ahead.
+            var predicted = bot.carrierPos +
+              bot.carrierVel * float(18 + bot.tick - bot.carrierSeen)
+            predicted.x += -homeSign(bot.team) * DefendInterceptPush
+            target = vec(clamp(predicted.x, 20.0, float(MapW - 20)),
+                         clamp(predicted.y, 20.0, float(MapH - 20)))
+          elif bot.carrierSeen > -100_000 and
+              bot.tick - bot.carrierSeen <= HuntCarrierStaleTtl:
+            when defined(phprobe): inc dtStale
+            # STALE but still out there: do not extrapolate a dead velocity into an
+            # off-map phantom (huntCarrier's lesson). Race to the crossing the thief MUST
+            # pass, on the lane of the last fix — reacquisition takes eyes, not magic.
+            target = vec(float(CenterX) + homeSign(bot.team) * DefendCrossGuard,
+                         clamp(bot.carrierPos.y, LaneTop, LaneBottom))
+          else:
+            when defined(phprobe): inc dtBlind
+            # NO usable fix — and MEASURED to be the dominant tier: 1215 of 1263 recapture
+            # frames (96%). Of course it is: the 6 attacker seats are deep in enemy ground
+            # when the steal lands, so the thief is never in their fog cone. v26 answered
+            # this by standing at mid at the bot's own height, which is where an attacker
+            # already was — the reason the "collapse" was invisible.
+            # But the thief's ROUTE is STATIC GEOMETRY, no fog read needed: it must run from
+            # OUR pedestal to ITS OWN capture edge. Cut that line at the mid crossing instead
+            # of loitering at our own height — the same move that made medEcon work (route to
+            # known coords, don't wait to see it). On the classic 2-team arena both pedestals
+            # sit at the same height (flagHome y=329 either side), so the route IS the
+            # pedestal lane. ⭐ STATED ZONE, NOT flagHome (audit finding #3): that equal-
+            # height assumption is arena-specific and false on a generated 4-team board, so
+            # reuse `ownHome` — the same observed-pedestal/statedZone/flagHome fallback the
+            # "PEDESTALS ARE OBSERVED" block already computed this frame for OUR OWN colour —
+            # instead of the hardcoded constant. Spread the seats into a PICKET across the
+            # crossing rather than stacking all six on one pixel: a cluster is what area
+            # weapons farm (the grenade lesson from the anti-line work), and a picket covers
+            # the lane the thief may drift to.
+            let lane = ownHome.y
+            let spread = float((ord(bot.role) mod 3) - 1) * DefendPicketSpread
+            target = vec(float(CenterX) + homeSign(bot.team) * DefendCrossGuard,
+                         clamp(lane + spread, LaneTop, LaneBottom))
+        else:
+          let interceptY = (if mateCarryPos.y > 0.5: clamp(mateCarryPos.y, LaneTop, LaneBottom)
+                            else: me.y)
+          # Cut toward our own half's crossing (where the thief must run THROUGH), not the
+          # enemy pedestal — reverse the attacker's default outbound bias.
+          target = vec(float(CenterX) + homeSign(bot.team) * 60.0, interceptY)
+    of PhProbe:
+      discard   # PROBE = the flank default above
+
+    # ⭐ rallyWave (plan #squad-1 / issue #20, 2026-08-06) — CROSS TOGETHER, don't queue.
+    # PhOpen above already pulls the wave onto the shared mid lane, and its own comment
+    # states the defect it fixes: "we currently lose it 14-6 by trickling to lane roles".
+    # It is armed by `elapsed < OpenPhaseTicks` alone — the first 600 of 5000 ticks, 12%
+    # of the game — while ~13.5 respawns per squad per episode each walk a 689px / 283t
+    # re-entry march up their OWN lane (measured, 26 GV36 league episodes, vs the rival
+    # squad's 165px / 77t at identical path efficiency 0.76 vs 0.75). Seven independent
+    # marches enter the enemy half as a QUEUE, which is why only 44.9% of our alive
+    # seat-frames sit in a buddy pair (his 62.3%) and we fight locally outnumbered 41.7%
+    # of contact frames (his 6.5%). So: same pull, same constant, same statement — a
+    # wider ARMING WINDOW, applied on the way back IN.
+    #   G1 no rival body seen THIS FRAME within RallyContactPx — `t.lastSeen == bot.tick`
+    #      is the frameAdvance-invariant "visible right now" (a tick-count window is
+    #      ~14.5x more generous on the speed-16 rig than in the league).
+    #   G2 still on OUR OWN side of CenterX (depth < 0) — frame-rate invariant, and it
+    #      keeps the lever pre-contact and out of the pocket by construction.
+    #   G3 not carrying (the enclosing `not iCarry`), our heart not stolen, and not
+    #      inside a phase that deliberately sets its own target (Open/Defend/Escort/
+    #      Force). A later pickup seek (`seekingPickup`) assigns `target` AFTER this
+    #      block and therefore still wins.
+    #   G4 sentries exempt: Overwatch and HomeDefender ARE their post [[AGG-E4]].
+    # ⚠️ THE FEET LAW (failed.md: learned-kits / woundedBank / medSee / frontage — four
+    # levers, 13-44% of our guns) is a CONTACT law: the vision cone rides the turret and
+    # 83% of shots land under 150px, so redirecting the feet DURING a fight points the
+    # gun away from it. G1 confines this to frames with no gun to tax. That is an
+    # ARGUMENT, not a measurement — M4 (travel per alive frame vs the NULL arm) and O1
+    # (kills) are pre-registered to catch it if it is wrong.
+    # No hold, no wait, no speed change, no role change, no headcount, no turret touch:
+    # the seat keeps walking to the same nav goal at the same speed; only the LANE moves.
+    # The pull target is CenterY, a MAP CONSTANT — not a mate, not an enemy — so seven
+    # seats converge by identical deterministic inference with zero comms, and it cannot
+    # dither or chase (frontage root cause 1).
+    let rallyOpen =
+      attacker and not ownStolen and
+      phase notin {PhOpen, PhDefend, PhEscort, PhForce} and
+      homeSign(bot.team) * (me.x - float(CenterX)) > 0.0 and
+      dist(me, stealTarget) > PocketRushRange
+    var rallyClear = false
+    if rallyOpen:
+      rallyClear = true
+      for t in bot.enemies:
+        if t.lastSeen == bot.tick and dist(t.pos, me) <= RallyContactPx:
+          rallyClear = false
+          break
+    when defined(rwprobe):
+      inc rwFrames
+      rwArmedFrame = false
+      rwNavHit = false
+      rwStepFlag = false
+      if not attacker: inc rwGateRole
+      elif ownStolen or dist(me, stealTarget) <= PocketRushRange: inc rwGateCarry
+      elif phase in {PhOpen, PhDefend, PhEscort, PhForce}: inc rwGatePhase
+      elif homeSign(bot.team) * (me.x - float(CenterX)) <= 0.0: inc rwGateDepth
+      elif not rallyClear: inc rwGateContact
+      else:
+        # M1 DIFFERENTIAL: both selectors, same frame state, EMITTED octant compared.
+        inc rwElig
+        let pre = target
+        let pulled = clamp(float(CenterY) - me.y, -OpenGroupPull, OpenGroupPull)
+        let post = vec(target.x, clamp(me.y + pulled, LaneTop, LaneBottom))
+        if abs(post.y - pre.y) > 0.5:
+          inc rwTargetDiff
+          rwShiftSum += abs(post.y - pre.y)
+        if octantBits(bot.navSteer(client, me, post)) !=
+            octantBits(bot.navSteer(client, me, pre)):
+          inc rwStepDiff
+          rwStepFlag = true
+        rwArmedFrame = true
+    if lvC(47, bot.tune.rallyWave and rallyOpen and rallyClear):
+      let midPull = clamp(float(CenterY) - me.y, -OpenGroupPull, OpenGroupPull)
+      target = vec(target.x, clamp(me.y + midPull, LaneTop, LaneBottom))
+    when defined(rwprobe):
+      # The target this block actually LEAVES (pulled when armed, untouched when not),
+      # so the emit-site survival check reads the same quantity in both runs.
+      if rwArmedFrame:
+        rwPostX = target.x
+        rwPostY = target.y
+
+  # ⭐⭐ ONE-DOOR BREAK, levers 2 + 3 (2026-08-14). See the const block for the
+  # forensics. Both act ONLY on our own side of the midline, on the movement
+  # TARGET only, and only with no rival body visible inside RallyContactPx —
+  # the FEET LAW (the vision cone rides the turret and 83% of shots land under
+  # 150px, so redirecting the feet DURING a fight points the gun away from it).
+  # Neither touches carry, defence, speed, the turret or the fire gate.
+  #   hotDoor  — a crossing height that has already killed friendlies twice is
+  #              a CAMPED door; cross in the other y-half instead. NOHOTDOOR=1.
+  #   waveGate — do not walk into that door alone; stage just short of the
+  #              crossing until a mate is with us, under a HARD cap. NOWAVEGATE=1.
+  # They compose: while staging we also slide laterally to the cold height, so
+  # the hold buys the reroute for free instead of costing a second trip.
+  block oneDoorBreak:
+    if lvC(48, not (bot.tune.hotDoor or bot.tune.waveGate)): break oneDoorBreak
+    if iCarry or mateCarry or ownStolen or retreating or declining or pushOut:
+      break oneDoorBreak
+    # Sentries ARE their post [[AGG-E4]] — only the attacking wave crosses.
+    if bot.role notin {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom}:
+      break oneDoorBreak
+    # Depth into the ENEMY half: + = across, - = still home. Frame-rate
+    # invariant, and it keeps both levers pre-contact by construction.
+    let depth = -homeSign(bot.team) * (me.x - float(CenterX))
+    if depth > 40.0:
+      # We are through. Refresh both budgets for the NEXT re-entry: a hold is
+      # once per crossing, and the next crossing re-reads the door fresh.
+      bot.waveGateSpent = false
+      bot.waveGateHolding = false
+      bot.doorRerouteUntil = -100_000
+      bot.doorRerouteY = -1.0
+      break oneDoorBreak
+    if depth > 0.0: break oneDoorBreak
+    if dist(me, stealTarget) <= PocketRushRange: break oneDoorBreak
+    var contactClear = true
+    for t in bot.enemies:
+      if t.lastSeen == bot.tick and dist(t.pos, me) <= RallyContactPx:
+        contactClear = false
+        break
+    if not contactClear: break oneDoorBreak
+    when defined(doorprobe):
+      let dpTm = clamp(ord(bot.team), 0, 1)
+      let dpSt = clamp(bot.teamSeat, 0, 7)
+
+    # ── LEVER 2: hot-door reroute ──────────────────────────────────────────
+    # crossY < 0 means "no opinion, leave the existing target alone".
+    var crossY = -1.0
+    if lvC(49, bot.tune.hotDoor):
+      if bot.tick <= bot.doorRerouteUntil and bot.doorRerouteY >= 0.0:
+        crossY = bot.doorRerouteY            # committed: no frame-to-frame stutter
+        when defined(doorprobe): inc dpHotDoorArm[dpTm][dpSt]
+      else:
+        # The height we WOULD cross at is the destination's height — the report's
+        # finding is a DESTINATION defect, not a timing one.
+        let planned = clamp(target.y, LaneTop, LaneBottom)
+        if bot.hotDoorNear(planned):
+          when defined(doorprobe): inc dpHotDoorArm[dpTm][dpSt]
+          let cold = bot.coldDoorY(planned)
+          if cold >= 0.0:
+            bot.doorRerouteY = cold
+            bot.doorRerouteUntil = bot.tick + HotDoorCommit
+            crossY = cold
+
+    # ── LEVER 3: re-entry wave gate ────────────────────────────────────────
+    var holding = false
+    if lvC(50, bot.tune.waveGate and not bot.waveGateSpent and
+        depth >= -WaveGateArmBand):
+      var packed = 0
+      for t in bot.mates:
+        if bot.tick - t.lastSeen > LocalFreshTicks: continue
+        if dist(t.pos, me) <= WaveGateRadius: inc packed
+      if packed >= WaveGatePack:
+        # The wave is with us. Release and spend the budget: this re-entry
+        # never holds again, so a mate drifting back out cannot re-stall us.
+        when defined(doorprobe):
+          if bot.waveGateHolding: inc dpWaveRelease[dpTm][dpSt]
+        bot.waveGateHolding = false
+        bot.waveGateSpent = true
+      elif bot.waveGateHolding and bot.tick > bot.waveGateUntil:
+        # ⚠️ HARD CAP reached. Teammates are FOGGED, so "wait for a mate" can
+        # never be open-ended — a squad that cannot see itself would stand
+        # still forever. Burn the budget and cross alone.
+        when defined(doorprobe): inc dpWaveExpire[dpTm][dpSt]
+        bot.waveGateHolding = false
+        bot.waveGateSpent = true
+      else:
+        if not bot.waveGateHolding:
+          bot.waveGateHolding = true
+          bot.waveGateUntil = bot.tick + WaveGateMaxHold
+        holding = true
+
+    # ── EMIT ───────────────────────────────────────────────────────────────
+    if holding:
+      # Stage just short of the crossing, at the cold height when lever 2 has
+      # an opinion — the wait doubles as the lateral move.
+      when defined(doorprobe): inc dpWaveHold[dpTm][dpSt]
+      target = vec(float(CenterX) + homeSign(bot.team) * WaveGateStageBack,
+                   (if crossY >= 0.0: crossY else: me.y))
+    elif crossY >= 0.0:
+      let beforeY = target.y
+      # A crossing WAYPOINT just inside the enemy half at the cold height: the
+      # nav field then routes us through that opening instead of the camped one
+      # (navSteer snaps an unreachable goal to the nearest open cell, so this
+      # can never strand a seat).
+      target = vec(float(CenterX) - homeSign(bot.team) * 24.0, crossY)
+      when defined(doorprobe):
+        if abs(target.y - beforeY) > 0.5: inc dpHotDoorFire[dpTm][dpSt]
+
+  # SENTRY DISPLACE: a sentry (overwatch / home defender) settled on its post
+  # with no live target and no fresh intruder has been standing scanning. SEAL
+  # doctrine — never a static target: after a dwell it slides laterally along the
+  # watch face to the next covered vantage and re-angles the crossing it commands.
+  # The offset is added to the post target (Y for the vertical mid crossing the
+  # overwatch owns; toward-mid X nudge for the home choke), flips sign each shift,
+  # and only arms when the sentry is actually AT its post with nothing to engage —
+  # a real intruder chase (target already set to the enemy) is left untouched.
+  if lvC(51, bot.tune.sentryDisplace and bot.role in {Overwatch, HomeDefender} and
+      not pushOut and not iCarry and not mateCarry):
+    # Effective post = the base post plus the CURRENT lateral shift. atPost is
+    # measured against that effective post (not the base) so arriving at a shifted
+    # vantage counts as settled — otherwise the dwell timer resets forever and the
+    # sentry never oscillates back. Once dwelt at the effective post, flip the
+    # shift so NEXT frame's effective post is the opposite vantage and the bot
+    # walks there: a continuous shoot-move cycle across the crossing it owns.
+    proc effPost(base: Vec, shift: float, home: float): Vec =
+      if bot.role == Overwatch:
+        vec(base.x, clamp(base.y + shift, LaneTop, LaneBottom))
+      else:
+        vec(base.x - home * abs(shift) * 0.5,
+            clamp(base.y + shift, LaneTop, LaneBottom))
+    let base = target
+    let cur = effPost(base, bot.sentryShift, homeSign(bot.team))
+    if dist(me, cur) >= 20.0:
+      bot.sentrySince = bot.tick              # still travelling to the vantage
+    elif bot.tick - bot.sentrySince >= SentryDwellTicks:
+      bot.sentrySince = bot.tick
+      bot.sentryShift =
+        (if bot.sentryShift >= 0.0: -SentryShiftPx else: SentryShiftPx)
+    let shifted = effPost(base, bot.sentryShift, homeSign(bot.team))
+    if bot.gridRayClear(me, shifted): target = shifted
+
+  # POST-WIPE CONSOLIDATION (regroupPush): the v14 squander fix. A mid that has
+  # pushed deep into the enemy half ALONE, into an area cleared of live enemies
+  # (the post-wipe vacuum), with support still inbound behind it, HOLDS a shallow
+  # midfield rally until the trio re-forms, then releases and pushes deep TOGETHER
+  # — instead of feeding the ~72t respawn wave one body at a time. Purely a timing
+  # gate on the attacker's movement target: the combat block below still fires at
+  # anything lined up while we rally (a free trade out is fine), it never touches
+  # carry/defense states, and it releases the instant the wave is grouped, so
+  # full-depth aggression (which correlates with WINNING) is preserved. Restricted
+  # to the mid trio — flankers keep their wide independent runs.
+  when defined(rgprobe):
+    if lvC(52, bot.tune.regroupPush and bot.role in {MidTop, MidBottom, MidGuard}):
+      inc rgMid
+      if not iCarry and not mateCarry: inc rgNoCarry
+      if not iCarry and not mateCarry and not ownStolen: inc rgNoStolen
+  if lvC(53, bot.tune.regroupPush and not iCarry and not mateCarry and not ownStolen and
+      not retreating and not declining and not pushOut and
+      bot.role in {MidTop, MidBottom, MidGuard} and
+      not (bot.tune.oneRunner and bot.role == MidTop) and
+      dist(me, stealTarget) >= PocketRushRange):
+    # ⭐ SHAPE carve-out: the designated runner is COMMITTED. Waiting for a wave
+    # that is (by design) holding at home would park it at midfield forever — the
+    # exact "held line with nobody running" shape the study says loses.
+    # Depth INTO the enemy half: 0 at center, grows toward the enemy pedestal.
+    let depth = -homeSign(bot.team) * (me.x - float(CenterX))
+    var packMates = 0        # fresh mates grouped near me RIGHT NOW
+    var joinMates = 0        # fresh mates homeward of me — support genuinely inbound
+    for t in bot.mates:
+      if bot.tick - t.lastSeen > LocalFreshTicks: continue
+      if dist(t.pos, me) <= RegroupPushRadius: inc packMates
+      if homeSign(bot.team) * (t.pos.x - me.x) > 20.0: inc joinMates
+    var enemyNear = false
+    for t in bot.enemies:
+      if bot.tick - t.lastSeen <= LocalFreshTicks and
+          dist(t.pos, me) <= RegroupPushClearRange:
+        enemyNear = true
+        break
+    let grouped = packMates >= RegroupPushPack
+    if grouped:
+      # The wave is together — commit the joint push (hysteresis: don't re-hold
+      # the rally as the pack naturally spreads out over the next stretch).
+      bot.regroupReleaseUntil = bot.tick + RegroupPushCommit
+    # ⭐ COMMS COUPLING (2026-07-22): a mate who SAW a post-wipe vacuum called it
+    # ("P<wipe>"); a trailing mid that heard the codeword but has NOT itself
+    # over-extended still converges on the rally so the wave re-forms across fog —
+    # the one thing the shared clock / globally-legible flag state can NOT sync (a
+    # local vacuum is invisible to a mate a lane away). This is the ONLY behavior
+    # the bus buys that isn't already consensus without it (flip = shared clock,
+    # peel = empty-pedestal legible). Gated behind commsPlay + a FRESH heard wipe;
+    # arms only inside the squander band (already committed forward of the rally
+    # line) so it never pulls a home-side mid up, and it still passes through EVERY
+    # downstream guard below (vacuum, not-grouped, support-inbound) — it lowers the
+    # depth trigger for an informed mid, it does not bypass the squander signature.
+    let heardWipe = bot.tune.commsPlay and bot.heardPlay == RpWipe and
+      bot.tick - bot.heardPlayTick <= CommsPlayTtl
+    # Arm the hold when over-extended past the trigger depth, OR still ahead of the
+    # rally line inside a live hold window (sticky — pulling back below the trigger
+    # keeps holding at the shallower rally rather than stuttering across the line),
+    # OR a fresh heard wipe + already forward of the rally line (the comms converge).
+    let armed = depth >= RegroupPushTrigDepth or
+      (bot.tick <= bot.regroupHoldUntil and depth >= RegroupPushRallyDepth) or
+      (heardWipe and depth >= RegroupPushRallyDepth)
+    when defined(commsprobe):
+      if heardWipe and depth >= RegroupPushRallyDepth and depth < RegroupPushTrigDepth and
+          not enemyNear and not grouped and joinMates >= 1 and
+          bot.tick > bot.regroupReleaseUntil:
+        inc csWipeArm
+    when defined(rgprobe):
+      inc rgReach
+      if armed: inc rgDeep
+      if armed and not enemyNear: inc rgVac
+      if armed and not enemyNear and not grouped: inc rgLone
+      if armed and not enemyNear and not grouped and joinMates >= 1: inc rgJoin
+    # Hold ONLY in the full squander signature: over-extended, area cleared
+    # (vacuum), not yet grouped, support inbound to actually wait for, and not
+    # inside a committed joint push. A lone last survivor (joinMates == 0) never
+    # holds — nobody is coming, so it presses the grab.
+    if armed and not enemyNear and not grouped and joinMates >= 1 and
+        bot.tick > bot.regroupReleaseUntil:
+      bot.regroupHoldUntil = bot.tick + RegroupPushCommit
+      # Rally line: a shallow point just inside the enemy half at our current
+      # height (the lane we advanced up), so strung-out mates converge on it.
+      let rallyX = float(CenterX) - homeSign(bot.team) * RegroupPushRallyDepth
+      target = vec(rallyX, me.y)
+      when defined(rgprobe):
+        inc rgFireCount
+
+  # ⭐ holdLine (2026-07-22, the h006 line-defense finding): the #1 policy forms a
+  # standing line in its OWN half and lets us over-push into a converging kill — we
+  # die 39% in the enemy half vs h006's ~14%, and that over-extension is what
+  # manufactures its clean hits/kill. holdLine is regroupPush's sibling with the
+  # OPPOSITE trigger: regroupPush rallies in a post-wipe VACUUM (no fresh enemy);
+  # holdLine rallies when a fresh enemy LINE is to our front AND we've over-extended
+  # AND we lack LOCAL fire-superiority — so the mid re-forms a shallow wave inside the
+  # enemy half and hits the line together instead of trickling one body at a time into
+  # the farm. Movement-target ONLY (combat below still trades out anything lined up);
+  # never touches carry/defense states; releases the instant we have the local edge or
+  # a grouped wave; a lone last body (no inbound support) never holds — it presses.
+  # LOCAL fire proxies only (fogged teammates); never a global headcount (falsified
+  # forceBalance). Runs AFTER regroupPush so a live vacuum-rally wins the target.
+  when defined(hlprobe):
+    if lvC(54, bot.tune.holdLine and bot.role in {MidTop, MidBottom, MidGuard}):
+      inc hlMid
+  when defined(hscensus):
+    ## Attribute the holdLine gate's FIRST failing conjunct on ffa4 boards.
+    ## The census found L9075(ship) unreached in 90k frames; a gate that never
+    ## opens makes its geometry moot, so name the conjunct that shuts it.
+    if ffa4Board:
+      inc hgRole[ord(bot.role)]
+      if not bot.tune.holdLine: inc hgTune
+      elif iCarry: inc hgICarry
+      elif mateCarry: inc hgMateCarry
+      elif ownStolen: inc hgOwnStolen
+      elif retreating: inc hgRetreat
+      elif declining: inc hgDecline
+      elif pushOut: inc hgPushOut
+      elif bot.role notin {MidTop, MidBottom, MidGuard}: inc hgNotMid
+      elif dist(me, stealTarget) < PocketRushRange: inc hgPocket
+      else: inc hgOpen
+  if lvC(55, bot.tune.holdLine and not iCarry and not mateCarry and not ownStolen and
+      not retreating and not declining and not pushOut and
+      bot.role in {MidTop, MidBottom, MidGuard} and
+      not (bot.tune.oneRunner and bot.role == MidTop) and
+      dist(me, stealTarget) >= PocketRushRange):
+    # ⭐ SHAPE carve-out (same reason as regroupPush above): the runner never rallies.
+    when defined(hlprobe):
+      inc hlReach
+    # Depth INTO the enemy half: 0 at center, grows toward the enemy pedestal.
+    let depth = -homeSign(bot.team) * (me.x - float(CenterX))
+    var freshMatesNear = 0   # fresh mates within our local pack radius RIGHT NOW
+    var joinMates = 0        # fresh mates homeward of me — support genuinely inbound
+    for t in bot.mates:
+      if bot.tick - t.lastSeen > LocalFreshTicks: continue
+      if dist(t.pos, me) <= HoldLineMateRange: inc freshMatesNear
+      if homeSign(bot.team) * (t.pos.x - me.x) > 20.0: inc joinMates
+    var freshEnemyNear = 0   # fresh enemy guns to our front = the standing line
+    for t in bot.enemies:
+      if bot.tick - t.lastSeen <= LocalFreshTicks and
+          dist(t.pos, me) <= HoldLineEnemyRange:
+        inc freshEnemyNear
+    let line = freshEnemyNear >= 1
+    # ⭐ COMMS COUPLING (anti-h006): a mate a lane away CALLED a line ("P<line>") that
+    # this bot can't see. A forward, strung-out, supported mid converges on the rally
+    # so the wave masses up instead of trickling its own push into the farm — the
+    # cross-fog convergence holdLine lacked (the WIPE coupling's sibling for a LINE).
+    # Bounded: fires only forward of the rally line, with support inbound, decaying
+    # after CommsPlayTtl — it never pulls a home-side mid up or holds on empty ground.
+    let heardLine = bot.tune.commsPlay and bot.heardPlay == RpLine and
+      bot.tick - bot.heardPlayTick <= CommsPlayTtl
+    # Local fire-superiority: we release (and commit) once fresh mates near us match or
+    # beat the fresh enemy guns to our front, OR a full pack has grouped up. ⚠️ superior
+    # is gated on `line`: with no enemy to our front, (mates - 0) >= 0 is trivially true
+    # during the empty-space APPROACH — arming the release window every frame so it is
+    # still live when we finally reach the line and the first hold never fires (the
+    # TURTLE probe caught exactly this: outgun 1385 -> support 311 -> FIRED 0). We only
+    # "have superiority" when there is actually a line to be superior OVER.
+    let superior = line and (freshMatesNear - freshEnemyNear) >= HoldLineSuperiority
+    let grouped = freshMatesNear >= HoldLinePack
+    # Arm the release/commit window ONLY when a line is present (superior already gates
+    # on line; grouped must too — a grouped APPROACH with no line to our front must not
+    # pre-arm the window, or the first hold at the line is suppressed for HoldLineCommit).
+    if superior or (line and grouped):
+      bot.holdLineReleaseUntil = bot.tick + HoldLineCommit
+    # Arm the hold when over-extended past the trigger depth, OR still ahead of the
+    # rally line inside a live hold window (sticky — mirrors regroupPush's hysteresis).
+    let armed = depth >= HoldLineTrigDepth or
+      (bot.tick <= bot.holdLineHoldUntil and depth >= HoldLineRallyDepth)
+    let outgunned = (freshMatesNear - freshEnemyNear) < HoldLineSuperiority
+    when defined(hlprobe):
+      if armed: inc hlDeep
+      if armed and line: inc hlLine
+      if armed and line and outgunned: inc hlOutgun
+      if armed and line and outgunned and joinMates >= 1: inc hlLone
+    # Hold ONLY in the full over-extend signature: over-extended, a fresh line to our
+    # front (locally seen OR a fresh heard call), outgunned locally, support inbound to
+    # actually wait for, and not inside a committed joint push. A lone last body
+    # (joinMates == 0) never holds — nobody is coming, so it presses the objective
+    # (identical carve-out to regroupPush). The heardLine arm requires forward depth so
+    # a called line converges the wave without needing this bot's own line sighting.
+    if armed and (line or heardLine) and (outgunned or heardLine) and joinMates >= 1 and
+        bot.tick > bot.holdLineReleaseUntil:
+      bot.holdLineHoldUntil = bot.tick + HoldLineCommit
+      # Rally line: a shallow point just inside the enemy half at our current height
+      # (the lane we advanced up), so the strung-out wave converges before the line.
+      let rallyX = float(CenterX) - homeSign(bot.team) * HoldLineRallyDepth
+      target = vec(rallyX, me.y)
+      when defined(commsprobe):
+        if heardLine and not line: inc csLineArm  # cross-fog line convergence fired
+      when defined(hlprobe):
+        inc hlFireCount
+
+  # The mid trio plays for the flag, not for position: pickup races and
+  # carrier chases are lost to peek/duck detours, so mids keep moving and
+  # shoot on the move whenever a mate is not already carrying.
+  let rushing = not iCarry and not mateCarry and
+    bot.role in {MidTop, MidBottom, MidGuard}
+  # The pocket endgame: duelling at the pocket edge is an infinite respawn
+  # grinder (respawners appear spawn-protected AT the pedestal), so the
+  # attacker CLOSEST to the pedestal commits to the touch, unarmed and
+  # undistracted, while the rest of the wave keeps its guns up to cover the
+  # grab — even a suicide grab forces the enemy back onto defense, and a
+  # lucky one starts the capture run.
+  var nearestMateToSteal = 1e18
+  for t in bot.mates:
+    if bot.tick - t.lastSeen > 48:
+      continue
+    nearestMateToSteal = min(nearestMateToSteal, dist(t.pos, stealTarget))
+  # `not banking` (plan #13 §1.5): a 1-hp attacker outside GrabCommitRing is a
+  # fed life, not an attacker — steal pursuit is overridden while banking (the
+  # imminent-grab exemption already keeps a bot inside the ring out of BANK).
+  # ⭐⭐⭐ comboGrab: gate the ComboGrabSeat's push-commit on holding BOTH items —
+  # while still gearing up (not comboGrabDone) it never wants the pocket rush,
+  # so it can't dive the pedestal mid-sequence and die before completing the
+  # durable close-range breacher loadout the combo is FOR.
+  # ⭐ SEAT-IDENTITY FIX (v45): teamSeat, not role (see the sprayGrab exclusion
+  # comment ~L7192 for why the role-equality form is wrong).
+  # ⭐⭐ lastLifeGuard HARD OFFENCE STOP (ffa4 lives audit, 2026-08-17): a bot on
+  # its OWN last life never volunteers as the pocket diver — the single
+  # riskiest committed action a bot takes, and this bot's 3rd death is
+  # PERMANENT (P(win) at 4-of-4 own slots eliminated: 0 of 801). AGENT-LOCAL
+  # only: it still shoots, holds, and covers a mate's dive; a teammate with
+  # lives in reserve is untouched and still dives (never team-wide passivity —
+  # spending 0 lives by half-time wins 53.3%, worse than spending 2 at 74.4%).
+  # ⚠️ `wantPocketRushBase` carries the GEOMETRY/role/seat terms ONLY; the
+  # last-life veto is applied at the final assignment, never folded in. That is
+  # a MEASUREMENT contract, kept even now that the retired L4 clock is no longer
+  # competing for the same decision: a veto baked into the base masks the fire
+  # counter of any veto applied after it (with the clock inside Base, L3's
+  # llWantSuppressed read a hard 0 and L3 looked inert when it was merely second
+  # in line — the near-miss that nearly killed a working lever). Any future veto
+  # on this decision goes on the final line too.
+  let wantPocketRushBase = not iCarry and not mateCarry and not banking and
+    bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom} and
+    not (bot.tune.comboGrab and bot.teamSeat == ComboGrabSeat and
+         not bot.comboGrabDone) and
+    dist(me, stealTarget) < PocketRushRange and
+    dist(me, stealTarget) < nearestMateToSteal + 8.0
+  let wantPocketRush = wantPocketRushBase and not onLastLife
+  when defined(lifeprobe):
+    if onLastLife:
+      inc llOnLastLifeFrames
+      if wantPocketRushBase: inc llWantSuppressed  # the veto was load-bearing
+  when defined(ffa4probe):
+    # DISCRIMINATE for L3a: f4RushVetoLL counts the frames the last-life veto
+    # ALONE closed the dive (every other term of wantPocketRush already true).
+    if wantPocketRushBase:
+      inc f4RushGeom
+      if onLastLife: inc f4RushVetoLL
+  when defined(seatprobe):
+    let comboSuppressing = bot.tune.comboGrab and bot.teamSeat == ComboGrabSeat and
+      not bot.comboGrabDone
+    if wantPocketRush: inc spWantTrue[bot.team][bot.teamSeat]
+    else: inc spWantFalse[bot.team][bot.teamSeat]
+    if comboSuppressing: inc spSuppressedByCombo[bot.team][bot.teamSeat]
+  # ⭐⭐ SMART GRAB (2026-07-24, THE dive-death fix — Maxwell's adaptive-Captain directive).
+  # The OLD grabTiming/grabGate were HARD-THRESHOLD gates with a fatal carve-out: a solo,
+  # outgunned body with no inbound mate "dives NOW" (theory: a suicide grab forces the enemy
+  # onto defense). FALSIFIED in play — >half our deaths are that dive doing ZERO damage; a
+  # dead body forces nothing. And "outgunned unless >=1 inbound mate" is wrong anyway — one
+  # mate can't beat a full defending team. The fix is ADAPTIVE via the Captain brain: commit
+  # the disarmed touch ONLY when we genuinely have the advantage the Captain already reads;
+  # otherwise HOLD at a firing standoff, gun UP, and SUPPRESS the clustered pocket from range
+  # (the map-wide gun; a cluster is a focus-fire gift) as a TEAM, until we're up. No lone
+  # suicide dive, ever. OFFENSIVE by construction: we arrive shooting + commit the kill.
+  var holdGrab = false
+  if lvC(56, bot.tune.smartGrab and wantPocketRush and not pushOut and
+      dist(me, stealTarget) > GrabCommitRing):
+    # The pocket defense: fresh enemy guns clustered on the pedestal.
+    var defenders = 0
+    for t in bot.enemies:
+      if bot.tick - t.lastSeen <= LocalFreshTicks and
+          dist(t.pos, stealTarget) <= GrabStackRange:
+        inc defenders
+    # ⭐⭐ v56 CROSS-FOG STACK GATE (stackHoldGate). smartGrab's `defenders` is a
+    # LOCAL-EYES read, so a body arriving at the pocket out of fog scores 0 and dives
+    # into a stack a mate is looking straight at. That mate has already shouted
+    # Pq/STACK — 840 times per 59 episodes in the v55 field, and until now every one
+    # of them was decoded and thrown away. A fresh heard STACK whose CALLER is at
+    # this pocket is exactly the evidence this read is missing, so it counts as the
+    # stack. This is the second half of the STACK contract ("converge a second gun,
+    # gate the dive"); stackConverge is the first. Never manufactures a hold on its
+    # own: the Captain's advantage read below still releases it, as with local eyes.
+    let fogStack = bot.tune.stackHoldGate and bot.tune.commsPlay and
+      bot.heardPlay == RpStack and bot.tick - bot.heardPlayTick <= CommsPlayTtl and
+      bot.heardPlayPos.x >= 0.0 and
+      dist(bot.heardPlayPos, stealTarget) <= GrabStackRange + CommsScanRange
+    let localStack = defenders >= GrabStackDefenders
+    if lvC(159, fogStack):
+      defenders = max(defenders, GrabStackDefenders)
+    # Cover in place: a fresh mate AT the pocket with us (already trading, so the touch is
+    # covered) releases the hold — that's a genuine team push, not a solo dive.
+    var coverMates = 0
+    for t in bot.mates:
+      if bot.tick - t.lastSeen > GrabMateFreshTicks: continue
+      if dist(t.pos, me) <= GrabCoverRange: inc coverMates
+    # ADVANTAGE to commit the touch = the Captain's shared read, NOT a fixed mate count:
+    #   • pickEdge      — a real LOCAL numbers edge near us (freshM>freshE) — we're up, push.
+    #   • PhForce       — the Captain's deliberate grouped all-in before the -1 timeout.
+    #   • cover in place — a mate is already at the pocket trading (the push has arrived).
+    # ownStolen is handled by its own recapture branches; a defended pocket with NONE of
+    # these = HOLD and suppress from standoff. An UNDEFENDED pocket always commits (fast
+    # uncontested touch). This is the chess-not-checkers pocket: the Captain calls the push.
+    let haveAdvantage = pickEdge or (bot.tune.planLayer and botPhase == PhForce) or
+      coverMates >= 1
+    holdGrab = defenders >= GrabStackDefenders and not haveAdvantage
+    when defined(commsprobe):
+      # Count ONLY the frames the heard call is what did the work: our own eyes saw
+      # no stack, the wire did, and the hold actually fired. A gate must DISCRIMINATE
+      # — crediting it on frames a local sighting would have held anyway is the
+      # measurement error that has burned this policy before.
+      if holdGrab and fogStack and not localStack:
+        inc csStackGate
+    when defined(sgprobe):
+      inc sgWant
+      if defenders >= GrabStackDefenders: inc sgDefended
+      if defenders >= GrabStackDefenders and not haveAdvantage: inc sgHold
+      if defenders >= GrabStackDefenders and haveAdvantage: inc sgCommit
+
+  if holdGrab:
+    # Hold the gun up at a standoff ring off the pedestal (outside the defenders'
+    # tightest cover) and suppress from there instead of diving unarmed.
+    target = stealTarget + norm(me - stealTarget) * GrabHoldStandoff
+  let pocketRush = wantPocketRush and not holdGrab
+  # ⭐ ARMED RUSH (the dive-death fix): is the pocket DEFENDED by a fresh, killable gun?
+  # pocketRush's disarm (maxEngage=0) assumed pedestal respawners were spawn-protected
+  # (unkillable) — GV20+ removed that, so a defended dive is a free death. When defended,
+  # keep the gun UP (below) so we shoot the way in + the duck/dodge branches re-enable.
+  # ⭐⭐ RANGE FLOOR (2026-07-29, the grab-conversion fix): armedRush had NO distance floor
+  # while its sibling holdGrab is floored at `> GrabCommitRing` (4435). So holdGrab correctly
+  # refuses to ENTER a stacked pocket, but once a body was already inside the ring armedRush
+  # re-armed it — gun up, duck/dodge branches back on — at 5-39px from a heart whose pickup
+  # radius is 12px. That is the measured close-range failure: 20 GV26 episodes with a bot
+  # beside the heart never taking it, and only 41 of our shots (0.3%) fired inside 60px of it.
+  # Arming to shoot is right on the APPROACH and wrong at arm's length: two steps from the
+  # heart the touch ends the episode, and no amount of covering fire does.
+  var pocketDefended = false
+  if lvC(57, bot.tune.armedRush and pocketRush and
+      not (bot.tune.touchCommit and dist(me, stealTarget) <= GrabCommitRing)):
+    for t in bot.enemies:
+      if bot.tick - t.lastSeen <= FreshShotTicks and
+          dist(t.pos, stealTarget) <= GrabStackRange:
+        pocketDefended = true
+        break
+  # A pocketRush stays DISARMED (fast unopposed touch) only when NOT defended; a defended
+  # pocket keeps the gun up (armedPocket) so every `not pocketRush` combat branch re-enables.
+  let armedPocket = pocketRush and pocketDefended
+  # disarmedRush = the ONLY state that suppresses combat (gun off, no duck/dodge): a pocket
+  # rush that is NOT armed (uncontested touch). An armedPocket rush fights its way in, so the
+  # combat branches below key on disarmedRush, not raw pocketRush.
+  let disarmedRush = pocketRush and not armedPocket
+  # ⭐⭐ THE TOUCH LATCH: inside GrabCommitRing the heart is ~2 steps away and the body is
+  # already inside the defenders' fire. Every alternative from here is strictly worse than
+  # closing: a grenade lob, a duel, or a duck all leave us in the same fire WITHOUT the heart,
+  # and a steal is worth the episode (26.4% -> 66.7%). So once inside the ring, the touch
+  # OUTRANKS everything. Note this deliberately ignores holdGrab/pocketDefended: holdGrab
+  # already declines to ENTER the ring when the pocket is stacked and we have no advantage —
+  # that is the approach decision and it stays. This is only about a body that is already
+  # there, where retreating costs the same exposure as finishing.
+  let touchLatch = bot.tune.touchCommit and not iCarry and not mateCarry and
+    bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom} and
+    dist(me, stealTarget) <= GrabCommitRing
+  when defined(tcprobe):
+    if touchLatch: inc tcLatch
+  if touchLatch:
+    # Drive straight onto the pedestal and let the act-chain guards below stand down.
+    target = stealTarget
+  when defined(prprobe):
+    if pocketRush: inc prRush
+    if armedPocket: inc prArmed
+
+  # ⭐ v56 STATED-HAZARD STAND VETO (hazardSense). Every movement target chosen
+  # above is a place we intend to BE — a sentry post, a smartGrab standoff, a
+  # rally, a bank-cell park. Two engine-stated hazard families had ZERO
+  # readers, so those stands landed inside stated attrition/death zones:
+  # (1) a stated puddle box costs 20%/s of 1 damage to OCCUPY (crossing in
+  #     motion is nearly free, so routing is untouched — the target is pushed
+  #     out the nearest face instead);
+  # (2) the stated barrage shell ring saturates every map edge BarrageDepthPx
+  #     deep — never post into it (the body-evacuation override further down
+  #     handles a bot already caught inside).
+  # Deliberately placed AFTER the role/rally/latch chain and BEFORE the
+  # pickup/medEcon overrides below: kits and cans are touch-and-go, and a kit
+  # inside a puddle is still worth the walk-through. Carrier logic is exempt
+  # (iCarry / touchLatch: a capture ends the episode).
+  if lvC(58, bot.tune.hazardSense and not iCarry and not touchLatch):
+    for attempt in 0 .. 1:               # one push can land in an overlapping box
+      var moved = false
+      for pd in PuddleMarks:
+        let
+          px0 = pd.x0 - PuddleStandMargin
+          px1 = pd.x1 + PuddleStandMargin
+          py0 = pd.y0 - PuddleStandMargin
+          py1 = pd.y1 + PuddleStandMargin
+        if target.x < px0 or target.x > px1 or target.y < py0 or target.y > py1:
+          continue
+        let                              # push out the nearest box face
+          dl = target.x - px0
+          dr = px1 - target.x
+          du = target.y - py0
+          dd = py1 - target.y
+          m = min(min(dl, dr), min(du, dd))
+        if m == dl: target.x = px0 - 1.0
+        elif m == dr: target.x = px1 + 1.0
+        elif m == du: target.y = py0 - 1.0
+        else: target.y = py1 + 1.0
+        target.x = clamp(target.x, 8.0, float(MapW - 8))
+        target.y = clamp(target.y, 8.0, float(MapH - 8))
+        moved = true
+      if not moved: break
+    if BarrageDepthPx > 0.0:
+      when defined(barrprobe): inc bpPostVeto
+      let bdanger = BarrageDepthPx + BarrageEvadeMargin
+      target.x = clamp(target.x, min(bdanger, float(CenterX)),
+                       max(float(MapW - 1) - bdanger, float(CenterX)))
+      target.y = clamp(target.y, min(bdanger, float(CenterY)),
+                       max(float(MapH - 1) - bdanger, float(CenterY)))
+
+  # Combat: the nearest fresh track with a clear pixel ray AND a mate-free
+  # fire cone is the engage target; the nearest fresh-but-wall-blocked track
+  # is the peek candidate. The map-wide gun engages fresh tracks far beyond
+  # the view, so chases keep killing after the target leaves the window —
+  # but objective play caps the range: the carrier only fights point-blank,
+  # rushers racing for the steal and escorts guarding a run only fight what
+  # is actually in the way, instead of frag-chasing across the map.
+  if iCarry and not bot.wasCarrying:
+    bot.grabPos = me
+  bot.wasCarrying = iCarry
+  # ⭐⭐ aggro — ENGAGEMENT/COMMIT RANGE (2026-08-06, captain-brain course-
+  # correction: tune-field tier ONLY, not a blanket post-selection multiply,
+  # and NOT threaded through outnumberMargin/breakMargin — a blunt press-
+  # harder toggle on THAT axis was already FALSIFIED, see gv21Press). Scales
+  # each of the four engage-range tune fields at the point they're read:
+  # fireRange, carrierFireRange, rushEngageRange, escortEngageRange. Formula
+  # (0.7+0.6*aggro), normalized by /1.3 so aggro=1.0 (the shipped default) is
+  # an EXACT 1.0x no-op — the raw (0.7+0.6*aggro) would put the untouched
+  # default at 1.3x (30% WIDER than today), silently perturbing every other
+  # v43 arm including the comboGrab-only A/B, which must isolate JUST that
+  # lever. Floors near 0.7/1.3=0.54x as aggro -> 0 (never a degenerate zero
+  # engage range).
+  let aggroScale = (0.7 + 0.6 * bot.tune.aggro) / 1.3
+  var maxEngage =
+    if disarmedRush: 0.0         # ONLY an uncontested pocket touch disarms; a DEFENDED
+                                 # pocket keeps the gun up (armedPocket) and fights its way in
+    elif lvC(59, iCarry and bot.tune.carrierSprint):
+      # ⭐ FIGHT OFF THE X (2026-08-04): live-replay carrier census, 10 carries —
+      # median progress toward home at span end was MINUS 2%, 7 of 10 died at
+      # <30%, half GRABBED at 1-2 hp with up to 3 defenders inside 300px. Our
+      # carriers do not die on the run home; they die AT THE PEDESTAL — which
+      # GV25 made the enemy's own respawn zone — holding a gun the old rule
+      # disarmed at the instant of the grab. The disarmed sprint stays proven
+      # for the RUN; the first 260px after the snatch is a breakout, not a
+      # run. Point-blank gun until clear, then sprint.
+      (if dist(me, bot.grabPos) < FightOutRadius: bot.tune.carrierFireRange * aggroScale
+       else: 0.0)                # ⭐⭐ past the ring: carrier never fights:
+      # the diagnosis showed carriers survive ~110t but travel ~4% of the run —
+      # PINNED firing at the invulnerable spawn-protected respawner (wasted) while
+      # advancing into the nest. Engage 0 drops the combat branch so the carrier
+      # pure-navigates home at full speed, turret free (still nav-steered).
+    elif iCarry: bot.tune.carrierFireRange * aggroScale
+    elif rushing: bot.tune.rushEngageRange * aggroScale
+    elif mateCarry: bot.tune.escortEngageRange * aggroScale
+    else: bot.tune.fireRange * aggroScale
+  # ⭐⭐ PLAN-LAYER COMBAT TEETH: the phase drives ENGAGEMENT, not just movement, so a
+  # called play actually WINS its fight instead of gently repositioning. PhOpen/PhPress
+  # widen the attacker's engage range so the grouped opening clash + the man-advantage
+  # window are fought to a kill (we lose the opening 14-6 by NOT committing the fire);
+  # PhEscort lets a free gun near the carrier hunt the carrier's chasers to the fireRange
+  # (kill the threat — body-block is void), instead of only sliding to its lane. Never
+  # overrides the pocketRush/carrier gun-discipline above (those stay 0).
+  if lvC(60, bot.tune.planLayer and maxEngage > 0.0 and not iCarry):
+    case botPhase
+    of PhOpen, PhPress:
+      if rushing or bot.role in {FlankTop, FlankBottom}:
+        maxEngage = max(maxEngage, bot.tune.fireRange)   # commit the clash to a kill
+    of PhEscort:
+      if mateCarry and dist(me, mateCarryPos) <= EscortCollapseRange:
+        maxEngage = max(maxEngage, bot.tune.fireRange)   # hunt the carrier's chasers
+    of PhDefend:
+      # v26: RECAPTURE has teeth — every seat presses the kill to delete the thief/escort
+      # (body-block is void, so recapture = KILL). The marquee "full-team collapse" phase
+      # was toothless (engage unchanged); now the hunters widen to map-wide to finish it.
+      maxEngage = max(maxEngage, bot.tune.fireRange)
+    of PhForce:
+      # v26: the late all-in FIGHTS to a kill — on a wipe-economy engine the force window
+      # must remove enemy guns, not gently reposition. Every seat widens to fireRange.
+      maxEngage = max(maxEngage, bot.tune.fireRange)
+    else: discard
+  # Focus-fire intel: which remembered enemies sit on a visible mate's aim
+  # line right now. A mate's rendered aim dots are an absolute readback of
+  # where it is about to shoot; piling our shot onto the same target converts
+  # two 1-damage hits into a kill instead of two wounded runners.
+  var mateTargeted = newSeq[bool](bot.enemies.len)
+  var mateGuns = newSeq[int](bot.enemies.len)   # satCap: HOW MANY mate aim lines
+                                                # cover each enemy, not just any
+  var supportRays: seq[tuple[origin, dir: Vec, length: float]]
+                                                # noMask: live mate gun-lines
+                                                # (an up gun with a fresh target
+                                                # on its bearing) the NAVIGATE
+                                                # branch must not walk across
+  for m in bot.mates:
+    if bot.tick - m.lastSeen > 2:
+      continue                          # dots exist only while the mate is visible
+    when defined(scprobe):
+      if lvC(61, bot.tune.satCap): inc scMateFresh
+    if lvC(62, bot.tune.mateAimPos):
+      # ⭐ MATE-POS PROXY (v45, MATEPOS=1 only — see the mateAimPos field doc).
+      # Same mateTargeted/mateGuns/supportRays OUTPUT SHAPE as the angular-ray
+      # branch below, but the coverage test itself never reads a mate's
+      # decoded aim: proximity (within MateAimRayLen, the same trust distance
+      # the ray branch already used) + clear LOS (pixelRayClear — geometry,
+      # not aim) + gun up (mateGunDown — a muzzle-bloom read, not aim).
+      var bestD = -1.0
+      var bestDir: Vec
+      for i in 0 ..< bot.enemies.len:
+        if bot.tick - bot.enemies[i].lastSeen > FreshShotTicks:
+          continue
+        let d = dist(bot.enemies[i].pos, m.pos)
+        if d > MateAimRayLen:
+          continue
+        if not client.pixelRayClear(m.pos, bot.enemies[i].pos):
+          continue
+        mateTargeted[i] = true
+        inc mateGuns[i]
+        when defined(scprobe):
+          if lvC(63, bot.tune.satCap): inc scRayHit
+        if bestD < 0.0 or d < bestD:
+          bestD = d
+          bestDir = norm(bot.enemies[i].pos - m.pos)
+      if lvC(64, bot.tune.noMask and bestD >= 0.0 and not client.mateGunDown(m.pos)):
+        supportRays.add((origin: m.pos, dir: bestDir, length: bestD))
+      continue                          # skip the angular-ray branch entirely
+    var mAim = client.mateAimBrads(m.pos, me, myColor)
+    if lvC(65, mAim < 0 and bot.tune.aimRotRead):
+      mAim = m.aimBrads                 # v9: the dots are retired; the track's
+                                        # bearing comes from the mate's soldier
+                                        # rotation id (actorsFor rotRead)
+    if mAim < 0:
+      continue
+    when defined(scprobe):
+      if lvC(66, bot.tune.satCap): inc scMateRead
+    let dir = bradsDir(mAim)
+    var rayTargetD = -1.0               # noMask: nearest fresh enemy ON this ray
+    for i in 0 ..< bot.enemies.len:
+      if bot.tick - bot.enemies[i].lastSeen > FreshShotTicks:
+        continue
+      let rel = bot.enemies[i].pos - m.pos
+      let along = dot(rel, dir)
+      if along <= 0.0 or along > MateAimRayLen:
+        continue
+      if abs(cross(rel, dir)) <= MateAimHitSlack:
+        mateTargeted[i] = true
+        inc mateGuns[i]
+        if rayTargetD < 0.0 or along < rayTargetD:
+          rayTargetD = along
+        when defined(scprobe):
+          if lvC(67, bot.tune.satCap): inc scRayHit
+    # noMask: a mate line only counts as a SUPPORT ray when the gun is UP (no
+    # muzzle bloom = off cooldown) and a fresh target sits on the bearing —
+    # that is the shot the mover must not walk into. The bullet stops at the
+    # target, so the corridor ends there.
+    if lvC(68, bot.tune.noMask and rayTargetD > 0.0 and
+        not client.mateGunDown(m.pos)):
+      supportRays.add((origin: m.pos, dir: dir, length: rayTargetD))
+
+  var
+    engage = -1
+    engageD = maxEngage
+    engagePrio = maxEngage
+    aim: Vec
+    engageVel: Vec                      # ⭐ wlead: the engage target's velocity
+    engageLeadApplied = 0.0             # ⭐ wlead: lead TICKS already baked into
+                                        # `aim` (excluding track staleness), so
+                                        # the fire bearing can top it up to the
+                                        # full windup horizon without double
+                                        # counting.
+    engageBody: Vec                     # the engage target's REAL last-seen pos
+    blockedAim: Vec
+    blockedBody: Vec                    # the blocked target's REAL last-seen pos,
+                                        # for the corner-pre-aim emergence search.
+    haveBlocked = false
+    blockedD = maxEngage
+    anySaturated = false                # satCap: some in-range candidate was saturated
+    engageSat = false                   # satCap: the FINAL pick was saturated
+  # The lead-predicted firing point of a track. Factored out ONLY so the lock-owner
+  # election below evaluates EXACTLY the candidate set the scorer does — if these two
+  # expressions ever drift apart the no-op property proven below breaks silently.
+  # ⚠️ MERGE (v59): the range-scaled lead FACTOR is now named, because two lanes
+  # need it and they must never drift apart. lockfix folded the inline
+  # `rawRange`/`leadScale` locals into this template so the lock-owner election
+  # evaluates EXACTLY the scorer's candidate set; pointblank's `wlead` needs the
+  # same factor to know how much lead is ALREADY baked into `aim` before it tops
+  # up to the windup horizon. One expression, two readers.
+  template leadScaleOf(t: untyped): float =
+    clamp(dist(t.pos, me) / 300.0, 0.15, 1.0)
+  template leadPredicted(t: untyped): Vec =
+    t.pos + t.vel * (float(bot.tick - t.lastSeen) +
+      bot.tune.leadTicks * leadScaleOf(t))
+  # ⭐⭐⭐ ONE LOCK OWNER (2026-08-20). `bot.lockPos` is a PLACE, not a target
+  # IDENTITY: `bot.enemies` indices are recycled by updateTracks, so nothing about
+  # WHICH body we committed to survives a frame — the only handle the lock has is a
+  # Vec. The old predicate `dist(t.pos, bot.lockPos) <= LockMatchDist` therefore
+  # evaluates TRUE for EVERY enemy inside the 60px lock disc. Each one takes the
+  # full CommitBonus (400) and each one is exempt from the StickyDangerCap moat
+  # below, so the commitment credit CANCELS on both sides and the moat disappears —
+  # precisely in the crowded fight the lock was written for. With -400 cancelled the
+  # pick collapses to `d + 1.6*arcErr - pull`, i.e. a coin flip on geometry.
+  #
+  # FIELD MEASUREMENT (hosted replays, the lock's OWN instrument — never attrition):
+  #   • 63.2% of our live-target switches inside a <=20-tick window go to a body
+  #     <=60px from the abandoned one (median separation 44px, n=133), against a
+  #     control showing one target's OWN motion over 20 ticks is median 21px /
+  #     p90 49px — so 60px really is "the same cluster", not the same body moving.
+  #   • P(switch off a still-live target), Elite ffa4: us 0.188 [0.164,0.211] vs
+  #     relh 0.115 / richard 0.117, field 0.157; at gap <=20t 0.153 vs 0.063/0.070.
+  #   • Two-team 8v8 paired WITHIN Episode, 89,807 pairs: vs relh +0.058
+  #     [+0.032,+0.083], richard +0.090, daveey +0.034, FIELD +0.025 — every CI
+  #     excludes zero. The behaviour is present in every mode.
+  #
+  # ⚠️ IT IS NOT ONLY A CROWD. `updateTracks` matches a sighting to a track by
+  # POSITION within TrackMatchDist = 40px, so a body that jumps further than that
+  # between two sightings (a fog gap of ~14 ticks at 3px/tick is enough, and a
+  # respawn always is) SPAWNS A SECOND TRACK while the first is still inside
+  # freshShotTicks. ONE enemy can therefore hold TWO live tracks, both inside the
+  # 60px disc, and the commit bonus cancels against a GHOST OF ITSELF. Measured:
+  # on a 2-slot board with exactly ONE enemy body in the game, 1 of 27 seeds still
+  # had contested frames (5 of 807 lock-live frames, disc = 2). Same root cause —
+  # no identity — one layer down. (TrackCap = 8 is exactly the real opponent
+  # count, so a duplicate also EVICTS a real opponent from the list; not fixed
+  # here, and worth its own measurement.)
+  #
+  # THE FIX: elect ONE owner — the fresh, in-range candidate NEAREST the lock fix —
+  # and give the CommitBonus and the cap exemption to it alone. Adds no state, no
+  # tune field, and is a STRICT NO-OP whenever at most one TRACK sits in the disc
+  # (then the argmin IS the sole member) — TRACK, not body, per the paragraph
+  # above. -d:lkprobe asserts that per candidate evaluation, in both arms.
+  #
+  # ⛔ DELIBERATELY NOT a dwell timer / min-ticks-on-target / switch cooldown. A
+  # switch costs only +0.14 shots [+0.10,+0.19] and relh pays MORE per switch
+  # (+0.21), so time hysteresis buys nothing and invites the "a 1hp bot stops
+  # ATTACKING by construction" regression class (-0.406 captures+steals).
+  #
+  # Ships DEFAULT ON in code with a NOLOCKONE=1 opt-out (the arcStandoff /
+  # touchCommit / windupFf shape) — NEVER a container ENV, which sat a shipped
+  # lever DARK for nine days. NOLOCKONE=1 is proven byte-identical to base 702701e.
+  # ⛔ MIGRATED (2026-08-20): this used to call `getEnv("NOLOCKONE")` directly,
+  # PER FRAME PER BOT — invisible to the lever-liveness tripwire (which audits
+  # the CombatTune switch panel, not decide()'s body) and impossible to
+  # seat-isolate in any rig (every bot in one process shares the same env, so
+  # both arms of an in-process A/B always agreed). It is now stamped once into
+  # CombatTune by shippedCombatTune(); see the field doc there.
+  let lockOne = bot.tune.lockOne
+  var lockIdx = -1                      # the single enemy that OWNS the commit lock
+  if lockOne and bot.tune.commit and bot.tick <= bot.lockUntil:
+    var lockBest = 0.0
+    for i in 0 ..< bot.enemies.len:
+      let t = bot.enemies[i]
+      # Same two rejections the scorer makes, in the same order, so the election
+      # can never crown a candidate the scorer would have skipped (which would
+      # STARVE the disc of a lock owner and make this more than a de-duplication).
+      if bot.tick - t.lastSeen > bot.tune.freshShotTicks:
+        continue
+      if dist(leadPredicted(t), me) >= maxEngage:
+        continue
+      let ld = dist(t.pos, bot.lockPos)
+      if ld > LockMatchDist:            # `<=` in the original predicate: keep the
+        continue                        # boundary case INSIDE the disc, exactly.
+      if lockIdx < 0 or ld < lockBest:  # strict `<` => lowest index wins a tie
+        lockBest = ld
+        lockIdx = i
+  # -d:lkprobe census. Computed UNCONDITIONALLY on the lever (it reads the DISC and
+  # re-runs the election itself), so both A/B arms measure the SAME world: the
+  # contested-frame rate is a stimulus census, not an effect of the fix.
+  when defined(lkprobe):
+    var lkFrameDisc = 0                 # candidates in the 60px disc this frame
+    var lockIdxProbe = -1               # the elected owner, computed in BOTH arms
+    if bot.tune.commit and bot.tick <= bot.lockUntil:
+      var lkBest = 0.0
+      for i in 0 ..< bot.enemies.len:
+        let t = bot.enemies[i]
+        if bot.tick - t.lastSeen > bot.tune.freshShotTicks: continue
+        if dist(leadPredicted(t), me) >= maxEngage: continue
+        let ld = dist(t.pos, bot.lockPos)
+        if ld > LockMatchDist: continue
+        inc lkFrameDisc
+        if lockIdxProbe < 0 or ld < lkBest:
+          lkBest = ld
+          lockIdxProbe = i
+      inc lkLockFrames
+      inc lkDiscHist[min(lkFrameDisc, lkDiscHist.high)]
+      if lkFrameDisc >= 2: inc lkContested
+  for i in 0 ..< bot.enemies.len:
+    let t = bot.enemies[i]
+    if lvC(69, bot.tick - t.lastSeen > bot.tune.freshShotTicks):
+      continue
+    # ⭐ RANGE-SCALED LEAD (2026-08-04, the CQB accuracy crater). Field census,
+    # 24 real Default episodes: our hit% by range is 36.7 / 60.4 / 68.7 / 56.4
+    # across 0-150 / 150-300 / 300-500 / 500-700px vs the field's 65.6 / 65.6 /
+    # 61.7 / 44.2 — we WIN every band past 300px and lose 0-150 by 29 points,
+    # where 43% of our shots are fired. The fixed ~16px lead is 2 degrees at
+    # 400px and ~12 at 75px — at point-blank it aims off the body edge of a
+    # jinking target. Scale the lead in below 300px (full lead above; at 60px
+    # ~20%). [[REF-realbody]] refuted DELETING the lead globally (undershot at
+    # range); the range-scaled form keeps the ranged lead that verdict protects.
+    let predicted = leadPredicted(t)    # SAME expression the lock election used
+    let d = dist(predicted, me)
+    if d >= maxEngage:
+      continue
+    # Target priority: distance plus the turret swing needed to lay on the
+    # target (the traverse is slow, so a target near the current aim line
+    # dies sooner than a nearer one behind us), discounted for wounded
+    # targets (a 1-hp enemy dies to one shot — finish it before it resets on
+    # respawn) and for targets a visible mate is already lined up on (focus
+    # fire). The discounts are tiebreaks between comparably-engageable
+    # targets, deliberately smaller than a real positional difference.
+    var prio = d +
+      float(abs(bradsErr(bradsOf(predicted - me), bot.estAim))) * TraversePxPerBrad
+    # satCap DISTRIBUTED FIRE: enough guns to kill is sufficient. A 1-hp enemy
+    # needs one lined mate gun, anything else two (a pair of 1-damage hitscan
+    # guns finishes a 3-hp target across their cycles). ⭐ A SHIELDED enemy is a
+    # 6-hp tank (the pip bar lies "3/3"), so it takes far more sustained fire —
+    # never call it saturated at two guns or a free gun peels off and leaves the
+    # tank alive. Past the threshold this enemy is SATURATED: a further free gun
+    # flips its focus credit into a debit so it spreads to an uncovered live enemy
+    # — the priority form keeps it a nudge (a lone saturated target in range is
+    # still engaged), and CommitBonus (400 > 220) still holds a gun in the kill.
+    let satNeed = (if t.hasShield: 4 elif t.hp == 1: 1 else: 2)
+    # ⭐ FINISH THE KILL (Bug 1): is THIS candidate the target we're already committed to?
+    # A committed target that we're one hit from killing (or whose gun is on us) must NOT be
+    # abandoned by satCap's spread-debit — satCap redirects a FREE gun, never the one closing
+    # a kill. Compute the lock match here so the satCap + danger terms below can protect it.
+    # ⭐⭐⭐ ONE LOCK OWNER: `i == lockIdx` is a target IDENTITY within this frame,
+    # where the disc test was a PLACE test that every body in the cluster passed.
+    # lockIdx is only ever set under `commit and tick <= lockUntil`, so those two
+    # conjuncts are already carried by it; NOLOCKONE=1 restores the disc predicate.
+    let isLocked =
+      if lockOne: i == lockIdx
+      else: bot.tune.commit and bot.tick <= bot.lockUntil and
+        dist(t.pos, bot.lockPos) <= LockMatchDist
+    when defined(lkprobe):
+      # The explicit NO-OP PROOF, per candidate evaluation: recompute BOTH
+      # predicates and assert they agree whenever the disc holds at most one
+      # candidate. lkNoopBreak must end at 0 — a non-zero is a broken fix.
+      block:
+        let discLocked = bot.tune.commit and bot.tick <= bot.lockUntil and
+          dist(t.pos, bot.lockPos) <= LockMatchDist
+        let oneLocked = i == lockIdxProbe
+        if lkFrameDisc <= 1:
+          inc lkNoopEvals
+          if discLocked != oneLocked: inc lkNoopBreak
+        else:
+          inc lkContestedEvals
+          if discLocked != oneLocked: inc lkDivergeEvals
+    let stick = bot.tune.stickyCommit and isLocked
+    let saturated = bot.tune.satCap and mateGuns[i] >= satNeed and not stick
+    when defined(scprobe):
+      if lvC(70, bot.tune.satCap):
+        if mateGuns[i] >= 1: inc scCov1
+        if mateGuns[i] >= 2: inc scCov2
+        if t.hp == 1: inc scHp1
+    # ⭐ FINISH THE KILL (Bug 1, v2): accumulate every DISCRETIONARY pull (hpFocus, focus-
+    # fire, danger, counterArc) into `pull` rather than subtracting each straight into prio.
+    # For a NON-committed challenger the TOTAL pull is then capped below commitBonus, so no
+    # stack of credits (danger 340 + hpFocus 120 + focus×3 135 = 595 uncapped!) can ever
+    # out-pull the enemy we're already closing a kill on. The committed target keeps its full
+    # uncapped pull (it IS the finish). Fixes the audit's mid-fight switch when the locked
+    # target's gun momentarily slews off us (danger→0) and a fresh challenger's hp+focus wins.
+    var pull = 0.0
+    if saturated:
+      anySaturated = true
+      prio += SatCapPenalty
+    else:
+      if t.hp in 1 ..< MaxHp:
+        pull += float(MaxHp - t.hp) * HpFocusBonus
+      if mateTargeted[i]:
+        # ⭐⭐ PLAN-LAYER FOCUS FIRE: in the opening clash / man-advantage window, the
+        # wave must CONCENTRATE fire to remove enemy guns fast and win the trade (the
+        # cqc-lens "focus-fire removes a gun" — we lose the opening 14-6 by spreading).
+        # Amplify the pile-on bonus during PhOpen/PhPress so mates share a target on
+        # the same beat; normal tiebreak otherwise. satCap still caps over-saturation.
+        let focus =
+          if lvC(71, bot.tune.planLayer and botPhase in {PhOpen, PhPress}): FocusFireBonus * 3.0
+          else: FocusFireBonus
+        pull += focus
+      # ⭐ v47: THE THIEF IS THE TARGET. When our heart is stolen and this track
+      # sits on the live carrier fix, killing it is the only recapture that
+      # exists — outrank hp-focus and pile-on, stay under the commit lock.
+      # NOTHIEF=1 reverts for the A/B arm.
+      if ownStolen and bot.tick - bot.carrierSeen <= ThiefFixTtl and
+          dist(t.pos, bot.carrierPos) <= ThiefMatchDist and
+          getEnv("NOTHIEF").len == 0:
+        pull += ThiefKillBonus
+    # Greatest-threat-first: an enemy FACING us can shoot this instant, so it
+    # is more dangerous than an equidistant one looking away (gated OFF).
+    let facingMe =
+      (t.facingRight and t.pos.x < me.x) or
+      (not t.facingRight and t.pos.x > me.x)
+    # AIM-DOT THREAT (#19): the coarse facingRight test only knows which half-
+    # plane the enemy faces — it flags a gun pointed 89° off us as "facing." When
+    # aimThreat is on and we read the enemy's aim-dot line, replace that with a
+    # real gun-on-me cone: aimScale is 1.0 when the gun is dead-on us, tapers to
+    # a floor at the cone edge, and 0 when the gun points elsewhere (NOT a threat
+    # this instant). Falls back to the half-plane (aimScale 1/0) when the dots are
+    # unreadable, so we never lose the old signal.
+    var aimScale = (if facingMe: 1.0 else: 0.0)
+    if lvC(72, bot.tune.aimThreat and t.aimBrads >= 0):
+      let aimErr = abs(bradsErr(t.aimBrads, bradsOf(me - t.pos)))
+      # ⭐⭐ FUZZ-TOLERANT THREAT READ (2026-07-29). GV24 made every enemy's rendered gun
+      # rotation wrong by up to ±AimFuzzBrads, so this measurement has a known error bar and
+      # must be treated as evidence, not fact. Two changes, both about the ERROR BAR:
+      #   • widen the cone by the fuzz, so a gun that is truly on us is not read as aside
+      #     (the miss direction: we ignore a lethal threat — measured 1.1% of reads, but its
+      #     cost is a death);
+      #   • replace the HARD ZERO with AimFuzzFloor. "Off cone" now means "probably aside",
+      #     not "harmless" — the old 0.0 dismissed a dead-on gun outright whenever the roll
+      #     went against us. The false-alarm direction (~13.5% of reads) is self-limiting
+      #     because the taper already scales it down; the hard zero was not.
+      # Deliberately NOT tightened instead: the read cannot be made exact by any label (the
+      # side bit is 1 bit and is itself fuzz-flipped), so the only honest response is to stop
+      # gating hard on it. Our OWN aim is exact again (GV26) and is untouched by this.
+      if aimErr <= AimOnConeBrads + AimFuzzBrads:
+        let tight = clamp(
+          float(AimOnConeBrads + AimFuzzBrads - aimErr) /
+            float(AimOnConeBrads + AimFuzzBrads - AimDeadOnBrads), 0.0, 1.0)
+        aimScale = max(AimFuzzFloor, 0.4 + 0.6 * tight)
+      else:
+        aimScale = AimFuzzFloor          # probably aside — but a fuzzed read is not proof
+    if lvC(73, bot.tune.dangerScore):
+      # #1 GREATEST-THREAT-FIRST (richer danger score, supersedes the flat
+      # facing tiebreak): a gun that is BOTH pointed at us AND close can kill us
+      # THIS second — that is the target to neutralize first, ahead of a nearer
+      # one looking away. Scale the facing credit UP as range closes (a facing
+      # enemy at point-blank is lethal now; one at 600px is a rumor), and stack
+      # an extra increment when it is also wounded (facing + one hit from death
+      # = the cheapest kill that also removes the most danger). Credit is capped
+      # so it stays a strong PRIORITY nudge, never a reason to fire past cover.
+      if aimScale > 0.0:
+        let closeFrac = clamp(1.0 - d / DangerFalloff, 0.0, 1.0)
+        var danger = (AimThreatBonus + DangerCloseBonus * closeFrac) * aimScale
+        if t.hp in 1 ..< MaxHp:
+          danger += DangerWoundedBonus * aimScale
+        pull += danger                     # capped as part of the TOTAL pull below
+    elif lvC(74, bot.tune.threatFacingBonus):
+      # ⚠️ REACHABILITY (audited 2026-08-20): this branch is UNREACHABLE IN EVERY
+      # SHIPPED CONFIGURATION, and that is by construction rather than by accident.
+      # `shippedCombatTune()` sets dangerScore = true, so the `if` above always wins;
+      # and threatFacingBonus is false in defaultCombatTune() and is never assigned
+      # true anywhere in the policy. It is NOT dead code and must NOT be deleted: the
+      # eval rig arms it with THREATFACE=1 (harness.nim, also folded into SEAL=1) on
+      # top of a DANGER=0 tune, which is the flat-facing CONTROL ARM that dangerScore
+      # was measured against. Deleting it would delete that control. Anyone reading a
+      # THREATFACE=1 run must confirm DANGER=0 in the same run, or the knob is inert.
+      if facingMe:
+        pull += AimThreatBonus
+    # counterArc (Play C): an enemy holding a plasma arc has NO gun for the rest
+    # of its life and a cone that only reaches 136px. Beyond PlasmaArcReachPx +
+    # buffer it is a defenseless high-value target — kill it to delete the enemy's
+    # whole AoE play. Credit (240) beats a generic/wounded enemy but sits below
+    # CommitBonus(400), so it never drops a target we're one hit from finishing.
+    # Retarget-only: no movement bias here (that's the separate arcStandoff lever).
+    # Inside the cone band we add nothing — the close+aim danger terms already top
+    # it, and stacking credit there risks thrashing.
+    when defined(caprobe):
+      if lvC(75, bot.tune.counterArc): inc caSeen
+    if lvC(76, bot.tune.counterArc and t.hasArc and
+        d > PlasmaArcReachPx + CounterArcReachBuffer):
+      pull += CounterArcBonus
+      when defined(caprobe): inc caBump
+    # ⭐ FINISH THE KILL: cap the TOTAL discretionary pull of a NON-committed challenger below
+    # commitBonus (by the StickyDangerCap margin), so no stack of hp+focus+danger+arc credit can
+    # out-pull the kill we're committed to. The committed target's pull is uncapped (it's the one
+    # we finish). Off (stickyCommit false) => behaves exactly as before (no cap), shipped-identical.
+    if lvC(77, bot.tune.stickyCommit and not isLocked):
+      pull = min(pull, bot.tune.commitBonus - StickyDangerCap)
+    prio -= pull
+    # Target commitment: heavily favour the enemy we are already engaged with
+    # (matched by its last-known position) so three shots land on ONE target
+    # and kill it, rather than one shot each spread across many wounded ones.
+    if isLocked:
+      prio -= bot.tune.commitBonus
+    if client.pixelRayClear(me, predicted):
+      if bot.friendlyBlocked(me, predicted, d):
+        continue                        # prefer a target with an empty corridor
+      if engage < 0 or prio < engagePrio:
+        engagePrio = prio
+        engageD = d
+        engage = i
+        aim = predicted
+        engageVel = t.vel
+        engageLeadApplied = bot.tune.leadTicks * leadScaleOf(t)
+        engageBody = t.pos
+        engageSat = saturated
+    elif d < blockedD:
+      blockedD = d
+      blockedAim = predicted
+      blockedBody = t.pos
+      haveBlocked = true
+
+  when defined(scprobe):
+    if lvC(78, bot.tune.satCap and engage >= 0):
+      inc scEngaged
+      if anySaturated:
+        inc scSatSeen
+        if engageSat: inc scDogpile else: inc scRedirect
+
+  # Refresh the commitment lock onto whichever target we chose this frame, so
+  # next frame's selection is drawn back to it until it dies or fogs out.
+  if lvC(79, bot.tune.commit and engage >= 0):
+    bot.lockPos = bot.enemies[engage].pos
+    bot.lockUntil = bot.tick + LockTtl
+
+  # TARGET-LOCK: pin the turret on a committed enemy's bearing so the vision
+  # cone (which rides the aim) keeps them lit and the gun stays pre-lined.
+  # Refresh onto the engage target when we have one; otherwise hold onto the
+  # freshest engageable-range enemy so a brief fog-out does not throw the aim
+  # back to the movement lane.
+  if lvC(80, bot.tune.aimLock):
+    if engage >= 0:
+      bot.aimLockPos = bot.enemies[engage].pos
+      bot.aimLockUntil = bot.tick + AimHoldTtl
+    else:
+      # No clear shot this frame: pre-lay the turret on the freshest engageable-
+      # range enemy so a brief fog-out doesn't throw the aim back to the move lane.
+      # preSlew (v8 "fire first", 2026-07-18): among that SAME engageable-range
+      # fresh set, prefer the enemy whose gun is NOT on us — the draw we WIN. We
+      # complete our 5-tick windup while its turret is still slewing onto us, so
+      # our bullet leaves first (OODA half-beat). This is a fire-TIMING choice
+      # inside aimLock's existing on-objective candidate set — NOT the refuted
+      # huntSweep (which aims off-objective at ANY remembered enemy regardless of
+      # range/objective and trades wins for kills, see failed.md ⛔huntSweep).
+      # Requires aimThreat (the enemy aim-dot read) to know whose gun is off us;
+      # with no dot readback it falls straight back to nearest, so the shipped
+      # behavior is unchanged when preSlew can't actually tell.
+      let preSlewOn = bot.tune.preSlew and bot.tune.aimThreat
+      var best = -1
+      var bestScore = 1e18
+      for i in 0 ..< bot.enemies.len:
+        if lvC(81, bot.tick - bot.enemies[i].lastSeen > bot.tune.freshShotTicks):
+          continue
+        let d = dist(bot.enemies[i].pos, me)
+        if d >= maxEngage:
+          continue
+        # Default score = distance (the shipped nearest-pick). With preSlew on
+        # AND a readable enemy aim dot, discount an enemy whose gun points AWAY
+        # from us: a big off-us aim error is the draw we WIN — pre-lay there so
+        # our windup finishes while its turret is still slewing onto us. An
+        # unreadable dot keeps offUs=0, so it still competes on pure distance
+        # (never dropped) and the pick is identical to shipped when no dot reads.
+        var score = d
+        if preSlewOn and bot.enemies[i].aimBrads >= 0:
+          let offUs = float(abs(bradsErr(bot.enemies[i].aimBrads, bradsOf(me - bot.enemies[i].pos))))
+          score = d - offUs * PreSlewOffUsPx
+        if best < 0 or score < bestScore:
+          bestScore = score
+          best = i
+      if best >= 0:
+        bot.aimLockPos = bot.enemies[best].pos
+        bot.aimLockUntil = bot.tick + AimHoldTtl
+
+  # The nearest remembered enemy that could be threatening us right now,
+  # used to pick which line to break when ducking through cooldown.
+  var
+    nearThreat = -1
+    nearThreatD = DuckRange
+  for i in 0 ..< bot.enemies.len:
+    if bot.tick - bot.enemies[i].lastSeen > 30:
+      continue
+    let d = dist(bot.enemies[i].pos, me)
+    if d < nearThreatD:
+      nearThreatD = d
+      nearThreat = i
+
+  # #6 BUDDY BOUNDING OVERWATCH: never stroll forward across a threatened open
+  # lane while MY gun is on cooldown. A gun that is down cannot answer a shot,
+  # so advancing into a live enemy line during the reload is how an attacker
+  # trades itself for nothing. Instead HOLD at cover for the reload while a
+  # covering mate's gun stays up, then bound forward when my gun is live again.
+  # This keeps at least one team gun always trained on the crossing. Only for
+  # advancing attackers (rushers who cross the open middle), only vs a threat
+  # with a clear line to us beyond duck range (the duck branch owns the close
+  # ones), and only when a fresh mate is nearby and not deeper in the jaws (so
+  # the bound is genuinely covered, not a solo freeze that surrenders tempo).
+  var boundHold = false
+  var boundThreatPos: Vec
+  if lvC(82, bot.tune.boundingOverwatch and not shotReady and
+      not iCarry and not mateCarry and not pocketRush and
+      bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom}):
+    var lineThreat = -1
+    var lineThreatD = BoundThreatRange
+    for i in 0 ..< bot.enemies.len:
+      if bot.tick - bot.enemies[i].lastSeen > BoundThreatTtl:
+        continue
+      let d = dist(bot.enemies[i].pos, me)
+      if d <= DuckRange or d >= lineThreatD:
+        continue                           # duck branch owns close; ignore far
+      if client.pixelRayClear(me, bot.enemies[i].pos):
+        lineThreatD = d
+        lineThreat = i
+    if lineThreat >= 0:
+      var covered = false
+      for t in bot.mates:
+        if bot.tick - t.lastSeen > BoundMateTtl:
+          continue
+        if dist(t.pos, me) > BoundMateRange:
+          continue
+        if homeSign(bot.team) * (t.pos.x - me.x) < -BoundMateDepth:
+          continue                         # this mate is further into the jaws
+        covered = true
+        break
+      if covered:
+        boundHold = true
+        boundThreatPos = bot.enemies[lineThreat].pos
+
+  # staggerFire (v8, 2026-07-18): the COMPLEMENT of boundingOverwatch. My gun is
+  # UP, but a nearby covering-position mate's gun is DOWN — it just fired (a
+  # muzzle bloom sits on it, and the bloom lifetime ShotFxTicks == the 12t reload
+  # FireCooldownTicks). If I bound forward across the threatened open lane now, I
+  # spend my overwatch and leave the crossing with NO live team gun while my mate
+  # reloads — the "whole pair empties on one beat, wiped by a focus-fire wave"
+  # death-burst (4.8 vs 3.6 in the H2H decode). So HOLD my up-gun on the crossing
+  # to cover the mate's reload; when its gun is back up (bloom gone) I bound.
+  # Turns a pair into true alternating bounds — one gun always live on the lane.
+  # MOVEMENT ONLY: the engage branch still wins whenever I have a clear shot
+  # (boundHold is reached only with no clear engage), so this never throttles my
+  # own trigger and cannot regress into the refuted fire-discipline knob.
+  if lvC(83, bot.tune.staggerFire and shotReady and not boundHold and
+      not iCarry and not mateCarry and not pocketRush and
+      bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom}):
+    var lineThreat = -1
+    var lineThreatD = BoundThreatRange
+    for i in 0 ..< bot.enemies.len:
+      if bot.tick - bot.enemies[i].lastSeen > BoundThreatTtl:
+        continue
+      let d = dist(bot.enemies[i].pos, me)
+      if d <= DuckRange or d >= lineThreatD:
+        continue                           # duck branch owns close; ignore far
+      if client.pixelRayClear(me, bot.enemies[i].pos):
+        lineThreatD = d
+        lineThreat = i
+    if lineThreat >= 0:
+      # A covering-position mate (near, not deeper in the jaws) whose gun is DOWN.
+      var mateReloading = false
+      for t in bot.mates:
+        if bot.tick - t.lastSeen > BoundMateTtl:
+          continue
+        if dist(t.pos, me) > BoundMateRange:
+          continue
+        if homeSign(bot.team) * (t.pos.x - me.x) < -BoundMateDepth:
+          continue                         # this mate is further into the jaws
+        if client.mateGunDown(t.pos):
+          mateReloading = true
+          break
+      if mateReloading:
+        boundHold = true
+        boundThreatPos = bot.enemies[lineThreat].pos
+
+  # ⭐ SHOUT-REACTION GATE (calloutGate): a heard callout is INTEL, and the
+  # track was already banked at intake — even a committed carrier now KNOWS the
+  # called enemy. This gate decides only whether the report earns a vision-cone
+  # GLANCE, keyed on the bot's task priority (SEAL "priority of work / need-to-
+  # know"), now that every commitment state is settled. It NEVER moves the feet:
+  # v1 (2026-07-16) mis-classed the pedestal-rushers as "free guns" and let a
+  # callout pull 5/8 seats off the heart-rush → grabs collapsed, −12 seat-adj.
+  # Maxwell's correction: a rusher advancing on the pedestal is ALREADY occupied
+  # by an objective, so it joins the committed tier — and since every seat in
+  # this policy always has a job, no report ever earns the feet. Cone-only.
+  if lvC(84, bot.tune.calloutGate and bot.calloutTick == bot.tick):
+    let
+      cp = bot.calloutPos
+      selfD = dist(cp, me)
+      # Proximity override: a callout inside our own tight bubble, or dead-ahead
+      # in a narrow cone on our travel bearing (a threat we are about to walk
+      # INTO), earns a glance even from a committed bot — a dead carrier/rusher
+      # captures nothing, so surviving the walk-in IS serving the objective.
+      inLaneCone = abs(bradsErr(bradsOf(cp - me), bradsOf(target - me))) <=
+        CalloutLaneCone
+      proximity = selfD <= CalloutSelfBubble or
+        (inLaneCone and selfD <= CalloutLaneReach)
+    var glance = false
+    if engage >= 0 or boundHold:
+      # Owns a fresh target / bounding across a covered lane: already committed
+      # to a threat we can win — a report never preempts a gun we're winning.
+      glance = false
+    elif iCarry or pocketRush or rushing:
+      # OCCUPIED BY THE OBJECTIVE: the carry, the final grab, and an attacker
+      # advancing on the pedestal all outrank a report (Maxwell: rushers "are
+      # occupied by a current objective already"; his example — "enemy next to
+      # the heart" is worth KNOWING, not worth stopping the grab). Only the
+      # survival proximity override earns the glance.
+      glance = proximity
+    elif mateCarry:
+      # Escorting a carrier run: a real job. Glance only at a callout near the
+      # carrier we screen or on our own body — need-to-know for the run we cover.
+      glance = dist(cp, mateCarryPos) <= CalloutSectorRange or proximity
+    elif bot.role in {Overwatch, HomeDefender}:
+      # Posted: need-to-know. Glance ONLY at a callout inside the sector this bot
+      # guards (the thief/our home for the defender, its post for the sniper) —
+      # a defender never leaves its post for a report, but it MUST look when the
+      # contact is on the ground it was placed to hold.
+      let guardPt =
+        if bot.role == HomeDefender:
+          (if ownStolen: bot.carrierPos else: ownHome)
+        elif bot.postReady: bot.postHold
+        else: me
+      glance = dist(cp, guardPt) <= CalloutSectorRange or proximity
+    else:
+      # No commitment matched (e.g. a flanker recalled off its deep lane with no
+      # rush active): the only genuinely uncommitted case. Glance if in earshot.
+      glance = selfD <= ShoutHeardRange
+    if glance:
+      bot.orientPos = cp
+      bot.orientUntil = bot.tick + ContactWatchTicks
+
+  # Grenades (0.7.0): a lobbed blast that flies over every wall — the counter to
+  # cover-campers the hitscan gun can never reach AND the MULTIKILL answer to a
+  # clustered enemy line (a line is a cluster; the 52px blast punishes clustering).
+  # Carry one when a corner pickup is a short detour away; spend it on a wall-
+  # blocked fresh track (value the gun cannot collect) or on the DENSEST cluster in
+  # range. ⭐ ANTI-h006: when a standing line is classified or heard, we prioritize
+  # the fattest cluster (most fresh enemies inside one blast) over mere nearness —
+  # break the line BEFORE the wave punches the gap, instead of trading down its front.
+  var carryingNade = false
+  for o in client.spriteObjectsWithLabel(LabelGrenadeCarried):
+    # The marker floats above-right of its carrier (+8 x, ~-20 y from center).
+    if dist(client.mapPos(o), me) <= 30.0:
+      carryingNade = true
+      break
+  # A line is live for us this frame if we classified one OR heard one called.
+  let lineLive = localSc == ScLine or
+    (bot.tune.commsPlay and bot.heardPlay == RpLine and
+     bot.tick - bot.heardPlayTick <= CommsPlayTtl)
+  var
+    nadeAim = -1
+    nadeThrowD = 0.0
+    nadeAimStale = false               # staleNade: the winning candidate is a
+                                       # remembered wall-camper, not a sighting
+  if carryingNade and not iCarry:
+    # Score each candidate by CLUSTER SIZE (fresh enemies within one blast of the
+    # aim point), tie-broken by nearness. A wall-blocked lone target still qualifies
+    # (the gun can't reach it); an open target needs a cluster >=2 (a lone open
+    # enemy is the gun's job, not a spent grenade) UNLESS a line is live, where even
+    # thinning the front is worth the lob.
+    #
+    # ⭐ staleNade (v56): the freshness gate below is the GUN's gate
+    # (FreshShotTicks = 24 ≈ 0.8s), and it was silently deciding grenade
+    # targeting too — so a bunched enemy KNOWN to be behind a wall could NEVER
+    # be a target, which is precisely the case a grenade exists for (the
+    # measured five-kill door camper: known, stationary, wall-covered, never
+    # naded). The gate STAYS for everything else; a stale track is admitted
+    # only when all three of the camper's own properties hold:
+    #   (1) wall-BLOCKED — the gun provably cannot collect it, so the lob is
+    #       not competing with a shot we could just take;
+    #   (2) CAMPED when last seen (vel <= NadeStaleVelPx) — a body that was
+    #       moving is not where we remember it, and a grenade's ~1s flight
+    #       cannot chase; and
+    #   (3) >= NadeStaleMinCluster remembered bodies inside ONE blast — a lone
+    #       stale memory is a guess, a stack of two is the bunker.
+    # A stale candidate is scored on its own cluster but NEVER outranks an
+    # equal-size fresh one (the freshness tiebreak below), and a stale aim
+    # point is the REMEMBERED position, never velocity-extrapolated: over 110
+    # ticks `pos + vel*age` would fly off the map.
+    var bestScore = -1
+    var bestD = 1e18
+    var bestStale = true               # so the first candidate always wins
+    when defined(ndprobe): inc ndCarryFrames
+    for i in 0 ..< bot.enemies.len:
+      let t = bot.enemies[i]
+      let age = bot.tick - t.lastSeen
+      var stale = false
+      if age > FreshShotTicks:
+        # Probe population (lever-INDEPENDENT so the OFF arm measures the same
+        # world): how often a stale track is actually the wall-camper shape.
+        when defined(ndprobe):
+          if bot.nadeCamper(t) and
+              dist(t.pos, me) >= NadeMinRange and dist(t.pos, me) <= NadeMaxRange and
+              not client.pixelRayClear(me, t.pos):
+            inc ndStaleSeen
+            # Same neighbour rule the real gate uses below (fresh sightings
+            # count too — a bunker is remembered as a whole), so this stage of
+            # the funnel is the actual bar, not a stricter one.
+            var pop = 1
+            for j in 0 ..< bot.enemies.len:
+              if j == i or dist(bot.enemies[j].pos, t.pos) > NadeBlast:
+                continue
+              if bot.tick - bot.enemies[j].lastSeen <= FreshShotTicks or
+                  bot.nadeCamper(bot.enemies[j]):
+                inc pop
+            if pop >= NadeStaleMinCluster: inc ndStaleCluster
+        if lvC(85, not (bot.tune.staleNade and bot.nadeCamper(t))):
+          continue
+        stale = true
+      let p = if stale: t.pos else: t.pos + t.vel * float(age)
+      let d = dist(p, me)
+      if d < NadeMinRange or d > NadeMaxRange:
+        continue
+      let blocked = not client.pixelRayClear(me, p)
+      if stale and not blocked:
+        continue                       # a stale OPEN memory is the gun's job
+      var cluster = 1                    # the target itself
+      for j in 0 ..< bot.enemies.len:
+        if j != i and bot.tick - bot.enemies[j].lastSeen <= FreshShotTicks and
+            dist(bot.enemies[j].pos, p) <= NadeBlast:
+          inc cluster
+      if stale:
+        # A stale candidate counts stale mates too — a bunker is remembered as
+        # a whole — but must clear the cluster bar to be a target at all.
+        var scluster = 1
+        for j in 0 ..< bot.enemies.len:
+          if j == i or dist(bot.enemies[j].pos, p) > NadeBlast:
+            continue
+          if bot.tick - bot.enemies[j].lastSeen <= FreshShotTicks or
+              bot.nadeCamper(bot.enemies[j]):
+            inc scluster
+        if scluster < NadeStaleMinCluster:
+          continue
+        cluster = scluster
+      # Worth a throw: wall-blocked (gun can't collect), OR a real cluster (>=2),
+      # OR a live line where even a single front body thins the wall we must cross.
+      if blocked or cluster >= 2 or lineLive:
+        # ⭐⭐ nadeFfVeto GATE (a): do not TARGET a point that blasts a mate. `p`
+        # is the aim point at distance `d` on the bearing the throw will take, so
+        # it IS the impact point the engine will compute from the charge — test
+        # it directly. Rejecting here (rather than at release) is free: no charge
+        # is started, no grenade is spent, and the scan simply picks the next
+        # best cluster. Counted lever-independently first so the OFF arm reports
+        # the same stimulus.
+        when defined(aoeprobe):
+          inc nfCand
+          for k in 0 ..< AoeSlackN:
+            if bot.friendlyInBlast(p, NadeFfFlightTicks, AoeSlack[k]):
+              inc nfCandHot[k]
+        if lvC(86, bot.tune.nadeFfVeto and
+            bot.friendlyInBlast(p, NadeFfFlightTicks, 0.0)):
+          when defined(aoeprobe): inc nfCandVeto
+          continue
+        # Prefer the fattest cluster; a FRESH candidate breaks a size tie ahead
+        # of a stale one (never trade a sighting for a memory); nearer breaks
+        # what is left (flatter lob, less drift).
+        let better =
+          if cluster > bestScore: true
+          elif cluster < bestScore: false
+          elif bestStale and not stale: true
+          elif stale and not bestStale: false
+          else: d < bestD
+        if better:
+          bestScore = cluster
+          bestD = d
+          bestStale = stale
+          nadeAim = bradsOf(p - me)
+          nadeThrowD = d
+          nadeAimStale = stale
+    when defined(commsprobe):
+      if nadeAim >= 0 and (lineLive or bestScore >= 2): inc csNadeLine
+    when defined(ndprobe):
+      if nadeAim >= 0:
+        if nadeAimStale: inc ndStaleAim else: inc ndFreshAim
+  elif not carryingNade and not iCarry and not mateCarry and not pocketRush and
+      not banking:
+    # Collect a pickup: anyone grabs one within a short detour, and the two
+    # flankers own their lane's friendly-side corner spawn — it sits right on
+    # their border route, so they arm up on the way out every respawn cycle.
+    var tookNade = false
+    for o in client.spriteObjectsWithLabel(LabelGrenade):
+      let p = client.mapPos(o)
+      if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
+          p.y > float(MapH - 40):
+        continue                     # HUD indicator shares the label
+      # ⭐ nadeSupply: a sighting also BANKS the depot. Corner spawns are
+      # static for the whole episode (sim resetGrenades never moves them) and
+      # refill 5s after a take, so one look is permanent map knowledge — the
+      # part the 90px vision bubble otherwise throws away every frame.
+      if lvC(87, bot.tune.nadeSupply and bot.nadeDepots.len < NadeDepotMax):
+        var known = false
+        for q in bot.nadeDepots:
+          if dist(q, p) <= NadeDepotSeenPx:
+            known = true
+            break
+        if not known:
+          bot.nadeDepots.add p
+          when defined(ndprobe): inc ndDepotLearned
+      let laneMatch =
+        (bot.role == FlankTop and p.y < float(CenterY) and
+         homeSign(bot.team) * (p.x - float(CenterX)) > 0) or
+        (bot.role == FlankBottom and p.y > float(CenterY) and
+         homeSign(bot.team) * (p.x - float(CenterX)) > 0)
+      let reach = if laneMatch: 1e9 else: NadePickupDetour
+      if dist(p, me) <= reach:
+        when defined(nadeDebug):
+          echo "DETOUR to pickup at ", p.x, ",", p.y, " role ", bot.role
+        target = p
+        tookNade = true
+        when defined(ndprobe): inc ndSupplySeen
+        break
+    # ⭐ nadeSupply (v56): the scan above is LOS-GATED. `spriteObjectsWithLabel`
+    # is fog-honest (broadcast.addPickup drops any spawn outside the seat's real
+    # vision) and the bubble is 90px, so the flankers' "unlimited reach to their
+    # lane corner" almost never fires — the identical fires-0 shape the
+    # shield/plasma-arc seek had before it was repointed at the STATIC spawn
+    # coordinate. Measured cost: 38 pickups to their 68.
+    #
+    # Grenade spawns ARE static known points. sim.grenadeSpawnPoints() derives
+    # them from map geometry alone, and on every board that is not a 4-team
+    # board the layout is layoutSides BY CONSTRUCTION (arena.nim: only
+    # `teams == 4` can draw corners/plus, and the layout override is rejected
+    # below 4 teams) — the four corners at ArenaBorder(10) + GrenadeSpawnInset(40)
+    # = 50px inset. resetGrenades plants them there exactly, with no
+    # nearest-walkable nudge, and a taken corner refills in GrenadeRespawnTicks
+    # = 5s, so a depot is essentially always stocked.
+    #
+    # ROLE-RESTRICTED, per the 2026-07 supply finding ("the 320px ammo detour
+    # MUST be role-restricted"): only the two flank seats — whose route already
+    # runs the border — and the MidGuard trailer, the one attacker explicitly
+    # dealt as "trails offset high and cleans up". The mids are the wave and
+    # never leave it; HomeDefender/Overwatch hold posts and must not wander.
+    # Budget is the EXTRA path (me->depot->task minus me->task), not raw range,
+    # so a depot already on the route is free and one across the map is refused.
+    let supplySeat = not tookNade and
+      bot.role in {FlankTop, FlankBottom, MidGuard} and
+      engage < 0                       # never leave a live gunfight for ammo
+    when defined(ndprobe):
+      # Population, counted WITHOUT the lever (asoprobe rule) so the OFF arm
+      # reports the same denominator instead of a structural 0.
+      if supplySeat:
+        inc ndSupplyRole
+        if bot.nadeDepots.len > 0 or GameTeams < 4: inc ndSupplyDepot
+    if lvC(88, bot.tune.nadeSupply and supplySeat):
+      if bot.nadeDepots.len == 0 and GameTeams < 4 and MapW > 120 and MapH > 120:
+        let inset = NadeSpawnInsetPx
+        for c in [vec(inset, inset), vec(inset, float(MapH) - inset),
+                  vec(float(MapW) - inset, inset),
+                  vec(float(MapW) - inset, float(MapH) - inset)]:
+          bot.nadeDepots.add c
+          when defined(ndprobe): inc ndDepotSeeded
+      while bot.nadeDryUntil.len < bot.nadeDepots.len:
+        bot.nadeDryUntil.add 0
+      var bestDepot = -1
+      var bestCost = NadeDepotDetour
+      let taskD = dist(target, me)
+      for k in 0 ..< bot.nadeDepots.len:
+        let q = bot.nadeDepots[k]
+        # Standing ON a depot and STILL unarmed proves it is empty (the sim
+        # grants on a 12px touch with no input at all), so believe it and let
+        # it refill. Without this the detour's own worst failure mode is a bot
+        # parked on a taken corner for the rest of the game.
+        if dist(q, me) <= NadeDepotDryPx:
+          bot.nadeDryUntil[k] = bot.tick + NadeDepotDryTicks
+        if bot.tick < bot.nadeDryUntil[k]:
+          continue
+        let cost = dist(q, me) + dist(target, q) - taskD
+        if cost < bestCost:
+          bestCost = cost
+          bestDepot = k
+      if bestDepot >= 0:
+        target = bot.nadeDepots[bestDepot]
+        when defined(ndprobe): inc ndSupplySeek
+
+  # ── SWORD / SHIELD / PLASMA-ARC pickups. The disarm object MOVED with the
+  # engine: on GameVersion 15 the SWORD IS GONE (replaced by the plasma arc) and
+  # the SHIELD NO LONGER DISARMS (it now grants 6 HP + 3x-slower fire, no gun
+  # loss). The ONLY thing that sets canFire=false is holding a PLASMA ARC
+  # (canFire = ... and not hasPlasmaArc). Behaviours, each gated:
+  #   avoidDisarm — steer around a PLASMA-ARC pickup we're NOT collecting (the
+  #     real disarm now; the pure-downside fix, repointed off the dead sword +
+  #     no-longer-disarming shield).
+  #   shieldTank  — an escort grabs a shield to body-block the carrier (still a
+  #     6-HP wall; the premise survives — shield still tanks + blocks bodies).
+  #   swordAmbush — INERT on v15 (no sword to grab); code kept, gated, never fires.
+  # Detect our own possession from the "shield carried"/"plasma arc carried"
+  # markers that float over our head (the "grenade carried" pattern). iHaveSword
+  # stays wired for the inert swordAmbush path but never trips ("sword carried"
+  # no longer emitted).
+  var
+    iHaveShield = false
+    iHaveSword = false
+    iHavePlasma = false
+  for o in client.spriteObjectsWithLabel(LabelShieldCarried):
+    if dist(client.mapPos(o), me) <= 30.0:
+      iHaveShield = true
+      break
+  for o in client.spriteObjectsWithLabel("sword carried"):
+    if dist(client.mapPos(o), me) <= 30.0:
+      iHaveSword = true
+      break
+  for o in client.spriteObjectsWithLabel(LabelSprayCanCarried):
+    if dist(client.mapPos(o), me) <= 30.0:
+      iHavePlasma = true
+      break
+  when defined(cgprobe):
+    inc cgFrames
+    if iHaveShield and iHavePlasma: inc cgCoShieldCan
+    if carryingNade and iHavePlasma: inc cgCoNadeCan
+    if cgFrames mod 2000 == 0:
+      stderr.writeLine "CGPROBE frames=" & $cgFrames &
+        " coShieldCan=" & $cgCoShieldCan & " coNadeCan=" & $cgCoNadeCan &
+        " shieldGrabFire=" & $cgShieldGrabFire
+  # Pickup points in view (each filtered against the HUD indicator that shares
+  # the label, exactly like the grenade pickup scan).
+  var
+    swordPickups: seq[Vec]
+    shieldPickups: seq[Vec]
+    plasmaPickups: seq[Vec]
+  if lvC(89, bot.tune.swordAmbush):            # inert on v15 (no "sword" pickup emitted)
+    for o in client.spriteObjectsWithLabel("sword"):
+      let p = client.mapPos(o)
+      if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or p.y > float(MapH - 40):
+        continue
+      swordPickups.add(p)
+  if lvC(90, bot.tune.avoidDisarm or bot.tune.sprayGrab):
+    for o in client.spriteObjectsWithLabel(LabelSprayCan):
+      let p = client.mapPos(o)
+      if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or p.y > float(MapH - 40):
+        continue
+      plasmaPickups.add(p)
+    when defined(canprobe):
+      inc cpGate
+      if plasmaPickups.len > 0:
+        inc cpSeen
+        cpObjs += plasmaPickups.len
+  if lvC(91, bot.tune.shieldTank or bot.tune.shieldRush or bot.tune.comboGrab or
+      bot.tune.shieldAddr):  # shield = 6 HP (no longer a disarm)
+    for o in client.spriteObjectsWithLabel(LabelShield):
+      let p = client.mapPos(o)
+      if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or p.y > float(MapH - 40):
+        continue
+      shieldPickups.add(p)
+  # ── ⭐⭐⭐ shieldAddr LEARNING PASS (2026-08-20). Runs BEFORE every shield seeker
+  # and is gated on NOTHING but the lever: the rush's seat, window and yields decide
+  # when we may WALK to a shield, but they must not decide when we may LEARN one.
+  # Most sightings happen while healthy and in transit through our own base, which is
+  # exactly the look that makes the later errand possible — the nadeSupply lesson
+  # verbatim. Cost when armed is one pass over a sprite list already built above;
+  # cost when OFF is a single false branch.
+  # ⚠️ ALIVE ONLY. `me` is a corpse's last position while dead and the sprite feed is
+  # not a live seat's view, so learning here would bank a spot from someone else's
+  # bubble and — worse — form a "this spot is EMPTY" belief from a body lying on it.
+  # bot.ownHp is 0 while dead or unread, the same test medKitEcon's own gate uses.
+  when defined(shprobe):
+    if bot.ownHp > 0:
+      inc shFrames
+      if iHaveShield and not bot.probeHadShield: inc shAcquired
+    bot.probeHadShield = iHaveShield
+  if bot.tune.shieldAddr and bot.ownHp > 0:
+    for p in shieldPickups:
+      var known = -1
+      for k in 0 ..< bot.shieldSpots.len:
+        if dist(bot.shieldSpots[k], p) <= ShieldSpotSeenPx:
+          known = k
+          break
+      if known < 0:
+        if bot.shieldSpots.len < ShieldSpotMax:
+          bot.shieldSpots.add p
+          bot.shieldDryUntil.add 0
+          when defined(shprobe): inc shLearned
+      else:
+        bot.shieldDryUntil[known] = 0        # its sprite is here: it is stocked again
+    for k in 0 ..< bot.shieldSpots.len:
+      # Standing on a remembered spot with no sprite on it proves the shield was
+      # taken — a pickup inside our own bubble is never fogged, so absence is
+      # evidence, not ignorance. Believe the take for exactly one refill period.
+      if dist(bot.shieldSpots[k], me) > ShieldSpotDryPx:
+        continue
+      var here = false
+      for p in shieldPickups:
+        if dist(bot.shieldSpots[k], p) <= ShieldSpotSeenPx:
+          here = true
+          break
+      if not here:
+        bot.shieldDryUntil[k] = bot.tick + ShieldSpotDryTicks
+        when defined(shprobe): inc shDry
+  # shieldTank: an escort with our heart stolen and a shield in easy reach grabs
+  # it to become a fat body-block on the carrier's cone (it can't shoot anyway).
+  var seekingPickup = false
+  if lvC(92, bot.tune.shieldTank and not iHaveShield and not iHaveSword and
+      not iCarry and not banking and mateCarry and
+      bot.role in {MidBottom, FlankBottom, MidGuard} and
+      dist(me, mateCarryPos) < EscortRunMateRange):
+    var best = 1e18
+    for p in shieldPickups:
+      let d = dist(p, me)
+      if d <= ShieldGrabDetour and d < best:
+        best = d
+        target = p
+        seekingPickup = true
+    when defined(ssprobe):
+      if seekingPickup: inc ssTankSeek
+  # ⭐ SPRAY GRAB (2026-08-04, GV36 melee doctrine — Maxwell's swap framing).
+  # The cone is not a sidearm: carrying it REPLACES the gun with a 3-dmg/touch
+  # close-range weapon that one-shots a bare cog. Census of 18 live post-GV36
+  # episodes: the post-churn league #1 takes 31% of his kills with the cone
+  # (5.77 kills/1k carry-ticks, short frequent carries), and NOBODY in the
+  # sample died while carrying — the gun you give up is broken at range
+  # anyway, so the swap is currently FREE. Our per-carry efficiency already
+  # beats focusfire's; we simply never picked one up (1% carry time).
+  # Opportunistic and VISIBLE-ONLY (no spawn-coordinate guessing — the kit
+  # lesson): any free attacker seat that sees a can nearby grabs it. The
+  # ComboGrabSeat is EXCLUDED below — its shield-then-can sequencing is owned
+  # entirely by the dedicated comboGrab block right after this one, so the two
+  # never race for the same target. ⭐ SEAT-IDENTITY FIX (v45): this used to
+  # compare bot.role == roleForSeat(ComboGrabSeat, team), which excludes every
+  # bot whose ROLE happens to match — and roleForSeat's table assigns MidBottom
+  # to TWO seats per team (seat 2 AND 4 for Red, seat 3 AND 4 for Blue), so on
+  # Red's canonical strided subset {0,2,4,6} this silently excluded 2 of 4 held
+  # bots instead of 1. bot.teamSeat is the physical seat; compare that instead.
+  if lvC(93, bot.tune.sprayGrab and not seekingPickup and not iHavePlasma and
+      not banking and
+      not iHaveShield and not iCarry and not mateCarry and not ownStolen and
+      not (bot.tune.comboGrab and bot.teamSeat == ComboGrabSeat) and
+      bot.role in {MidTop, MidBottom, MidGuard, FlankTop, FlankBottom}):
+    var best = 1e18
+    for p in plasmaPickups:
+      let d = dist(p, me)
+      if d <= SprayGrabDetour and d < best:
+        best = d
+        target = p
+        seekingPickup = true
+    when defined(canprobe):
+      if seekingPickup: inc cpSeek
+  # ⭐⭐⭐ COMBO GRAB (2026-08-06, sharpened per captain-brain audit course-
+  # correction from the original unrestricted design): item-stacking insight —
+  # shield/spray-can/grenade are separate state bits and STACK on one agent,
+  # the engine forces no choice — but a population-wide opportunistic grab
+  # risks diluting single-item discipline everywhere sprayGrab/shieldTank
+  # already work. Instead: ONE designated seat (ComboGrabSeat, mirrors
+  # ShieldRushSeat's single-seat pattern) runs a SEQUENCED shield-THEN-can
+  # grab with a done-latch (mirrors shieldRushDone), reusing the SAME
+  # ShieldGrabDetour/SprayGrabDetour budgets shieldTank/sprayGrab already
+  # proved. Everyone else keeps today's single-item discipline untouched.
+  #   PHASE 1 (not iHaveShield): route to the nearest known shield.
+  #   PHASE 2 (iHaveShield, not iHavePlasma): route to the nearest known can —
+  #     this is exactly the case the general sprayGrab block above refuses
+  #     (its own `not iHaveShield` term), so this seat is carved out of that
+  #     block entirely and gets its own can-seek here instead of a "lifted"
+  #     shared condition (no risk of leaking the exception to any other seat).
+  # Latches comboGrabDone once BOTH are held, so the seat then plays its
+  # normal combat posture (can+shield = the durable close-range breacher) and
+  # never re-detours mid-fight for a replacement after a drop/death (reset
+  # alongside shieldRushDone, per life).
+  # ⭐ SEAT-IDENTITY FIX (v45): teamSeat, not role — see the sprayGrab exclusion
+  # comment above for why the role-equality form double-fires on Red/Blue.
+  if lvC(94, bot.tune.comboGrab and not bot.comboGrabDone and not seekingPickup and
+      bot.teamSeat == ComboGrabSeat and
+      not iCarry and not mateCarry and not ownStolen and not banking):
+    if iHaveShield and iHavePlasma:
+      bot.comboGrabDone = true                # loadout complete: hand off to combat
+    elif not iHaveShield:
+      var best = ShieldGrabDetour
+      for p in shieldPickups:
+        let d = dist(p, me)
+        if d <= best:
+          best = d
+          target = p
+          seekingPickup = true
+    elif not iHavePlasma:                     # iHaveShield and not iHavePlasma
+      var best = SprayGrabDetour
+      for p in plasmaPickups:
+        let d = dist(p, me)
+        if d <= best:
+          best = d
+          target = p
+          seekingPickup = true
+          when defined(cgprobe): inc cgShieldGrabFire
+  # ⭐⭐ shieldRush: the rusher grabs OUR OWN endzone shield BEFORE the steal so it
+  # carries the heart home at 6 HP (survive 6 hits vs 3 = the grab→cap fix). Gated to
+  # the rusher seats, only while still home-side (ShieldRushMaxDepth) and not already
+  # carrying/shielded/seeking — a cheap detour toward home, never a backtrack once
+  # forward. The shield sits at our endzone (¾ height), so it's on the way out.
+  # ⭐ SEAT-IDENTITY FIX (v45): teamSeat, not role. roleForSeat(ShieldRushSeat=3,
+  # Blue) = MidBottom, the SAME role ComboGrabSeat(4) maps to on Blue — the old
+  # role-equality check matched BOTH physical seats on Blue, and because
+  # comboGrab runs earlier in source order and shares the `seekingPickup` guard,
+  # it silently preempted this block for both, so shieldRush's own designated
+  # seat never got to run its "grab our home shield before the steal" behavior
+  # on Blue whenever comboGrab was on (the default).
+  if lvC(95, bot.tune.shieldRush and not bot.shieldRushDone and not seekingPickup and
+      not banking and
+      not iHaveShield and not iCarry and not mateCarry and not ownStolen and
+      bot.teamSeat == ShieldRushSeat and
+      bot.tick - max(bot.gameStart, bot.lifeStart) <= ShieldRushWindow):
+    # Navigate to the STATIC known shield spawn (no LOS needed — VisionBubble is 90px
+    # and the shield sits behind the spawn cone, so the see-it scan fired 0). One
+    # designated seat grabs it; a give-up latch stops re-detouring if a mate took it.
+    # ⭐⭐⭐ shieldAddr: the address, not the errand. Prefer a spot we have SEEN and
+    # do not believe dry; fall back to the formula ONLY where the board's own stated
+    # endzone says that point could be ours; otherwise refuse outright rather than
+    # walk to a coordinate the generator never used. `haveSp` is unconditionally true
+    # on the control path, so the branch order below is unchanged when the lever is off.
+    var sp = ownShieldSpawn(bot.team)
+    var haveSp = true
+    if bot.tune.shieldAddr:
+      var best = -1.0
+      var learned = false
+      for k in 0 ..< bot.shieldSpots.len:
+        if bot.tick < bot.shieldDryUntil[k]:
+          continue                           # believed taken; it refills, but not yet
+        let d = dist(bot.shieldSpots[k], me)
+        if best < 0.0 or d < best:
+          best = d
+          sp = bot.shieldSpots[k]
+          learned = true
+      if not learned:
+        haveSp = inOwnStatedZone(bot.team, sp)
+      when defined(shprobe):
+        inc shScan
+        if learned: inc shPickLearned
+        elif haveSp: inc shPickFormula
+        else: inc shRefuse
+        # REALIZED COVERAGE: not a state class, but the frames on which our
+        # destination actually MOVED off the formula (or vanished).
+        if not haveSp or dist(sp, ownShieldSpawn(bot.team)) > ShieldMovedPx:
+          inc shMoved
+    if iHaveShield:
+      bot.shieldRushDone = true              # got it — carry on to the steal
+    elif not haveSp:
+      bot.shieldRushDone = true              # shieldAddr: no credible address — take NO errand
+    elif dist(me, sp) <= ShieldOnSpotPx and shieldPickups.len == 0:
+      bot.shieldRushDone = true              # on the spot but no shield here = taken; give up
+    else:
+      target = sp
+      seekingPickup = true
+      when defined(commsprobe): inc csArcSeek  # reuse a probe slot for shield-rush seek
+  elif iHaveShield:
+    bot.shieldRushDone = true
+  # swordAmbush: a bot with no clear ranged shot, boxed in close to an enemy,
+  # with a sword within reach, grabs it to melee. Only when a fresh enemy is
+  # inside SwordCloseRange (a pocket scrum the windup gun loses) and we're not
+  # carrying / defending a run.
+  var swordTarget = -1
+  if lvC(96, bot.tune.swordAmbush and not iCarry and not mateCarry and not ownStolen):
+    if iHaveSword:
+      # Already armed with melee: close on and swing at the nearest fresh enemy.
+      var best = SwordCloseRange
+      for i in 0 ..< bot.enemies.len:
+        if lvC(97, bot.tick - bot.enemies[i].lastSeen > bot.tune.freshShotTicks):
+          continue
+        let d = dist(bot.enemies[i].pos, me)
+        if d < best:
+          best = d
+          swordTarget = i
+    elif not seekingPickup and engage < 0 and swordPickups.len > 0:
+      # No ranged engage this frame and a close enemy — grab a sword if handy.
+      var enemyClose = false
+      for i in 0 ..< bot.enemies.len:
+        if lvC(98, bot.tick - bot.enemies[i].lastSeen <= bot.tune.freshShotTicks and
+            dist(bot.enemies[i].pos, me) <= SwordCloseRange * 2.0):
+          enemyClose = true
+          break
+      if enemyClose:
+        var best = 1e18
+        for p in swordPickups:
+          let d = dist(p, me)
+          if d <= SwordGrabDetour and d < best:
+            best = d
+            target = p
+            seekingPickup = true
+        when defined(ssprobe):
+          if seekingPickup: inc ssAmbushSeek
+
+  # ── ⭐ ARC BREACHER SEEK (anti-line OFFENSE). When a line is live (classified or
+  # heard) and we are the designated breacher seat, break off and grab the plasma
+  # arc so we can cone the clustered line. Deliberately trades our gun (canFire=false
+  # while holding) — a specialist swap, so ONLY the fixed breacher seat, ONLY on a
+  # live line (or a committed run), ONLY when not carrying/escorting/defending. The
+  # FIRE half is in the mask block below (a sibling of the sword-melee swing).
+  #
+  # ⭐ CAPTAIN-COORDINATED ARM (2026-07-24, the reframe). The lone-wolf breacher failed
+  # the audit on GEOMETRY: grabbing REACTIVELY after a line forms means the breacher is
+  # already deep forward, so the round trip back to the own-corner arcSpawn and out again
+  # is ~478t — longer than the line lives. The fix is to arm PROACTIVELY while SHALLOW:
+  # the arc sits in our own back corner NEXT to spawn, so a breacher that's near/behind
+  # mid grabs it on a cheap ~one-leg detour, THEN carries the armed cone forward to the
+  # called cluster. The Captain-mind (teamPhase) supplies the proactive trigger — an
+  # ATTACKING phase (Open/Probe/Press) is exactly when the enemy answers with a standing
+  # line, so a shallow breacher pre-arms for it; a live/heard line (lineLive) also arms.
+  # The seek navigates to the STATIC arcSpawn (no LOS — the fires-0 fix), and the commit
+  # window (arcBreachUntil) holds the run through line-read flicker. Once armed the FIRE
+  # block owns the bot (iHavePlasma) and carries the cone to the cluster regardless of depth.
+  # ⭐ SEAT-DIVISOR FIX (2026-08-14, NOSEATFIX=1 reverts). This recomputed the
+  # team seat with a HARDCODED `div 2` — correct only on a 2-team board. Seats
+  # deal round the ACTIVE teams (the engine's own slotIdentityIndex is
+  # slot div teams, the same index `roleForSeat` is fed), so on a 4-team board
+  # this local read named a DIFFERENT physical seat than bot.teamSeat did: on a
+  # 16-seat 4-team board slot 6 reads teamSeat 3 here but is really teamSeat 1,
+  # and the ArcBreachSeat designation landed on the wrong bot (or on nobody, or
+  # on two bots at once — the exact class of silent seat-contract break that
+  # once left 2 of 6 bots standing still with zero errors).
+  # ⚠️ Written as the FORMULA, not as a read of `bot.teamSeat`. decide() can run
+  # before buildNavGrid (mapCameraReady arrives before walkabilityReady), and in
+  # that window bot.teamSeat is still its 0 default — reading the field would
+  # briefly make EVERY bot claim seat 0, i.e. swap one seat bug for another.
+  # The formula is the engine's own slotIdentityIndex and is well-defined on the
+  # first frame. On a 2-team board max(GameTeams,2) == 2, so this is
+  # `slot div 2` — byte-identical to the old line, on EVERY frame. Strictly a
+  # 4-team fix; 2-team behaviour is provably unchanged.
+  let teamSeat =
+    if getEnv("NOSEATFIX").len > 0: clamp(bot.slot div 2, 0, 7)
+    else: clamp(bot.slot div max(GameTeams, 2), 0, 7)
+  when defined(doorprobe):
+    if getEnv("NOSEATFIX").len == 0 and
+        teamSeat != clamp(bot.slot div 2, 0, 7):
+      inc dpSeatFixDiff
+  let iAmBreacher = bot.tune.arcBreach and teamSeat == ArcBreachSeat
+  let breachDepth = -homeSign(bot.team) * (me.x - float(CenterX))   # + = into enemy half
+  # Remember that a line was seen (this bot's own classification OR a heard call) — the
+  # proof this OPPONENT plays defensive lines. Opponent-adaptivity hinges on this memory.
+  if iAmBreacher and lineLive:
+    bot.sawLineTick = bot.tick
+  # A line is likely when it's actually called (lineLive) OR the Captain has us in a mid-game
+  # PRESSURE phase (Probe/Press) AND this opponent has shown a line recently (ArcLineMemory).
+  # NOT PhOpen (the opening needs every gun grouped). The line-memory gate is what keeps the
+  # breacher DORMANT (a full gun) vs an aggressive no-line field — it only pre-commits its gun
+  # to the arc against opponents that actually stand lines, so we never pay disarm for nothing.
+  let sawLineRecently = bot.tick - bot.sawLineTick <= ArcLineMemoryTicks
+  let linePendingPhase = bot.tune.planLayer and botPhase in {PhProbe, PhPress} and sawLineRecently
+  # arcAlways (DIAGNOSTIC ONLY, 2026-08-07): arm the breacher UNCONDITIONALLY, ignoring the
+  # line-memory gate. Sole purpose is the arcStandoff test rig — the mirror can produce no
+  # enemy arc-carrier at all (no opponent grabs one), so ARCFOE=1 puts the control team's
+  # breacher seat here to create a real cone for arcStandoff to react to. Never shipped.
+  let armProactive = lineLive or linePendingPhase or bot.tune.arcAlways
+  when defined(arcprobe):
+    if iAmBreacher: inc apBreacher
+    if iAmBreacher and lineLive: inc apLineLive
+  # ARM the commit window only while SHALLOW (a cheap grab); a deep breacher must NOT
+  # start the ~478t retreat the audit killed — it stays a gun on the line until it falls
+  # back naturally, then arms shallow. Once armed (iHavePlasma) the window is irrelevant.
+  if iAmBreacher and armProactive and not iHavePlasma and breachDepth <= ArcArmMaxDepth:
+    bot.arcBreachUntil = bot.tick + ArcBreachCommit
+  let arcRunLive = iAmBreacher and bot.tick <= bot.arcBreachUntil
+  if iAmBreacher and not iHavePlasma and not iCarry and not mateCarry and
+      not ownStolen and arcRunLive and not seekingPickup:
+    when defined(arcprobe): inc apEligible
+    # Navigate to the KNOWN own-side arc spawn — it's on our half (safe route) and a
+    # fresh pickup is essentially always waiting there (30s respawn), so no sighting
+    # is needed. Auto-pickup on a 12px touch arms us; the FIRE block takes over.
+    target = arcSpawn(bot.team)
+    seekingPickup = true
+    when defined(arcprobe): inc apSeek
+    when defined(commsprobe): inc csArcSeek
+
+  # ── v9 MED-KIT TOP-OFF (GameVersion 9). A wounded, out-of-contact bot detours
+  # to the nearest VISIBLE center med kit to heal to FULL on a 12px touch (sim
+  # tryPickupMedKits; a healthy bot never consumes one, so a kit is never wasted).
+  # A pure MOVEMENT override — it only moves the target, never the trigger — so it
+  # can't regress into fire discipline. Gated hard to SAFE + FREE: fires only with
+  # no active engage and no near threat (topping off is a between-contacts act,
+  # never mid-fight), and never for a carrier / escort / committed grabber /
+  # stolen-flag defender (they own a higher objective). Skips a deliberate v7
+  # sword/shield seeker so it can't clobber that target. Fog reveals a kit only
+  # near center, so the detour is naturally self-limiting; MedKitDetour caps it so
+  # a bot never abandons its lane for a far kit.
+  #
+  # ── ⭐⭐⭐ kitSel LEARNING PASS (2026-08-20). Runs BEFORE both kit blocks and
+  # is gated on NOTHING but the lever, deliberately: the hp gate, the objective
+  # yields and the contact rules below decide when we may WALK to a kit, but they
+  # must not decide when we may LEARN one. Most sightings happen while healthy and
+  # in transit — a wounded bot in contact is looking at a gun, not at the floor —
+  # so gating the scan on the errand's own preconditions would throw away exactly
+  # the looks that make the errand possible. This is the nadeSupply lesson
+  # verbatim: "the part the 90px vision bubble otherwise throws away every frame".
+  # Cost when armed is one sprite pass per frame over a label we already read
+  # twice below; cost when OFF is a single false branch.
+  # ⚠️ ALIVE ONLY. `me` is a corpse's last position while dead and the sprite feed
+  # is not a live seat's view, so learning here would bank a spot from someone
+  # else's bubble and — worse — form a "this spot is EMPTY" belief from a body
+  # lying on it. bot.ownHp is 0 while dead or unread, which is exactly the same
+  # test medKitEcon's own `notin 1 ..< MaxHp` gate uses for the unread case.
+  if bot.tune.kitSel and bot.ownHp > 0:
+    for o in client.spriteObjectsWithLabel(LabelMedKit):
+      let p = client.mapPos(o)
+      if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
+          p.y > float(MapH - 40):
+        continue                                         # HUD indicator shares the label
+      var known = -1
+      for k in 0 ..< bot.kitSpots.len:
+        if dist(bot.kitSpots[k], p) <= KitSpotSeenPx:
+          known = k
+          break
+      if known < 0:
+        if bot.kitSpots.len >= KitSpotMax:
+          continue
+        bot.kitSpots.add p
+        bot.kitDryUntil.add 0
+        bot.kitSeenTick.add bot.tick
+        when defined(kselprobe): inc ksLearned
+      else:
+        # A live sprite IS presence: it clears any stale "taken" belief, and it
+        # re-stamps the spot's own coordinate. The engine nudges each spawn to
+        # the nearest walkable floor, so the SPRITE is the authority on where the
+        # 12px touch radius actually sits — never the seed coordinate, and never
+        # a formula.
+        bot.kitSpots[known] = p
+        bot.kitDryUntil[known] = 0
+        bot.kitSeenTick[known] = bot.tick
+    # Standing on a remembered spot with no sprite on it proves the kit is TAKEN
+    # (a kit inside our own bubble is never fogged), so believe it for exactly one
+    # MedKitRespawnTicks. Without this the selector's own worst failure mode is a
+    # wounded bot orbiting a spot it just emptied — the same failure NadeDepotDry*
+    # exists to prevent, and the one thing the formula family got RIGHT.
+    for k in 0 ..< bot.kitSpots.len:
+      if dist(bot.kitSpots[k], me) <= KitSpotDryPx and
+          bot.kitSeenTick[k] != bot.tick:
+        bot.kitDryUntil[k] = bot.tick + KitSpotDryTicks
+        when defined(kselprobe): inc ksDry
+  block medKitTopOff:
+    when defined(mtprobe):
+      if lvC(99, bot.tune.medTopOff and bot.ownHp > 0): inc mtOn
+    if lvC(100, not bot.tune.medTopOff): break medKitTopOff
+    if bot.ownHp notin 1 ..< MaxHp: break medKitTopOff   # unread(0) or full: no detour
+    when defined(mtprobe): inc mtWounded
+    if engage >= 0 or nearThreat >= 0: break medKitTopOff # in contact: fight/duck, don't wander
+    when defined(mtprobe): inc mtSafe
+    if iCarry or mateCarry or pocketRush or ownStolen or
+        seekingPickup or iHaveShield or iHaveSword or iHavePlasma:
+      break medKitTopOff                                 # a higher objective owns this bot
+    when defined(mtprobe): inc mtFree
+    var best = MedKitDetour
+    var haveKit = false
+    var chosen: Vec
+    for o in client.spriteObjectsWithLabel(LabelMedKit):
+      let p = client.mapPos(o)
+      if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
+          p.y > float(MapH - 40):
+        continue                                         # HUD indicator shares the label
+      let d = dist(p, me)
+      if d < best:
+        best = d
+        chosen = p
+        haveKit = true
+    when defined(mtprobe):
+      if haveKit or client.spriteObjectsWithLabel(LabelMedKit).len > 0: inc mtVisible
+    if haveKit:
+      target = chosen
+      when defined(mtprobe): inc mtFireCount
+
+  # ── ⭐⭐ medEcon: THE MED KITS ARE A STATIC, RENEWABLE HP ECONOMY (2026-07-28).
+  # Measured on 20 real league episodes: the field took 42 heals to our 11 (3.8x),
+  # while 81% of our kill deficit books in ticks 1000-3000 and 8 of 13 losses were
+  # full WIPES. With 3 hp per life a free full heal is worth a life's damage, so
+  # this is the single largest resource asymmetry we could find.
+  #
+  # medTopOff above has the right DOCTRINE but a gate that almost never opens: it
+  # requires the kit sprite to be VISIBLE in the fog cone within 150px AND zero
+  # contact. In a mid-game where contact is ~constant that conjunction is dead.
+  # medEcon fixes exactly the three closed conditions and changes nothing else:
+  #   1. the kits sit at STATIC engine coords (sim.resetMedKits; verified against
+  #      53 league heal events clustering at (617,219)/(617,439)), so we route to
+  #      remembered positions like a pedestal — no fog read needed at all;
+  #   2. MedKitEconDetour(320) instead of 150, since the walk is now the only cost;
+  #   3. at MedKitLightContactHp a bot breaks LIGHT contact (a threat NOT aiming at
+  #      us) to heal — at 1 hp the next bullet is death, so the heal outranks the
+  #      duel. A threat whose gun IS on us still wins: we never turn our back on a
+  #      live gun (the holdVsGun rule), so that case falls through to combat.
+  # Still a pure MOVEMENT override (never touches the trigger), and it still yields
+  # to every genuine objective. A kit we are standing on but cannot see is TAKEN
+  # (its sprite would be in our bubble), so give up rather than orbit an empty spot.
+  block medKitEcon:
+    if lvC(101, not bot.tune.medEcon): break medKitEcon
+    when defined(meprobe):
+      if bot.ownHp > 0: inc meOn
+    if bot.ownHp notin 1 ..< MaxHp: break medKitEcon    # unread(0) or full: no detour
+    when defined(meprobe): inc meWounded
+    # ⭐ medEncum: the GEAR half of this yield list is not an objective. A shield
+    # "never heals base damage (that is the med kits' job)" — sim.tryPickupShields
+    # says so verbatim, and the state bits STACK — while a can-carrier has
+    # canFire=false and so has no gun line for the walk to cost it. Only the sword
+    # (inert on this GameVersion) is a genuine loadout commitment. See the tune
+    # field doc for the realized coverage and the futility bound.
+    let gearVeto =
+      if bot.tune.medEncum: iHaveSword
+      else: iHaveShield or iHaveSword or iHavePlasma
+    when defined(shprobe):
+      # REALIZED COVERAGE for medEncum: wounded frames that clear every OTHER
+      # yield, split by whether the gear terms alone are what stops the errand.
+      if not (iCarry or mateCarry or pocketRush or ownStolen or seekingPickup):
+        inc seWounded
+        if iHaveShield or iHavePlasma: inc seWoundedGear
+    if iCarry or mateCarry or pocketRush or ownStolen or
+        seekingPickup or gearVeto:
+      break medKitEcon                                 # a higher objective owns this bot
+    when defined(meprobe): inc meFree
+    # ffa4Board / onLastLife: computed once, right after the lives readback
+    # near the top of decide() — reused here unchanged.
+
+    # Contact rule. Out of contact: always free to top off (the medTopOff intent).
+    # In contact: only a bot at the light-contact threshold may disengage, and
+    # only from a threat that is NOT pointing at it. Anything else keeps fighting.
+    if engage >= 0 or nearThreat >= 0:
+      # ⭐⭐ MEDPEEL (2026-08-07, Alex Smith forensics): medEcon's failure is the
+      # CONDITION gate, not the destination (kit coords stay untouched). Two
+      # tune-gated changes:
+      #   (1) light-contact threshold 1 -> 2: the peel can fire before the bot
+      #       is one hit from death (Alex breaks at 2 of 3 hp, median).
+      #   (2) aimedAtUs is RANGE-GATED to FinishRange (~260px): 83% of shots
+      #       land under 150px, so a gun aimed at us from well beyond effective
+      #       range is a paper threat, not a real veto on the walk.
+      let lightContactHp = if bot.tune.medPeel: 2 else: MedKitLightContactHp
+      if bot.ownHp > lightContactHp: break medKitEcon
+      var aimedAtUs = false
+      for i in 0 ..< bot.enemies.len:
+        let t = bot.enemies[i]
+        if bot.tick - t.lastSeen > HoldVsGunTtl or t.aimBrads < 0:
+          continue
+        if lvC(102, bot.tune.medPeel and dist(t.pos, me) > FinishRange):
+          continue                                     # too far to punish the walk right now
+        # Widened by AimFuzzBrads (GV24): this gate decides whether a WOUNDED bot turns its
+        # back and walks to a kit. A fuzzed read that says "not on us" when the gun really is
+        # buys a free shot in the back, so the error bar belongs on the SAFE side here.
+        if abs(bradsErr(t.aimBrads, bradsOf(me - t.pos))) >
+            AimOnConeBrads + AimFuzzBrads:
+          continue                                     # its gun is not on us
+        if not client.pixelRayClear(me, t.pos):
+          continue                                     # no line: it cannot punish the walk
+        aimedAtUs = true
+        break
+      if aimedAtUs: break medKitEcon                   # a live gun on us: hold, don't flee
+      when defined(meprobe): inc meLightBreak
+    when defined(meprobe): inc meSafe
+
+    # Route to the nearest kit whose spot is not known-empty. The position is
+    # static knowledge; only the PRESENCE needs a sight check, and only once we
+    # are close enough that an absent sprite proves the kit is gone.
+    # ⭐⭐ lastLifeGuard WIDER MEDKIT ERRAND: a bot on its last life gets a
+    # bigger routing budget (both families below share this one cap).
+    var bestEcon = MedKitEconDetour
+    var haveEconKit = false
+    var chosenEcon: Vec
+    var pickedVisible = false      # which family supplied the target (probe/mechanism)
+    var pickedVisOffSpot = false   # ...and that visible kit is NOT at a formula spot
+
+    # ── ⭐⭐ medSee (plan #16) / ffaMedSee (ffa4 lives audit, 2026-08-17): the
+    # kits we can SEE are candidates too. The two formula spots below are an
+    # ARENA truth: on a generated board the generator draws the pair's y per
+    # map, and a 4-team board carries FOUR kits in a rot90 orbit — so a
+    # wounded bot walks to empty floor while a real kit sits in its cone. A
+    # visible sprite needs no presence check (seeing it IS presence) but
+    # keeps the SAME HUD-indicator edge filter and the SAME detour cap;
+    # nearest across both families wins. Nothing above this point changes —
+    # same hp gate, same objective yields, same in-contact and aimedAtUs
+    # rules — so this adds no new disengagement, only a better address.
+    # medSee itself ships OFF (2-team FEET LAW cost); ffaMedSee is the SAME
+    # mechanism armed only on GameTeams > 2, where the destination-blindness
+    # this fixes is the measured cause of the ffa4 medkit gap.
+    # ── ⭐⭐⭐ kitSel: THE FEASIBILITY-AWARE SELECTOR (2026-08-20). Replaces the
+    # two-family raw-euclidean arbitration below wholesale. Same budget
+    # (`bestEcon` starts at MedKitEconDetour and every candidate must fit inside
+    # it), same output variables, same everything downstream — the ONLY thing
+    # that changes is which address wins. Three ideas, in priority order:
+    #
+    #   CERTAINTY. A candidate is scored by what we KNOW about it, not by range
+    #   alone. A sprite in the cone right now is certain; a spot we saw earlier
+    #   is a real spawn whose stock we cannot currently confirm (KitSightCost);
+    #   a formula spot is not a spawn at all and is admitted ONLY when we have
+    #   never seen a kit this episode. Today's code scores all three the same,
+    #   which is how a phantom one pixel nearer takes the commit off a kit we
+    #   can see.
+    #
+    #   REACHABILITY. `dist()` is a straight line through walls. A candidate the
+    #   eroded nav grid cannot reach in a straight line costs KitBlockedCost more,
+    #   because its true path is strictly longer than its range — the same
+    #   `gridRayClear` reachability test findBankCell / findPeekCell / findDuckCell
+    #   already use to reject "not directly reachable" cells. A RANKING term: a
+    #   blocked kit still wins when it is the only kit. The BUDGET check stays on
+    #   raw `d`, so this can never widen the errand — only re-order it.
+    #
+    #   PRESENCE. A spot we stood on and found empty is skipped for one
+    #   MedKitRespawnTicks (the learning pass above owns that belief). The old
+    #   code could only form this belief for a FORMULA spot, and only at 26px.
+    #
+    # ⚠️ PRECISION OVER PROXIMITY: the destination is the SPRITE's own position,
+    # which is where the engine's 12px MedKitPickupRange actually sits after
+    # resetMedKits nudges each spawn to the nearest walkable floor. An address
+    # that is merely "close" is worth nothing against a 12px touch.
+    # Hoisted above the selector so the -d:kselprobe realized-coverage counter can
+    # reconstruct what the OLD arbitration would have chosen on this same frame.
+    # A pure `let` of a pure expression — no behaviour rides on where it sits.
+    let medVisOn = bot.tune.medSee or (bot.tune.ffaMedSee and ffa4Board)
+    var kitSelFired = false
+    if bot.tune.kitSel:
+      var bestCost = 1e18
+      for k in 0 ..< bot.kitSpots.len:
+        if bot.tick < bot.kitDryUntil[k]:
+          continue                                     # believed taken, still refilling
+        let
+          p = bot.kitSpots[k]
+          d = dist(p, me)
+        if d >= bestEcon:
+          continue                                     # UNCHANGED detour budget, on raw range
+        var cost = d
+        if not bot.gridRayClear(me, p):
+          cost = cost * KitBlockedCost
+        let seenNow = bot.kitSeenTick[k] == bot.tick
+        if not seenNow:
+          cost = cost * KitSightCost
+        if cost < bestCost:
+          bestCost = cost
+          chosenEcon = p
+          haveEconKit = true
+          kitSelFired = true
+          pickedVisible = true                         # a REAL spawn, not a formula spot
+          pickedVisOffSpot =
+            dist(p, vec(MedKitAX, MedKitAY)) > MedKitOnSpotPx and
+            dist(p, vec(MedKitBX, MedKitBY)) > MedKitOnSpotPx
+      when defined(kselprobe):
+        inc ksScan
+        if bot.kitSpots.len > 0: inc ksKnown
+        if haveEconKit:
+          inc ksPickReal
+          # REALIZED COVERAGE, not a state-class share: what would the OLD
+          # arbitration have addressed on this exact frame, and is our answer
+          # DIFFERENT? A sibling's state-class estimate over-stated its lever
+          # 3.8x, so this counts frames where the destination actually MOVED.
+          var oldBest = MedKitEconDetour
+          var oldChosen = vec(-1, -1)
+          var oldWasPhantom = false
+          if medVisOn:
+            for o in client.spriteObjectsWithLabel(LabelMedKit):
+              let q = client.mapPos(o)
+              if q.x < 40.0 or q.y < 40.0 or q.x > float(MapW - 40) or
+                  q.y > float(MapH - 40):
+                continue
+              let dq = dist(q, me)
+              if dq < oldBest:
+                oldBest = dq
+                oldChosen = q
+          for spot in [vec(MedKitAX, MedKitAY), vec(MedKitBX, MedKitBY)]:
+            let ds = dist(spot, me)
+            if ds < oldBest:
+              oldBest = ds
+              oldChosen = spot
+              oldWasPhantom = true
+          # ⚠️ ONE increment per FRAME, not per spot. Both formula spots can beat
+          # the running best on the same frame and a per-spot `inc` would report a
+          # defect rate up to 2x the real one — the exact shape of over-statement
+          # this probe exists to avoid.
+          if oldWasPhantom: inc ksOldPhantomWin
+          if oldChosen.x < 0:
+            inc ksOldHadNothing                        # old code had NO errand at all
+          elif dist(oldChosen, chosenEcon) > MedKitOnSpotPx:
+            inc ksMoved                                # the destination genuinely CHANGED
+            if bot.gridRayClear(me, chosenEcon):
+              inc ksMovedReachable                     # ...and the new one is reachable
+    # COLD START ONLY. With a learned spot in hand the formula never runs; with
+    # none, it is the only address there is, and it is counted separately so its
+    # share is a measured number rather than an assumption.
+    if bot.tune.kitSel and not kitSelFired and bot.kitSpots.len > 0:
+      when defined(kselprobe): inc ksDryAll
+    let kitSelOwns = bot.tune.kitSel and bot.kitSpots.len > 0
+
+    if (medVisOn or MedSeeProbeScan) and not kitSelOwns:
+      var visAny = false
+      var visNear = false
+      var visOff = false
+      for o in client.spriteObjectsWithLabel(LabelMedKit):
+        let p = client.mapPos(o)
+        if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
+            p.y > float(MapH - 40):
+          continue                                     # HUD indicator shares the label
+        visAny = true
+        let d = dist(p, me)
+        if d >= MedKitEconDetour:
+          continue                                     # outside the detour budget
+        visNear = true
+        let offSpot = dist(p, vec(MedKitAX, MedKitAY)) > MedKitOnSpotPx and
+                      dist(p, vec(MedKitBX, MedKitBY)) > MedKitOnSpotPx
+        if offSpot:
+          visOff = true
+        if not medVisOn:
+          continue                                     # probe build, lever off: count only
+        if d >= bestEcon:
+          continue
+        bestEcon = d
+        chosenEcon = p
+        haveEconKit = true
+        pickedVisible = true
+        pickedVisOffSpot = offSpot
+      when defined(msprobe):
+        inc msScan
+        if visAny: inc msVisAny
+        if visNear: inc msVisNear
+        if visOff: inc msVisOffSpot
+
+    # ⭐⭐⭐ kitSel: THE PHANTOM IS DEMOTED TO A COLD START. `kitSelOwns` is true
+    # the moment we have seen ONE real spawn this episode, and from then on this
+    # loop never runs again — a formula spot can no longer outbid a kit we have
+    # actually looked at. Before the first sighting it still runs unchanged,
+    # because an unproven address is better than no address at all and the
+    # generator's 2-team pair does sit on this x column. When kitSel is OFF,
+    # `kitSelOwns` is false by construction and this is byte-identical.
+    for spot in [vec(MedKitAX, MedKitAY), vec(MedKitBX, MedKitBY)]:
+      if kitSelOwns:
+        continue
+      let d = dist(spot, me)
+      if d >= bestEcon:
+        continue
+      if d <= MedKitOnSpotPx:
+        # Standing on it: if no kit sprite is here it has been taken — a kit in
+        # our own bubble is never fogged, so absence is proof, not ignorance.
+        var present = false
+        for o in client.spriteObjectsWithLabel(LabelMedKit):
+          let p = client.mapPos(o)
+          if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
+              p.y > float(MapH - 40):
+            continue                                   # HUD indicator shares the label
+          if dist(p, spot) <= MedKitOnSpotPx:
+            present = true
+            break
+        if not present:
+          continue
+      bestEcon = d
+      chosenEcon = spot
+      haveEconKit = true
+      pickedVisible = false
+      pickedVisOffSpot = false
+    when defined(lifeprobe):
+      if lvC(103, haveEconKit and pickedVisible and bot.tune.ffaMedSee and ffa4Board and
+          not bot.tune.medSee):
+        inc ffaMedFireCount   # ffaMedSee (not base medSee) supplied this target
+    if haveEconKit:
+      target = chosenEcon
+      # ⭐ v48: GIVE THE PEEL FEET. This assignment was DISCARDED whenever we
+      # were engaged: the act chain only navSteers to `target` under fire for
+      # retreating/banking/carrierFlee, and woundedBank (the intended owner of
+      # the under-the-gun tier) is env-gated OFF in production — so medPeel
+      # widened a gate whose output the movement arbitration threw away, and
+      # the measured med gap (us 15-24 takes vs their 85-112) never moved.
+      # `peeling` joins the act-chain steer set: feet to the kit, gun stays on
+      # the threat. The medPeel vetoes upstream already guarantee no live gun
+      # inside FinishRange when this fires. NOPEEL=1 reverts.
+      # v55 FIELD CORRECTION (r1565-71 forensics vs the v53 hours beside it):
+      # at <=2hp the peel fired so often it drained the mid-game gun line —
+      # kits/ep 0.57 -> 1.03 (the mechanism WORKS) but K-D in the 1000-3000
+      # bucket collapsed +155 -> +41 and gun damage fell 24%: the FEET LAW,
+      # measured again. Peel feet ONLY at 1hp — one hit from deletion, where
+      # leaving the fight is right; a 2hp bot keeps its gun in the line (the
+      # out-of-contact medEcon walk is unaffected — it never had feet issues).
+      if getEnv("NOPEEL").len == 0 and bot.ownHp == 1:
+        peeling = true
+      when defined(ffa4probe):
+        inc f4MedFire
+        if onLastLife: inc f4MedLastLife
+        if pickedVisible:
+          inc f4MedPickVis
+          if pickedVisOffSpot: inc f4MedPickVisOff
+      when defined(meprobe): inc meFireCount
+      when defined(msprobe):
+        inc msFire
+        if pickedVisible:
+          inc msPickVis
+          if pickedVisOffSpot: inc msPickVisOff
+        else:
+          inc msPickSpot
+
+  # Grenade danger: a visible throw-target ring marks where an enemy's lob
+  # will land, and an airborne grenade is seconds from bursting — anything
+  # inside the blast radius eats 2 of 3 hit points. Fleeing the marked spot
+  # outranks every movement goal except nothing: dead carriers drop the run.
+  var
+    nadeDanger = false
+    nadeDangerFrom: Vec
+  block nadeDangerScan:
+    for label in ["throw target", "grenade air"]:
+      for o in client.spriteObjectsWithLabel(label):
+        let p = client.mapPos(o)
+        if dist(p, me) <= NadeBlast + 18.0:
+          nadeDanger = true
+          nadeDangerFrom = p
+          break nadeDangerScan
+
+  # ⭐⭐ v56 SHAPE — ONE RUNNER, SEVEN HOLD (oneRunner, 2026-08-14, the Hermes study).
+  # Placed HERE deliberately: this is the last point before the act chain, after every
+  # `target = ` write in decide(), so the cap cannot be silently overwritten downstream
+  # (the rallyWave/holdLine class of bug where a movement target is set and then thrown
+  # away). It is also IDEMPOTENT and one-directional — it only ever pulls a target that
+  # is DEEPER than the hold line back TO the line, and never pushes anyone forward — so
+  # every home-ward decision above (retreat, bank, defend, med peel, carry home) passes
+  # through untouched.
+  #
+  # Carve-outs, in the same spirit as holdLine's: a carrier or its escort is running the
+  # heart home (that run is home-ward anyway, and clamping an escort would strand the
+  # carrier), and with our own heart stolen the whole squad is on defence in its own half
+  # already. The RUNNER is exempt by definition — it is the one body we commit.
+  # ⛔ TWO-TEAM ONLY. On a 4-team board "our own half" is not a thing (corner and
+  # plus maps), homeSign only distinguishes Red from everything-else, and the role
+  # table hands MidTop to seat 2 on Blue / seat 3 on Red — so a Green or Yellow team
+  # would get ZERO runners and eight clamped holders. Guard it here rather than in
+  # shippedCombatTune so the tune stays a plain description of intent.
+  if lvC(104, bot.tune.oneRunner and GameTeams <= 2):
+    when defined(shapefire):
+      inc spArmed[ord(bot.team)]
+      if bot.role == MidTop: inc spRunner[ord(bot.team)]
+    if bot.role != MidTop and not iCarry and not mateCarry and not ownStolen:
+      when defined(shapefire):
+        inc spHold[ord(bot.team)]
+      # The hold line, on OUR side of centre. depthPastHold > 0 means the target we
+      # were about to walk to is deeper into the enemy half than a holder may go.
+      let holdX = float(CenterX) + homeSign(bot.team) * bot.tune.shapeHoldPx
+      if -homeSign(bot.team) * (target.x - holdX) > 0.0:
+        target = vec(holdX, target.y)   # keep the lane (y), give up the depth (x)
+        when defined(shapefire):
+          inc spHoldFired[ord(bot.team)]
+
+  # Turret + locomotion, decided together but on separate buttons: moveMask
+  # is the d-pad, desiredAim feeds the rotate buttons, wantFire pulls A.
+  var
+    moveMask: uint8
+    desiredAim = -1
+    deadband = bot.tune.combatDeadband
+    wantFire = false
+    acted = false
+    holdStill = false
+    nadeC = false
+    aimTargetD = -1.0         # range of the COMBAT traverse this tick (-1 = the
+                              # turret is not slewing onto a shootable target), the
+                              # conditioning variable for the spinCap range fork.
+  if touchLatch and bot.nadeCharge == 0:
+    # ⭐⭐ TOUCH LATCH wins the act-priority race. It is placed FIRST deliberately: the
+    # grenade branch below used to own this slot and sets holdStill, so a bot 15px from the
+    # heart with a charge available would stop and lob (a defended pocket is exactly the
+    # cluster>=2 the lob wants, and NadeMinRange=72 still fires from inside grab range).
+    # Move onto the pedestal and keep the turret where the nav is going; do not fire, do not
+    # hold still. An already-charging throw (nadeCharge > 0) is allowed to release rather than
+    # be abandoned mid-charge — dropping a live charge wastes the grenade for nothing.
+    moveMask = octantBits(stealTarget - me)
+    acted = true
+    when defined(tcprobe):
+      if nadeAim >= 0: inc tcNade
+      if engage >= 0 and shotReady: inc tcEngage
+      if not shotReady and nearThreat >= 0: inc tcDuck
+      if shotReady and haveBlocked: inc tcPeek
+  elif bot.nadeCharge > 0 or nadeAim >= 0:
+    # Charge-throw: lay the turret on the lob line, then hold C for the ticks
+    # the planned distance needs and release — the grenade leaves along the
+    # CURRENT aim on release. Pre-GV36 the turret could keep correcting while
+    # charging (5 brads/tick drifts stay near the line); on the GV36 slot grid
+    # a mid-charge correction is a 40-brad/tick multi-revolution sweep, so an
+    # uncgated release flies the WRONG WAY. nadeLob: freeze the lob bearing at
+    # charge start (no cluster-chasing) and release only on a settled turret —
+    # the engine holds max charge indefinitely, so waiting is legal; the cost
+    # is range creep toward the cap, bounded by the NadeHoldMax bail-out.
+    if bot.nadeCharge == 0:
+      bot.nadeNeed = max(3, int(float(NadeFullChargeTicks) *
+        (nadeThrowD - 30.0) / (NadeMaxRange - 30.0)))
+      bot.nadeStaleArm = nadeAimStale  # staleNade: which class armed THIS charge
+      bot.nadeFfHold = 0               # nadeFfVeto: fresh hold budget per charge
+      if lvC(105, bot.tune.nadeLob):
+        bot.nadeLockAim = nadeAim
+        bot.nadeHold = 0
+    if lvC(106, bot.tune.nadeLob and bot.nadeLockAim >= 0):
+      desiredAim = bot.nadeLockAim
+    elif nadeAim >= 0:
+      desiredAim = nadeAim
+    if bot.nadeCharge > 0 or (desiredAim >= 0 and
+        abs(bradsErr(desiredAim, bot.estAim)) <= CombatDeadband + 2):
+      if bot.nadeCharge < bot.nadeNeed:
+        nadeC = true
+        inc bot.nadeCharge
+      else:
+        const NadeHoldMax = 20         # settle-wait bail-out (ticks)
+        # ⭐⭐ nadeFfVeto GATE (b): where this throw will ACTUALLY land, right now.
+        # The selection gate tested the plan; between then and here 3-24 charge
+        # ticks passed, and another 10 pass in flight, so a mate that was nowhere
+        # near the plan can be standing on the burst. sim.throwGrenade re-derives
+        # the distance from throwCharge at the RELEASE tick, so project it from
+        # the ticks we have actually held C — nadeCharge counts the ramp,
+        # nadeHold and nadeFfHold the two waits — using the engine's own
+        # GrenadeMinRange + (max-min)*charge/GrenadeChargeTicks formula.
+        let
+          ffAim = (if desiredAim >= 0: desiredAim else: bot.estAim)
+          ffPress = clamp(bot.nadeCharge + bot.nadeHold + bot.nadeFfHold,
+                          0, NadeFullChargeTicks)
+          ffImpact = me + bradsDir(ffAim) *
+            (30.0 + (NadeMaxRange - 30.0) * float(ffPress) /
+                    float(NadeFullChargeTicks))
+          ffDirty = bot.friendlyInBlast(ffImpact, NadeFfFlightTicks, 0.0)
+        if lvC(107, bot.tune.nadeLob and desiredAim >= 0 and
+            abs(bradsErr(desiredAim, bot.estAim)) > 6 and
+            bot.nadeHold < NadeHoldMax):
+          nadeC = true                 # keep holding: turret not on the line yet
+          inc bot.nadeHold
+        elif lvC(108, bot.tune.nadeFfVeto and ffDirty and bot.nadeFfHold < NadeFfHoldMax):
+          # A mate is on the burst. The engine throws on the C RELEASE EDGE, so
+          # there is no abort — the only lever is to KEEP HOLDING and let them
+          # clear. Same mechanism as the settle-wait above, and bounded the same
+          # way: the cost is range creep toward the cap (which the projection
+          # above tracks tick by tick) and at most NadeFfHoldMax frozen ticks.
+          nadeC = true
+          inc bot.nadeFfHold
+          when defined(aoeprobe): inc nfHoldTicks
+        else:
+          when defined(aoeprobe):
+            if lvC(109, bot.tune.nadeFfVeto and ffDirty): inc nfHoldBail
+            inc nfRelease
+            var ffHot: array[AoeSlackN, bool]
+            for k in 0 ..< AoeSlackN:
+              ffHot[k] = bot.friendlyInBlast(ffImpact, NadeFfFlightTicks,
+                                             AoeSlack[k])
+              if ffHot[k]: inc nfReleaseHot[k]
+            nfRel.add((tick: aoeTick, slot: bot.slot, hot: ffHot))
+          when defined(nadeprobe):
+            if desiredAim >= 0:
+              stderr.writeLine "NADEREL slot=" & $bot.slot & " t=" & $bot.tick &
+                " err=" & $abs(bradsErr(desiredAim, bot.estAim)) &
+                " held=" & $bot.nadeHold
+          when defined(ndprobe):
+            if bot.nadeStaleArm: inc ndStaleRelease else: inc ndFreshRelease
+            # The release ledger the harness joins to the engine's
+            # GrenadeThrow/GrenadeImpact by actionId, so the stale class can be
+            # scored on CONVERSION (victims per throw), not trigger count.
+            ndReleases.add((tick: bot.tick, slot: bot.slot,
+                            stale: bot.nadeStaleArm))
+          bot.nadeCharge = 0           # release this tick = the throw
+          bot.nadeLockAim = -1
+          bot.nadeStaleArm = false
+          bot.nadeFfHold = 0
+    holdStill = true
+    acted = true
+  elif lvC(110, bot.tune.swordAmbush and iHaveSword and swordTarget >= 0):
+    # SWORD MELEE: holding a sword makes canFire=false and turns the attack
+    # button into a 26px forward-arc INSTANT kill. Close on the nearest fresh
+    # enemy and swing when it sits inside the arc — a guaranteed kill the 3-hit
+    # windup gun would lose at point-blank. The swing eats fireCooldown, so only
+    # press when the enemy is actually within reach and roughly in front.
+    let
+      tgt = bot.enemies[swordTarget].pos
+      d = dist(tgt, me)
+    desiredAim = bradsOf(tgt - me)
+    moveMask = octantBits(tgt - me)          # charge straight in
+    if d <= SwordReach + 6.0:
+      let err = abs(bradsErr(desiredAim, bot.estAim))
+      wantFire = err <= AimBrads div 4        # within the ~forward half-arc
+      when defined(ssprobe):
+        if wantFire: inc ssAmbushSwing
+    acted = true
+  elif iHavePlasma:
+    # ⭐ ARC BREACHER FIRE: holding the arc, canFire=false — the attack button now
+    # fires a 136px forward CONE (dmg 3, hits everyone in the ~14° arc at once).
+    # Aim at the FATTEST cluster of fresh enemies in reach (a line is a cluster; the
+    # cone is a multikill), close to reach, and press attack when on-bearing so the
+    # cone lands. Same edge-triggered attack the sim reads for the cone (input.attack
+    # and not prev.attack); firedLast gating below keeps it a clean press, not a hold.
+    when defined(arcprobe): inc apArmed
+    # The cone only earns its disarmed-for-life cost against a real CLUSTER (>=
+    # ArcConeMinCluster fresh enemies inside one PlasmaArcReach): coning a SINGLETON is a
+    # net DPS loss (a 25t-recharge weapon vs one cog we'd have shot anyway; field-measured
+    # 1.33 mean hits WITHOUT this gate). Doctrine: the arc is AREA-DENIAL — its value is
+    # >=2-at-once; good opponents space to dodge AoE, so a lone target is not its job.
+    # Compute, for every fresh enemy, the cluster size around it (peers within one arc
+    # reach). Track the fattest cluster that is (a) inside FIRE reach + clear LOS, and
+    # (b) the fattest within the wider APPROACH radius (to close a deep line before firing).
+    # ⭐⭐⭐ sprayConeFire: the CANDIDATE radius. The engine caps FORWARD distance
+    # at reach + body (187), and forward <= radial, so 187 is the exact radial
+    # superset of the wedge — every body the cone can reach is inside it and
+    # arcConeCovers() then cuts the wedge itself. The old 128 was a radial
+    # under-approximation of a 136 that was itself stale.
+    let fireReachPx =
+      if bot.tune.sprayConeFire: ArcFfReachPx + ArcFfBodyPx
+      else: ArcBreachFireReach
+    var fireCluster = 0
+    var fireAim = -1
+    var fireTgt: Vec
+    var approachCluster = 0
+    var approachTgt: Vec
+    var nearFoe = -1
+    var nearD = 1e18
+    for i in 0 ..< bot.enemies.len:
+      if lvC(111, bot.tick - bot.enemies[i].lastSeen > bot.tune.freshShotTicks):
+        continue
+      let tp = bot.enemies[i].pos
+      let dme = dist(tp, me)
+      if dme < nearD:
+        nearD = dme
+        nearFoe = i
+      var cluster = 1
+      for j in 0 ..< bot.enemies.len:
+        if lvC(112, j != i and bot.tick - bot.enemies[j].lastSeen <= bot.tune.freshShotTicks and
+            dist(bot.enemies[j].pos, tp) <= PlasmaArcReachPx):
+          inc cluster
+      # Approach candidate: the fattest cluster within the (wider) approach radius.
+      if dme <= ArcApproachRadius and cluster > approachCluster:
+        approachCluster = cluster
+        approachTgt = tp
+      # Fire candidate: must be inside cone reach with clear LOS (the sim gates the cone).
+      if dme <= fireReachPx and client.pixelRayClear(me, tp) and cluster > fireCluster:
+        fireCluster = cluster
+        fireTgt = tp
+        fireAim = bradsOf(tp - me)
+    let depth = -homeSign(bot.team) * (me.x - float(CenterX))   # how deep we are (+ = enemy half)
+    if fireAim >= 0 and fireCluster >= ArcConeMinCluster:
+      # A real cluster IN REACH: close onto it and CONE it (the multikill this weapon is for).
+      when defined(arcprobe): inc apInReach
+      desiredAim = fireAim
+      moveMask = octantBits(fireTgt - me)      # close to keep the cluster in the cone
+      let err = abs(bradsErr(desiredAim, bot.estAim))
+      # ⭐⭐⭐ sprayConeFire: ask the WEAPON, not a hand-tuned brads slack. The
+      # engine locks arcAimBrads to the live aim at the press, so bot.estAim IS
+      # the bearing the wedge will be cut on — the same basis `err` uses.
+      wantFire =
+        if bot.tune.sprayConeFire:
+          client.arcConeCovers(me, bot.estAim, fireTgt)
+        else:
+          err <= ArcBreachConeBrads            # on-bearing so the cone covers them
+      # ⭐⭐ sprayFfVeto. The cone hits EVERY body in the wedge (selectArcVictims
+      # excludes only the attacker), so a mate standing between us and the
+      # cluster takes PlasmaArcDamage(3) = a whole life. Test the wedge the
+      # engine will actually cut: along bot.estAim, because startArcFire LOCKS
+      # arcAimBrads to the live aim at the press and never sweeps it afterwards.
+      # Declining costs nothing — the can is not spent, the approach continues,
+      # and the next tick re-tests once the mate clears.
+      when defined(aoeprobe):
+        if wantFire:
+          inc sfPress
+          var sfHot: array[AoeSlackN, bool]
+          for k in 0 ..< AoeSlackN:
+            sfHot[k] = bot.friendlyInCone(client, me, bot.estAim, AoeSlack[k])
+            if sfHot[k]: inc sfPressHot[k]
+          sfFire.add((tick: aoeTick, slot: bot.slot, hot: sfHot))
+      if lvC(113, wantFire and bot.tune.sprayFfVeto and
+          bot.friendlyInCone(client, me, bot.estAim, 0.0)):
+        wantFire = false
+        when defined(aoeprobe): inc sfVeto
+      when defined(commsprobe):
+        if wantFire: inc csArcFire
+      when defined(arcprobe):
+        if wantFire:
+          inc apFire
+          apClusterSum += fireCluster
+          if fireCluster > apMaxCluster: apMaxCluster = fireCluster
+    elif approachCluster >= ArcConeMinCluster and
+        not (bot.tune.sprayFireFirst and bot.tune.spraySingle and
+             nearFoe >= 0 and nearD <= fireReachPx and
+             client.pixelRayClear(me, bot.enemies[nearFoe].pos)):
+      # ── ⭐ NOT-INERT, MEASURED (v59 integration, 2026-08-21). The differential
+      # is a MASK FINGERPRINT, not a fire counter: this lever's whole shape is an
+      # `if` whose two arms can agree, and "it FIRED" says nothing about whether
+      # it could have CHANGED anything (the carrierClearBand lesson — 1,008 fires,
+      # zero possible effect). So the test is: same seeds, same binary, NOSPRAYFIRST
+      # flipped, FNV-1a over every emitted button mask.
+      #   hosted board ms1, 3 games @1500t : 053a754ffe44a734 vs 053a754ffe44a734
+      #                                      -> IDENTICAL. No divergence.
+      #   hosted board ms2, 4 games @3000t : adf25381d6f503a4 vs 6237c367cd7a38f5
+      #                                      -> DIVERGES (masks 153,360 vs 160,192)
+      #   hosted board ms3, 4 games @3000t : 708a6db7210742a7 vs d054766b5ca34c87
+      #                                      -> DIVERGES (masks 178,656 vs 192,000)
+      #   hosted board ms4, 4 games @3000t : c06b011827702712 vs c06b011827702712
+      #                                      -> IDENTICAL. No divergence.
+      # ⚠️ SO IT IS BOARD-DEPENDENT: 2 of 4 hosted boards diverge, 2 do not. An
+      # earlier draft of this note read "ms1 is the outlier, not the rule" off
+      # ms1/ms2/ms3 alone; ms4 refuted that and the claim is corrected here rather
+      # than left standing. What IS established is the thing that matters: the
+      # lever is NOT DARK — there exist real boards on which it demonstrably
+      # changes emitted decisions. What is NOT established is any rate, and a
+      # single-board null must never again be reported as inertness (the
+      # "false nulls from instrument resolution" trap).
+      # WHY it is board-dependent: the veto needs an approach CLUSTER and an
+      # in-reach SINGLE on the SAME frame, and whether that co-occurs at all is a
+      # property of the map's geometry, not of the policy. On both boards where
+      # it does fire the armed arm ends games EARLIER (-4.3% and -7.0% masks),
+      # the expected direction: taking the in-reach shot instead of walking at an
+      # out-of-reach cluster resolves fights sooner.
+      # ⚠️ Still UNSCORED for outcome — divergence proves it is not dark, not that
+      # it is good. It rides into v59 on the correctness argument below (never
+      # lose an in-reach shot to keep walking toward an out-of-reach one), and
+      # that argument is what a hosted A/B has to confirm.
+      # ⭐⭐ sprayFireFirst is expressed as a VETO on this branch rather than by
+      # physically hoisting the one below it: the added predicate is character
+      # for character the guard of the single-target FIRE branch, so declining
+      # here falls through to exactly that branch and the transformation is a
+      # provable no-op on every frame where no in-reach single shot exists.
+      # WHY: a cluster of two at 250px cannot be coned from here, and closing on
+      # it does not require holding fire — the press costs a 25-tick recharge we
+      # are not otherwise spending. Losing an in-reach shot to keep walking
+      # toward an out-of-reach one is never right, and it gets worse once
+      # sprayConeFire widens what "in reach" means.
+      #
+      # A real cluster is in view but OUT of cone reach: CLOSE the gap onto its centroid.
+      # This is the sanctioned approach (we're closing to land a multikill — +EV per the
+      # numbers doctrine), NOT feeding: it is gated on a genuine cluster, and we keep the
+      # cone trained on it the whole way so it lands the instant we're in reach.
+      when defined(arcprobe): inc apCharge
+      moveMask = octantBits(approachTgt - me)
+      desiredAim = bradsOf(approachTgt - me)
+    elif lvC(114, bot.tune.spraySingle and nearFoe >= 0 and nearD <= fireReachPx and
+        client.pixelRayClear(me, bot.enemies[nearFoe].pos)):
+      # ⭐⭐ SPRAY SINGLE (fix C, 2026-08-06). No qualifying CLUSTER exists (both branches
+      # above required >= ArcConeMinCluster) — ArcConeMinCluster's "coning a singleton is
+      # a net DPS loss" doctrine was written when the GUN stayed available as the
+      # alternative ("a 25t-recharge weapon vs one cog we'd have shot anyway"). It is not:
+      # canFire=false for the entire time the can is held, so today this singleton case
+      # falls straight through to the DRY branch below, which never fires — a disarmed
+      # body that stands mute. Field truth: winners convert can pickups into 5.28 kills/ep,
+      # we convert into 0.50, and 87% of our pickups die WITHOUT EVER FIRING the cone. Take
+      # the nearest fresh enemy in reach with clear LOS: same on-bearing gate as the cluster
+      # fire above, same fire-reach + LOS gate the sim itself uses for the cone.
+      when defined(arcprobe): inc apSingleFire
+      let tgt = bot.enemies[nearFoe].pos
+      desiredAim = bradsOf(tgt - me)
+      moveMask = octantBits(tgt - me)
+      let err = abs(bradsErr(desiredAim, bot.estAim))
+      # ⭐⭐⭐ sprayConeFire, singleton branch — same engine test as the cluster
+      # press above, so the two branches cannot drift apart on the gate either.
+      wantFire =
+        if bot.tune.sprayConeFire: client.arcConeCovers(me, bot.estAim, tgt)
+        else: err <= ArcBreachConeBrads
+      # ⭐⭐ sprayFfVeto, singleton branch — same wedge, same reasoning as the
+      # cluster press above. Both presses go through one helper so the two
+      # branches can never drift apart.
+      when defined(aoeprobe):
+        if wantFire:
+          inc sfPress
+          var sfHot: array[AoeSlackN, bool]
+          for k in 0 ..< AoeSlackN:
+            sfHot[k] = bot.friendlyInCone(client, me, bot.estAim, AoeSlack[k])
+            if sfHot[k]: inc sfPressHot[k]
+          sfFire.add((tick: aoeTick, slot: bot.slot, hot: sfHot))
+      if lvC(115, wantFire and bot.tune.sprayFfVeto and
+          bot.friendlyInCone(client, me, bot.estAim, 0.0)):
+        wantFire = false
+        when defined(aoeprobe): inc sfVeto
+      when defined(commsprobe):
+        if wantFire: inc csArcFire
+    elif lvC(116, bot.tune.spraySingle and nearFoe >= 0 and nearD <= ArcApproachRadius):
+      # Lone target still out of cone reach: close the gap the same way we would for a
+      # distant cluster, so the fire branch above opens as soon as we're in range.
+      when defined(arcprobe): inc apSingleCharge
+      moveMask = octantBits(bot.enemies[nearFoe].pos - me)
+      desiredAim = bradsOf(bot.enemies[nearFoe].pos - me)
+    elif bot.arcLinePos.x >= 0 and bot.tick - bot.arcLineTick <= CommsPlayTtl and
+        dist(bot.arcLinePos, me) > ArcBreachFireReach:
+      # ⭐ CONVERGE on the CALLED line (Captain-coordinated). We can't SEE the cluster yet
+      # (no fresh tracks), but we KNOW where it was called — our own centroid or a heard
+      # caller's bubble. Walk toward it so the line comes into vision + cone reach, then the
+      # cluster scan above takes over. This is the fog-crossing convergence the callout buys:
+      # a breacher a lane away brings its sustained cone to the real line, not a blind seam.
+      # Stop short of overrunning (the cone reach margin), and keep the vision cone on it.
+      when defined(arcprobe): inc apCharge
+      moveMask = octantBits(bot.navSteer(client, me, bot.arcLinePos))
+      desiredAim = bradsOf(bot.arcLinePos - me)
+    else:
+      # DRY: no fat cluster anywhere and no fresh line location (a singleton or nothing). We
+      # hold a disarmed gun for the rest of this life, so the worst thing we can do is charge
+      # that gunless body INTO the line to be focus-fired for free. Ease to a SHALLOW threat
+      # depth and hold — a live cone shapes the line (enemies space to dodge AoE) even unfired,
+      # and we stay poised to close the instant a real cluster forms or a line is called. A
+      # disarmed unit has no gun to trade.
+      when defined(arcprobe): inc apCharge
+      if depth < ArcSeamHoldDepth:
+        let seam = vec(float(CenterX) - homeSign(bot.team) * ArcSeamHoldDepth, me.y)
+        moveMask = octantBits(bot.navSteer(client, me, seam))
+        desiredAim = bradsOf(seam - me)
+      elif nearFoe >= 0:
+        # At the threat line: hold depth, keep the cone on the nearest foe (poised to cone).
+        desiredAim = bradsOf(bot.enemies[nearFoe].pos - me)
+      else:
+        desiredAim = bradsOf(vec(-homeSign(bot.team), 0.0))  # face the enemy half
+    acted = true
+  elif engage >= 0 and shotReady:
+    # Traverse onto the target and fire once the corridor covers it: the
+    # perpendicular miss of the current aim error at the target's range must
+    # sit inside the ~14px bullet corridor. Advancing scales that miss down
+    # linearly, so keep closing while the turret settles.
+    # ⭐⭐⭐ wlead — THE WINDUP LEAD (2026-08-20). See shippedCombatTune for the
+    # 201,827-shot field derivation. The gun is HITSCAN with its bearing LOCKED
+    # at the pull and its ray traced from our centre at RELEASE, so the bearing
+    # must point at where the TARGET will be AND from where WE will be, six
+    # ticks on. Two independent corrections, both off this frame's own data:
+    #   1. top the target lead up from the range-scaled `leadScale` phantom to
+    #      the full constant windup horizon (the scale is a projectile idea and
+    #      this weapon has no flight time — at 60px it leaves 0.9 ticks of lead);
+    #   2. slide the ray's ORIGIN forward by our own one-tick step (rejected if
+    #      it is not a plausible single-tick move, so a respawn teleport leads
+    #      nothing) — our own perpendicular travel is 4.32px at point blank and
+    #      the acceptance window is 14px.
+    # ⚠️ TURRET ONLY: `aim` is untouched, so `advance` (the d-pad, ~180 lines
+    # down) and every target-ledger term keep the shipped phantom exactly.
+    var
+      fireAim = aim
+      fireOrigin = me
+    if bot.tune.windupLead > 0.0:
+      fireAim = aim + engageVel * (bot.tune.windupLead - engageLeadApplied)
+    if bot.tune.windupSelfLead > 0.0:
+      # ⛔⛔ SAME FRAME-vs-TICK DEFECT, INHERITED. `wlead` copied the shipped
+      # windupFfSelfLead shape verbatim, including its missing divisor, and
+      # `WLeadStepCapPx`'s comment repeats the same "a plausible ONE-tick move"
+      # claim about a per-FRAME quantity. See the long note at the windupFf site
+      # below for the derivation, the two failure regimes and the proof of local
+      # inertness. Normalised identically here, and for the same reason: this
+      # lever ships DEFAULT ON in v59, so shipping it uncorrected would bake a
+      # known defect into a brand-new default.
+      let wlAdv = max(1, client.frameAdvance)
+      var step = me - bot.lastPos
+      if wlAdv > 1: step = step * (1.0 / float(wlAdv))
+      if step.len() <= WLeadStepCapPx:
+        fireOrigin = me + step * bot.tune.windupSelfLead
+    desiredAim = bradsOf(fireAim - fireOrigin)
+    aimTargetD = engageD      # this traverse is a SHOOTING traverse at this range
+    let
+      err = abs(bradsErr(desiredAim, bot.estAim))
+      perpMiss = engageD * sin(float(err) * PI / float(AimBrads div 2))
+    # GV36 recalibration: settled on the NEAREST slot the residual error is
+    # up to 4 brads (5.6 deg) — at 150px that is 14.7px of perp-miss against
+    # a slack tuned for 5-brad precision that no longer exists. Inside 300px
+    # widen to body+corridor (17px); beyond, the old slack stands (a ray that
+    # far off really does miss).
+    wantFire = perpMiss <=
+      (if engageD < 300.0: max(bot.tune.fireSlackPx, 17.0)
+       else: bot.tune.fireSlackPx)
+    when defined(rngprobe):
+      rpBand = rpBandOf(engageD)
+      rpSide = ord(bot.team)
+      inc rpFrames[rpSide][rpBand]
+      rpErrSum[rpSide][rpBand] += err
+      rpDistSum[rpSide][rpBand] += engageD
+      if wantFire: inc rpOpen[rpSide][rpBand]
+    if lvC(117, bot.tune.fireOnRealBody):
+      # Also open the trigger when the current aim's perp-miss to the target's
+      # REAL last-seen position sits in the corridor (the lead phantom swings
+      # wide on a juking target). Aim still LEADS; this only OPENS the trigger.
+      let
+        bodyAim = bradsOf(engageBody - me)
+        bodyErr = abs(bradsErr(bodyAim, bot.estAim))
+        bodyD = dist(engageBody, me)
+        bodyMiss = bodyD * sin(float(bodyErr) * PI / float(AimBrads div 2))
+      if lvC(118, bodyMiss <= bot.tune.fireSlackPx and
+          client.pixelRayClear(me, engageBody) and
+          not bot.friendlyBlocked(me, engageBody, bodyD)):
+        wantFire = true
+    # ⭐⭐⭐ WINDUP FRIENDLY-FIRE VETO (wuff) — the last word on the gun trigger,
+    # and the ONLY thing on this path that can CLOSE it. Everything above only
+    # opens it: `wantFire` is pure perp-miss, and the friendlyBlocked call three
+    # lines up lives inside a block that exclusively assigns `true`.
+    #
+    # Gated on `wantFire and not bot.firedLast` because that pair is exactly the
+    # condition under which a ButtonA is emitted at the bottom of decide(); on any
+    # other frame clearing wantFire could not change the mask, so evaluating there
+    # would only burn CPU and inflate the "it fired" counter with frames where it
+    # could not possibly have mattered.
+    if lvC(119, bot.tune.windupFf and wantFire and not bot.firedLast):
+      # The bearing is LOCKED at the pull (startFireWindup stores windupBrads =
+      # aimBrads) and the pull tick emits ButtonA with NO rotate bit — see the
+      # mask assembly at the tail of decide() — so bot.estAim IS the bearing the
+      # bullet will fly on, not an estimate of one.
+      let wuffDir = (if lvC(160, bot.tune.windupFfAxis): bradsDir(bot.estAim)
+                     else: norm(aim - me))
+      # The ORIGIN, though, travels: the muzzle is the shooter's centre AT THE
+      # RELEASE TICK. Our own velocity is the one-tick delta (bot.lastPos is still
+      # last frame's position here — decide() restamps it at the tail), rejected
+      # unless it is a plausible single-tick move so a respawn teleport or the
+      # first frame contributes nothing.
+      var
+        wuffOrigin = me
+        wuffLed = false
+      if lvC(120, bot.tune.windupFfSelfLead > 0.0):
+      # ⛔⛔ FRAME vs TICK (v59, latency audit O-50 — VERIFIED against the source,
+      # not taken from its prose). `bot.lastPos` is stamped ONCE PER decide()
+      # CALL (the tail of this proc), and one decide() call consumes
+      # `client.frameAdvance` SERVER TICKS (`bot.tick += max(1,
+      # client.frameAdvance)`). So `me - bot.lastPos` is a per-FRAME
+      # displacement, while the lead it multiplies is denominated in TICKS —
+      # and so is the plausibility cap, whose own comment says "a plausible ONE-
+      # tick move ... top speed is ~2.75px/tick". Two regimes, both wrong:
+      #   advance = 2: a full-speed 2.75px/tick run arrives as 5.5px, still
+      #     PASSES the 6px cap, and is multiplied by the tick lead — the muzzle
+      #     projects ~27.5px instead of ~13.75px. The corridor origin slides a
+      #     FULL CORRIDOR WIDTH (~14px) down the fire axis, so the veto refuses
+      #     triggers that were never blocked. Over-veto costs us shots.
+      #   advance >= 3: the same run arrives as >6px, the cap REJECTS it, no
+      #     lead is applied at all — and since the union re-test only runs when
+      #     `wuffLed` is true, the lever silently degrades to the plain
+      #     held-muzzle test it was built to replace.
+      # THE FIX IS THE FILE'S OWN PATTERN: `updateTracks` derives every enemy
+      # velocity as `(a.pos - tracks[best].pos) * (1.0 / dt)` with `dt` in ticks.
+      # The own-muzzle step is the ONE motion estimate in the policy that never
+      # got that divisor. Normalise it and BOTH halves come right at once: the
+      # cap then genuinely tests a one-tick move, and the multiply is tick-correct.
+      # ⚠️ PROVABLY INERT IN EVERY LOCAL MEASUREMENT. `frameAdvance` is 1 in the
+      # in-process rig (grabprobe/harness feed exactly one packet per decide),
+      # and the branch below is written so adv == 1 takes the ORIGINAL expression
+      # unchanged — no float round-trip, byte-identical. This rig therefore
+      # CANNOT see this defect or its repair: it is a "mirror rig lacks the
+      # disease" case, and the claim is field-only by construction.
+        let wuffAdv = max(1, client.frameAdvance)
+        var step = me - bot.lastPos
+        if wuffAdv > 1: step = step * (1.0 / float(wuffAdv))
+        if step.len() <= WuffSelfStepCapPx:
+          wuffOrigin = me + step * bot.tune.windupFfSelfLead
+          wuffLed = true
+      var wuffHit = bot.windupFfBlocked(
+        wuffOrigin, wuffDir, engageD, bot.tune.windupFfLead,
+        bot.tune.windupFfLead > 0, bot.tune.windupFfMateRange)
+      if lvC(121, bot.tune.windupFfUnion and not wuffHit.hit and wuffLed):
+        # ⭐ THE UNION. Leading the muzzle is not a strict improvement: it slides
+        # the corridor forward along the fire axis, which can carry a mate OUT of
+        # a corridor it is genuinely standing in at release. Re-test with the
+        # muzzle held where it is; block if EITHER geometry finds a mate. Costs
+        # one extra corridor scan on the frames the led test already cleared.
+        wuffHit = bot.windupFfBlocked(
+          me, wuffDir, engageD, bot.tune.windupFfLead,
+          bot.tune.windupFfLead > 0, bot.tune.windupFfMateRange)
+      when defined(wuffprobe):
+        # FOUR verdicts on the SAME frame, so ONE run decomposes the axis term
+        # from the lead term instead of needing four arms. A = the selection ray
+        # at T0 (what the shipped code can see), B = the fire axis at T0 (a
+        # cqbLos-style check), C = fire axis + mate lead, D = the full lever.
+        let
+          wpTeam = (if bot.slot >= 0 and bot.slot < 32: wuffTeamOfSlot[bot.slot]
+                    else: -1)
+          wpA = bot.windupFfBlocked(me, norm(aim - me), engageD, 0, false,
+                                    bot.tune.windupFfMateRange)
+          wpB = bot.windupFfBlocked(me, bradsDir(bot.estAim), engageD, 0, false,
+                                    bot.tune.windupFfMateRange)
+          wpC = bot.windupFfBlocked(me, bradsDir(bot.estAim), engageD,
+                                    bot.tune.windupFfLead, true,
+                                    bot.tune.windupFfMateRange)
+          wpD = bot.windupFfBlocked(wuffOrigin, bradsDir(bot.estAim), engageD,
+                                    bot.tune.windupFfLead, true,
+                                    bot.tune.windupFfMateRange)
+          wpU = wpC.hit or wpD.hit
+        if wpTeam in 0 .. 3:
+          inc wuffCand[wpTeam]
+          if wpA.hit: inc wuffBlkA[wpTeam]
+          if wpB.hit: inc wuffBlkB[wpTeam]
+          if wpC.hit: inc wuffBlkC[wpTeam]
+          if wpU: inc wuffBlkU[wpTeam]
+          if wpD.hit:
+            inc wuffBlkD[wpTeam]
+            if not wpB.hit: inc wuffNewD[wpTeam]
+            if wpD.stale: inc wuffStale[wpTeam]
+        var wpBits = 1'u8
+        if wpA.hit: wpBits = wpBits or 2'u8
+        if wpB.hit: wpBits = wpBits or 4'u8
+        if wpC.hit: wpBits = wpBits or 8'u8
+        if wpD.hit: wpBits = wpBits or 16'u8
+        if wpU: wpBits = wpBits or 64'u8
+        if lvC(122, wuffHit.hit and not bot.tune.windupFfShadow): wpBits = wpBits or 32'u8
+        wuffMark(bot.slot, bot.tick, wpBits)
+        if lvC(123, wuffHit.hit and not bot.tune.windupFfShadow):
+          if wpTeam in 0 .. 3: inc wuffSup[wpTeam]
+          if bot.slot >= 0 and bot.slot < 32: wuffSupAt[bot.slot] = bot.tick
+      if lvC(124, wuffHit.hit and not bot.tune.windupFfShadow):
+        wantFire = false
+    if lvC(125, retreating or declining or banking or peeling or (bot.tune.carrierFlee and iCarry)):
+      # Outnumbered (retreat), declining the coin-flip trade (tradeGate), banking
+      # at 1 hp, OR carrying the heart (flee):
+      # keep the gun on the
+      # lined-up target and take the free trade, but MOVE toward our objective
+      # (the regroup point / home capture edge) instead of advancing into the
+      # enemy. A carrier that steps toward a point-blank respawner walks into the
+      # invulnerable respawn nest at the pedestal and dies at ~2% of the run home
+      # — the single biggest leak in the grab->capture funnel. The heart only
+      # scores by reaching our edge, so the carrier NEVER trades ground for a kill.
+      when defined(tempoprobe):
+        # ⭐⭐⭐ TGEV SUPPRESSION COST. We are inside the engage branch, so `engage`
+        # names a target we had actually selected and `aim` is already on it —
+        # this is the exact frame where "keep the gun, drop the walk" spends
+        # something. The gun still fires (wantFire is untouched above); what we
+        # give up is the CLOSE, i.e. the kill this advance might have converted.
+        # The +32..+42pp early-kill field fact is the reason this has to be
+        # counted rather than assumed harmless.
+        if declining: inc tgFeetDrop
+      when defined(rwprobe):
+        if rwArmedFrame:
+          rwNavHit = true
+          if abs(target.x - rwPostX) < 0.5 and abs(target.y - rwPostY) < 0.5:
+            inc rwSurvive
+            if rwStepFlag: inc rwStepDiffSurv
+          else:
+            inc rwOverwritten
+      moveMask = octantBits(bot.navSteer(client, me, target))
+    else:
+      # offCone: OFF-CONE APPROACH (backlog #4, Battle Drill 6). Never close on
+      # an oriented gun down the axis it covers: when the engage target's read
+      # bearing (aimRotRead) has its cone ON us, bend the approach TANGENTIALLY
+      # around it toward the cone's edge — it must slew its uncappable 5-brad/
+      # tick turret to keep us while our gun stays on its body (desiredAim is
+      # untouched; feet only). aimErr is the signed arc from our bearing (as
+      # seen from the enemy) to its aim: positive = its gun lies CCW of us, so
+      # escape CW; the CCW tangent around the enemy is vec(rel.y, -rel.x) in
+      # screen coords. The bend ramps with how dead-on the gun is; inside
+      # OffConeCloseRange charge straight (a tangent step just orbits at knife
+      # range); a wall on the escape side cancels the bend (crossing THROUGH
+      # the aim axis to the far edge walks the dead-on line — worse).
+      var advance = norm(aim - me)
+      when defined(ocprobe):
+        if lvC(126, bot.tune.offCone and bot.tune.aimThreat): inc ocAdvance
+      if lvC(127, bot.tune.offCone and bot.tune.aimThreat and
+          engageD > OffConeCloseRange and
+          bot.enemies[engage].aimBrads >= 0):
+        when defined(ocprobe):
+          inc ocConeRead
+        let
+          rel = me - engageBody
+          aimErr = bradsErr(bot.enemies[engage].aimBrads, bradsOf(rel))
+        if abs(aimErr) <= AimOnConeBrads:
+          when defined(ocprobe):
+            inc ocOnUs
+          var tangent = norm(vec(rel.y, -rel.x))      # CCW around the enemy
+          if aimErr > 0 or (aimErr == 0 and (bot.slot and 1) == 1):
+            tangent = tangent * -1.0                  # its gun is CCW: go CW
+          if bot.gridRayClear(me, me + tangent * 24.0):
+            let tight = clamp(
+              float(AimOnConeBrads - abs(aimErr)) /
+                float(AimOnConeBrads - AimDeadOnBrads), 0.0, 1.0)
+            advance = advance + tangent *
+              (OffConeBendMin + (OffConeBendMax - OffConeBendMin) * tight)
+            when defined(ocprobe):
+              inc ocBend
+      moveMask = octantBits(advance)
+    if lvC(128, bot.tune.unstuckEngaged and bot.tick < bot.jinkUntil):
+      # A stuck burst is in flight while we advance on the target: keep jinking
+      # so a corner-grind actually breaks free instead of re-grinding the wall
+      # every frame. The gun still fires on-line.
+      moveMask = bot.jinkBits
+    acted = true
+  elif not iCarry and not rushing and not disarmedRush and not shotReady and
+      nearThreat >= 0:
+    # Cooldown: our gun is down and a threat is near. Default = duck behind the
+    # nearest cover that breaks its line and hold there until the gun is back
+    # up, keeping the aim (and the vision cone) on the arc it would push through.
+    let tp = bot.enemies[nearThreat]
+    let facingMe =
+      (tp.facingRight and tp.pos.x < me.x) or
+      (not tp.facingRight and tp.pos.x > me.x)
+    # assaultThrough: an armed near-ambush charge is COMMITTED (set at the
+    # surprise scan: untracked contact in our face, gun on us, no cover nearer
+    # than the enemy). Battle Drill 4 says fight THROUGH it — take the press
+    # branch even against a facing full-hp gun, because the duck we'd otherwise
+    # pick has no cover to reach and turns our gun off-axis at can't-miss range.
+    let assaultOn =
+      bot.tune.assaultThrough and bot.tick <= bot.assaultUntil and
+      dist(tp.pos, me) <= AssaultPressRange
+    when defined(asprobe):
+      if assaultOn: inc asCharge
+    # woundedBank: a 1-hp bot never closes into spray range on a reload gamble
+    # (that close IS the median-83-tick death) — the one offensive suppression.
+    let pressWorth = not banking and (assaultOn or (
+      bot.tune.tempoPress and bot.tick - tp.lastSeen <= TempoFreshTicks and
+      # #8 TEMPO / AUDACITY — press on the half-beat: our reload is dead time,
+      # but so is theirs if the threat can't punish us right now. When it is
+      # WOUNDED (one or two of our returning trigger-pulls from dead) or TURNED
+      # AWAY (its gun isn't on us this instant), don't surrender tempo to a duck
+      # — CLOSE the distance while jinking, so the moment our gun is live we are
+      # on top of it and finish it in ITS dead time. Only inside a band where
+      # closing actually pays; a facing, full-hp gun still gets the duck.
+      ((tp.hp in 1 ..< MaxHp) or not facingMe) and
+      dist(tp.pos, me) <= TempoPressRange))
+    if pressWorth:
+      desiredAim = bradsOf(tp.pos - me)      # pre-lay for the returning shot
+      # Close on a jinking line (never a static/straight target): step toward
+      # the threat with a sideways weave so we are not walking a clean corridor
+      # into a gun that may come back up first.
+      let toward = norm(tp.pos - me)
+      var side = vec(-toward.y, toward.x)
+      if (bot.tick div 10 + bot.slot div 2) mod 2 == 0:
+        side = side * -1.0
+      if not bot.gridRayClear(me, me + side * 24.0):
+        side = side * -1.0
+      moveMask = octantBits(toward + side * 0.5)
+      acted = true
+    else:
+      let duck = bot.findDuckCell(client, me, tp.pos)
+      if duck >= 0:
+        desiredAim = bradsOf(tp.pos - me)
+        if dist(cellCenter(duck), me) < 5.0:
+          holdStill = true
+        else:
+          moveMask = octantBits(cellCenter(duck) - me)
+        acted = true
+  elif boundHold:
+    # #6 BUDDY BOUNDING OVERWATCH: our gun is down and a mid-range enemy has a
+    # clear line to us across open ground, but a covering mate's gun is up. Do
+    # NOT bound forward into that line while reloading — duck to the nearest
+    # cover that breaks the line and hold there, cone on the threat, until our
+    # gun is live again (then shotReady flips and the engage/advance branches
+    # resume the bound). One team gun stays trained on the crossing the whole
+    # time. If no cover breaks the line, at least stop advancing (hold still).
+    let duck = bot.findDuckCell(client, me, boundThreatPos)
+    desiredAim = bradsOf(boundThreatPos - me)
+    if duck >= 0 and dist(cellCenter(duck), me) >= 5.0:
+      moveMask = octantBits(cellCenter(duck) - me)
+    else:
+      holdStill = true
+    acted = true
+  elif lvC(129, bot.tune.holdVsGun and not shotReady and not iCarry and not pocketRush and
+      not retreating and not declining and not banking):
+    # (banking already keeps the gun on the threat while withdrawing — avoid
+    # double-owning the frame; plan #13 touch 12. declining is the same shape.)
+    # ⭐ NEVER TURN YOUR BACK ON A LIVE GUN (focus-fire audit fix). boundHold above only
+    # holds a gun-down bot that has a covering MATE; a SOLO bot (no wingman) with its gun
+    # on cooldown and a fresh enemy whose gun is ON us past DuckRange but inside
+    # HoldVsGunRange would otherwise fall through to the objective-movement branches and
+    # STROLL AWAY — the map-wide gun kills it in the back. Find that dead-on threat and,
+    # if there is one, break its line the same way boundHold does (duck to cover / hold),
+    # aim held on it. Requires the aim-dot read (aimThreat) to know the gun is truly on us;
+    # with no readback it does nothing (falls through), so it never fires blindly. Skips
+    # when retreating (that branch already keeps the gun on the trade while moving to rally)
+    # and when a clear engage exists (the engage branch owns that — this is a no-shot tier).
+    var gunThreat = -1
+    var gunThreatD = HoldVsGunRange
+    if lvC(130, bot.tune.aimThreat):
+      for i in 0 ..< bot.enemies.len:
+        let t = bot.enemies[i]
+        if bot.tick - t.lastSeen > HoldVsGunTtl or t.aimBrads < 0:
+          continue
+        let d = dist(t.pos, me)
+        if d <= DuckRange or d >= gunThreatD:
+          continue                         # close-duck owns <=DuckRange; ignore far
+        # Widened by AimFuzzBrads (GV24), same reasoning as the medEcon disengage gate: the
+        # whole point of this branch is "never turn your back on a live gun", so a fuzzed
+        # read must not be allowed to declare a gun harmless.
+        if abs(bradsErr(t.aimBrads, bradsOf(me - t.pos))) >
+            AimOnConeBrads + AimFuzzBrads:
+          continue                         # its gun is NOT on us — not a back-turn danger
+        if not client.pixelRayClear(me, t.pos):
+          continue                         # no clear line: it can't shoot our back anyway
+        gunThreatD = d
+        gunThreat = i
+    if gunThreat >= 0:
+      when defined(fsprobe): inc fsHold
+      let tp = bot.enemies[gunThreat]
+      desiredAim = bradsOf(tp.pos - me)      # keep the gun/cone ON the threat
+      let duck = bot.findDuckCell(client, me, tp.pos)
+      if duck >= 0 and dist(cellCenter(duck), me) >= 5.0:
+        moveMask = octantBits(cellCenter(duck) - me)  # break its line to cover
+      else:
+        holdStill = true                     # no cover: at least don't present the back
+      acted = true
+  elif not iCarry and not rushing and shotReady and haveBlocked:
+    # Peek: PRE-LAY the aim on the blocked target while stepping sideways to
+    # the nearest cell that opens the firing line — the engage branch fires
+    # the moment the ray clears, with the traverse already done.
+    #
+    # CORNER PRE-AIM: aim the EMERGENCE CORNER, not the body behind the wall.
+    # The enemy's body appears at the cell nearest it that can see us when it
+    # peeks; laying the turret there means our shot is already on-bearing as it
+    # rounds the cover (winning the trade) instead of pointed at solid wall and
+    # traversing after it shows — the replay-reported "we shoot the wall, they
+    # step out and kill us" miss. Falls back to the body lead when no emergence
+    # corner is found (target deep behind cover, not about to peek).
+    if lvC(131, bot.tune.cornerPreAim):
+      let emerge = bot.enemyEmergeAim(client, me, blockedBody)
+      if emerge.x >= 0.0:
+        desiredAim = bradsOf(emerge - me)
+      else:
+        desiredAim = bradsOf(blockedAim - me)
+    else:
+      desiredAim = bradsOf(blockedAim - me)
+    let peek = bot.findPeekCell(client, me, blockedAim)
+    if peek >= 0 and dist(cellCenter(peek), me) > 4.0:
+      moveMask = octantBits(cellCenter(peek) - me)
+      acted = true
+
+  if not acted:
+    # Threat jink: sidestep a visible enemy that is aiming our way while our
+    # own shot is not lined up, instead of walking into its muzzle.
+    var threat = -1
+    var threatD = ThreatRange
+    for i in 0 ..< seenEnemies.len:
+      let a = seenEnemies[i]
+      let facingMe =
+        (a.facingRight and a.pos.x < me.x) or
+        (not a.facingRight and a.pos.x > me.x)
+      let d = dist(a.pos, me)
+      if facingMe and d < threatD:
+        threatD = d
+        threat = i
+    # THIEF PURSUIT: when OUR flag is stolen and a threat is in sight, that
+    # enemy is either the carrier or its escort on OUR side of the field — the
+    # capture race is lost if nobody hunts. Do NOT jink away "out of fear":
+    # CLOSE on the nearest one and lay the gun, weaving so the approach isn't a
+    # clean corridor. This overrides the generic sidestep (which was making a
+    # defender who spotted the runner flee) but keeps the free-trade shot.
+    if lvC(132, bot.tune.chaseThief and ownStolen and threat >= 0 and
+        not iCarry and not disarmedRush):
+      # ⭐ v48: chase the THIEF, not whoever is nearest (audit: "when it does
+      # arm it closes on whoever is nearest, not the carrier"). With a live
+      # carrier fix, pick the visible enemy nearest that fix — the escort is
+      # not the one scoring the elimination. Falls back to the generic threat
+      # when the fix is stale or nobody is near it.
+      var chase = threat
+      if bot.tick - bot.carrierSeen <= ThiefFixTtl:
+        var bestD = 3.0 * ThiefMatchDist
+        for i in 0 ..< seenEnemies.len:
+          let d = dist(seenEnemies[i].pos, bot.carrierPos)
+          if d < bestD:
+            bestD = d
+            chase = i
+      let toward = norm(seenEnemies[chase].pos - me)
+      var side = vec(-toward.y, toward.x)
+      if (bot.tick div 10 + bot.slot div 2) mod 2 == 0:
+        side = side * -1.0
+      if not bot.gridRayClear(me, me + side * 24.0):
+        side = side * -1.0
+      moveMask = octantBits(toward + side * 0.4)
+      desiredAim = bradsOf(seenEnemies[chase].pos - me)
+    elif threat >= 0 and not iCarry and not disarmedRush:
+      let away = norm(me - seenEnemies[threat].pos)
+      var side = vec(-away.y, away.x)
+      if (bot.tick div 12 + bot.slot div 2) mod 2 == 0:
+        side = side * -1.0
+      if not bot.gridRayClear(me, me + side * 24.0):
+        side = side * -1.0
+      moveMask = octantBits(side + away * 0.4)
+      if desiredAim < 0:
+        desiredAim = bradsOf(seenEnemies[threat].pos - me)
+    elif bot.role in {Overwatch, HomeDefender} and
+        dist(me, target) < 6.0:
+      # Holding a watch position: the aim carries the vision cone, so sweep
+      # it back and forth across the arc threats cross while standing still.
+      # While our flag is stolen the thief comes from our own half;
+      # otherwise intruders come from the enemy half.
+      # ⭐ v56 REAR-GUARD (Maxwell replay note): a posted sentry consumed NO
+      # orient bearing at all — damageSense/callouts staged orientPos, but
+      # only the navigate arm ever read it, so the last man back stood
+      # sweeping his watch arc while being shot from behind. For its short
+      # window the staged hit/callout bearing outranks the idle sweep (a live
+      # engage target still owns desiredAim before this branch runs).
+      if lvC(133, bot.tune.rearTurn and desiredAim < 0 and
+          bot.tick <= bot.orientUntil and bot.orientPos.x >= 0 and
+          dist(bot.orientPos, me) > 1.0):
+        desiredAim = bradsOf(bot.orientPos - me)
+      var watch =
+        if ownStolen: vec(homeSign(bot.team), 0.0)
+        else: vec(-homeSign(bot.team), 0.0)
+      # ⭐ v56 LAST-MAN WATCH (rearTurn): with every mate believed dead there
+      # is no front line left to face — the static -homeSign watch is a
+      # 2-team parity vector aimed at a wall of fog (and on a 4-team board it
+      # is not even our axis). Face the FIELD instead: the freshest
+      # remembered enemy if any track survives, else the board centre. The
+      # belief is evidence-based (a mate corpse newer than any live-mate
+      # sighting/shout, held MateGoneTicks) — fogged silence alone never
+      # flips it, and solo modes (no mates, no corpses) never trigger it.
+      when defined(mkprobe):
+        if bot.tune.rearTurn and not ownStolen and
+            bot.mateDeathTick > bot.lastMateAlive and
+            bot.tick - bot.lastMateAlive > MateGoneTicks:
+          inc mkWatchOpp
+      if lvC(134, bot.tune.rearTurn and bot.tune.mateKoWatch and not ownStolen and
+          bot.mateDeathTick > bot.lastMateAlive and
+          bot.tick - bot.lastMateAlive > MateGoneTicks):
+        var fw = -1
+        var fwT = -100_000
+        for i in 0 ..< bot.enemies.len:
+          if bot.enemies[i].lastSeen > fwT:
+            fwT = bot.enemies[i].lastSeen
+            fw = i
+        if fw >= 0 and dist(bot.enemies[fw].pos, me) > 1.0:
+          watch = norm(bot.enemies[fw].pos - me)
+        else:
+          let fieldC = vec(float(CenterX), float(CenterY))
+          if dist(fieldC, me) > 40.0:
+            watch = norm(fieldC - me)
+      # fatalFunnel: DEFENSIVE FATAL FUNNEL pre-lay (backlog #5, FM 90-10-1
+      # App K). A truly idle sentry (no enemy track fresh within FunnelFreshTtl)
+      # parks the turret ON the throat of the approach funnel instead of
+      # sweeping: vision rides the aim so the cone lights the throat, and the
+      # 5-brad/tick turret is already lined when a body funnels through —
+      # acquisition ~0 instead of a 15-30t re-slew. REF-hunt guardrail: ANY
+      # fresh track returns the two-speed sweep (which dwells on real threats),
+      # so we never tunnel a defender onto an empty lane while a raider is
+      # actually being tracked; the engage branch breaks the pre-lay the
+      # instant a target appears (it owns desiredAim before this branch runs).
+      var funnelIdle = false
+      if lvC(135, bot.tune.fatalFunnel and bot.funnelReady and not ownStolen):
+        funnelIdle = true
+        for t in bot.enemies:
+          if bot.tick - t.lastSeen <= FunnelFreshTtl:
+            funnelIdle = false
+            break
+      when defined(ffprobe):
+        if lvC(136, bot.tune.fatalFunnel):
+          inc ffHold
+          if funnelIdle: inc ffIdle
+      if desiredAim < 0 and funnelIdle and
+          dist(bot.funnelThroat, me) > 12.0:
+        desiredAim = bradsOf(bot.funnelThroat - me)
+        when defined(ffprobe):
+          inc ffPreLay
+      if desiredAim < 0:
+        desiredAim = bot.scanAim(watch, me)
+      holdStill = true
+    else:
+      # Navigate: cover-aware path steering plus soft repulsion from nearby
+      # teammates so one burst (or our own shot) cannot hit two of us.
+      when defined(rwprobe):
+        if rwArmedFrame:
+          rwNavHit = true
+          if abs(target.x - rwPostX) < 0.5 and abs(target.y - rwPostY) < 0.5:
+            inc rwSurvive
+            if rwStepFlag: inc rwStepDiffSurv
+          else:
+            inc rwOverwritten
+      var steer = norm(bot.navSteer(client, me, target))
+      for t in bot.mates:
+        if bot.tick - t.lastSeen > 12:
+          continue
+        let d = dist(t.pos, me)
+        if d < MateSpacing and d > 0.5:
+          steer = steer + norm(me - t.pos) * ((MateSpacing - d) / MateSpacing) * 0.9
+      # ⭐ antiBunch (v56): the repulsion above settles pairs at MateSpacing =
+      # 40px — INSIDE NadeBlast (52px + body). Measured: 56% of the enemy
+      # grenade impacts that damaged us caught 2+ of ours in one blast. Add a
+      # second, gentler term over the 40..BunchSpacing band so the settling
+      # distance lands OUTSIDE one blast instead of inside it, and widen the
+      # track window to BunchMateTtl: there is no team radio (sim
+      # playerVisibleTo — a mate is visible only inside your own cone), so two
+      # bots walking the same way are mutually invisible and the shipped
+      # 12-tick gate never fires on exactly the pair that stacks at a door.
+      if lvC(137, bot.tune.antiBunch):
+        for t in bot.mates:
+          let age = bot.tick - t.lastSeen
+          if age > BunchMateTtl:
+            continue
+          let d = dist(t.pos, me)
+          if d >= MateSpacing and d < BunchSpacing and d > 0.5:
+            steer = steer + norm(me - t.pos) *
+              ((BunchSpacing - d) / BunchSpacing) * BunchOuterGain
+            when defined(ndprobe): inc ndBunchBand
+      # avoidDisarm: soft-repel from a PLASMA-ARC pickup we are NOT out to collect
+      # (auto-pickup on 12px touch => canFire=false, gun lost until fired+dropped).
+      # Repointed off the dead sword + no-longer-disarming shield: the arc is the
+      # only disarm on v15. Skip when we already hold the arc, or are deliberately
+      # seeking a pickup (shieldTank sets seekingPickup). ⭐⭐⭐ comboGrab: also skip
+      # for the ComboGrabSeat outright — that ONE seat always wants the can
+      # eventually (it is mid-sequence toward it even during its shield phase),
+      # so it should never be pushed away from a nearby one.
+      # ⭐ SEAT-IDENTITY FIX (v45): teamSeat, not role (see ~L7192).
+      if lvC(138, bot.tune.avoidDisarm and not seekingPickup and not iHavePlasma and
+          not (bot.tune.comboGrab and bot.teamSeat == ComboGrabSeat)):
+        for p in plasmaPickups:
+          let d = dist(p, me)
+          if d < DisarmAvoidRadius and d > 0.5:
+            steer = steer + norm(me - p) * ((DisarmAvoidRadius - d) / DisarmAvoidRadius) * 1.2
+            when defined(ssprobe):
+              inc ssAvoidActive
+      # noMask: DON'T MASK FIRES, mover-side (backlog #3, ATP 3-21.8). Soft-
+      # repel LATERALLY off any mate's live support ray (up gun + fresh target
+      # on the bearing, built with the focus-fire scan above). friendlyBlocked
+      # already protects from the SHOOTER'S side — by holding fire, spending
+      # the mate's whole ~17t fire cycle; this moves the cost to the mover,
+      # who has slack, so the mate's shot survives. Perpendicular push only
+      # (never along the ray) so progress toward the target is preserved —
+      # the same soft-repel family as MateSpacing/avoidDisarm above. Carriers
+      # and the pocket grab are exempt (speed beats etiquette on the run).
+      when defined(nmprobe):
+        if lvC(139, bot.tune.noMask):
+          inc nmNavFrames
+          nmRays += supportRays.len
+      if lvC(140, bot.tune.noMask and not iCarry and not pocketRush):
+        for ray in supportRays:
+          let rel = me - ray.origin
+          let along = dot(rel, ray.dir)
+          if along <= 0.0 or along >= ray.length:
+            continue                    # behind the muzzle / past the target
+          let side = cross(rel, ray.dir)
+          if abs(side) >= NoMaskAvoid:
+            continue                    # already clear of the corridor
+          # push perpendicular, away from whichever side of the line I'm on
+          # (dead-center picks the side my steer already leans toward). With
+          # perp = (-dir.y, dir.x), a body displaced along +perp reads
+          # cross(rel, dir) NEGATIVE — so flip on side > 0.
+          var perp = vec(-ray.dir.y, ray.dir.x)
+          if (if abs(side) > 1e-3: side > 0.0
+              else: cross(steer, ray.dir) > 0.0):
+            perp = perp * -1.0
+          steer = steer + perp * ((NoMaskAvoid - abs(side)) / NoMaskAvoid) * 1.2
+          when defined(nmprobe):
+            inc nmRepel
+      # Serpentine when a straight run would cross watched ground. Fog cuts
+      # both ways: a fresh remembered enemy with a clear pixel line pins
+      # anyone, and rushers crossing the contested MIDDLE weave even without
+      # intel — the snipers watching their lane are exactly the enemies they
+      # cannot see. Close threats are the jink/duck branches' job; carriers
+      # and the pocket grab skip it — for them speed beats evasion.
+      # A CARRIER now weaves too (carrierSerpentine): the slowest (70%), highest-value unit
+      # is the one that most needs to break a map-wide hitscan's firing solution — but with a
+      # SHALLOWER amplitude so net homeward progress is preserved (it must still reach home).
+      let carrierWeaves = iCarry and bot.tune.carrierSerpentine
+      if (not iCarry and not pocketRush) or lvC(161, carrierWeaves):
+        var weave = false
+        if rushing:
+          weave = abs(me.x - float(CenterX)) < WeaveBand
+        else:
+          for t in bot.enemies:
+            if bot.tick - t.lastSeen > UnderFireTrackTtl:
+              continue
+            let d = dist(t.pos, me)
+            if d >= SerpentineNear and d <= SerpentineFar and
+                client.pixelRayClear(me, t.pos):
+              weave = true
+              break
+        if weave:
+          var side = vec(-steer.y, steer.x)
+          if (bot.tick div 8 + bot.slot div 2) mod 2 == 0:
+            side = side * -1.0
+          # Shallower weave for the carrier (0.35 vs 0.6) — dodge without stalling the run.
+          steer = norm(steer) + side * (if carrierWeaves: 0.35 else: 0.6)
+      steer = steer + vec(rand(-0.12 .. 0.12), rand(-0.12 .. 0.12))
+      moveMask = octantBits(steer)
+      if bot.tick < bot.jinkUntil:
+        moveMask = bot.jinkBits            # unsticking burst
+      # Carriers and the pocket-grab rusher keep the cone down their escape
+      # lane — for them speed beats gunfighting, so the lock/hunt overrides skip.
+      let mayHunt = not iCarry and not disarmedRush
+      if lvC(141, desiredAim < 0 and mayHunt and bot.tune.aimLock and
+          bot.tick <= bot.aimLockUntil):
+        # ⭐ TARGET-LOCK: we hold a fresh enemy but have no clear shot THIS
+        # frame (fogged, wall-blocked, or on cooldown). Do NOT snap the aim to
+        # the movement lane — that surrenders a bearing we paid 5-brads/tick to
+        # acquire and drops the enemy out of the cone. Keep the turret smoothly
+        # pursuing the locked body so the moment the line clears we fire.
+        desiredAim = bradsOf(bot.aimLockPos - me)
+      elif lvC(142, desiredAim < 0 and mayHunt and bot.tune.huntSweep):
+        # HUNTING POSTURE: no lock, but actively acquire — aim at the nearest
+        # recently-remembered enemy rather than blindly down-lane.
+        var best = -1
+        var bestD = 1e18
+        for i in 0 ..< bot.enemies.len:
+          if bot.tick - bot.enemies[i].lastSeen > HuntSweepTtl:
+            continue
+          let d = dist(bot.enemies[i].pos, me)
+          if d < bestD:
+            bestD = d
+            best = i
+        if best >= 0:
+          desiredAim = bradsOf(bot.enemies[best].pos - me)
+        else:
+          desiredAim = bradsOf(steer)
+          deadband = CruiseDeadband
+      if desiredAim < 0 and mayHunt and bot.tick <= bot.orientUntil and
+          bot.orientPos.x >= 0:
+        # CONTACT ORIENT: a mate's "oh shit!"/"die"/callout or an own-HP drop
+        # from an unseen shooter gave us a bearing to face for a beat. With no
+        # target of our own pulling the turret, swing the vision cone onto it
+        # (turn-and-watch) so we pick the threat up instead of walking blind.
+        desiredAim = bradsOf(bot.orientPos - me)
+        deadband = CruiseDeadband
+      if lvC(143, desiredAim < 0 and mayHunt and bot.tune.dangerPreAim):
+        # ⭐ v56 DANGER-BEARING PRE-AIM (Maxwell replay note: "shots on target
+        # = positioned + looking where the enemy WILL be"). No live target, no
+        # lock, no staged orient bearing: rather than idling the cone down the
+        # movement lane, pre-lay the highest-priority DANGER bearing — the
+        # freshest mate death (their killer is standing near it), else the
+        # last damage bearing on us, else the approach corridor toward enemy
+        # country (stealTarget doubles as "enemy country" on every layout:
+        # observed pedestal / stated endzone centre). Deliberately NOT the
+        # refuted huntSweep (which chased ANY remembered enemy off-objective
+        # and traded wins for kills): these bearings decay in DangerAimTtl,
+        # never steer the feet, require NO fresh track at all, and lose to
+        # every live-target claim above.
+        var freshTrack = false
+        for t in bot.enemies:
+          if bot.tick - t.lastSeen <= HuntSweepTtl:
+            freshTrack = true
+            break
+        if not freshTrack:
+          when defined(mkprobe):
+            inc mkIdleTurret
+            if bot.tick - bot.mateDeathTick <= DangerAimTtl and
+                bot.mateDeathPos.x >= 0 and dist(bot.mateDeathPos, me) > 24.0:
+              inc mkAimOpp
+          if bot.tune.mateKoAim and
+              bot.tick - bot.mateDeathTick <= DangerAimTtl and
+              bot.mateDeathPos.x >= 0 and dist(bot.mateDeathPos, me) > 24.0:
+            desiredAim = bradsOf(bot.mateDeathPos - me)
+            deadband = CruiseDeadband
+          elif bot.tick - bot.lastHitTick <= DangerAimTtl and
+              bot.lastHitPos.x >= 0 and dist(bot.lastHitPos, me) > 24.0:
+            desiredAim = bradsOf(bot.lastHitPos - me)
+            deadband = CruiseDeadband
+          elif dist(stealTarget, me) > 60.0:
+            desiredAim = bradsOf(stealTarget - me)
+            deadband = CruiseDeadband
+      if desiredAim < 0:
+        # No target demands the turret: the aim leads the movement direction
+        # so the vision cone watches down-lane where we are heading. Movement
+        # no longer leaks our vision, so this is a choice, not a side effect.
+        desiredAim = bradsOf(steer)
+        deadband = CruiseDeadband
+
+  when defined(doorprobe):
+    # ⭐ ENTRY-Y PROBE (instrumentation only). A rising edge of `depth` through
+    # zero IS an entry into the enemy half — the exact event the replay
+    # forensics counted. Recorded per (team, teamSeat) so the strided league
+    # subset can be scored on its own. Also the per-seat LIVENESS tally: a seat
+    # with 0 alive frames or 0 travel is the silent seat-contract failure.
+    block doorProbeTail:
+      let dpTm = clamp(ord(bot.team), 0, 1)
+      let dpSt = clamp(bot.teamSeat, 0, 7)
+      dpRole[dpTm][dpSt] = ord(bot.role)
+      inc dpAliveFrames[dpTm][dpSt]
+      dpTravel[dpTm][dpSt] += dist(me, bot.lastPos)
+      let dpSl = clamp(bot.slot, 0, 31)
+      inc dpSlotFrames[dpSl]
+      dpSlotTravel[dpSl] += dist(me, bot.lastPos)
+      dpSlotRole[dpSl] = ord(bot.role)
+      dpSlotSeat[dpSl] = bot.teamSeat
+      let dpDepth = -homeSign(bot.team) * (me.x - float(CenterX))
+      if bot.prevDepthSet and bot.prevDepth <= 0.0 and dpDepth > 0.0:
+        dpNoteEntry(dpTm, dpSt, me.y)
+        inc dpSlotEntries[dpSl]
+      if bot.prevDepthSet and bot.prevDepth <= DpDoorDepth and
+          dpDepth > DpDoorDepth:
+        dpNoteDoor(dpTm, dpSt, me.y)
+      bot.prevDepth = dpDepth
+      bot.prevDepthSet = true
+
+  # Stuck detection: if we have not moved for a second (and are not holding
+  # behind cover on purpose), burst in a random direction and force a repath.
+  if dist(me, bot.lastPos) < 0.8:
+    inc bot.stuckTicks
+  else:
+    bot.stuckTicks = 0
+  bot.lastPos = me
+  if holdStill:
+    bot.stuckTicks = 0
+  if lvC(144, bot.stuckTicks > 20 and
+      (engage < 0 or retreating or declining or bot.tune.unstuckEngaged)):
+    bot.stuckTicks = 0
+    bot.jinkUntil = bot.tick + 10
+    bot.jinkBits = octantBits(vec(rand(-1.0 .. 1.0), rand(-1.0 .. 1.0)))
+    bot.navGoal = -1
+    if bot.jinkBits == 0:
+      bot.jinkBits = ButtonUp
+    moveMask = bot.jinkBits
+
+  # ⭐ v56 BARRAGE EVACUATION (hazardSense, Maxwell replay note: "we still
+  # don't react to end-of-game perimeter bombs, we die to them a lot"). The
+  # engine STATES the endgame shell ring outright — every map edge is lethal
+  # BarrageDepthPx deep, escalating to the full board — and the policy never
+  # read it: bots held posts and duels inside a declared death zone. When the
+  # stated ring covers us, sprint for the shrinking safe interior. A post-
+  # chain MOVEMENT-ONLY override (same shape as arcStandoff/nadeDanger
+  # below): whatever branch won the feet, the ring outranks it — never the
+  # turret (the engage block keeps firing on the way out) and never carrier
+  # logic (iCarry/touchLatch keep their run: a capture ends the episode).
+  # Runs BEFORE arcStandoff and nadeDanger so an instant-kill cone or a shell
+  # already falling on our head still wins the final say on the feet.
+  if lvC(145, bot.tune.hazardSense and BarrageDepthPx > 0.0 and
+      not iCarry and not touchLatch):
+    let bdanger = BarrageDepthPx + BarrageEvadeMargin
+    let edgeD = min(min(me.x, float(MapW - 1) - me.x),
+                    min(me.y, float(MapH - 1) - me.y))
+    if edgeD < bdanger:
+      # Nearest point of the safe interior box; the box collapses onto the
+      # centre as the escalation completes (then the centre is simply the
+      # last ground to stand on).
+      let
+        bsafe = vec(
+          clamp(me.x, min(bdanger, float(CenterX)),
+                max(float(MapW - 1) - bdanger, float(CenterX))),
+          clamp(me.y, min(bdanger, float(CenterY)),
+                max(float(MapH - 1) - bdanger, float(CenterY))))
+      var bstep = bot.navSteer(client, me, bsafe)
+      if bstep.len() < 0.5:
+        bstep = bsafe - me               # degenerate field: straight inward
+      moveMask = octantBits(norm(bstep))
+      holdStill = false
+      when defined(barrprobe): inc bpEvac
+      bot.stuckTicks = 0                 # a deliberate sprint, not a corner grind
+
+  # ⭐ ARC STANDOFF (2026-08-07): the MOVEMENT half of counterArc. counterArc bumps a disarmed
+  # enemy arc-carrier's engage PRIORITY but deliberately left the feet alone — so we happily shoot
+  # it while strolling into the one place it can kill us. The sim numbers say never do that:
+  # PlasmaArcDamage(3) == MaxHp(3), so ONE cone touch inside PlasmaArcReachPx(136) is an INSTANT
+  # kill; the cone is repeatable (25t recharge) and tracks its owner's live aim for 5 ticks. Yet
+  # the carrier's own 1300px gun is dead for the rest of its life and the arc never drops. So the
+  # geometry is a pure free lunch: hold at ArcStandoffRing(196px), keep shooting, and it has NO
+  # win condition — equal top speeds (2.75px/tick) mean it can never close the gap on a bot that
+  # keeps backing up. This is deliberately a MOVEMENT-ONLY override (feet only: moveMask/holdStill,
+  # never desiredAim/wantFire/rotBits), so we back off STILL FIRING with whatever aim the engage/
+  # counterArc block already laid on — the retreat is a fighting withdrawal, not a disengage.
+  #
+  # Placed as a post-chain override rather than another `elif` for a specific reason: a cone
+  # closing on us must beat whatever branch happened to win (engage/press/duck all walk forward),
+  # and the arcBreach lesson was that a lone reactive branch buried in the chain never fires.
+  # It still yields to nadeDanger below — a grenade blast out-ranges and out-damages a cone.
+  #
+  # Skips: iCarry (the carrier's flee line is the objective and carrierFlee owns it — a heart at
+  # our edge outscores dodging a cone) and iHavePlasma (we hold a cone too, that's a cone duel the
+  # breacher block owns). Requires counterArc for the same fog-gated sprite read.
+  # NOTE the gating split: the SCAN + probe counters run whenever counterArc is on, but only the
+  # ACTION is gated on arcStandoff. That is deliberate — a funnel gated behind its own lever can
+  # only ever report 0 on the OFF arm, which makes the A/B unreadable (you cannot tell "no
+  # stimulus" from "lever inert"). This way asoNear/asoInCone measure the SAME world in both arms
+  # and caughtInCone is a true before/after of the instant-death exposure.
+  if lvC(146, bot.tune.counterArc and not iCarry and not iHavePlasma):
+    var arcFoe = -1
+    var arcFoeD = 1e18
+    for i in 0 ..< bot.enemies.len:
+      let t = bot.enemies[i]
+      # FRESH only: hasArc is sticky-for-life on a track, so a STALE arc track would pin us at
+      # 196px off a remembered ghost that may be dead. freshShotTicks is the same window that
+      # gates firing — if it isn't fresh enough to shoot, it isn't fresh enough to retreat from.
+      if lvC(147, not t.hasArc or bot.tick - t.lastSeen > bot.tune.freshShotTicks):
+        continue
+      let d = dist(t.pos, me)
+      if d < arcFoeD:
+        arcFoeD = d
+        arcFoe = i
+    when defined(asoprobe):
+      if arcFoe >= 0:
+        if arcFoeD <= ArcStandoffRing + ArcStandoffHold: inc asoNear
+        if arcFoeD <= PlasmaArcReachPx: inc asoInCone
+    if lvC(148, arcFoe >= 0 and bot.tune.arcStandoff):
+      let latched = bot.tick - bot.arcBackTick <= ArcStandoffLatch
+      # Back off when inside the ring, or while the latch holds us through the dead band.
+      if arcFoeD < ArcStandoffRing or (latched and arcFoeD < ArcStandoffRing + ArcStandoffHold):
+        let tp = bot.enemies[arcFoe].pos
+        var away = me - tp
+        if away.len() < 1.0:
+          away = vec(homeSign(bot.team), 0.0)   # degenerate overlap: fall back toward home
+        away = norm(away)
+        # ⭐ Retreat DIAGONALLY (back + sideways), never straight back. Two sim facts force this:
+        #   (1) The cone is NARROW, not radial: halfWidthSlope = PlasmaArcMaxWidth(68)/(2*136) =
+        #       0.25, so the lethal half-width is just 34px even at full reach (~28° total). You
+        #       leave a cone that thin far faster SIDEWAYS than by outrunning its 136px length.
+        #   (2) Top speeds are EQUAL (2.75px/tick both sides), so a purely radial retreat from a
+        #       chasing carrier holds the gap CONSTANT — it can never break contact. Sideways
+        #       motion has no such symmetry: it forces the carrier to slew its aim to track us,
+        #       and angular demand grows as range shrinks, so the closer it gets the harder its
+        #       tracking problem becomes. Measured: radial-only left in-cone exposure flat.
+        # Same principle as offCone (never walk down an oriented gun's axis), applied to the cone.
+        let tangent = norm(vec(away.y, -away.x))
+        # Break the tangent tie DETERMINISTICALLY per seat, so two mates backing off the same
+        # carrier peel to opposite sides instead of stacking into one shared cone.
+        let side = (if (bot.slot and 1) == 0: tangent else: tangent * -1.0)
+        var step = norm(away + side * ArcStandoffSlipMix)
+        # Wall handling, in falling-back order: the diagonal, the other diagonal, then pure
+        # sideways, then straight back. A bot pinned against cover must still leave the cone, and
+        # the stuck-burst above would otherwise jink us RANDOMLY — possibly straight into it.
+        if not bot.gridRayClear(me, me + step * 32.0):
+          for alt in [norm(away - side * ArcStandoffSlipMix), side, side * -1.0, away]:
+            if bot.gridRayClear(me, me + alt * 32.0):
+              step = alt
+              break
+        moveMask = octantBits(step)
+        holdStill = false
+        bot.arcBackTick = bot.tick
+        when defined(asoprobe): inc asoBack
+      elif arcFoeD < ArcStandoffRing + ArcStandoffHold:
+        # DEAD BAND (196..236px): don't close, don't flee — we are already outside the cone and
+        # deep inside our own gun range, so standing here IS the winning trade. Only stop the
+        # feet if the winning branch wanted to walk us TOWARD the carrier; a move that already
+        # opens the range (or is lateral) is fine and stays untouched.
+        let towardBits = octantBits(bot.enemies[arcFoe].pos - me)
+        if moveMask != 0 and (towardBits and moveMask) != 0:
+          moveMask = 0
+          holdStill = true
+          # This override runs AFTER the stuck check (the chain's own holds run before it), so
+          # clear the counter ourselves exactly as the `if holdStill` block up there does —
+          # otherwise a deliberate 20-tick standoff hold reads as a corner-grind and the
+          # stuck-burst jinks us in a RANDOM direction, i.e. possibly into the cone.
+          bot.stuckTicks = 0
+          when defined(asoprobe): inc asoHold
+
+  # ⭐ antiBunch STEP-APART (v56). The steer term above only reaches bots that
+  # are NAVIGATING; the pairs that actually eat one grenade are the ones
+  # STANDING together — at a door, behind the same corner, holding the same
+  # lip. This is a post-chain MOVEMENT-ONLY override in the same family as
+  # arcStandoff/nadeDanger: whatever branch won the feet, a mate parked inside
+  # one blast of us outranks a hold. Deliberately narrow:
+  #   * only when we are actually STILL (nothing else is moving us apart);
+  #   * only inside NadeBlast (one blast takes both — not merely "close");
+  #   * exactly ONE of the pair yields, on a rule both sides compute the same
+  #     way, so they step APART instead of both dancing and neither clearing;
+  #   * never a carrier / touch-latched grab (a capture ends the episode), and
+  #     never mid-charge (dropping a live grenade charge wastes it), and
+  #   * placed BEFORE nadeDanger so a grenade already marked on our head still
+  #     has the final say on the feet.
+  if lvC(149, bot.tune.antiBunch and moveMask == 0 and not iCarry and not touchLatch and
+      bot.nadeCharge == 0):
+    var bunchFrom = vec(-1.0, -1.0)
+    var bunchD = NadeBlast
+    for t in bot.mates:
+      if bot.tick - t.lastSeen > BunchMateTtl:
+        continue
+      let d = dist(t.pos, me)
+      if d < bunchD and d > 0.5:
+        bunchD = d
+        bunchFrom = t.pos
+    if bunchFrom.x >= 0.0:
+      # Yield rule: the FORWARD body peels, the one nearer our own heart holds
+      # its ground (ties fall to x, then y). It has to be an ASYMMETRIC rule
+      # both sides compute identically — a symmetric one moves both bodies and
+      # preserves the gap. A mate track carries no slot id, so the ordering is
+      # positional; perception is one-way anyway (no team radio), so often only
+      # the bot that can SEE the other runs this at all.
+      let
+        myHome = abs(me.x - homeDeepX(bot.team))
+        itsHome = abs(bunchFrom.x - homeDeepX(bot.team))
+        iYield =
+          if abs(myHome - itsHome) > 1.0: myHome > itsHome
+          elif abs(me.x - bunchFrom.x) > 1.0: me.x > bunchFrom.x
+          else: me.y > bunchFrom.y
+      if iYield:
+        var step = norm(me - bunchFrom)
+        if step.len() < 0.5:
+          step = vec(0.0, 1.0)
+        # Prefer a lateral peel that keeps us on task; fall back round cover.
+        let side = vec(-step.y, step.x)
+        if not bot.gridRayClear(me, me + step * BunchStepPx):
+          for alt in [norm(step + side), norm(step - side), side, side * -1.0]:
+            if bot.gridRayClear(me, me + alt * BunchStepPx):
+              step = alt
+              break
+        moveMask = octantBits(step)
+        holdStill = false
+        bot.stuckTicks = 0               # a deliberate peel, not a corner grind
+        when defined(ndprobe): inc ndBunchStep
+  when defined(ndprobe):
+    # Bunching STIMULUS, counted lever-independently (asoprobe rule): frames a
+    # remembered mate sat inside one blast of us.
+    for t in bot.mates:
+      if bot.tick - t.lastSeen <= BunchMateTtl and dist(t.pos, me) <= NadeBlast:
+        inc ndPairFrames
+        break
+
+  if nadeDanger:
+    # Sprint straight out of the marked blast zone; drop any hold/duck.
+    let away = me - nadeDangerFrom
+    moveMask = octantBits(
+      if len(away) < 1.0: vec(homeSign(bot.team), 0.3) else: away
+    )
+    holdStill = false
+
+  if moveMask == 0 and not holdStill:
+    moveMask = octantBits(vec(rand(-1.0 .. 1.0), rand(-1.0 .. 1.0)))
+
+  when defined(carryDebug):
+    if iCarry and abs(me.x - homeDeepX(bot.team)) < 320.0:
+      echo "RUN t=", bot.tick, " slot=", bot.slot, " team=", bot.team,
+        " me=", int(me.x), ",", int(me.y),
+        " tgt=", int(target.x), ",", int(target.y),
+        " mask=", moveMask, " stuck=", bot.stuckTicks,
+        " eng=", engage, " retreat=", retreating
+      flushFile(stdout)
+
+  when defined(homeprobe):
+    ## Four-team carrier diagnosis (issue #17): NO 2-team x-gate — the
+    ## carryDebug filter above is `abs(me.x - homeDeepX)` which hides every
+    ## four-team run. Prints the stated zone the target came from.
+    if iCarry:
+      let hz = statedZone(SelfColor)
+      echo "HOME t=", bot.tick, " slot=", bot.slot, " col=", SelfColor,
+        " parity=", bot.team, " teams=", GameTeams, " marks=", EndzoneMarks.len,
+        " me=", int(me.x), ",", int(me.y),
+        " tgt=", int(target.x), ",", int(target.y),
+        " zone=", (if hz.have: (if hz.compact: "compact" else: "column")
+                   else: "MISSING"),
+        " box=", int(hz.x0), ",", int(hz.y0), "..", int(hz.x1), ",", int(hz.y1),
+        " c=", int(hz.c.x), ",", int(hz.c.y),
+        " deepX=", int(homeDeepX(bot.team)),
+        " mask=", moveMask, " stuck=", bot.stuckTicks,
+        " eng=", engage, " retreat=", retreating, " grabD=",
+        int(dist(me, bot.grabPos))
+      flushFile(stdout)
+
+  # Rotate toward the desired aim by the shortest arc; inside the deadband
+  # (AimRate cannot settle tighter than +-AimRate/2) hold the turret still.
+  var rotBits: uint8 = 0
+  # ⭐ GV40 (2026-08-06): the engine RESTORED CONTINUOUS TURRET AIM — aimBrads
+  # spans all 256 headings again and aimTurnRate is brads/tick (5), undoing
+  # GV36's 32-slot reinterpretation. Choose the servo off the OBSERVED step
+  # rather than a compiled-in assumption, so this survives the flip in either
+  # direction: a slot world always steps a multiple of 8 brads, and at least 8.
+  let aimSlotWorld = bot.tune.aimLegacy or
+    (bot.aimStepBrads >= 8 and bot.aimStepBrads mod 8 == 0)
+  if desiredAim >= 0 and not aimSlotWorld:
+    # CONTINUOUS SERVO: shortest signed arc, hold inside the deadband. There is
+    # no slot lattice to plan around, so the GV36 planner's whole reason to
+    # exist (gcd(5,32)=1 makes an adjacent slot cost 13 held ticks) is void —
+    # running it here is what produced the 8x overshoot. With step 5 and
+    # deadband 2, an error of 3-4 lands inside the band on the next tick, so it
+    # settles instead of hunting.
+    let err = bradsErr(desiredAim, bot.estAim)
+    if lvC(150, abs(err) > bot.tune.combatDeadband):
+      rotBits = (if err > 0: ButtonB else: ButtonSelect)
+  elif desiredAim >= 0:
+    # ⭐ GV36 SLOT SERVO. The aim occupies 32 discrete slots and a held rotate
+    # steps aimTurnRate SLOTS per tick (league config: 5 slots = 40 brads =
+    # 56 degrees). Proportional shortest-arc turning cannot settle: gcd
+    # arithmetic means reaching an ADJACENT slot can take 13 ticks the long
+    # way round, and a naive servo oscillates or parks 20 brads off — which
+    # is why ranged gunfire died league-wide (measured on live physics: hit%
+    # 0.0 past 300px, 83% of all shots under 150px). Plan in slot space: take
+    # whichever direction reaches the desired slot in fewer held ticks, even
+    # when that transiently widens the raw error.
+    let
+      sSlots = max(1, bot.aimStepBrads div 8)
+      cur = ((bot.estAim + 4) div 8) mod 32
+      des = ((desiredAim + 4) div 8) mod 32
+      delta = ((des - cur) mod 32 + 32) mod 32
+    if delta != 0:
+      var kp = -1
+      var km = -1
+      for k in 1 .. 32:
+        if kp < 0 and (k * sSlots) mod 32 == delta: kp = k
+        if km < 0 and (k * sSlots) mod 32 == (32 - delta) mod 32: km = k
+        if kp >= 0 and km >= 0: break
+      # ⭐ SPINCAP (gated): with step 5 and gcd(5,32)=1, the EXACT plan for a
+      # ±1-slot correction is 13 held ticks — 65 slots swept, two full BLIND
+      # revolutions (the vision cone rides the aim), and the field-visible
+      # "turret spinning the long way". When the exact plan exceeds the
+      # budget, steer to the reachable slot with the least angular error
+      # inside it (often: hold, accepting ≤1 slot = 11.25°) and let the
+      # fire-gate slack + the target's own bearing drift close the rest.
+      # ⭐ THE RANGE FORK: the budget's accepted residual is ANGULAR, the fire
+      # corridor is LINEAR (perpMiss = D·sin err), so the same ≤2-slot residual
+      # that is invisible at 60px is a permanent trigger LOCKOUT at 600px. Spend
+      # the budget only where it is cheap; beyond spinCapRangePx pay the exact
+      # plan so the error actually reaches 0 and the corridor opens. A traverse
+      # with no shootable target (aimTargetD < 0) always keeps the budget — it
+      # cannot cost a shot, and the blind multi-rev spin is pure vision loss.
+      # ⛔ MEASURED DEAD 2026-08-20: `spinBudgeted` was true on 0 of 768,992
+      # bot-frames — not because the test below fails, but because this entire
+      # `elif` (the GV36 slot servo) is unreachable while the engine runs
+      # continuous aim at AimTurnRate = 5 brads/tick. See the spinCap note in
+      # shippedCombatTune(). Do not "fix" the condition; there is nothing wrong
+      # with it. NOSPINCAP / SPINRANGE are inert for the same reason.
+      let spinBudgeted = bot.tune.spinCap and
+        (aimTargetD < 0.0 or aimTargetD <= bot.tune.spinCapRangePx)
+      var capped = false
+      if lvC(162, spinBudgeted):
+        const SpinCapTicks = 4
+        let kbest = (if kp >= 0 and (km < 0 or kp <= km): kp
+                     elif km >= 0: km else: 99)
+        if kbest > SpinCapTicks:
+          capped = true
+          when defined(rngprobe): inc rpCap[ord(bot.team)]
+          var bestJ = 0
+          var bestErr = 99
+          for jj in -SpinCapTicks .. SpinCapTicks:
+            let net = (((cur + jj * sSlots - des) mod 32) + 32) mod 32
+            let e = min(net, 32 - net)
+            if e < bestErr or (e == bestErr and abs(jj) < abs(bestJ)):
+              bestErr = e
+              bestJ = jj
+          when defined(rngprobe): rpCapErr[ord(bot.team)] += bestErr
+          if bestJ > 0: rotBits = ButtonB
+          elif bestJ < 0: rotBits = ButtonSelect
+      if not capped:
+        if kp >= 0 and (km < 0 or kp <= km): rotBits = ButtonB
+        elif km >= 0: rotBits = ButtonSelect
+
+  # Only a FRESH A press fires, and the pull locks the aim angle on the same
+  # tick — never rotate on the pull tick so the lock takes the settled aim.
+  # ⛔ CQB PLANT was here — MEASURED AND REVERTED (2026-08-04). 12-game frozen
+  # A/B: moving-while-firing 63% -> 0.1% (mechanism perfect) and CQB hit%
+  # 36.0 -> 36.1 (NO effect), while shots -19%, hits -25%, kills -34%,
+  # deaths +34%, W-L-D 1-9-2. The REF-slack failure plus a stationary-target
+  # penalty. The field's plant/hit correlation was a SIDE-COMPOSITION
+  # confound (within-side gradient only 8pp). Movement was never the cause.
+  when defined(carrytrace):
+    if iCarry and bot.tick mod 60 < 2:
+      stderr.writeLine "CARRY slot=" & $bot.slot & " t=" & $bot.tick &
+        " me=" & $int(me.x) & "," & $int(me.y) &
+        " target=" & $int(target.x) & "," & $int(target.y) &
+        " hp=" & $bot.ownHp & " engage=" & $engage &
+        " homeDeepX=" & $int(homeDeepX(bot.team)) &
+        " ownHome=" & $int(ownHome.x) & "," & $int(ownHome.y)
+  when defined(rwprobe):
+    # An eligible frame whose emitted step never came from the nav-target path at all
+    # (a jink/duck/peek/charge branch owned the mask): the pull cannot reach the output
+    # on that frame regardless of what it did to `target`.
+    if rwArmedFrame and not rwNavHit: inc rwEmitOther
+  var mask = moveMask or rotBits
+  if wantFire and not bot.firedLast:
+    mask = moveMask or ButtonA
+    when defined(wuffprobe):
+      # ⭐ "A vetoed trigger re-fires a tick or two later on a clean line" is the
+      # whole cost argument for this lever, so MEASURE it: on every A actually
+      # emitted, how long ago was this slot's last suppression? A suppression
+      # that is never followed by an A is a shot we truly lost and shows up as
+      # the shortfall between wuffSup and wuffRe[2].
+      if bot.slot >= 0 and bot.slot < 32 and wuffSupAt[bot.slot] >= 0:
+        let wpGap = bot.tick - wuffSupAt[bot.slot]
+        let wpTm = wuffTeamOfSlot[bot.slot]
+        if wpGap >= 1 and wpTm in 0 .. 3:
+          if wpGap <= 3: inc wuffRe[0][wpTm]
+          if wpGap <= 6: inc wuffRe[1][wpTm]
+          if wpGap <= 12: inc wuffRe[2][wpTm]
+        if wpGap >= 1: wuffSupAt[bot.slot] = -1
+    when defined(rngprobe):
+      if rpBand >= 0: inc rpFire[rpSide][rpBand]
+  when defined(rngprobe):
+    rpBand = -1
+    # Live-server dump: the bot processes are SIGTERM'd by the A/B script, so
+    # write a running tally every 500 ticks and read the LAST line per slot.
+    inc rpCalls
+    if rpCalls mod 50 == 0:
+      var s = "RNG slot=" & $bot.slot & " t=" & $bot.tick & " calls=" & $rpCalls
+      let sd = ord(bot.team)
+      for b in 0 .. 4:
+        s.add " b" & $b & "=" & $rpFrames[sd][b] & "/" & $rpOpen[sd][b] & "/" &
+          $rpFire[sd][b] & "/" & $rpErrSum[sd][b] & "/" & $int(rpDistSum[sd][b])
+      s.add " cap=" & $rpCap[sd] & " capErr=" & $rpCapErr[sd]
+      stderr.writeLine s
+      flushFile(stderr)
+  if nadeC:
+    mask = mask or ButtonC
+  bot.firedLast = (mask and ButtonA) != 0
+  bot.rotSign =
+    if (mask and ButtonB) != 0: 1
+    elif (mask and ButtonSelect) != 0: -1
+    else: 0
+
+  # ── COMMS BUS emit (highest priority, shares the one shout slot): when we
+  # classified a live team scenario (STACK/WIPE/PEEL — a LOCAL read a mate may
+  # not see), broadcast its opaque rotating codeword "P<tok>" so the squad
+  # converges. Emit-only + mask-neutral (staged in shoutWant AFTER the mask is
+  # finalized, exactly like the vanity shouts — proven not to perturb aim/move).
+  # Consumes the shared shout slot (updates lastShoutTick) so it wins over vanity
+  # this frame. Own CommsEmitCooldown keeps it to a play-beat, not per-frame spam.
+  if lvC(151, bot.tune.commsBus and localSc != ScNone and
+      bot.tick - bot.lastShoutTick >= ShoutGapTicks and
+      bot.tick - bot.lastCommsTick >= CommsEmitCooldown):
+    let salt = roundSalt(bot.gameStart, bot.team, bot.tune.commsCrypto)
+    let clockFlank = selectPlay(bot.tick - bot.gameStart, ownStolen)
+    let rp = scenarioToPlay(localSc, clockFlank)
+    # ⭐⭐ v56 EMIT DEDUPE (playLatch). MEASURED: 58% of all play calls were the SAME
+    # token another seat had already put in the air within 90t — every seat runs the
+    # same classifier with no authority bit, so the squad agrees loudly and burns the
+    # one shout slot re-saying it. That redundancy is not a relay protocol worth
+    # keeping (reach is fine at 2.86 mean hearers / 7.6% starved, and the echo IS the
+    # relay); it is dead air. Skip the emit when the play we would call is already
+    # live on the wire, and — critically — do NOT consume lastShoutTick, so the slot
+    # falls through to the E-callout below instead of evaporating. This is what pays
+    # for E-callouts: v55 emitted 3,526 P-calls and ZERO E in the same window.
+    let alreadyAired = bot.tune.playLatch and rp != RpNone and rp == bot.heardPlay and
+      bot.tick - bot.heardPlayTick <= CommsEchoSuppress
+    if alreadyAired:
+      when defined(commsprobe):
+        inc csEchoSkip
+    elif rp != RpNone:
+      bot.shoutWant = "P" & $commsToken(rp, salt)
+      bot.lastShoutTick = bot.tick
+      bot.lastCommsTick = bot.tick
+      when defined(commsprobe):
+        inc csEmit
+        if rp == RpStack: inc csEmitStack
+
+  # ── Team shout emit (one channel, server-capped ~1/s): pick the single
+  # highest-value message this frame and stage it in shoutWant for the caller
+  # to send. Priority: a close-range ambush ("oh shit!") > a pre-fire warning
+  # ("die") > enemy position callouts ("E <cell>..") > the carrier's own-
+  # position heartbeat ("C<cx> <cy>"). Each flavor has its own cooldown so none
+  # spams; ShoutGapTicks (> the server's ShoutCooldownTicks) keeps us under the
+  # cap. Every flavor is independently gated so the harness can A/B one at a
+  # time; the whole emitter is off unless tune.shout.
+  if lvC(152, bot.tune.shout and bot.shoutWant.len == 0 and
+      bot.tick - bot.lastShoutTick >= ShoutGapTicks):
+    var say = ""
+    if lvC(153, bot.tune.shoutSurprise and surprisePos.x >= 0 and
+        bot.tick - bot.surpriseShoutTick >= SurpriseShoutCooldown):
+      # Consume the cooldown window whether or not we actually yell, then emit
+      # on only VanityShoutChance% of windows — otherwise the roll just re-fires
+      # every frame and the cooldown stays the real (spammy) throttle.
+      bot.surpriseShoutTick = bot.tick
+      if vanityRoll(bot.slot, bot.tick, 1):
+        say = "oh shit!"
+    elif lvC(154, bot.tune.shoutDie and (mask and ButtonA) != 0 and
+        bot.tick - bot.dieShoutTick >= DieShoutCooldown):
+      # We are opening fire this tick: warn a nearby friendly so they take
+      # cover or look our way and help finish the kill.
+      var mateNear = false
+      for t in bot.mates:
+        if bot.tick - t.lastSeen <= LocalFreshTicks and
+            dist(t.pos, me) <= DieEarshot:
+          mateNear = true
+          break
+      if mateNear:
+        # Same rare-flavor gate: consume the window, emit ~VanityShoutChance%.
+        bot.dieShoutTick = bot.tick
+        if vanityRoll(bot.slot, bot.tick, 2):
+          say = "die"
+    if lvC(155, say.len == 0 and (bot.tune.shoutCallout or bot.tune.eCallout)):
+      # Enemy callout: name the nearest fresh enemy cells on the chess grid so
+      # mates who cannot see them swing their cones over. Dedupe cells and cap
+      # the count so the address fits the 10-char shout.
+      # ⭐ v56 (eCallout): this branch now runs on its own flag, separately from the
+      # carrier "C" heartbeat below — which is the piece that made shoutCallout a net
+      # cost (it broadcasts our CARRIER's exact cell to a channel both teams hear) and
+      # which stays off. An E names an ENEMY cell: worthless to the enemy who already
+      # knows where he is, and the position tell of the bubble itself is already paid
+      # for by every P codeword we shout. Only a body with FRESH eyes can fill this,
+      # so it self-limits to the seats that actually have something to say.
+      var chosen: seq[Track] = @[]
+      for t in bot.enemies:
+        if bot.tick - t.lastSeen <= CalloutFreshTicks:
+          chosen.add t
+      chosen.sort(proc(a, b: Track): int =
+        cmp(dist(a.pos, me), dist(b.pos, me)))
+      var cells: seq[string] = @[]
+      for t in chosen:
+        let c = chessCell(t.pos)
+        if c notin cells:
+          cells.add c
+        if cells.len >= CalloutMaxCells:
+          break
+      if cells.len > 0:
+        say = "E " & cells.join(" ")
+        when defined(commsprobe):
+          inc csECall
+    if lvC(156, say.len == 0 and iCarry and bot.tune.shoutCallout):
+      # Carrier heartbeat: our own 8px-grid position so escorts converge. This
+      # is STRATEGIC comms (broadcasts the carrier's exact spot — a position
+      # tell to any shout-parsing enemy, since the bubble is range-audible to
+      # both teams), so it rides shoutCallout, NOT the bare shout master: the
+      # vanity-only champion (shout+surprise+die, callout off) must NOT leak the
+      # carrier. It only ever HELPED when escorts reacted (reactContact), which
+      # the shelved-comms champion also runs off — so off it's pure cost.
+      say = "C" & $(int(me.x) div 8) & " " & $(int(me.y) div 8)
+    if say.len > 0:
+      bot.shoutWant = say
+      bot.lastShoutTick = bot.tick
+
+  mask
+
+proc decide(bot: Bot, client: ProtocolClient): uint8 =
+  ## The shipped per-frame decision: the core policy, plus a free-for-all
+  ## POSITIONING layer that takes the feet only when the core is not in
+  ## contact.
+  ##
+  ## Why a wrapper and not another early return inside the core: the core's
+  ## objective layer is written for a game with home ground and a flag to
+  ## fetch. A free-for-all map has neither, so with nothing visible to fight
+  ## the objective layer resolves its destination from the 2-team fallbacks
+  ## and marches at a pedestal that is not there — a long walk to a map edge,
+  ## which in this mode is also the first ground the ring takes. Overriding
+  ## the RESULT rather than jumping out early means every piece of per-frame
+  ## bookkeeping the core does — track ageing, cover memory, aim resync, the
+  ## fire gate — still runs exactly as it always has, and we replace only the
+  ## d-pad bits. Aim and trigger bits are the core's, untouched: if it wants
+  ## to shoot something while we reposition, it still shoots it.
+  ##
+  ## In contact (anything visible) the core owns the feet outright. That is
+  ## deliberate: the gunfight doctrine is the part of this policy that is
+  ## PROVEN, and this layer must not quietly outrank it.
+  FfaSeen.stamped = false
+  result = bot.decideCore(client)
+  if not FfaRing.have or not FfaSeen.stamped or FfaSeen.enemies > 0:
+    return
+  # No contact. Hold station INSIDE the ring rather than walking a phantom
+  # objective: keep our angular position (the centre is where every survivor
+  # is converging, and arriving there with the whole lobby is not safety) and
+  # sit at a fraction of the safe radius, so the shrink walks us inward ahead
+  # of the edge instead of catching us on it.
+  let
+    elapsed = max(0, bot.tick - max(bot.ringT0, 0)) + RingElapsedBiasTicks
+    total = max(1, FfaRing.shrinkSec * FfaTicksPerSec)
+    step = clamp(elapsed, 0, total)
+    span = max(0, FfaRing.startR - FfaRing.floorR)
+    radius = float(FfaRing.startR - span * step div total)
+    centre = vec(float(FfaRing.cx), float(FfaRing.cy))
+    me = vec(FfaSeen.meX, FfaSeen.meY)
+    d = dist(me, centre)
+    holdR = radius * RingHoldFrac
+  if d <= holdR:
+    return                               # already stationed; leave the core's feet
+  let
+    inward = (me - centre) * (holdR / max(d, 1.0))
+    steer = bot.navSteer(client, me, centre + inward)
+  if steer.len() < 1e-6:
+    return
+  when defined(ringProbe):
+    inc rpHold
+  result = (result and not DpadBits) or octantBits(steer)
+
+proc runBot(url: string) =
+  ## Connects, then loops frames forever, reconnecting on disconnect.
+  let
+    slot = slotFromUrl(url)
+    team = (if slot mod 2 == 0: Team.Red else: Team.Blue)
+    role = roleForSeat(clamp(slot div 2, 0, 7), team)
+      # provisional: GameTeams is unknown until the init markers land, so this
+      # is the 2-team reading. buildNavGrid re-derives it once teams are stated.
+    endpoint = ensureWsPath(url, WebSocketPath)
+  randomize(slot * 7919 + 1)
+  let bot = Bot(slot: slot, team: team, role: role, ringT0: -1,
+                tune: shippedCombatTune(),
+                aimStepBrads: AimRate, prevStatedAim: -1, nadeLockAim: -1,
+                myColor: (if team == Red: "red" else: "blue"))
+    # myColor is only the slot-PARITY guess here: the team count is not known
+    # until the init markers arrive. buildNavGrid re-deals it on a 4-team board
+    # and the self marker locks the truth on the first alive frame.
+  SelfStrategyTeam = team
+  SelfColor = bot.myColor
+  bot.resetTransient()
+  echo "baseline slot=", slot, " team=", team, " role=", role, " -> ", endpoint
+  let client = initProtocolClient()
+  var everConnected = false
+  while true:
+    try:
+      let ws = newWebSocket(endpoint)
+      echo "connected ", endpoint
+      everConnected = true
+      # ⛔ sprites-off (0x87) MEASURED AND HELD (2026-08-04): pooled 16-game
+      # frozen A/B vs this same build without it — shots/kills flat, but
+      # deaths +14% (9.9 -> 11.3/g), the one delta that SURVIVED doubling the
+      # sample. Every channel we read is kept by design, so the mechanism is
+      # unidentified (suspects: a subtle dropped-FX interaction, or speed-16
+      # readiness micro-timing that would not exist live). A no-op claim must
+      # measure flat; this did not. Helper stays; revisit if the fleet makes
+      # it mandatory or a live-speed test exonerates it.
+      client.reset()
+      bot.navBuilt = false
+      bot.resetTransient()
+      var lastMask = 0xff'u8
+      while true:
+        if not client.receiveLatestFrame(ws, false):
+          continue
+        let advance = max(1, client.frameAdvance)
+        bot.tick += advance
+        # Dead-reckon the aim: the last sent mask keeps rotating on the
+        # server for every elapsed sim tick until we change it.
+        bot.estAim = floorMod(
+          bot.estAim + bot.rotSign * bot.aimStepBrads * advance, AimBrads)
+        if not client.mapCameraReady:
+          bot.resetTransient()             # lobby / game-over interstitial
+          continue
+        if not bot.navBuilt and client.walkabilityReady:
+          when defined(perfprobe):
+            let ppN0 = getMonoTime()
+            bot.buildNavGrid(client)
+            ppNavBuildNs += (getMonoTime() - ppN0).inNanoseconds
+          else:
+            bot.buildNavGrid(client)
+        when defined(perfprobe):
+          let ppT0 = getMonoTime()
+        let mask = bot.decide(client)
+        when defined(perfprobe):
+          ppDecideNs += (getMonoTime() - ppT0).inNanoseconds
+          inc ppFrames
+          if ppFrames mod 200 == 0:
+            stderr.writeLine "PERF slot=" & $bot.slot &
+              " map=" & $MapW & "x" & $MapH & " cells=" & $(GridW * GridH) &
+              " frames=" & $ppFrames &
+              " decide_avg_us=" & $(ppDecideNs div ppFrames div 1000) &
+              " field_calls=" & $ppFields &
+              " field_avg_us=" & $(if ppFields > 0: ppFieldNs div ppFields div 1000 else: 0) &
+              " navbuild_ms=" & $(ppNavBuildNs div 1_000_000)
+        if mask != lastMask:
+          ws.send(inputBlob(mask), BinaryMessage)
+          lastMask = mask
+        # decide() stages at most one shout per frame (already self-rate-limited
+        # under the server cap, and only ever set when tune.shout is on).
+        if bot.shoutWant.len > 0:
+          ws.send(chatBlob(bot.shoutWant), BinaryMessage)
+          bot.shoutWant = ""
+    except Exception as e:
+      if everConnected:
+        # The game ended and the server went away: exit so the episode
+        # runner sees a clean player shutdown.
+        when defined(cgprobe):
+          # Guaranteed final flush: a short local episode may never cross a
+          # cgFrames mod-2000 boundary, so print the last cumulative tally
+          # here too (harmless double-print with the periodic one; the A/B
+          # collector just reads the LAST CGPROBE line per bot).
+          stderr.writeLine "CGPROBE frames=" & $cgFrames &
+            " coShieldCan=" & $cgCoShieldCan & " coNadeCan=" & $cgCoNadeCan &
+            " shieldGrabFire=" & $cgShieldGrabFire
+        echo "game over, exiting: ", e.msg
+        quit(0)
+      echo "connect retry: ", e.msg
+      sleep(250)
+
+when isMainModule and not defined(ctfEvalHarness):
+  # The eval harness `include`s this file to drive the BYTE-IDENTICAL decision
+  # path in-process; -d:ctfEvalHarness suppresses only this WS entrypoint so
+  # the shipped player build (no such define) is completely unchanged.
+  let url = getEnv("COWORLD_PLAYER_WS_URL", getEnv("COGAMES_ENGINE_WS_URL"))
+  if url.len == 0:
+    raise newException(ValueError, "COWORLD_PLAYER_WS_URL is required.")
+  runBot(url)
