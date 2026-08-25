@@ -464,6 +464,12 @@ when defined(healprobe):
   var hpWalkPhantom = 0  # frames medEcon targeted the CTF formula spot instead
   var hpPickups = 0        # raw-hp upward transitions: ground truth, a kit taken
   var hpPickupAmount = 0   # summed hp restored across all pickups this process
+  # brHeal funnel (only moves under BRHEAL=1; a BRHEAL-unset run of this same
+  # -d:healprobe binary reads all four as 0, which is itself the control proof).
+  var hpBrHurtFrames = 0     # alive frames at/below BrHealHurtFrac (population)
+  var hpBrFreeFrames = 0     # ...and out of contact / not owned by a higher objective
+  var hpBrVetoRing = 0       # ...had a visible kit but it sat outside the safe ring
+  var hpBrVetoEnemyPath = 0  # ...had a valid kit but a fresh enemy sat on the walk
 
 const MedSeeProbeScan* = defined(msprobe)
   ## Compile-time only: under -d:msprobe the medEcon block walks the VISIBLE-kit
@@ -928,10 +934,10 @@ var
     ## sense that arms the turn-toward-the-shooter behaviour and, since
     ## another lever now reads it too, the "we are being shot at" stamp.
   OwnMaxHpRaw = 0
-    ## -d:healprobe only: the STATED denominator alongside OwnHpRaw, so a BR
-    ## heal-seeking audit can compute "below half health" against the real
-    ## board max (20) instead of the 3-pip bucket. Unused (stays 0) in any
-    ## build without the probe define.
+    ## The STATED denominator alongside OwnHpRaw. brHeal reads this to gate on
+    ## a real hurt FRACTION (hp/max) instead of the 3-pip MaxHp bucket, which
+    ## on a 20-hp board only trips "wounded" below ~65% (see OwnHpRaw doc).
+    ## Also read by -d:healprobe to compute "below half health" precisely.
   FfaWeapon = ""
     ## Our own weapon tier this frame, from the `weapon <token>` HUD marker.
     ## In a free-for-all EVERY cog spawns UNARMED and guns are ground loot, so
@@ -1381,6 +1387,20 @@ const
                               # and a 1-hp bot is worth less than the detour.
   MedKitOnSpotPx = 26.0       # "we are standing on the spot": if this close and the
                               # kit sprite is NOT visible, it is taken - stop going.
+  BrHealDetourPx = 320.0      # brHeal: same budget as MedKitEconDetour — the walk is
+                              # the only cost, and this mode has no gun-line to protect
+                              # mid-detour (the in-contact veto already handles that).
+  BrHealHurtFrac = 0.7        # brHeal: seek only below 70% of stated max hp. Gating on
+                              # actually being hurt matters here specifically because a
+                              # full-health bot walking off objective buys nothing and
+                              # only spends exposure — unlike medTopOff/medEcon's 3-pip
+                              # bucket (wounded only below ~65% raw on a 20-hp board),
+                              # this is a deliberate choice on the real fraction, not an
+                              # accident of a scale built for a different hp pool.
+  BrHealPathClearPx = 150.0  # brHeal: refuse a candidate whose straight-line walk passes
+                              # within this of a freshly-seen enemy (pointSegDist) — "never
+                              # path through a visible enemy". Matches FinishRange's order
+                              # of magnitude (most shots land under 150px per medPeel).
   # ── ⭐⭐⭐ kitSel: THE LEARNED KIT MAP (2026-08-20, ffa4 selection audit).
   # medEcon's doctrine — "route to remembered kit positions like a pedestal, no
   # fog read needed" — is right. Its MEMORY is wrong: it remembers a FORMULA
@@ -3531,6 +3551,40 @@ type
                               # Mirror-measurable for the same reason medTopOff was: it is a
                               # resource RACE, not a coordination lever, so self-play scores
                               # it (heals, deaths, K-D) — unlike comms.
+    brHeal: bool              # ⭐ BR HEAL-SEEK (2026-08-25, one-life audit). medTopOff/medEcon
+                              # above are CTF-native and never fire on a true battle-royale
+                              # board (-d:healprobe measured walkReal=0 on every seat across
+                              # real matches: kits ARE seen — kitsSeenDistinct=2, 22-62 frames
+                              # each — but neither block ever commits a target). Two compounding
+                              # reasons: (1) both gate "wounded" on `bot.ownHp notin 1..<MaxHp`,
+                              # a 3-pip bucket that only trips below ~65% raw hp on a 20-hp
+                              # board; (2) medEcon's fallback candidates are the CTF formula
+                              # spots (MapW/2, MapH/3) and (MapW/2, 2*MapH/3) — built for a
+                              # 2-team map's fixed side-columns, not this mode's loot cluster,
+                              # which sits at ffaRingCenter (MapW/2, MapH/2) and rotates its
+                              # spawn ANGLE per seed (sim.ffaLootPoints). The two spots sit a
+                              # full MapH/6 off true centre — farther than either med kit's own
+                              # 55%/75%-of-radius placement — so they can never land on one.
+                              # In a mode that pays 1 point per SECOND ALIVE with no respawn
+                              # (FfaSurvivalPointsPerSec), hp converts directly into score, and
+                              # of the field's leading policies the one that heals (38% of its
+                              # episodes) is also the one that wins the ladder — so this is a
+                              # real, currently-uncontested gap, not a nice-to-have.
+                              # brHeal is a NEW, narrower errand rather than a fix to either
+                              # CTF block (both stay untouched and keep shipping for CTF/ffa4):
+                              # gated on `FfaRing.have` (true BR only) so it is a total no-op
+                              # off that mode; gates "hurt" on the RAW fraction (OwnHpRaw /
+                              # OwnMaxHpRaw) instead of the 3-pip bucket; targets only a
+                              # currently-VISIBLE kit sprite (reusing the exact medKitTopOff
+                              # scan idiom, never the CTF formula spots); refuses a candidate
+                              # outside the CURRENT safe-ring radius (reusing the ringSafety/
+                              # gun-upgrade centre+radius integration) and refuses one whose
+                              # walk line passes within BrHealPathClearPx of a freshly-seen
+                              # enemy (pointSegDist, new — "never path through a visible
+                              # enemy"); and yields to the same in-contact / carrier / shield /
+                              # plasma / seeking-pickup set medEcon already yields to, so it
+                              # never abandons a fight in progress. OFF by default; BRHEAL=1
+                              # arms it. -d:healprobe's hpWalkReal counter is the fire-proof.
     # ⚠️⚠️ 2-TEAM MEDKIT PERCEPTION BLACKOUT (recorded 2026-08-20, lever-liveness
     # correctness pass). The visibility gate in the medEcon commit block is
     #     let medVisOn = bot.tune.medSee or (bot.tune.ffaMedSee and ffa4Board)
@@ -5508,6 +5562,11 @@ proc shippedCombatTune(): CombatTune =
   # rests on the funnel + heal ratio + both-seatings K-D, per the null-calibration
   # rule. Keeps its MEDECON knob for bisection.
   result.medEcon = true
+  # ⭐ brHeal (2026-08-25): OFF by default, BRHEAL=1 arms it. See the tune
+  # field doc for the measured case (walkReal=0 on the CTF-native blocks on a
+  # real BR board) and the mechanism. Independent knob from medTopOff/medEcon
+  # so a BRHEAL-unset run of this SAME binary is the paired control.
+  result.brHeal = getEnv("BRHEAL").len > 0
   # ⭐ LEVER 1 DROPPED (2026-08-06, captain-brain audit course-correction): medSee
   # was briefly baked ON here as "medkitSeek", but the med-kit ROUTING family is
   # formally CLOSED — ~/.ctf/knowledge/experiments/hypotheses.md:507-516 records
@@ -6525,6 +6584,19 @@ proc dot(a, b: Vec): float =
 proc cross(a, b: Vec): float =
   a.x * b.y - a.y * b.x
 
+proc pointSegDist(p, a, b: Vec): float =
+  ## Shortest distance from `p` to the segment a-b (not the infinite line) —
+  ## brHeal's "does a visible enemy sit on this walk" check. Clamped
+  ## projection, not `pixelRayClear` (a WALL raycast): an enemy standing
+  ## beside the beeline but not blocking a bullet is exactly the case a
+  ## walk-through-a-gun veto has to catch.
+  let ab = b - a
+  let abLenSq = dot(ab, ab)
+  if abLenSq < 1e-6:
+    return dist(p, a)
+  let t = clamp(dot(p - a, ab) / abLenSq, 0.0, 1.0)
+  dist(p, a + ab * t)
+
 proc octantBits(d: Vec): uint8 =
   ## D-pad bits for the 8-way direction nearest to `d`. The worst-case aim
   ## error is 22.5 degrees, safely inside the 25-degree firing cone.
@@ -6985,8 +7057,7 @@ proc selfHp(client: ProtocolClient, me: Vec, color: string): tuple[have: bool, h
       bestD = d
       let scaled = clamp((hp * MaxHp + maxHp - 1) div maxHp, 1, MaxHp)
       OwnHpRaw = hp
-      when defined(healprobe):
-        OwnMaxHpRaw = maxHp
+      OwnMaxHpRaw = maxHp
       result = (have: true, hp: scaled)
 
 proc selfLives(client: ProtocolClient): tuple[have: bool, hp: int, lives: int] =
@@ -13356,6 +13427,66 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
         if not known:
           hpKitSeenSpots.add (p.x, p.y)
           inc hpKitSeenDistinct
+  # ── ⭐ brHeal (2026-08-25): BR-native heal-seek. See the tune field doc for
+  # the full measured case. A total no-op unless FfaRing.have AND the env
+  # knob is set, so a BRHEAL-unset run of this SAME binary is the paired
+  # control. Placed BEFORE medKitTopOff/medKitEcon and sets `seekingPickup`
+  # on commit so those CTF blocks correctly stand down instead of double-
+  # deciding the same frame (they already treat seekingPickup as a veto).
+  block brHealSeek:
+    if not (bot.tune.brHeal and FfaRing.have): break brHealSeek
+    if OwnHpRaw <= 0 or OwnMaxHpRaw <= 0: break brHealSeek   # dead or unread
+    if OwnHpRaw.float > BrHealHurtFrac * OwnMaxHpRaw.float:
+      break brHealSeek                                       # not hurt enough to bother
+    when defined(healprobe): inc hpBrHurtFrames
+    if engage >= 0 or nearThreat >= 0:
+      break brHealSeek                     # never abandon a fight in progress
+    if iCarry or mateCarry or pocketRush or ownStolen or
+        seekingPickup or iHaveShield or iHaveSword or iHavePlasma:
+      break brHealSeek                     # a higher objective already owns this bot
+    when defined(healprobe): inc hpBrFreeFrames
+    # Same visible-kit scan as medKitTopOff (never the CTF formula spots).
+    var best = BrHealDetourPx
+    var haveKit = false
+    var chosen: Vec
+    for o in client.spriteObjectsWithLabel(LabelMedKit):
+      let p = client.mapPos(o)
+      if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
+          p.y > float(MapH - 40):
+        continue                                             # HUD indicator shares the label
+      let d = dist(p, me)
+      if d < best:
+        best = d
+        chosen = p
+        haveKit = true
+    if not haveKit: break brHealSeek
+    # Never route outside the current safe ring — same integration as the
+    # ringSafety override / gun-upgrade detour above, off our own clock.
+    let
+      elapsedR = max(0, bot.tick - bot.ringT0) + RingElapsedBiasTicks
+      totalR = max(1, FfaRing.shrinkSec * FfaTicksPerSec)
+      stepR = clamp(elapsedR, 0, totalR)
+      spanR = max(0, FfaRing.startR - FfaRing.floorR)
+      radiusR = float(FfaRing.startR - spanR * stepR div totalR)
+      centreR = vec(float(FfaRing.cx), float(FfaRing.cy))
+    if dist(chosen, centreR) > radiusR - float(RingSafeMarginPx):
+      when defined(healprobe): inc hpBrVetoRing
+      break brHealSeek
+    # Never path through a visible enemy: refuse if any FRESHLY seen enemy
+    # sits within BrHealPathClearPx of the straight walk to the kit.
+    var blocked = false
+    for i in 0 ..< bot.enemies.len:
+      if bot.tick - bot.enemies[i].lastSeen > HoldVsGunTtl:
+        continue
+      if pointSegDist(bot.enemies[i].pos, me, chosen) < BrHealPathClearPx:
+        blocked = true
+        break
+    if blocked:
+      when defined(healprobe): inc hpBrVetoEnemyPath
+      break brHealSeek
+    target = chosen
+    seekingPickup = true
+    when defined(healprobe): inc hpWalkReal
   block medKitTopOff:
     when defined(mtprobe):
       if lvC(99, bot.tune.medTopOff and bot.ownHp > 0): inc mtOn
@@ -15708,7 +15839,11 @@ proc runBot(url: string) =
             " walkReal=" & $hpWalkReal &
             " walkPhantom=" & $hpWalkPhantom &
             " pickups=" & $hpPickups &
-            " pickupAmount=" & $hpPickupAmount
+            " pickupAmount=" & $hpPickupAmount &
+            " brHurt=" & $hpBrHurtFrames &
+            " brFree=" & $hpBrFreeFrames &
+            " brVetoRing=" & $hpBrVetoRing &
+            " brVetoEnemyPath=" & $hpBrVetoEnemyPath
         echo "game over, exiting: ", e.msg
         quit(0)
       echo "connect retry: ", e.msg
