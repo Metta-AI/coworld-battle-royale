@@ -489,7 +489,7 @@ proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   of FfaPact: "pact"
 
 proc ffaDoctrineFor(requestedDoctrine: string): FfaDoctrineKind =
-  if requestedDoctrine.len == 0: FfaHunter
+  if requestedDoctrine.len == 0: FfaPassive
   elif requestedDoctrine == "hybrid": FfaHybrid
   elif requestedDoctrine == "legacy": FfaLegacy
   elif requestedDoctrine == "passive": FfaPassive

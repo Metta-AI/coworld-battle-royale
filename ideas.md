@@ -16,12 +16,35 @@
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
+- Switch only the submitted hunter doctrine to passive.
 - Switch only the FFA doctrine from legacy to shade.
 - Switch only the FFA doctrine from legacy to pact.
 - Inspect hosted artifacts for avoidable unarmed time, ring damage, and
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 7: passive doctrine default
+
+- Idea: The live 24-hour dashboard reports two passive policies near 63 percent
+  win rate, while the submitted hunter is near 53 percent. Hosted artifacts
+  also show that the hunter spends most of its live time in the passive hold
+  branch. Removing hunter-only arm trips, pursuit, fire-range expansion, and
+  four-player late close may preserve more survival and podium score.
+- Change: When `CTF_BOT_FFA_DOCTRINE` is unset, select `FfaPassive` instead of
+  `FfaHunter`. No passive, hunter, ring, arming, or combat parameter changes.
+- Isolation: Native binary settings passed. `tools/extract_doctrine.nim`
+  compared the exact submitted control at `ffaDoctrine=hunter` with the
+  candidate at `ffaDoctrine=passive`; all printed bands, arming, pursuit, and
+  ring settings match. Production and hosted artifact verification are
+  pending.
+- Artifact: Pending production image and upload.
+- XP id: Pending.
+- Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
+  players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
+  (`nancy-br:v1`, 1355.24), and David Greis
+  (`Battle Royale Baseline:v1`, 1330.31).
+- Verdict: Pending hosted XP significance.
 
 ### Trial 6: interior hunter hold band
 
