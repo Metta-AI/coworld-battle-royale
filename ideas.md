@@ -30,6 +30,8 @@
 - Isolation: Passed. `tools/extract_doctrine.nim` ran the compiled policy with
   the doctrine environment variable removed and captured
   `ffaDoctrine=hunter`, `ffaHunterArm=true`, and `ffaHunterPursuit=true`.
+  `tools/extract_hosted_doctrine.nim` then confirmed `ffaDoctrine=legacy` in
+  the clean v1 hosted log and `ffaDoctrine=hunter` in the clean v2 hosted log.
 - Artifact: `andre-battleroyale:v2`, policy version
   `6e71ddba-557d-4f19-861e-3add5441f0d9`.
 - XP id: Baseline `xreq_dcc0888b-4175-4fbd-9a17-1dd04dcc48d5`;
@@ -45,7 +47,9 @@
   (`sivan-br-ringsurfer:v1`, 1470), and NanosaurusX (`nancy-br:v1`, 1479).
   Both requests pin this exact field, use four agents, rotate seats, and run 10
   hosted episodes.
-- Verdict: Pending hosted XP significance.
+- Verdict: Inconclusive after the first clean 10 episodes per side because the
+  dashboard frontier confidence bands overlap. Do not keep from the displayed
+  means. Extending the same field by 20 episodes per side.
 
 ### Bootstrap 0: current example champion
 
