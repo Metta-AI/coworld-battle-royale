@@ -259,6 +259,7 @@ const
   FfaHunterArmDefault = true
   FfaHunterFireRangeDefault = true
   FfaHunterPursuitDefault = true
+  FfaHunterPursueEqualDefault = true
   FfaHunterPursuitMinHpDefault = 6
   FfaHunterSupportRadiusDefault = 300.0
   FfaHunterArmTripMaxSecDefault = 30
@@ -541,6 +542,7 @@ var
   FfaHunterArm = FfaHunterArmDefault
   FfaHunterFireRange = FfaHunterFireRangeDefault
   FfaHunterPursuit = FfaHunterPursuitDefault
+  FfaHunterPursueEqual = FfaHunterPursueEqualDefault
   FfaHunterPursuitMinHp = FfaHunterPursuitMinHpDefault
   FfaHunterSupportRadius = FfaHunterSupportRadiusDefault
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
@@ -2125,7 +2127,8 @@ proc shadeFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
 
 proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, unarmed: bool, pursue: bool): FfaIntent =
+    weaponTier: int, unarmed: bool, pursue: bool,
+    pursueReason: string): FfaIntent =
   result = passiveFfaIntent(bot, actors, me, center, ringRadius, targetIndex,
     false)
   if FfaHunterRingMargin > 0.0:
@@ -2137,7 +2140,7 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     result.moveTarget = actors[targetIndex].pos
     result.objective = "fight"
     result.action = "engage"
-    result.engageReason = "pursue_weak"
+    result.engageReason = pursueReason
     return
   if not unarmed:
     bot.ffaLootTrip = false
@@ -2179,10 +2182,11 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, unarmed: bool, pursue, pactActive,
+    weaponTier: int, unarmed: bool, pursue: bool, pursueReason: string,
+    pactActive,
     pactMemoryFresh: bool): FfaIntent =
   result = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-    targetIndex, targetDist, weaponTier, unarmed, pursue)
+    targetIndex, targetDist, weaponTier, unarmed, pursue, pursueReason)
   if not pactActive or not pactMemoryFresh:
     return
   if unarmed and (result.lootTripStarted or result.objective == "loot_trip"):
@@ -2375,12 +2379,23 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
           dist(actor.pos, actors[targetIndex].pos) <= FfaHunterSupportRadius:
         hunterSupported = true
         break
-  let hunterTargetWeaker = targetIndex >= 0 and
-    (actors[targetIndex].weaponTier == 0 or
-      (actors[targetIndex].hp > 0 and actors[targetIndex].hp < hp))
+  let
+    hunterTargetWeaker = targetIndex >= 0 and
+      (actors[targetIndex].weaponTier == 0 or
+        (actors[targetIndex].hp > 0 and actors[targetIndex].hp < hp))
+    hunterTargetEqual = targetIndex >= 0 and
+      actors[targetIndex].weaponTier > 0 and actors[targetIndex].hp > 0 and
+      actors[targetIndex].hp == hp
+    hunterTargetViable = hunterTargetWeaker or
+      (FfaHunterPursueEqual and hunterTargetEqual)
+    hunterPursueReason =
+      if FfaHunterPursueEqual and hunterTargetEqual:
+        "pursue_equal"
+      else:
+        "pursue_weak"
   let hunterPursue = FfaDoctrine in {FfaHunter, FfaPact} and
     FfaHunterPursuit and
-    not unarmed and hp >= FfaHunterPursuitMinHp and hunterTargetWeaker and
+    not unarmed and hp >= FfaHunterPursuitMinHp and hunterTargetViable and
     not hunterSupported and
     dist(actors[targetIndex].pos, center) <= float(max(1, ringRadius))
   var
@@ -2473,10 +2488,12 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         targetIndex, engage)
     of FfaHunter:
       intent = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-        targetIndex, targetDist, weaponTier, unarmed, hunterPursue)
+        targetIndex, targetDist, weaponTier, unarmed, hunterPursue,
+        hunterPursueReason)
     of FfaPact:
       intent = pactFfaIntent(bot, client, actors, me, center, ringRadius,
         targetIndex, targetDist, weaponTier, unarmed, hunterPursue,
+        hunterPursueReason,
         pactActive, pactMemoryFresh)
     of FfaHybrid:
       intent = hybridFfaIntent(bot, client, me, center, ringRadius,
@@ -4315,6 +4332,10 @@ proc runBot(url: string) =
     FfaHunterFireRangeDefault)
   FfaHunterPursuit = parseEnvBool("CTF_BOT_FFA_HUNTER_PURSUIT",
     FfaHunterPursuitDefault)
+  FfaHunterPursueEqual = parseEnvBool(
+    "CTF_BOT_FFA_HUNTER_PURSUE_EQUAL",
+    FfaHunterPursueEqualDefault
+  )
   FfaHunterPursuitMinHp = max(1, parseEnvInt(
     "CTF_BOT_FFA_HUNTER_PURSUIT_MIN_HP", FfaHunterPursuitMinHpDefault))
   FfaHunterSupportRadius = max(1.0, parseEnvFloat(
@@ -4370,6 +4391,7 @@ proc runBot(url: string) =
     " ffaHunterArm=", FfaHunterArm,
     " ffaHunterFireRange=", FfaHunterFireRange,
     " ffaHunterPursuit=", FfaHunterPursuit,
+    " ffaHunterPursueEqual=", FfaHunterPursueEqual,
     " ffaHunterPursuitMinHp=", FfaHunterPursuitMinHp,
     " ffaHunterSupportRadius=", FfaHunterSupportRadius,
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,

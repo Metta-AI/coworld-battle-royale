@@ -11,6 +11,7 @@
 
 - Switch only the FFA doctrine from legacy to hunter.
 - Add only a conservative hunter ring-safety margin.
+- Allow only safe hunter pursuit against equal-HP opponents.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
@@ -20,6 +21,34 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 5: pursue equal-HP solo opponents
+
+- Idea: `tools/download_xp_artifacts.nim` and
+  `tools/summarize_artifacts.nim` aggregated the exact 30 Trial 4 control
+  artifacts, which are the submitted hunter. They contain 69,232 passive-hold
+  ticks but only 42 fight ticks. Sampled engage reasons contain 6,082 holds and
+  only five `pursue_weak` ticks. The current hunter rejects a healthy armed
+  opponent unless its HP is strictly lower, so the common equal-health duel
+  never becomes a pursuit.
+- Change: Add only `CTF_BOT_FFA_HUNTER_PURSUE_EQUAL`, enabled by default. An
+  armed hunter at or above the existing six-HP threshold may pursue an
+  equal-HP armed opponent. The existing 300-pixel support rejection, ring
+  safety, arming, fire-range, and weak-target behavior are unchanged.
+- Isolation: Native binary settings passed. `tools/extract_doctrine.nim`
+  compared the exact submitted control image with the candidate. The control
+  retains its prior hunter behavior; the candidate reports
+  `ffaHunterPursueEqual=true`. Their pursuit, six-HP threshold, 300-pixel
+  support rejection, 240-pixel arm detour, and ring settings match. Production
+  and hosted artifact verification are pending. Equal-HP activations are
+  labeled `pursue_equal` in artifact samples.
+- Artifact: Pending production image and upload.
+- XP id: Pending.
+- Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
+  players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
+  (`nancy-br:v1`, 1355.24), and David Greis
+  (`Battle Royale Baseline:v1`, 1330.31).
+- Verdict: Pending hosted XP significance.
 
 ### Trial 4: wider safe hunter arm detour
 
