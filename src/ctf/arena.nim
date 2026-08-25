@@ -8,7 +8,7 @@
 ## re-exports this module, so existing consumers are unchanged.
 
 import
-  std/[json, math, strutils],
+  std/[json, math, sequtils, strutils],
   jsony, pixie,
   sim_types
 
@@ -1318,6 +1318,13 @@ proc buildAnimatedDiamonds*(
 const
   GenMapName* = "gen"
   PoolMapName* = "pool"
+  BrPoolMapName* = "brpool"
+  BrCanonicalCenterSeed* = 42
+    ## The canonical center comes from the battle-royale variant's own pinned
+    ## map, so rotation leaves the endgame arena exactly as it plays today.
+  BrCenterKeepOut* = 260
+    ## FfaLootRadius (180) + 80 px margin: the ring's final area and the heavy
+    ## loot cluster are inside this disc on every pool entry.
   MinCorridorWidth = 26      ## narrowest corridor for the 13px footprint.
   MapGenMaxAttempts = 100
   MapSizeNames = ["small", "standard", "large", "huge", "giant"]
@@ -1636,6 +1643,102 @@ proc shapeBounds*(shape: ArenaShape): tuple[x0, y0, x1, y1: int] =
         x0 = min(x0, p.x); y0 = min(y0, p.y)
         x1 = max(x1, p.x); y1 = max(y1, p.y)
       (x0, y0, x1, y1)
+
+proc brCanonicalOverrides*(): MapGenOverrides =
+  ## The battle-royale override set, mirrored from config.br.json. Every pool
+  ## entry is drawn under exactly these locks, so entries differ only in the
+  ## obstacle/trench/puddle draws — never in dimensions, symmetry, endzone, or
+  ## center feature.
+  MapGenOverrides(
+    size: "huge", symmetry: "mirror", columns: 18, windows: 4,
+    centerFeature: "ring", endzone: "disc", pits: 18, pitDensity: -1,
+    puddles: 0)
+
+proc brTouchesCenter(gameMap: CtfMap, shape: ArenaShape): bool =
+  let
+    centerX = gameMap.width div 2
+    centerY = gameMap.height div 2
+    bounds = shapeBounds(shape)
+    radius2 = BrCenterKeepOut * BrCenterKeepOut
+    x0 = max(bounds.x0, max(0, centerX - BrCenterKeepOut))
+    y0 = max(bounds.y0, max(0, centerY - BrCenterKeepOut))
+    x1 = min(bounds.x1, min(gameMap.width - 1, centerX + BrCenterKeepOut))
+    y1 = min(bounds.y1, min(gameMap.height - 1, centerY + BrCenterKeepOut))
+  if x0 > x1 or y0 > y1:
+    return false
+  for y in y0 .. y1:
+    for x in x0 .. x1:
+      let dx = x - centerX
+      let dy = y - centerY
+      if dx * dx + dy * dy <= radius2 and inShape(x, y, shape):
+        return true
+  false
+
+proc brTouchesCenter(gameMap: CtfMap, puddle: Puddle): bool =
+  let
+    centerX = gameMap.width div 2
+    centerY = gameMap.height div 2
+    bounds = puddleBounds(puddle)
+    radius2 = BrCenterKeepOut * BrCenterKeepOut
+    x0 = max(bounds.x, max(0, centerX - BrCenterKeepOut))
+    y0 = max(bounds.y, max(0, centerY - BrCenterKeepOut))
+    x1 = min(bounds.x + bounds.w - 1,
+      min(gameMap.width - 1, centerX + BrCenterKeepOut))
+    y1 = min(bounds.y + bounds.h - 1,
+      min(gameMap.height - 1, centerY + BrCenterKeepOut))
+  if x0 > x1 or y0 > y1:
+    return false
+  for y in y0 .. y1:
+    for x in x0 .. x1:
+      let dx = x - centerX
+      let dy = y - centerY
+      if dx * dx + dy * dy <= radius2 and inPuddle(x, y, puddle):
+        return true
+  false
+
+proc brTouchesCenter(gameMap: CtfMap, point: MapPoint): bool =
+  let
+    dx = point.x - gameMap.width div 2
+    dy = point.y - gameMap.height div 2
+  dx * dx + dy * dy <= BrCenterKeepOut * BrCenterKeepOut
+
+proc stampBrCanonicalCenter*(gameMap: var CtfMap, reference: CtfMap) =
+  ## Replaces every whole shape and point touching the canonical center disc.
+  ## The authored obstacle set stays in its seed-half form; no installed arena
+  ## globals are consulted or changed.
+  if gameMap.width != reference.width or gameMap.height != reference.height or
+      gameMap.symmetry != reference.symmetry or
+      gameMap.endzone != reference.endzone or
+      gameMap.endzoneRadius != reference.endzoneRadius:
+    raise newException(
+      CtfError,
+      "BR canonical center requires matching dimensions, symmetry, endzone, " &
+      "and endzone radius.")
+  gameMap.leftObstacles = gameMap.leftObstacles.filterIt(
+    not gameMap.brTouchesCenter(it))
+  for shape in reference.leftObstacles:
+    if reference.brTouchesCenter(shape):
+      gameMap.leftObstacles.add shape
+  gameMap.trenches = gameMap.trenches.filterIt(
+    not gameMap.brTouchesCenter(it))
+  for trench in reference.trenches:
+    if reference.brTouchesCenter(trench):
+      gameMap.trenches.add trench
+  gameMap.puddles = gameMap.puddles.filterIt(
+    not gameMap.brTouchesCenter(it))
+  for puddle in reference.puddles:
+    if reference.brTouchesCenter(puddle):
+      gameMap.puddles.add puddle
+  gameMap.medKitCandidates = gameMap.medKitCandidates.filterIt(
+    not gameMap.brTouchesCenter(it))
+  for point in reference.medKitCandidates:
+    if reference.brTouchesCenter(point):
+      gameMap.medKitCandidates.add point
+  gameMap.medKitSpawns = gameMap.medKitSpawns.filterIt(
+    not gameMap.brTouchesCenter(it))
+  for point in reference.medKitSpawns:
+    if reference.brTouchesCenter(point):
+      gameMap.medKitSpawns.add point
 
 proc rasterizeWallMasks*(
   gameMap: CtfMap, obstacles: seq[ArenaShape]
@@ -3025,6 +3128,24 @@ proc poolCtfMap*(
   let n = MapPoolSeeds.len
   generateCtfMap(MapPoolSeeds[((index mod n) + n) mod n], overrides)
 
+var
+  brCanonicalReference: CtfMap
+  brCanonicalReferenceReady = false
+
+proc brPoolCtfMap*(index: int, overrides: MapGenOverrides): CtfMap =
+  ## One battle-royale pool map; the index wraps around the pool and always
+  ## uses the seed's first attempt before stamping the canonical center.
+  let
+    n = BrMapPoolSeeds.len
+    seed = BrMapPoolSeeds[((index mod n) + n) mod n]
+  if not brCanonicalReferenceReady:
+    brCanonicalReference =
+      generateMapAttempt(BrCanonicalCenterSeed, brCanonicalOverrides())
+    brCanonicalReferenceReady = true
+  result = generateMapAttempt(seed, overrides)
+  result.stampBrCanonicalCenter(brCanonicalReference)
+  doAssert result.genSeed == seed
+
 proc shapeSpecNode(shape: ArenaShape): JsonNode =
   ## One obstacle as replay-spec JSON.
   result = newJObject()
@@ -3301,6 +3422,14 @@ proc resolveCtfMapMetadata*(config: GameConfig): CtfMap =
         let index =
           if config.mapPoolIndex >= 0: config.mapPoolIndex else: genSeed
         poolCtfMap(index, config.mapGen)
+      of BrPoolMapName:
+        if config.teams != 2:
+          raise newException(
+            CtfError, "The battle-royale pool is 2-team; use mapPath gen for " &
+              $config.teams & " teams.")
+        let index =
+          if config.mapPoolIndex >= 0: config.mapPoolIndex else: genSeed
+        brPoolCtfMap(index, config.mapGen)
       else:
         raise newException(CtfError, "Unknown map: " & name)
   if result.teamCount() != config.teams:
@@ -3381,8 +3510,9 @@ proc installDefaultArena*() =
 
 proc loadCtfMapMetadata*(path = ""): CtfMap =
   ## Returns one map's metadata WITHOUT installing it as the process map.
-  ## Accepts "arena", "arena-large", "gen[:seed]", and "pool[:index]" (the
-  ## suffix-less generated forms use seed/index 0); tooling convenience —
+  ## Accepts "arena", "arena-large", "gen[:seed]", "pool[:index]", and
+  ## "brpool[:index]" (the suffix-less generated forms use seed/index 0);
+  ## tooling convenience —
   ## servers resolve through the GameConfig overload instead.
   let name = if path.len == 0: DefaultMapPath else: path
   case name
@@ -3400,6 +3530,8 @@ proc loadCtfMapMetadata*(path = ""): CtfMap =
       generateCtfMap(suffix)
     elif parts.len <= 2 and parts[0] == PoolMapName:
       poolCtfMap(suffix)
+    elif parts.len <= 2 and parts[0] == BrPoolMapName:
+      brPoolCtfMap(suffix, brCanonicalOverrides())
     else:
       raise newException(CtfError, "Unknown map: " & name)
 

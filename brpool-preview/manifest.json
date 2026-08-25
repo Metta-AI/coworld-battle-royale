@@ -1,0 +1,12470 @@
+[
+  {
+    "index": 0,
+    "seed": 3076,
+    "file": "pool-00-seed-3076.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 482,
+    "obstacles": 98,
+    "trenches": 14,
+    "medKitSpawns": [
+      [
+        1111,
+        278
+      ],
+      [
+        1111,
+        907
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        278
+      ],
+      [
+        1111,
+        907
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 1,
+    "seed": 3276,
+    "file": "pool-01-seed-3276.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 507,
+    "obstacles": 108,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 2,
+    "seed": 3311,
+    "file": "pool-02-seed-3311.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 437,
+    "obstacles": 107,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 3,
+    "seed": 3567,
+    "file": "pool-03-seed-3567.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 442,
+    "obstacles": 102,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        243
+      ],
+      [
+        1111,
+        942
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        243
+      ],
+      [
+        1111,
+        942
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 4,
+    "seed": 3586,
+    "file": "pool-04-seed-3586.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 512,
+    "obstacles": 97,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 5,
+    "seed": 3592,
+    "file": "pool-05-seed-3592.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 458,
+    "obstacles": 99,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 6,
+    "seed": 3637,
+    "file": "pool-06-seed-3637.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 530,
+    "obstacles": 99,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 7,
+    "seed": 3907,
+    "file": "pool-07-seed-3907.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 455,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        325
+      ],
+      [
+        1111,
+        860
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        325
+      ],
+      [
+        1111,
+        860
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 8,
+    "seed": 3958,
+    "file": "pool-08-seed-3958.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 469,
+    "obstacles": 100,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        260
+      ],
+      [
+        1111,
+        925
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 9,
+    "seed": 3965,
+    "file": "pool-09-seed-3965.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 477,
+    "obstacles": 92,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 10,
+    "seed": 4114,
+    "file": "pool-10-seed-4114.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 526,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 11,
+    "seed": 4141,
+    "file": "pool-11-seed-4141.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 499,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        249
+      ],
+      [
+        1111,
+        936
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 12,
+    "seed": 4145,
+    "file": "pool-12-seed-4145.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 453,
+    "obstacles": 108,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        229
+      ],
+      [
+        1111,
+        956
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 13,
+    "seed": 4232,
+    "file": "pool-13-seed-4232.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 513,
+    "obstacles": 101,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 14,
+    "seed": 4269,
+    "file": "pool-14-seed-4269.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 527,
+    "obstacles": 103,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 15,
+    "seed": 4401,
+    "file": "pool-15-seed-4401.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 525,
+    "obstacles": 96,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        258
+      ],
+      [
+        1111,
+        927
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        258
+      ],
+      [
+        1111,
+        927
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 16,
+    "seed": 4531,
+    "file": "pool-16-seed-4531.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 533,
+    "obstacles": 108,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 17,
+    "seed": 4613,
+    "file": "pool-17-seed-4613.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 470,
+    "obstacles": 108,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        313
+      ],
+      [
+        1111,
+        872
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        313
+      ],
+      [
+        1111,
+        872
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 18,
+    "seed": 4710,
+    "file": "pool-18-seed-4710.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 479,
+    "obstacles": 105,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        272
+      ],
+      [
+        1111,
+        913
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 19,
+    "seed": 4786,
+    "file": "pool-19-seed-4786.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 506,
+    "obstacles": 96,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 20,
+    "seed": 4966,
+    "file": "pool-20-seed-4966.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 442,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        297
+      ],
+      [
+        1111,
+        888
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 21,
+    "seed": 5161,
+    "file": "pool-21-seed-5161.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 497,
+    "obstacles": 109,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        263
+      ],
+      [
+        1111,
+        922
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        263
+      ],
+      [
+        1111,
+        922
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 22,
+    "seed": 5178,
+    "file": "pool-22-seed-5178.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 522,
+    "obstacles": 105,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        330
+      ],
+      [
+        1111,
+        855
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        330
+      ],
+      [
+        1111,
+        855
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 23,
+    "seed": 5226,
+    "file": "pool-23-seed-5226.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 493,
+    "obstacles": 109,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        277
+      ],
+      [
+        1111,
+        908
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 24,
+    "seed": 5243,
+    "file": "pool-24-seed-5243.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 464,
+    "obstacles": 101,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        268
+      ],
+      [
+        1111,
+        917
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        268
+      ],
+      [
+        1111,
+        917
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 25,
+    "seed": 5268,
+    "file": "pool-25-seed-5268.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 427,
+    "obstacles": 99,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 26,
+    "seed": 5269,
+    "file": "pool-26-seed-5269.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 435,
+    "obstacles": 107,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        192
+      ],
+      [
+        1111,
+        993
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        192
+      ],
+      [
+        1111,
+        993
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 27,
+    "seed": 5285,
+    "file": "pool-27-seed-5285.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 488,
+    "obstacles": 105,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        217
+      ],
+      [
+        1111,
+        968
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        217
+      ],
+      [
+        1111,
+        968
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 28,
+    "seed": 5287,
+    "file": "pool-28-seed-5287.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 487,
+    "obstacles": 100,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 29,
+    "seed": 5381,
+    "file": "pool-29-seed-5381.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 534,
+    "obstacles": 107,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        212
+      ],
+      [
+        1111,
+        973
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        212
+      ],
+      [
+        1111,
+        973
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 30,
+    "seed": 5464,
+    "file": "pool-30-seed-5464.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 508,
+    "obstacles": 90,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 31,
+    "seed": 5470,
+    "file": "pool-31-seed-5470.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 439,
+    "obstacles": 100,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 32,
+    "seed": 5572,
+    "file": "pool-32-seed-5572.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 523,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        330
+      ],
+      [
+        1111,
+        855
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 33,
+    "seed": 6012,
+    "file": "pool-33-seed-6012.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 534,
+    "obstacles": 107,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 34,
+    "seed": 6142,
+    "file": "pool-34-seed-6142.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 477,
+    "obstacles": 114,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        303
+      ],
+      [
+        1111,
+        882
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        303
+      ],
+      [
+        1111,
+        882
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 35,
+    "seed": 6341,
+    "file": "pool-35-seed-6341.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 527,
+    "obstacles": 108,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 36,
+    "seed": 6537,
+    "file": "pool-36-seed-6537.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 458,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        223
+      ],
+      [
+        1111,
+        962
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 37,
+    "seed": 6581,
+    "file": "pool-37-seed-6581.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 505,
+    "obstacles": 99,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        273
+      ],
+      [
+        1111,
+        912
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        273
+      ],
+      [
+        1111,
+        912
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 38,
+    "seed": 6596,
+    "file": "pool-38-seed-6596.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 472,
+    "obstacles": 107,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        296
+      ],
+      [
+        1111,
+        889
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        296
+      ],
+      [
+        1111,
+        889
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 39,
+    "seed": 6804,
+    "file": "pool-39-seed-6804.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 478,
+    "obstacles": 102,
+    "trenches": 14,
+    "medKitSpawns": [
+      [
+        1111,
+        198
+      ],
+      [
+        1111,
+        987
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        198
+      ],
+      [
+        1111,
+        987
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 40,
+    "seed": 7290,
+    "file": "pool-40-seed-7290.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 512,
+    "obstacles": 105,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 41,
+    "seed": 7319,
+    "file": "pool-41-seed-7319.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 457,
+    "obstacles": 97,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        192
+      ],
+      [
+        1111,
+        993
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 42,
+    "seed": 7376,
+    "file": "pool-42-seed-7376.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 449,
+    "obstacles": 98,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        197
+      ],
+      [
+        1111,
+        988
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 43,
+    "seed": 7424,
+    "file": "pool-43-seed-7424.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 477,
+    "obstacles": 105,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        294
+      ],
+      [
+        1111,
+        891
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        294
+      ],
+      [
+        1111,
+        891
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 44,
+    "seed": 7450,
+    "file": "pool-44-seed-7450.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 463,
+    "obstacles": 108,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        243
+      ],
+      [
+        1111,
+        942
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 45,
+    "seed": 7459,
+    "file": "pool-45-seed-7459.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 523,
+    "obstacles": 94,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        197
+      ],
+      [
+        1111,
+        988
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 46,
+    "seed": 7535,
+    "file": "pool-46-seed-7535.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 477,
+    "obstacles": 107,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        210
+      ],
+      [
+        1111,
+        975
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        210
+      ],
+      [
+        1111,
+        975
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 47,
+    "seed": 7579,
+    "file": "pool-47-seed-7579.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 453,
+    "obstacles": 102,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 48,
+    "seed": 7611,
+    "file": "pool-48-seed-7611.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 480,
+    "obstacles": 99,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 49,
+    "seed": 7681,
+    "file": "pool-49-seed-7681.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 442,
+    "obstacles": 100,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        268
+      ],
+      [
+        1111,
+        917
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 50,
+    "seed": 7768,
+    "file": "pool-50-seed-7768.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 496,
+    "obstacles": 100,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        267
+      ],
+      [
+        1111,
+        918
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        267
+      ],
+      [
+        1111,
+        918
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 51,
+    "seed": 7839,
+    "file": "pool-51-seed-7839.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 463,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        199
+      ],
+      [
+        1111,
+        986
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 52,
+    "seed": 7876,
+    "file": "pool-52-seed-7876.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 500,
+    "obstacles": 104,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        318
+      ],
+      [
+        1111,
+        867
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        318
+      ],
+      [
+        1111,
+        867
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 53,
+    "seed": 8008,
+    "file": "pool-53-seed-8008.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 446,
+    "obstacles": 94,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 54,
+    "seed": 8035,
+    "file": "pool-54-seed-8035.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 493,
+    "obstacles": 104,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        311
+      ],
+      [
+        1111,
+        874
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        311
+      ],
+      [
+        1111,
+        874
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 55,
+    "seed": 8135,
+    "file": "pool-55-seed-8135.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 458,
+    "obstacles": 102,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        233
+      ],
+      [
+        1111,
+        952
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        233
+      ],
+      [
+        1111,
+        952
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 56,
+    "seed": 8246,
+    "file": "pool-56-seed-8246.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 530,
+    "obstacles": 100,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        275
+      ],
+      [
+        1111,
+        910
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        275
+      ],
+      [
+        1111,
+        910
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 57,
+    "seed": 8612,
+    "file": "pool-57-seed-8612.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 509,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        276
+      ],
+      [
+        1111,
+        909
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 58,
+    "seed": 8641,
+    "file": "pool-58-seed-8641.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 489,
+    "obstacles": 105,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        249
+      ],
+      [
+        1111,
+        936
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 59,
+    "seed": 8700,
+    "file": "pool-59-seed-8700.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 463,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 60,
+    "seed": 8946,
+    "file": "pool-60-seed-8946.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 497,
+    "obstacles": 98,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        190
+      ],
+      [
+        1111,
+        995
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        190
+      ],
+      [
+        1111,
+        995
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 61,
+    "seed": 8984,
+    "file": "pool-61-seed-8984.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 520,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        254
+      ],
+      [
+        1111,
+        931
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        254
+      ],
+      [
+        1111,
+        931
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 62,
+    "seed": 9064,
+    "file": "pool-62-seed-9064.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 472,
+    "obstacles": 95,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 63,
+    "seed": 9299,
+    "file": "pool-63-seed-9299.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 469,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        217
+      ],
+      [
+        1111,
+        968
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        217
+      ],
+      [
+        1111,
+        968
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 64,
+    "seed": 9436,
+    "file": "pool-64-seed-9436.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 460,
+    "obstacles": 103,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        307
+      ],
+      [
+        1111,
+        878
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        307
+      ],
+      [
+        1111,
+        878
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 65,
+    "seed": 9497,
+    "file": "pool-65-seed-9497.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 442,
+    "obstacles": 103,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        221
+      ],
+      [
+        1111,
+        964
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        221
+      ],
+      [
+        1111,
+        964
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 66,
+    "seed": 9600,
+    "file": "pool-66-seed-9600.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 510,
+    "obstacles": 105,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 67,
+    "seed": 9683,
+    "file": "pool-67-seed-9683.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 473,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        282
+      ],
+      [
+        1111,
+        903
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        282
+      ],
+      [
+        1111,
+        903
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 68,
+    "seed": 9786,
+    "file": "pool-68-seed-9786.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 439,
+    "obstacles": 102,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        291
+      ],
+      [
+        1111,
+        894
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        291
+      ],
+      [
+        1111,
+        894
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 69,
+    "seed": 9824,
+    "file": "pool-69-seed-9824.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 496,
+    "obstacles": 100,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        200
+      ],
+      [
+        1111,
+        985
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        200
+      ],
+      [
+        1111,
+        985
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 70,
+    "seed": 9858,
+    "file": "pool-70-seed-9858.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 423,
+    "obstacles": 102,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        193
+      ],
+      [
+        1111,
+        992
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        193
+      ],
+      [
+        1111,
+        992
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 71,
+    "seed": 9881,
+    "file": "pool-71-seed-9881.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 495,
+    "obstacles": 110,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        260
+      ],
+      [
+        1111,
+        925
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        260
+      ],
+      [
+        1111,
+        925
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 72,
+    "seed": 9945,
+    "file": "pool-72-seed-9945.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 437,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 73,
+    "seed": 9947,
+    "file": "pool-73-seed-9947.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 506,
+    "obstacles": 111,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        244
+      ],
+      [
+        1111,
+        941
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 74,
+    "seed": 10057,
+    "file": "pool-74-seed-10057.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 489,
+    "obstacles": 107,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        214
+      ],
+      [
+        1111,
+        971
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        214
+      ],
+      [
+        1111,
+        971
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 75,
+    "seed": 10119,
+    "file": "pool-75-seed-10119.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 423,
+    "obstacles": 98,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 76,
+    "seed": 10202,
+    "file": "pool-76-seed-10202.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 439,
+    "obstacles": 106,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 77,
+    "seed": 10403,
+    "file": "pool-77-seed-10403.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 510,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 78,
+    "seed": 10818,
+    "file": "pool-78-seed-10818.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 480,
+    "obstacles": 99,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 79,
+    "seed": 10977,
+    "file": "pool-79-seed-10977.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 444,
+    "obstacles": 106,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 80,
+    "seed": 11144,
+    "file": "pool-80-seed-11144.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 526,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        300
+      ],
+      [
+        1111,
+        885
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        300
+      ],
+      [
+        1111,
+        885
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 81,
+    "seed": 11347,
+    "file": "pool-81-seed-11347.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 498,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        272
+      ],
+      [
+        1111,
+        913
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        272
+      ],
+      [
+        1111,
+        913
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 82,
+    "seed": 11431,
+    "file": "pool-82-seed-11431.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 475,
+    "obstacles": 99,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 83,
+    "seed": 11449,
+    "file": "pool-83-seed-11449.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 520,
+    "obstacles": 102,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        255
+      ],
+      [
+        1111,
+        930
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        255
+      ],
+      [
+        1111,
+        930
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 84,
+    "seed": 11561,
+    "file": "pool-84-seed-11561.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 460,
+    "obstacles": 111,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 85,
+    "seed": 11566,
+    "file": "pool-85-seed-11566.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 504,
+    "obstacles": 102,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        251
+      ],
+      [
+        1111,
+        934
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        251
+      ],
+      [
+        1111,
+        934
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 86,
+    "seed": 11598,
+    "file": "pool-86-seed-11598.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 530,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 87,
+    "seed": 11647,
+    "file": "pool-87-seed-11647.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 475,
+    "obstacles": 97,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        264
+      ],
+      [
+        1111,
+        921
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        264
+      ],
+      [
+        1111,
+        921
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 88,
+    "seed": 11759,
+    "file": "pool-88-seed-11759.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 426,
+    "obstacles": 96,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 89,
+    "seed": 11883,
+    "file": "pool-89-seed-11883.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 473,
+    "obstacles": 108,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        307
+      ],
+      [
+        1111,
+        878
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        307
+      ],
+      [
+        1111,
+        878
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 90,
+    "seed": 11946,
+    "file": "pool-90-seed-11946.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 446,
+    "obstacles": 97,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 91,
+    "seed": 11957,
+    "file": "pool-91-seed-11957.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 522,
+    "obstacles": 102,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 92,
+    "seed": 12085,
+    "file": "pool-92-seed-12085.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 424,
+    "obstacles": 106,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        272
+      ],
+      [
+        1111,
+        913
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 93,
+    "seed": 12095,
+    "file": "pool-93-seed-12095.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 447,
+    "obstacles": 106,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        219
+      ],
+      [
+        1111,
+        966
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        219
+      ],
+      [
+        1111,
+        966
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 94,
+    "seed": 12109,
+    "file": "pool-94-seed-12109.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 524,
+    "obstacles": 104,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        236
+      ],
+      [
+        1111,
+        949
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 95,
+    "seed": 12123,
+    "file": "pool-95-seed-12123.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 514,
+    "obstacles": 99,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 96,
+    "seed": 12161,
+    "file": "pool-96-seed-12161.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 432,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        306
+      ],
+      [
+        1111,
+        879
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        306
+      ],
+      [
+        1111,
+        879
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 97,
+    "seed": 12312,
+    "file": "pool-97-seed-12312.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 484,
+    "obstacles": 108,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        208
+      ],
+      [
+        1111,
+        977
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        208
+      ],
+      [
+        1111,
+        977
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 98,
+    "seed": 12498,
+    "file": "pool-98-seed-12498.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 455,
+    "obstacles": 97,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        256
+      ],
+      [
+        1111,
+        929
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 99,
+    "seed": 12717,
+    "file": "pool-99-seed-12717.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 506,
+    "obstacles": 101,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        324
+      ],
+      [
+        1111,
+        861
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 100,
+    "seed": 12927,
+    "file": "pool-100-seed-12927.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 433,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 101,
+    "seed": 13345,
+    "file": "pool-101-seed-13345.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 487,
+    "obstacles": 107,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 102,
+    "seed": 13458,
+    "file": "pool-102-seed-13458.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 524,
+    "obstacles": 107,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        266
+      ],
+      [
+        1111,
+        919
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        266
+      ],
+      [
+        1111,
+        919
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 103,
+    "seed": 13462,
+    "file": "pool-103-seed-13462.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 484,
+    "obstacles": 102,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 104,
+    "seed": 13540,
+    "file": "pool-104-seed-13540.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 468,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 105,
+    "seed": 13674,
+    "file": "pool-105-seed-13674.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 494,
+    "obstacles": 102,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        312
+      ],
+      [
+        1111,
+        873
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        312
+      ],
+      [
+        1111,
+        873
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 106,
+    "seed": 13789,
+    "file": "pool-106-seed-13789.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 478,
+    "obstacles": 102,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        273
+      ],
+      [
+        1111,
+        912
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 107,
+    "seed": 13945,
+    "file": "pool-107-seed-13945.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 449,
+    "obstacles": 100,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        222
+      ],
+      [
+        1111,
+        963
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 108,
+    "seed": 14149,
+    "file": "pool-108-seed-14149.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 485,
+    "obstacles": 108,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 109,
+    "seed": 14283,
+    "file": "pool-109-seed-14283.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 428,
+    "obstacles": 103,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        213
+      ],
+      [
+        1111,
+        972
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        213
+      ],
+      [
+        1111,
+        972
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 110,
+    "seed": 14555,
+    "file": "pool-110-seed-14555.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 429,
+    "obstacles": 100,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 111,
+    "seed": 14711,
+    "file": "pool-111-seed-14711.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 459,
+    "obstacles": 97,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        201
+      ],
+      [
+        1111,
+        984
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 112,
+    "seed": 14739,
+    "file": "pool-112-seed-14739.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 533,
+    "obstacles": 103,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 113,
+    "seed": 14858,
+    "file": "pool-113-seed-14858.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 528,
+    "obstacles": 95,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        325
+      ],
+      [
+        1111,
+        860
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        325
+      ],
+      [
+        1111,
+        860
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 114,
+    "seed": 14862,
+    "file": "pool-114-seed-14862.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 448,
+    "obstacles": 103,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 115,
+    "seed": 15356,
+    "file": "pool-115-seed-15356.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 483,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        252
+      ],
+      [
+        1111,
+        933
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        252
+      ],
+      [
+        1111,
+        933
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 116,
+    "seed": 15361,
+    "file": "pool-116-seed-15361.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 457,
+    "obstacles": 99,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        222
+      ],
+      [
+        1111,
+        963
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 117,
+    "seed": 15391,
+    "file": "pool-117-seed-15391.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 494,
+    "obstacles": 98,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        306
+      ],
+      [
+        1111,
+        879
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        306
+      ],
+      [
+        1111,
+        879
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 118,
+    "seed": 15410,
+    "file": "pool-118-seed-15410.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 533,
+    "obstacles": 102,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 119,
+    "seed": 15422,
+    "file": "pool-119-seed-15422.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 436,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 120,
+    "seed": 15532,
+    "file": "pool-120-seed-15532.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 507,
+    "obstacles": 109,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 121,
+    "seed": 15598,
+    "file": "pool-121-seed-15598.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 425,
+    "obstacles": 102,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        291
+      ],
+      [
+        1111,
+        894
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 122,
+    "seed": 15741,
+    "file": "pool-122-seed-15741.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 434,
+    "obstacles": 96,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 123,
+    "seed": 15813,
+    "file": "pool-123-seed-15813.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 509,
+    "obstacles": 95,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        295
+      ],
+      [
+        1111,
+        890
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 124,
+    "seed": 15853,
+    "file": "pool-124-seed-15853.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 464,
+    "obstacles": 96,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 125,
+    "seed": 15938,
+    "file": "pool-125-seed-15938.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 486,
+    "obstacles": 105,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        262
+      ],
+      [
+        1111,
+        923
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        262
+      ],
+      [
+        1111,
+        923
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 126,
+    "seed": 16111,
+    "file": "pool-126-seed-16111.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 464,
+    "obstacles": 104,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        331
+      ],
+      [
+        1111,
+        854
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        331
+      ],
+      [
+        1111,
+        854
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 127,
+    "seed": 16204,
+    "file": "pool-127-seed-16204.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 525,
+    "obstacles": 99,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 128,
+    "seed": 16325,
+    "file": "pool-128-seed-16325.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 495,
+    "obstacles": 100,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 129,
+    "seed": 16471,
+    "file": "pool-129-seed-16471.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 452,
+    "obstacles": 99,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 130,
+    "seed": 16501,
+    "file": "pool-130-seed-16501.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 479,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        315
+      ],
+      [
+        1111,
+        870
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 131,
+    "seed": 16531,
+    "file": "pool-131-seed-16531.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 509,
+    "obstacles": 100,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        214
+      ],
+      [
+        1111,
+        971
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        214
+      ],
+      [
+        1111,
+        971
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 132,
+    "seed": 16572,
+    "file": "pool-132-seed-16572.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 478,
+    "obstacles": 103,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        285
+      ],
+      [
+        1111,
+        900
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        285
+      ],
+      [
+        1111,
+        900
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 133,
+    "seed": 16675,
+    "file": "pool-133-seed-16675.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 485,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        244
+      ],
+      [
+        1111,
+        941
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        244
+      ],
+      [
+        1111,
+        941
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 134,
+    "seed": 16677,
+    "file": "pool-134-seed-16677.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 429,
+    "obstacles": 111,
+    "trenches": 14,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        205
+      ],
+      [
+        1111,
+        980
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 135,
+    "seed": 16781,
+    "file": "pool-135-seed-16781.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 528,
+    "obstacles": 110,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 136,
+    "seed": 16786,
+    "file": "pool-136-seed-16786.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 517,
+    "obstacles": 94,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 137,
+    "seed": 16885,
+    "file": "pool-137-seed-16885.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 484,
+    "obstacles": 96,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        195
+      ],
+      [
+        1111,
+        990
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 138,
+    "seed": 16975,
+    "file": "pool-138-seed-16975.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 445,
+    "obstacles": 100,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        197
+      ],
+      [
+        1111,
+        988
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        197
+      ],
+      [
+        1111,
+        988
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 139,
+    "seed": 17208,
+    "file": "pool-139-seed-17208.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 427,
+    "obstacles": 106,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        319
+      ],
+      [
+        1111,
+        866
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 140,
+    "seed": 17238,
+    "file": "pool-140-seed-17238.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 475,
+    "obstacles": 106,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        214
+      ],
+      [
+        1111,
+        971
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 141,
+    "seed": 17665,
+    "file": "pool-141-seed-17665.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 430,
+    "obstacles": 110,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        280
+      ],
+      [
+        1111,
+        905
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        280
+      ],
+      [
+        1111,
+        905
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 142,
+    "seed": 17819,
+    "file": "pool-142-seed-17819.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 444,
+    "obstacles": 94,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        309
+      ],
+      [
+        1111,
+        876
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        309
+      ],
+      [
+        1111,
+        876
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 143,
+    "seed": 17841,
+    "file": "pool-143-seed-17841.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 484,
+    "obstacles": 91,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        235
+      ],
+      [
+        1111,
+        950
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        235
+      ],
+      [
+        1111,
+        950
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 144,
+    "seed": 17967,
+    "file": "pool-144-seed-17967.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 462,
+    "obstacles": 95,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        319
+      ],
+      [
+        1111,
+        866
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        319
+      ],
+      [
+        1111,
+        866
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 145,
+    "seed": 18006,
+    "file": "pool-145-seed-18006.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 477,
+    "obstacles": 98,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        194
+      ],
+      [
+        1111,
+        991
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        194
+      ],
+      [
+        1111,
+        991
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 146,
+    "seed": 18047,
+    "file": "pool-146-seed-18047.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 429,
+    "obstacles": 110,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 147,
+    "seed": 18244,
+    "file": "pool-147-seed-18244.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 473,
+    "obstacles": 109,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 148,
+    "seed": 18370,
+    "file": "pool-148-seed-18370.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 505,
+    "obstacles": 97,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        315
+      ],
+      [
+        1111,
+        870
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 149,
+    "seed": 18382,
+    "file": "pool-149-seed-18382.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 465,
+    "obstacles": 109,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        278
+      ],
+      [
+        1111,
+        907
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 150,
+    "seed": 18435,
+    "file": "pool-150-seed-18435.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 508,
+    "obstacles": 94,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 151,
+    "seed": 18502,
+    "file": "pool-151-seed-18502.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 503,
+    "obstacles": 114,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        268
+      ],
+      [
+        1111,
+        917
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 152,
+    "seed": 18597,
+    "file": "pool-152-seed-18597.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 447,
+    "obstacles": 100,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        255
+      ],
+      [
+        1111,
+        930
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 153,
+    "seed": 18834,
+    "file": "pool-153-seed-18834.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 445,
+    "obstacles": 89,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        258
+      ],
+      [
+        1111,
+        927
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 154,
+    "seed": 19049,
+    "file": "pool-154-seed-19049.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 488,
+    "obstacles": 109,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 155,
+    "seed": 19215,
+    "file": "pool-155-seed-19215.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 426,
+    "obstacles": 105,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 156,
+    "seed": 19300,
+    "file": "pool-156-seed-19300.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 475,
+    "obstacles": 111,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        232
+      ],
+      [
+        1111,
+        953
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 157,
+    "seed": 19456,
+    "file": "pool-157-seed-19456.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 498,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 158,
+    "seed": 19484,
+    "file": "pool-158-seed-19484.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 465,
+    "obstacles": 96,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        328
+      ],
+      [
+        1111,
+        857
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 159,
+    "seed": 19494,
+    "file": "pool-159-seed-19494.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 430,
+    "obstacles": 107,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        241
+      ],
+      [
+        1111,
+        944
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 160,
+    "seed": 19515,
+    "file": "pool-160-seed-19515.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 529,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        305
+      ],
+      [
+        1111,
+        880
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 161,
+    "seed": 19522,
+    "file": "pool-161-seed-19522.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 508,
+    "obstacles": 100,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        290
+      ],
+      [
+        1111,
+        895
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        290
+      ],
+      [
+        1111,
+        895
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 162,
+    "seed": 19616,
+    "file": "pool-162-seed-19616.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 454,
+    "obstacles": 99,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        228
+      ],
+      [
+        1111,
+        957
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        228
+      ],
+      [
+        1111,
+        957
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 163,
+    "seed": 19679,
+    "file": "pool-163-seed-19679.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 439,
+    "obstacles": 100,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        228
+      ],
+      [
+        1111,
+        957
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        228
+      ],
+      [
+        1111,
+        957
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 164,
+    "seed": 19757,
+    "file": "pool-164-seed-19757.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 469,
+    "obstacles": 97,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        192
+      ],
+      [
+        1111,
+        993
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        192
+      ],
+      [
+        1111,
+        993
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 165,
+    "seed": 19900,
+    "file": "pool-165-seed-19900.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 507,
+    "obstacles": 86,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        242
+      ],
+      [
+        1111,
+        943
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 166,
+    "seed": 20275,
+    "file": "pool-166-seed-20275.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 467,
+    "obstacles": 104,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        325
+      ],
+      [
+        1111,
+        860
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 167,
+    "seed": 20471,
+    "file": "pool-167-seed-20471.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 459,
+    "obstacles": 102,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        196
+      ],
+      [
+        1111,
+        989
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        196
+      ],
+      [
+        1111,
+        989
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 168,
+    "seed": 20475,
+    "file": "pool-168-seed-20475.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 515,
+    "obstacles": 109,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        250
+      ],
+      [
+        1111,
+        935
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        250
+      ],
+      [
+        1111,
+        935
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 169,
+    "seed": 20723,
+    "file": "pool-169-seed-20723.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 512,
+    "obstacles": 102,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        198
+      ],
+      [
+        1111,
+        987
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 170,
+    "seed": 20823,
+    "file": "pool-170-seed-20823.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 476,
+    "obstacles": 96,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        291
+      ],
+      [
+        1111,
+        894
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        291
+      ],
+      [
+        1111,
+        894
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 171,
+    "seed": 20952,
+    "file": "pool-171-seed-20952.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 447,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 172,
+    "seed": 20997,
+    "file": "pool-172-seed-20997.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 494,
+    "obstacles": 95,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        325
+      ],
+      [
+        1111,
+        860
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 173,
+    "seed": 21094,
+    "file": "pool-173-seed-21094.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 454,
+    "obstacles": 97,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 174,
+    "seed": 21248,
+    "file": "pool-174-seed-21248.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 464,
+    "obstacles": 95,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 175,
+    "seed": 21402,
+    "file": "pool-175-seed-21402.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 483,
+    "obstacles": 103,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        310
+      ],
+      [
+        1111,
+        875
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        310
+      ],
+      [
+        1111,
+        875
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 176,
+    "seed": 21441,
+    "file": "pool-176-seed-21441.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 533,
+    "obstacles": 108,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 177,
+    "seed": 22099,
+    "file": "pool-177-seed-22099.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 455,
+    "obstacles": 102,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 178,
+    "seed": 22191,
+    "file": "pool-178-seed-22191.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 520,
+    "obstacles": 99,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 179,
+    "seed": 22207,
+    "file": "pool-179-seed-22207.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 480,
+    "obstacles": 88,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        218
+      ],
+      [
+        1111,
+        967
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 180,
+    "seed": 22215,
+    "file": "pool-180-seed-22215.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 457,
+    "obstacles": 108,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 181,
+    "seed": 22297,
+    "file": "pool-181-seed-22297.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 518,
+    "obstacles": 105,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 182,
+    "seed": 22320,
+    "file": "pool-182-seed-22320.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 427,
+    "obstacles": 110,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        192
+      ],
+      [
+        1111,
+        993
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        192
+      ],
+      [
+        1111,
+        993
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 183,
+    "seed": 22326,
+    "file": "pool-183-seed-22326.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 513,
+    "obstacles": 97,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 184,
+    "seed": 22356,
+    "file": "pool-184-seed-22356.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 463,
+    "obstacles": 97,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 185,
+    "seed": 22467,
+    "file": "pool-185-seed-22467.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 456,
+    "obstacles": 110,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 186,
+    "seed": 22476,
+    "file": "pool-186-seed-22476.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 489,
+    "obstacles": 99,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        210
+      ],
+      [
+        1111,
+        975
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        210
+      ],
+      [
+        1111,
+        975
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 187,
+    "seed": 22481,
+    "file": "pool-187-seed-22481.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 494,
+    "obstacles": 106,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        259
+      ],
+      [
+        1111,
+        926
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 188,
+    "seed": 22639,
+    "file": "pool-188-seed-22639.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 437,
+    "obstacles": 101,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        198
+      ],
+      [
+        1111,
+        987
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        198
+      ],
+      [
+        1111,
+        987
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 189,
+    "seed": 22651,
+    "file": "pool-189-seed-22651.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 447,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        191
+      ],
+      [
+        1111,
+        994
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 190,
+    "seed": 22976,
+    "file": "pool-190-seed-22976.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 423,
+    "obstacles": 103,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        231
+      ],
+      [
+        1111,
+        954
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        231
+      ],
+      [
+        1111,
+        954
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 191,
+    "seed": 23136,
+    "file": "pool-191-seed-23136.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 449,
+    "obstacles": 89,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        325
+      ],
+      [
+        1111,
+        860
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 192,
+    "seed": 23295,
+    "file": "pool-192-seed-23295.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 464,
+    "obstacles": 108,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        308
+      ],
+      [
+        1111,
+        877
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        308
+      ],
+      [
+        1111,
+        877
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 193,
+    "seed": 23460,
+    "file": "pool-193-seed-23460.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 489,
+    "obstacles": 105,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        225
+      ],
+      [
+        1111,
+        960
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 194,
+    "seed": 23635,
+    "file": "pool-194-seed-23635.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 455,
+    "obstacles": 102,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 195,
+    "seed": 23663,
+    "file": "pool-195-seed-23663.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 488,
+    "obstacles": 112,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        303
+      ],
+      [
+        1111,
+        882
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        303
+      ],
+      [
+        1111,
+        882
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 196,
+    "seed": 23786,
+    "file": "pool-196-seed-23786.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 490,
+    "obstacles": 105,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        251
+      ],
+      [
+        1111,
+        934
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 197,
+    "seed": 23853,
+    "file": "pool-197-seed-23853.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 533,
+    "obstacles": 97,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        222
+      ],
+      [
+        1111,
+        963
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        222
+      ],
+      [
+        1111,
+        963
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 198,
+    "seed": 23855,
+    "file": "pool-198-seed-23855.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 426,
+    "obstacles": 105,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        242
+      ],
+      [
+        1111,
+        943
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        242
+      ],
+      [
+        1111,
+        943
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 199,
+    "seed": 23892,
+    "file": "pool-199-seed-23892.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 534,
+    "obstacles": 105,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 200,
+    "seed": 24143,
+    "file": "pool-200-seed-24143.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 473,
+    "obstacles": 103,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        230
+      ],
+      [
+        1111,
+        955
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        230
+      ],
+      [
+        1111,
+        955
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 201,
+    "seed": 24149,
+    "file": "pool-201-seed-24149.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 507,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 202,
+    "seed": 24164,
+    "file": "pool-202-seed-24164.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 524,
+    "obstacles": 105,
+    "trenches": 14,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 203,
+    "seed": 24321,
+    "file": "pool-203-seed-24321.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 514,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 204,
+    "seed": 24554,
+    "file": "pool-204-seed-24554.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 444,
+    "obstacles": 104,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 205,
+    "seed": 24571,
+    "file": "pool-205-seed-24571.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 470,
+    "obstacles": 96,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        294
+      ],
+      [
+        1111,
+        891
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 206,
+    "seed": 24687,
+    "file": "pool-206-seed-24687.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 503,
+    "obstacles": 105,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        206
+      ],
+      [
+        1111,
+        979
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        206
+      ],
+      [
+        1111,
+        979
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 207,
+    "seed": 24691,
+    "file": "pool-207-seed-24691.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 468,
+    "obstacles": 104,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 208,
+    "seed": 25045,
+    "file": "pool-208-seed-25045.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 427,
+    "obstacles": 96,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 209,
+    "seed": 25164,
+    "file": "pool-209-seed-25164.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 526,
+    "obstacles": 104,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 210,
+    "seed": 25311,
+    "file": "pool-210-seed-25311.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 482,
+    "obstacles": 96,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        298
+      ],
+      [
+        1111,
+        887
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 211,
+    "seed": 25349,
+    "file": "pool-211-seed-25349.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 466,
+    "obstacles": 91,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        232
+      ],
+      [
+        1111,
+        953
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        232
+      ],
+      [
+        1111,
+        953
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 212,
+    "seed": 25358,
+    "file": "pool-212-seed-25358.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 498,
+    "obstacles": 94,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        259
+      ],
+      [
+        1111,
+        926
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 213,
+    "seed": 25446,
+    "file": "pool-213-seed-25446.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 500,
+    "obstacles": 106,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        303
+      ],
+      [
+        1111,
+        882
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 214,
+    "seed": 25459,
+    "file": "pool-214-seed-25459.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 478,
+    "obstacles": 92,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 215,
+    "seed": 25506,
+    "file": "pool-215-seed-25506.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 470,
+    "obstacles": 102,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 216,
+    "seed": 25598,
+    "file": "pool-216-seed-25598.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 487,
+    "obstacles": 110,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        321
+      ],
+      [
+        1111,
+        864
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        321
+      ],
+      [
+        1111,
+        864
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 217,
+    "seed": 25609,
+    "file": "pool-217-seed-25609.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 454,
+    "obstacles": 100,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        299
+      ],
+      [
+        1111,
+        886
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        299
+      ],
+      [
+        1111,
+        886
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 218,
+    "seed": 25803,
+    "file": "pool-218-seed-25803.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 440,
+    "obstacles": 101,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        292
+      ],
+      [
+        1111,
+        893
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        292
+      ],
+      [
+        1111,
+        893
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 219,
+    "seed": 25989,
+    "file": "pool-219-seed-25989.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 436,
+    "obstacles": 101,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 220,
+    "seed": 26140,
+    "file": "pool-220-seed-26140.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 489,
+    "obstacles": 101,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 221,
+    "seed": 26141,
+    "file": "pool-221-seed-26141.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 435,
+    "obstacles": 108,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 222,
+    "seed": 26319,
+    "file": "pool-222-seed-26319.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 497,
+    "obstacles": 104,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 223,
+    "seed": 26370,
+    "file": "pool-223-seed-26370.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 508,
+    "obstacles": 96,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 224,
+    "seed": 26473,
+    "file": "pool-224-seed-26473.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 427,
+    "obstacles": 106,
+    "trenches": 14,
+    "medKitSpawns": [
+      [
+        1111,
+        278
+      ],
+      [
+        1111,
+        907
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        278
+      ],
+      [
+        1111,
+        907
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 225,
+    "seed": 26571,
+    "file": "pool-225-seed-26571.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 477,
+    "obstacles": 108,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        332
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 226,
+    "seed": 26808,
+    "file": "pool-226-seed-26808.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 483,
+    "obstacles": 105,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        317
+      ],
+      [
+        1111,
+        868
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        317
+      ],
+      [
+        1111,
+        868
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 227,
+    "seed": 26821,
+    "file": "pool-227-seed-26821.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 476,
+    "obstacles": 99,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        224
+      ],
+      [
+        1111,
+        961
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        224
+      ],
+      [
+        1111,
+        961
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 228,
+    "seed": 26914,
+    "file": "pool-228-seed-26914.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 482,
+    "obstacles": 97,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        306
+      ],
+      [
+        1111,
+        879
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        306
+      ],
+      [
+        1111,
+        879
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 229,
+    "seed": 26957,
+    "file": "pool-229-seed-26957.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 440,
+    "obstacles": 97,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 230,
+    "seed": 26973,
+    "file": "pool-230-seed-26973.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 478,
+    "obstacles": 104,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        275
+      ],
+      [
+        1111,
+        910
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        275
+      ],
+      [
+        1111,
+        910
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 231,
+    "seed": 27164,
+    "file": "pool-231-seed-27164.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 504,
+    "obstacles": 98,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        258
+      ],
+      [
+        1111,
+        927
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        258
+      ],
+      [
+        1111,
+        927
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 232,
+    "seed": 27191,
+    "file": "pool-232-seed-27191.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 429,
+    "obstacles": 110,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 233,
+    "seed": 27197,
+    "file": "pool-233-seed-27197.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 427,
+    "obstacles": 105,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 234,
+    "seed": 27214,
+    "file": "pool-234-seed-27214.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 445,
+    "obstacles": 105,
+    "trenches": 16,
+    "medKitSpawns": [
+      [
+        1111,
+        332
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        332
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 235,
+    "seed": 27447,
+    "file": "pool-235-seed-27447.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 435,
+    "obstacles": 106,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        229
+      ],
+      [
+        1111,
+        956
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 236,
+    "seed": 27531,
+    "file": "pool-236-seed-27531.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 480,
+    "obstacles": 100,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        323
+      ],
+      [
+        1111,
+        862
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 237,
+    "seed": 27535,
+    "file": "pool-237-seed-27535.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 437,
+    "obstacles": 98,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        291
+      ],
+      [
+        1111,
+        894
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        291
+      ],
+      [
+        1111,
+        894
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 238,
+    "seed": 27805,
+    "file": "pool-238-seed-27805.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 466,
+    "obstacles": 105,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 239,
+    "seed": 27837,
+    "file": "pool-239-seed-27837.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 429,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 240,
+    "seed": 27838,
+    "file": "pool-240-seed-27838.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 490,
+    "obstacles": 101,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        251
+      ],
+      [
+        1111,
+        934
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        251
+      ],
+      [
+        1111,
+        934
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 241,
+    "seed": 27920,
+    "file": "pool-241-seed-27920.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 436,
+    "obstacles": 106,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 242,
+    "seed": 27925,
+    "file": "pool-242-seed-27925.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 496,
+    "obstacles": 103,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        253
+      ],
+      [
+        1111,
+        932
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 243,
+    "seed": 28074,
+    "file": "pool-243-seed-28074.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 432,
+    "obstacles": 99,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 244,
+    "seed": 28088,
+    "file": "pool-244-seed-28088.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 449,
+    "obstacles": 99,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        210
+      ],
+      [
+        1111,
+        975
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 245,
+    "seed": 28262,
+    "file": "pool-245-seed-28262.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 523,
+    "obstacles": 109,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        265
+      ],
+      [
+        1111,
+        920
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        265
+      ],
+      [
+        1111,
+        920
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 246,
+    "seed": 28275,
+    "file": "pool-246-seed-28275.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 466,
+    "obstacles": 112,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        232
+      ],
+      [
+        1111,
+        953
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 247,
+    "seed": 28339,
+    "file": "pool-247-seed-28339.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 433,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 248,
+    "seed": 28351,
+    "file": "pool-248-seed-28351.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 468,
+    "obstacles": 103,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        280
+      ],
+      [
+        1111,
+        905
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 249,
+    "seed": 28379,
+    "file": "pool-249-seed-28379.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 430,
+    "obstacles": 101,
+    "trenches": 14,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        197
+      ],
+      [
+        1111,
+        988
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 250,
+    "seed": 28482,
+    "file": "pool-250-seed-28482.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 454,
+    "obstacles": 98,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        235
+      ],
+      [
+        1111,
+        950
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 251,
+    "seed": 28592,
+    "file": "pool-251-seed-28592.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 495,
+    "obstacles": 103,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 252,
+    "seed": 28623,
+    "file": "pool-252-seed-28623.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 464,
+    "obstacles": 106,
+    "trenches": 22,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 253,
+    "seed": 28705,
+    "file": "pool-253-seed-28705.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 424,
+    "obstacles": 109,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        308
+      ],
+      [
+        1111,
+        877
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        308
+      ],
+      [
+        1111,
+        877
+      ],
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 254,
+    "seed": 28804,
+    "file": "pool-254-seed-28804.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 434,
+    "obstacles": 101,
+    "trenches": 20,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  },
+  {
+    "index": 255,
+    "seed": 28946,
+    "file": "pool-255-seed-28946.png",
+    "width": 2223,
+    "height": 1186,
+    "symmetry": "mirror",
+    "endzone": "disc",
+    "endzoneRadius": 235,
+    "homeX": 473,
+    "obstacles": 100,
+    "trenches": 18,
+    "medKitSpawns": [
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ],
+    "medKitCandidates": [
+      [
+        1111,
+        394
+      ],
+      [
+        1111,
+        791
+      ],
+      [
+        1111,
+        455
+      ],
+      [
+        1111,
+        730
+      ]
+    ]
+  }
+]

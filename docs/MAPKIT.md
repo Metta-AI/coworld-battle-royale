@@ -73,3 +73,27 @@ A finished `mapSpec` drops straight into a game: set the config's inline map
 spec, or feed the JSON into the curated pool. See
 [ENV_VARIATION.md](ENV_VARIATION.md) for every map/gameplay knob a level can
 vary.
+
+## Battle-royale rotation pool
+
+The battle-royale rotation pool contains 256 pre-validated `huge` maps. Each
+entry is generated from its own deterministic seed, then receives the
+canonical center from seed 42 (the map pinned by `config.br.json`). Whole
+terrain shapes touching the 260 px keep-out radius are replaced, so the final
+ring and heavy loot cluster remain in the recognizable center arena.
+
+Regenerate the pool and its review renders from the repository root:
+
+```bash
+nim c -r -d:release tools/gen_map_pool.nim 3001
+nim c -r -d:release tools/render_map_pool.nim --br brpool-preview
+python3 tools/build_pool_review.py brpool-preview docs/pool-review.html
+```
+
+Activation is deliberately **not applied in this PR**. The exact future flip
+is:
+
+```json
+"mapPath": "brpool",     // was "gen"
+// and remove "mapSeed": 42 so the index derives from the episode seed
+```

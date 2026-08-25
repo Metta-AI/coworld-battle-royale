@@ -13,6 +13,7 @@ import
   test_handicaps,
   test_identity_badges,
   test_label_contract,
+  test_map_pool_center,
   test_map_export,
   test_movement_slide,
   test_perks,

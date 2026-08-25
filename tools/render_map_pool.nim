@@ -2,23 +2,35 @@
 ## for the pool-review page: floor/stone/glass like dump_map_mask, with the
 ## protected zones tinted, pedestal positions dotted, and the med-kit
 ## candidate/active points marked.
-## Usage: nim c -r tools/render_map_pool.nim outDir
+## Usage: nim c -r tools/render_map_pool.nim [--br] [outDir]
 ## Demo/curation tooling; not part of the server.
 import
-  std/[json, os, strformat],
+  std/[json, os, sequtils, strformat],
   pixie,
   ../src/ctf/[map_pool, sim],
   map_render
 
 when isMainModule:
-  let outDir = if paramCount() >= 1: paramStr(1) else: "pool-preview"
+  let br = paramCount() >= 1 and paramStr(1) == "--br"
+  let outDir =
+    if br:
+      if paramCount() >= 2: paramStr(2) else: "brpool-preview"
+    elif paramCount() >= 1:
+      paramStr(1)
+    else:
+      "pool-preview"
   createDir(outDir)
   var manifest = newJArray()
-  for i, seed in MapPoolSeeds:
+  let seeds = if br: BrMapPoolSeeds.toSeq else: MapPoolSeeds.toSeq
+  for i, seed in seeds:
     let
-      gameMap = loadCtfMapMetadata("gen:" & $seed)
+      gameMap =
+        if br:
+          brPoolCtfMap(i, brCanonicalOverrides())
+        else:
+          loadCtfMapMetadata("gen:" & $seed)
       renderOptions = MapRenderOptions(
-        maxDimension: 0,
+        maxDimension: (if br: 1600 else: 0),
         overlays: {overlayProtected, overlayPickups},
         pickupKinds: {pickupMedKitActive, pickupMedKitCandidate},
       )
@@ -53,5 +65,16 @@ when isMainModule:
       "medKitCandidates": candidates,
     }
     echo "rendered ", name
+  if br:
+    let
+      reference = generateMapAttempt(BrCanonicalCenterSeed, brCanonicalOverrides())
+      options = MapRenderOptions(
+        maxDimension: 1600,
+        overlays: {overlayProtected, overlayPickups},
+        pickupKinds: {pickupMedKitActive, pickupMedKitCandidate},
+      )
+    renderMap(reference, options).image.writeFile(
+      outDir / "br-canonical-reference.png")
+    echo "rendered br-canonical-reference.png"
   writeFile(outDir / "manifest.json", pretty(manifest))
   echo "wrote ", outDir / "manifest.json"
