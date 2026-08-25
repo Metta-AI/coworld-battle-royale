@@ -55,11 +55,14 @@
 - Opponents: At launch Andre is #9 at 1466.38. The frozen nearest other players
   are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX (`nancy-br:v1`,
   1355.24), and David Greis (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Pending extension. The first 10 hosted episodes per side were
-  inconclusive. Candidate minus baseline was `19.8000`, with a two-sided 95
-  percent Welch interval `[-46.0627, 85.6627]` and `p=0.527068`. Twenty more
-  episodes per side on the same frozen field are running before a keep or
-  revert decision.
+- Verdict: Reverted. The first 10 hosted episodes per side were inconclusive.
+  Candidate minus baseline was `19.8000`, with a two-sided 95 percent Welch
+  interval `[-46.0627, 85.6627]` and `p=0.527068`. Twenty more hosted episodes
+  per side used the same frozen field. Across all 30 episodes per side,
+  candidate minus baseline was `5.1000`, with a two-sided 95 percent Welch
+  interval `[-25.1892, 35.3892]` and `p=0.736958`. This remains inconclusive,
+  so the default returned to `240.0`; `andre-battleroyale:v5` remains
+  unsubmitted.
 
 ### Trial 3: pact doctrine default
 

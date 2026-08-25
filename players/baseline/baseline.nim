@@ -262,7 +262,7 @@ const
   FfaHunterPursuitMinHpDefault = 6
   FfaHunterSupportRadiusDefault = 300.0
   FfaHunterArmTripMaxSecDefault = 30
-  FfaHunterArmTripMaxDetourRadiusDefault = 480.0
+  FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
