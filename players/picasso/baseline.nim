@@ -13439,7 +13439,17 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
     if OwnHpRaw.float > BrHealHurtFrac * OwnMaxHpRaw.float:
       break brHealSeek                                       # not hurt enough to bother
     when defined(healprobe): inc hpBrHurtFrames
-    if engage >= 0 or nearThreat >= 0:
+    # "Do not abandon a fight in progress" is `engage` (a real, currently-
+    # selected combat target with a clear line) — not medEcon's `nearThreat`
+    # (any enemy merely seen in the last 30 ticks within DuckRange=340px). In
+    # a shrinking-ring, no-respawn endgame that broader signal is true almost
+    # continuously (measured: brHurt fired 30-198 times across three real
+    # seeds with BRHEAL=1 and brFree never once advanced past a combined
+    # engage-or-nearThreat veto) — it would make the errand structurally
+    # unable to fire exactly when hp matters most. The path-clearance check
+    # below still refuses to walk near a freshly-seen enemy, so this is not
+    # an unguarded relaxation.
+    if engage >= 0:
       break brHealSeek                     # never abandon a fight in progress
     if iCarry or mateCarry or pocketRush or ownStolen or
         seekingPickup or iHaveShield or iHaveSword or iHavePlasma:
