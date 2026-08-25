@@ -57,9 +57,13 @@
   launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
   (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Initial 10 per arm is inconclusive. Baseline mean 174.7000,
-  candidate mean 192.0000, difference 17.3000, two-sided 95 percent Welch CI
-  [-37.3482, 71.9482], p=0.510652. Do not keep; extend to 30 per arm.
+- Verdict: Revert. Initial 10 per arm was inconclusive: baseline mean
+  174.7000, candidate mean 192.0000, difference 17.3000, two-sided 95 percent
+  Welch CI [-37.3482, 71.9482], p=0.510652. At 30 per arm the baseline mean
+  was 177.5333 and candidate mean 189.2333, difference 11.7000, CI
+  [-22.7784, 46.1784], p=0.499519. This remains inconclusive. Restored
+  initial-arming-only behavior; uploaded `andre-battleroyale:v10` was not
+  submitted.
 
 ### Trial 8: vulnerable hunter target selection
 
