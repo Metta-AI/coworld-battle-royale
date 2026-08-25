@@ -54,9 +54,12 @@
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
   (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Initial 10 per arm is inconclusive. Baseline mean 192.6000,
-  candidate mean 194.8000, difference 2.2000, two-sided 95 percent Welch CI
-  [-80.6707, 85.0707], p=0.956134. Do not keep; extend to 30 per arm.
+- Verdict: Revert. Initial 10 per arm was inconclusive: baseline mean
+  192.6000, candidate mean 194.8000, difference 2.2000, two-sided 95 percent
+  Welch CI [-80.6707, 85.0707], p=0.956134. At 30 per arm the baseline mean
+  was 194.7333 and candidate mean 171.8667, difference -22.8667, CI
+  [-58.5045, 12.7711], p=0.203874. This remains inconclusive and trends worse.
+  Restored `FfaHunter`; uploaded `andre-battleroyale:v8` was not submitted.
 
 ### Trial 6: interior hunter hold band
 
