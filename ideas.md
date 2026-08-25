@@ -49,7 +49,9 @@
   hosted episodes.
 - Verdict: Inconclusive after the first clean 10 episodes per side because the
   dashboard frontier confidence bands overlap. Do not keep from the displayed
-  means. Extending the same field by 20 episodes per side.
+  means. Extending the same field by 20 episodes per side with baseline XP
+  `xreq_f59f6778-4940-4ceb-8062-cd72b8d56909` and candidate XP
+  `xreq_a334c9cc-21f9-4fec-a992-8a21a4260e1e`.
 
 ### Bootstrap 0: current example champion
 
