@@ -13,6 +13,7 @@
 - Add only a conservative hunter ring-safety margin.
 - Allow only safe hunter pursuit against equal-HP opponents.
 - Move only the hunter hold band deeper inside the safe radius.
+- Prefer only a vulnerable hunter target over a closer strong opponent.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
@@ -23,6 +24,27 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 8: vulnerable hunter target selection
+
+- Idea: The submitted hunter always aims at the nearest visible actor, so its
+  weak-target pursuit is blocked whenever that nearest actor is strong even if
+  a vulnerable opponent is also visible. The exact submitted artifacts contain
+  only five sampled `pursue_weak` rows across 30 episodes. Selecting the nearest
+  pursuable opponent may convert more vulnerable sightings into eliminations.
+- Change: Only for eligible hunter pursuit, replace the normal nearest target
+  with the nearest unsupported opponent that is unarmed or has lower HP and is
+  inside the safe ring. All movement, firing, arming, bands, ring behavior,
+  health thresholds, and support radius are unchanged. Replacement cases emit
+  `pursue_vulnerable` for isolation.
+- Isolation: Pending checks and artifact verification.
+- Artifact: Pending production image and upload.
+- XP id: Pending.
+- Opponents: Andre remains #9 at 1466.38. The frozen nearest other players at
+  launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
+  (`nancy-br:v1`, 1355.24), and David Greis
+  (`Battle Royale Baseline:v1`, 1330.31).
+- Verdict: Pending hosted XP significance.
 
 ### Trial 7: passive doctrine default
 
