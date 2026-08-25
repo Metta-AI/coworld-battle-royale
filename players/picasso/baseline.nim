@@ -8640,8 +8640,26 @@ proc brRoleOverride(): tuple[have: bool, role: Role] =
   ## (guarding a pedestal that does not exist). One seat means the squad-
   ## complement reasoning has nothing to complement; the only question is
   ## which single role plays this mode best, and that is a measurement.
+  ## DEFAULT: Overwatch, and that is a measured choice rather than the obvious
+  ## one — I predicted it would be the WORST of the seven. Paired sweep, our
+  ## six seats against the stock bot's six in the same episodes, seeds 1 and 7:
+  ## overwatch +39.2 score (per-seed +43.8/+34.7, replicated), midtop +25.3
+  ## (+45.0/+5.7), flankbottom -32.2 and the slot-derived control -57.2 (one
+  ## seed each). Both winning arms gained through SURVIVAL, not kills — our
+  ## kill counts stayed low while the stock bot out-killed us and we still won
+  ## on score, which is exactly what a scoreboard paying 1/second alive and 10
+  ## per kill should produce. A static, low-exposure poster is the archetype
+  ## the live ladder's winners actually play.
+  ##
+  ## ⚠️ NOT a clean margin: overwatch's lead over midtop (13.9) is smaller than
+  ## midtop's own seed-to-seed swing (39.3). What picks it is CONSISTENCY —
+  ## two similar positive reads versus one large and one near-null — plus the
+  ## agreement with the live-replay archetype and the score arithmetic. A third
+  ## seed is the honest next step. `BRROLE=slot` restores the old per-seat
+  ## deal for a rollback or an A/B.
   let want = getEnv("BRROLE").toLowerAscii()
   case want
+  of "slot": (false, MidTop)
   of "midtop": (true, MidTop)
   of "midbottom": (true, MidBottom)
   of "midguard": (true, MidGuard)
@@ -8649,7 +8667,7 @@ proc brRoleOverride(): tuple[have: bool, role: Role] =
   of "flankbottom": (true, FlankBottom)
   of "overwatch": (true, Overwatch)
   of "homedefender": (true, HomeDefender)
-  else: (false, MidTop)
+  else: (true, Overwatch)
 
 let fastReadyEnabled = getEnv("CTF_BOT_FAST_READY").len > 0
   ## Lockstep opt-in for local rigs and fixture recording only — see the send
