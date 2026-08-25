@@ -31,8 +31,11 @@
 - Isolation: Passed locally. `tools/extract_doctrine.nim` asserted that the
   current champion starts with `ffaHunterRingMargin=0.0` and the candidate
   starts with `ffaHunterRingMargin=80.0`; both start with the hunter doctrine
-  and the other printed doctrine parameters are unchanged. Hosted artifact
-  confirmation is pending.
+  and the other printed doctrine parameters are unchanged. Hosted logs passed
+  the same assertions: baseline episode request
+  `ereq_435ab7d1-5684-4311-b2af-0d4595703a40` reported margin `0.0`, while
+  candidate episode request `ereq_66344e74-8c68-4aba-a4b0-31d5b052489b`
+  reported margin `80.0`.
 - Artifact: Production image `andre-battleroyale:candidate-2`, Linux AMD64,
   command `/bin/baseline`. Uploaded as candidate `andre-battleroyale:v3`,
   policy version `ff38a716-95eb-4bc6-af35-e18e1897c31f`. Exact binary clones
