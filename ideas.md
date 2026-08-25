@@ -21,6 +21,19 @@
 
 ## Trial log
 
+### Trial 1: hunter doctrine default
+
+- Idea: The newly added hunter doctrine should outperform the legacy example
+  by arming early, pursuing weaker targets, and closing sooner in the late game.
+- Change: When `CTF_BOT_FFA_DOCTRINE` is unset, select `FfaHunter` instead of
+  `FfaLegacy`. No hunter parameter is changed.
+- Isolation: Passed. `tools/extract_doctrine.nim` ran the compiled policy with
+  the doctrine environment variable removed and captured
+  `ffaDoctrine=hunter`, `ffaHunterArm=true`, and `ffaHunterPursuit=true`.
+- XP id: Pending.
+- Opponents: Pending the displayed MRR and exact field freeze.
+- Verdict: Pending hosted XP significance.
+
 ### Bootstrap 0: current example champion
 
 - Idea: Establish a working submitted champion before experiments.
