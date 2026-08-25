@@ -21,6 +21,24 @@
 
 ## Trial log
 
+### Trial 4: wider safe hunter arm detour
+
+- Idea: `tools/summarize_artifacts.nim` aggregated all 10 Trial 3 candidate
+  artifacts. Because `pact_converge` never fired, their navigation is
+  equivalent to the submitted hunter. Mean armed fraction was only `0.4496`:
+  22,706 ticks were spent holding the passive band and 8,815 retreating from
+  the ring, versus 1,313 gun-trip ticks. On the huge map, the 240-pixel gun
+  cap is preventing safe arming opportunities. A 480-pixel cap should improve
+  armed time while retaining the existing ring-safe, opponent-closer, and
+  30-second trip guards.
+- Change: Set only `FfaHunterArmTripMaxDetourRadiusDefault` from `240.0` to
+  `480.0`.
+- Isolation: Pending local and hosted artifact confirmation.
+- Artifact: Pending.
+- XP id: Pending.
+- Opponents: Pending launch-time nearest-player freeze.
+- Verdict: Pending hosted XP significance.
+
 ### Trial 3: pact doctrine default
 
 - Idea: Coworld v0.1.13 added the pact doctrine and alliance broadcast cue.
