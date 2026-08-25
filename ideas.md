@@ -50,7 +50,9 @@
   `andre-trial-9:v2`.
 - XP id: Baseline `xreq_835e6afc-41ed-4a3f-bd2e-467c47f8d4e0` and
   candidate `xreq_5897dfe3-eee9-48f3-b1dd-7d2a95d19e87`, 10 hosted episodes
-  per arm. A same-field 20-episode extension per arm is pending.
+  per arm. Same-field extensions are baseline
+  `xreq_0f4416f4-4bf4-4760-8fbf-3f6e118366c4` and candidate
+  `xreq_fbfd2628-a349-48d7-b949-dde0cdef6000`, 20 hosted episodes per arm.
 - Opponents: Andre remains #9 at 1466.38. The frozen nearest other players at
   launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
