@@ -883,7 +883,14 @@ when defined(barrprobe):
   var bpEvac = 0          # frames the body-evacuation override drove the feet
 
 var
-  FfaSeen: tuple[stamped: bool, alive: bool, enemies: int, meX, meY: float]
+  FfaWeapon = ""
+    ## Our own weapon tier this frame, from the `weapon <token>` HUD marker.
+    ## In a free-for-all EVERY cog spawns UNARMED and guns are ground loot, so
+    ## this is not flavour: it is our actual reach. A policy that assumes it is
+    ## holding the standard gun swings a fist at a target a thousand pixels
+    ## away, all game, and never understands why nothing dies.
+  FfaSeen: tuple[stamped: bool, alive: bool, enemies: int,
+                 nearestFoe: float, meX, meY: float]
     ## The core's own read of this frame, stamped once so the free-for-all
     ## positioning wrapper can ask "were we in contact?" without paying for a
     ## second sweep of every colour.
@@ -980,6 +987,8 @@ const
                               # ring is bigger than it is — the one direction
                               # that gets a cog killed. Assume we are a second
                               # further along than we can prove.
+  FistReachPx = 70.0          # fist is a CONTACT weapon (centre to centre)
+  LowGunRangePx = 700.0       # the short pickup tier
   RingHoldFrac = 0.55         # out of contact, station at this fraction of the
                               # safe radius: inside the band the ring is about
                               # to take, without joining the crowd at dead
@@ -8644,6 +8653,26 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       except ValueError:
         discard
       break
+  # ── OUR OWN REACH ──────────────────────────────────────────────────────
+  # `weapon <token>` states what we are actually holding. Everything in the
+  # engage and fire layers prices off FireRange, so re-stamping it here is the
+  # single edit that makes those layers correct for a mode where reach is
+  # LOOT rather than a constant. Only inside a free-for-all: a team game has
+  # one gun and this marker is a formality there.
+  if FfaRing.have:
+    for (_, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixWeapon):
+      let now = label[LabelPrefixWeapon.len .. ^1]
+      when defined(ringProbe):
+        if now != FfaWeapon:
+          stderr.writeLine("WEAPON tick=" & $bot.tick & " " &
+            (if FfaWeapon.len == 0: "(none)" else: FfaWeapon) & " -> " & now)
+      FfaWeapon = now
+      break
+    FireRange =
+      case FfaWeapon
+      of LabelWeaponFist: FistReachPx
+      of LabelWeaponLowGun: LowGunRangePx
+      else: GunRangePx
   # ⭐⭐ COLOR TRUTH. The self marker is the ONE sprite only we ever see, so it
   # is the authoritative statement of our own color. Sweep the active team
   # colors until one answers, then LOCK it: a wrong color makes findSelf
@@ -8930,8 +8959,11 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
     shotReady = client.spriteObjectsWithLabel(LabelFireIcon).len > 0
     seenEnemies = client.actorsForEnemies(myColor, bot.tune.aimRotRead)
     seenMates = client.actorsFor(myColor, bot.tune.aimRotRead)
+  var ffaNearest = Inf
+  for a in seenEnemies:
+    ffaNearest = min(ffaNearest, dist(a.pos, me))
   FfaSeen = (stamped: true, alive: true, enemies: seenEnemies.len,
-             meX: me.x, meY: me.y)
+             nearestFoe: ffaNearest, meX: me.x, meY: me.y)
   when defined(arprobe):
     if lvC(7, bot.tune.aimRotRead):
       inc arFrames
@@ -15030,7 +15062,16 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
   ## PROVEN, and this layer must not quietly outrank it.
   FfaSeen.stamped = false
   result = bot.decideCore(client)
-  if not FfaRing.have or not FfaSeen.stamped or FfaSeen.enemies > 0:
+  if not FfaRing.have or not FfaSeen.stamped:
+    return
+  let
+    unarmed = FfaWeapon == LabelWeaponFist or FfaWeapon.len == 0
+    # A fist reaches 70px. Standing in a firefight holding one is not a
+    # fight, it is a delay before dying, so an unarmed cog is allowed to
+    # break contact and go arm itself — UNLESS the enemy is already inside
+    # fist reach, where the core's gunfight is the right and only answer.
+    armErrand = unarmed and FfaSeen.nearestFoe > FistReachPx * 2.0
+  if FfaSeen.enemies > 0 and not armErrand:
     return
   # No contact. Hold station INSIDE the ring rather than walking a phantom
   # objective: keep our angular position (the centre is where every survivor
@@ -15047,11 +15088,45 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     me = vec(FfaSeen.meX, FfaSeen.meY)
     d = dist(me, centre)
     holdR = radius * RingHoldFrac
-  if d <= holdR:
-    return                               # already stationed; leave the core's feet
-  let
-    inward = (me - centre) * (holdR / max(d, 1.0))
-    steer = bot.navSteer(client, me, centre + inward)
+  # ARM FIRST. Guns are ground loot here and everyone starts with fists, so
+  # until we are holding one, the nearest visible gun inside the ring outranks
+  # every other destination. Better tiers win ties: heavy and mid both reach
+  # 1050 and hit harder than low, so a slightly further mid gun is worth more
+  # than a close low one.
+  var
+    target = centre
+    haveTarget = false
+  if unarmed:
+    var bestScore = Inf
+    for (label, penalty) in [(LabelWeaponHeavyGun, 0.0),
+                             (LabelWeaponMidGun, 60.0),
+                             (LabelWeaponGun, 60.0),
+                             (LabelWeaponLowGun, 400.0)]:
+      for o in client.spriteObjectsWithLabel(label):
+        let
+          gun = client.mapPos(o)
+          gd = dist(gun, me)
+        # Never chase loot that is already outside the ring: the walk is paid
+        # for in hit points and the gun does not come with them back.
+        if dist(gun, centre) > radius - float(RingSafeMarginPx):
+          continue
+        if gd + penalty < bestScore:
+          bestScore = gd + penalty
+          target = gun
+          haveTarget = true
+  if not haveTarget:
+    if unarmed:
+      # Unarmed with no gun in sight. Holding station here is the losing line:
+      # loot is clustered at the arena centre and the gun bands are
+      # centre-weighted (heavy in the middle), so a cog that keeps its
+      # distance keeps its fists. Go to the middle and find one. Only once we
+      # are armed does holding off-centre become the better idea.
+      target = centre
+    else:
+      if d <= holdR:
+        return                           # already stationed; leave the core's feet
+      target = centre + (me - centre) * (holdR / max(d, 1.0))
+  let steer = bot.navSteer(client, me, target)
   if steer.len() < 1e-6:
     return
   when defined(ringProbe):
