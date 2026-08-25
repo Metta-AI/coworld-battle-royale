@@ -77,6 +77,11 @@ when defined(ringProbe):
   var rpFires = 0
   var rpOutside = 0
   var rpHold = 0
+  var rpUpgrade = 0
+
+when defined(bandprobe):
+  var bpFrames = 0
+  var bpFracSum = 0.0
 
 when defined(hpprobe):
   var hpFrames = 0
@@ -434,6 +439,31 @@ when defined(msprobe):
   var msPickVisOff = 0  # ...and that visible kit is NOT at a formula spot  <= THE counter
   var msWoundedFrames = 0  # tune-independent: frames our own hp read 1..<MaxHp
   var msHeals = 0          # tune-independent: wounded -> full transitions (a kit taken)
+
+when defined(healprobe):
+  # -d:healprobe ONLY (BR one-life heal audit, 2026-08-25): "in a one-life mode
+  # that pays 1pt/sec alive, do we ever heal?" Answers all four parts with ONE
+  # binary and RAW (unbucketed) hp, since the 3-pip MaxHp scale used by the
+  # medTopOff/medEcon gates themselves is too coarse to see "below half" on a
+  # 20-hp board. Ground truth for "taken" is the raw hp wire value going UP —
+  # BR has no other hp-regen source (grep confirms: no regen anywhere in
+  # sim.nim, only tryPickupMedKits touches hp upward). walkReal/walkPhantom
+  # split on medEcon's own `pickedVisible` bit, which already distinguishes a
+  # SIGHTED kit from the two hard-coded CTF formula spots (MedKitAX/AY,
+  # MedKitBX/BY = mapW/2, mapH/3 and 2*mapH/3) — spots built for a 2-team CTF
+  # map's fixed med-kit columns, not for the BR ring-centred loot cluster
+  # (ffaRingCenter = mapW/2, mapH/2, radius FfaLootRadius=180). Never shipped.
+  var hpAliveFrames = 0      # alive frames with a readable hp bar (population)
+  var hpBelowHalfFrames = 0  # ...and raw hp is below half of the STATED max
+  var hpKitSeenDistinct = 0  # distinct med-kit spawn POSITIONS ever sighted
+  var hpKitSeenFrames = 0    # frames with >=1 real (non-HUD) kit sprite visible
+  # (x, y) tuples rather than Vec: this var block sits before Vec's own type
+  # declaration further down the file, so a Vec-typed seq would not compile.
+  var hpKitSeenSpots: seq[(float, float)] = @[]
+  var hpWalkReal = 0     # frames medTopOff/medEcon targeted a SIGHTED kit
+  var hpWalkPhantom = 0  # frames medEcon targeted the CTF formula spot instead
+  var hpPickups = 0        # raw-hp upward transitions: ground truth, a kit taken
+  var hpPickupAmount = 0   # summed hp restored across all pickups this process
 
 const MedSeeProbeScan* = defined(msprobe)
   ## Compile-time only: under -d:msprobe the medEcon block walks the VISIBLE-kit
@@ -897,6 +927,11 @@ var
     ## invisible. Roughly two of every three hits went unnoticed — which is the
     ## sense that arms the turn-toward-the-shooter behaviour and, since
     ## another lever now reads it too, the "we are being shot at" stamp.
+  OwnMaxHpRaw = 0
+    ## -d:healprobe only: the STATED denominator alongside OwnHpRaw, so a BR
+    ## heal-seeking audit can compute "below half health" against the real
+    ## board max (20) instead of the 3-pip bucket. Unused (stays 0) in any
+    ## build without the probe define.
   FfaWeapon = ""
     ## Our own weapon tier this frame, from the `weapon <token>` HUD marker.
     ## In a free-for-all EVERY cog spawns UNARMED and guns are ground loot, so
@@ -1003,6 +1038,15 @@ const
                               # further along than we can prove.
   FistReachPx = 70.0          # fist is a CONTACT weapon (centre to centre)
   LowGunRangePx = 700.0       # the short pickup tier
+  SprayReachPx = 170.0        # the spray cone's ACTUAL forward reach:
+                              # PlasmaArcReach = 5 squares of SoldierBodyPx 34.
+                              # We were pricing it at the gun's 1050 — a six-
+                              # fold overestimate — so a spray-carrying cog
+                              # believed it could answer anything on the board
+                              # and held its ground against opponents it could
+                              # not touch. Hosted replays: in both final fights
+                              # where we carried spray we fired ZERO shots at
+                              # opponents 400px away and simply died.
   UnarmedFleeRange = 420.0    # a gun outranges a fist by 10x; anything armed
                               # this close while we hold one is a threat we
                               # answer with distance, not with a punch.
@@ -1033,7 +1077,13 @@ const
                               # the bucket boundary selfHp already uses for
                               # our own side, so self and enemy stay on the
                               # same calibration.
-  RingHoldFrac = 0.55         # out of contact, station at this fraction of the
+  RingBandSlack = 0.18        # deadband either side of the hold band, as a
+                              # fraction of it — wide enough that ordinary
+                              # movement does not ping-pong across the edge.
+  RingHoldFrac = 0.62         # was 0.55, and it never achieved even that: the
+                              # ratchet parked us at 0.33. Set inside the
+                              # 0.55-0.66 opening range the leading policies
+                              # actually hold.         # out of contact, station at this fraction of the
                               # safe radius: inside the band the ring is about
                               # to take, without joining the crowd at dead
                               # centre.
@@ -6935,6 +6985,8 @@ proc selfHp(client: ProtocolClient, me: Vec, color: string): tuple[have: bool, h
       bestD = d
       let scaled = clamp((hp * MaxHp + maxHp - 1) div maxHp, 1, MaxHp)
       OwnHpRaw = hp
+      when defined(healprobe):
+        OwnMaxHpRaw = maxHp
       result = (have: true, hp: scaled)
 
 proc selfLives(client: ProtocolClient): tuple[have: bool, hp: int, lives: int] =
@@ -8775,6 +8827,14 @@ let fastReadyEnabled = getEnv("CTF_BOT_FAST_READY").len > 0
   ## Lockstep opt-in for local rigs and fixture recording only — see the send
   ## site in the frame loop for why a competitive build must never set it.
 
+let brUpgradeArmed = getEnv("BRUPGRADE").len > 0
+  ## Off by default, measured before it ships. `BRUPGRADE=1` arms the FFA
+  ## weapon-UPGRADE diversion in `proc decide`: once already holding a gun,
+  ## detour to a visible STRICTLY-better tier when it is cheap and the ring
+  ## stays safe. Until now the gun-scan only ran while unarmed (see the ARM
+  ## FIRST comment below) — a low-gun hold never looked again even with a
+  ## heavy gun in plain sight.
+
 proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
   ## Core policy for one frame.
   when defined(statue):
@@ -8824,6 +8884,7 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       case FfaWeapon
       of LabelWeaponFist: FistReachPx
       of LabelWeaponLowGun: LowGunRangePx
+      of LabelWeaponSpray: SprayReachPx
       else: GunRangePx
   # Role re-stamp. It has to happen HERE rather than at construction: the role
   # is dealt before the first frame, and whether this is a free-for-all is not
@@ -9130,6 +9191,24 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
   FfaSeen = (stamped: true, alive: true, enemies: seenEnemies.len,
              nearestFoe: ffaNearest, foeX: ffaFoe.x, foeY: ffaFoe.y,
              meX: me.x, meY: me.y)
+  when defined(bandprobe):
+    # The mechanism this whole change turns on: our ACHIEVED distance from the
+    # ring centre as a fraction of the live radius, sampled on every alive
+    # frame so it is comparable with the hosted-replay measurement (0.32-0.34
+    # flat, against the leaders' 0.55-0.88).
+    if FfaRing.have:
+      let
+        total = max(1, FfaRing.shrinkSec * FfaTicksPerSec)
+        step = clamp(max(0, bot.tick - max(bot.ringT0, 0)) + RingElapsedBiasTicks, 0, total)
+        span = max(0, FfaRing.startR - FfaRing.floorR)
+        rad = float(FfaRing.startR - span * step div total)
+        dc = dist(me, vec(float(FfaRing.cx), float(FfaRing.cy)))
+      if rad > 1.0:
+        bpFrames += 1
+        bpFracSum += dc / rad
+        if bpFrames mod 900 == 0:
+          stderr.writeLine("BANDPROBE frames=" & $bpFrames &
+            " meanFrac=" & $(bpFracSum / float(bpFrames)))
   when defined(arprobe):
     if lvC(7, bot.tune.aimRotRead):
       inc arFrames
@@ -9495,6 +9574,27 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       # whenever a fresh enemy is already in view). The engage-range gate reads
       # this to grant full weapon reach back to a bot actually taking fire.
       bot.lastDamagedTick = bot.tick
+    when defined(healprobe):
+      # RAW ground truth, tune-independent: population, below-half time, and
+      # actual pickups.
+      # ⚠️ CROSS-CHECKED against engine events.jsonl (kind="heal"): an early
+      # cut counted ANY upward hp tick as a pickup and reported 2 heals on a
+      # seed where the engine recorded ZERO "heal" events all match — a false
+      # positive from selfHp's nearest-bar match, which can briefly attribute
+      # a close-by player's bar to us mid-melee (both bars sit within
+      # HpPipRadius of `me` in a crowd). tryPickupMedKits always heals to the
+      # exact max (sim.nim: `hp = maxHp`, no partial heals exist), so the same
+      # doctrine msHeals/wbHp1Heals already use on the bucketed 3-scale
+      # (wounded -> AT the top) generalizes correctly to the raw scale and
+      # cannot alias a blip: a misattributed neighbour would have to land on
+      # OUR exact stated max, not just any higher number.
+      inc hpAliveFrames
+      if OwnMaxHpRaw > 0 and OwnHpRaw * 2 < OwnMaxHpRaw:
+        inc hpBelowHalfFrames
+      if prevRaw > 0 and OwnMaxHpRaw > 0 and prevRaw < OwnMaxHpRaw and
+          OwnHpRaw >= OwnMaxHpRaw:
+        inc hpPickups
+        hpPickupAmount += OwnHpRaw - prevRaw
     when defined(msprobe):
       # plan #16 heal funnel, TUNE-INDEPENDENT so a MEDSEE-unset run of the SAME
       # binary is the control. A death reads hp as unread (0) on the dead path, so
@@ -12832,7 +12932,17 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or p.y > float(MapH - 40):
         continue
       swordPickups.add(p)
-  if lvC(90, bot.tune.avoidDisarm or bot.tune.sprayGrab):
+  # ⛔ NEVER TRADE A GUN FOR A SPRAY CAN IN A FREE-FOR-ALL. Picking one up
+  # REPLACES the held gun, and in this mode that swaps 1050px of reach for a
+  # 170px cone. Our own weapon probe caught the downgrade happening live
+  # (`mid gun -> spray`), and both hosted final fights where we carried spray
+  # ended with us firing zero shots at opponents 400px away. Seeking one while
+  # already armed with a gun is strictly self-harm here; unarmed, a spray is
+  # still better than fists, so the ban is conditional rather than absolute.
+  let sprayIsDowngrade = FfaRing.have and
+    FfaWeapon in [LabelWeaponMidGun, LabelWeaponHeavyGun, LabelWeaponGun]
+  if lvC(90, (bot.tune.avoidDisarm or bot.tune.sprayGrab) and
+      not sprayIsDowngrade):
     for o in client.spriteObjectsWithLabel(LabelSprayCan):
       let p = client.mapPos(o)
       if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or p.y > float(MapH - 40):
@@ -13227,6 +13337,25 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
           bot.kitSeenTick[k] != bot.tick:
         bot.kitDryUntil[k] = bot.tick + KitSpotDryTicks
         when defined(kselprobe): inc ksDry
+  when defined(healprobe):
+    # TUNE-INDEPENDENT sightings count (kitSel ships OFF, so the scan above
+    # would otherwise report zero regardless of what we actually see). Same
+    # alive-only / HUD-edge-filter doctrine as the kitSel pass above.
+    if bot.ownHp > 0:
+      for o in client.spriteObjectsWithLabel(LabelMedKit):
+        let p = client.mapPos(o)
+        if p.x < 40.0 or p.y < 40.0 or p.x > float(MapW - 40) or
+            p.y > float(MapH - 40):
+          continue                                         # HUD indicator shares the label
+        inc hpKitSeenFrames
+        var known = false
+        for q in hpKitSeenSpots:
+          if dist(vec(q[0], q[1]), p) <= KitSpotSeenPx:
+            known = true
+            break
+        if not known:
+          hpKitSeenSpots.add (p.x, p.y)
+          inc hpKitSeenDistinct
   block medKitTopOff:
     when defined(mtprobe):
       if lvC(99, bot.tune.medTopOff and bot.ownHp > 0): inc mtOn
@@ -13257,6 +13386,7 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
     if haveKit:
       target = chosen
       when defined(mtprobe): inc mtFireCount
+      when defined(healprobe): inc hpWalkReal  # medTopOff only ever targets a SIGHTED kit
 
   # ── ⭐⭐ medEcon: THE MED KITS ARE A STATIC, RENEWABLE HP ECONOMY (2026-07-28).
   # Measured on 20 real league episodes: the field took 42 heals to our 11 (3.8x),
@@ -13543,6 +13673,9 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
         inc ffaMedFireCount   # ffaMedSee (not base medSee) supplied this target
     if haveEconKit:
       target = chosenEcon
+      when defined(healprobe):
+        if pickedVisible: inc hpWalkReal
+        else: inc hpWalkPhantom  # targeted a CTF formula spot, not a sighted kit
       # ⭐ v48: GIVE THE PEEL FEET. This assignment was DISCARDED whenever we
       # were engaged: the act chain only navSteers to `target` under fire for
       # retreating/banking/carrierFlee, and woundedBank (the intended owner of
@@ -15254,6 +15387,23 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
 
   mask
 
+const
+  FfaGunLoot = [(LabelWeaponHeavyGun, 0.0, 3),
+                (LabelWeaponMidGun, 60.0, 2),
+                (LabelWeaponGun, 60.0, 2),
+                (LabelWeaponLowGun, 400.0, 1)]
+    ## Ground gun labels this policy will walk to, each with its arm-up
+    ## tie-break penalty (a further heavier tier still wins — see ARM FIRST
+    ## below) and a tier RANK shared with the armed UPGRADE scan, which
+    ## additionally requires strictly > our current tier. `gun` never spawns
+    ## as FFA ground loot (only a non-FFA HUD marker — see labels.nim) but is
+    ## listed defensively at mid's rank in case that ever changes.
+  GunUpgradeMaxDetourPx = 500.0
+    ## The UPGRADE diversion (BRUPGRADE=1) must be a short errand, not a
+    ## shopping trip: refuse any candidate farther than this. Well under a
+    ## mid/heavy gun's own 1050px reach, so the walk itself never strays far
+    ## from where the core already expects us to be if a fight interrupts it.
+
 proc decide(bot: Bot, client: ProtocolClient): uint8 =
   ## The shipped per-frame decision: the core policy, plus a free-for-all
   ## POSITIONING layer that takes the feet only when the core is not in
@@ -15317,10 +15467,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     haveTarget = false
   if unarmed:
     var bestScore = Inf
-    for (label, penalty) in [(LabelWeaponHeavyGun, 0.0),
-                             (LabelWeaponMidGun, 60.0),
-                             (LabelWeaponGun, 60.0),
-                             (LabelWeaponLowGun, 400.0)]:
+    for (label, penalty, _) in FfaGunLoot:
       for o in client.spriteObjectsWithLabel(label):
         let
           gun = client.mapPos(o)
@@ -15333,6 +15480,54 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
           bestScore = gd + penalty
           target = gun
           haveTarget = true
+  elif brUpgradeArmed and FfaWeapon != LabelWeaponSpray:
+    # ⭐ UPGRADE (env BRUPGRADE=1, off by default; measuring before it ships).
+    # Reaching this branch at all means enemies == 0: the contact gate just
+    # above (`FfaSeen.enemies > 0 and not unarmed: return`) already sent us
+    # back to the core's feet on ANY frame we are armed with a visible enemy,
+    # so an upgrade detour can never pre-empt a fight in progress — the next
+    # frame an enemy appears, this whole proc falls through to decideCore
+    # again before we take another step. What is left to gate is cost, not
+    # safety-in-combat: a STRICT tier floor (nothing beats an already-heavy
+    # hold) and a short leash (GunUpgradeMaxDetourPx) so a "better gun over
+    # there" is never a cross-ring errand. Reuses the exact scan and the
+    # exact ring-safety filter above; only the tier and distance guards below
+    # are new.
+    #
+    # ⚠️ SPRAY IS EXCLUDED ON PURPOSE. `weapon spray` is not a gun tier — the
+    # sim swaps the gun OUT entirely whenever a spray can is carried (see
+    # global.nim's own-weapon HUD comment), so a spray holder has no tier to
+    # read here at all. Folding it into "tier 0" would silently turn this
+    # lever into "trade the spray can for a low gun", a different and
+    # unmeasured decision this task never asked for.
+    let currentTier =
+      case FfaWeapon
+      of LabelWeaponLowGun: 1
+      of LabelWeaponMidGun: 2
+      of LabelWeaponHeavyGun: 3
+      else: 0                             # unreachable: fist/unarmed take the `if unarmed` branch above
+    var bestScore = Inf
+    for (label, penalty, tier) in FfaGunLoot:
+      if tier <= currentTier:
+        continue                        # not an upgrade — skip the scan entirely
+      for o in client.spriteObjectsWithLabel(label):
+        let
+          gun = client.mapPos(o)
+          gd = dist(gun, me)
+        if dist(gun, centre) > radius - float(RingSafeMarginPx):
+          continue                      # never leave the safe ring for loot
+        if gd > GunUpgradeMaxDetourPx:
+          continue                      # not cheap — leave it for later
+        if gd + penalty < bestScore:
+          bestScore = gd + penalty
+          target = gun
+          haveTarget = true
+    when defined(ringProbe):
+      if haveTarget:
+        inc rpUpgrade
+        stderr.writeLine("UPGRADE tick=" & $bot.tick & " from=" & FfaWeapon &
+          " tier=" & $currentTier & " dist=" & $int(dist(target, me)) &
+          " tgt=" & $int(target.x) & "," & $int(target.y))
   # ⭐ BREAK OFF. Measured on hosted replays, and it was MY bug: with the
   # errand owning the feet, an unarmed cog under fire walked its beeline to
   # the loot without deviating. One trace has us closing from 165px to 124px
@@ -15371,8 +15566,24 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
       # as a loss: a kill is ten seconds.
       target = centre
     else:
-      if d <= holdR:
-        return                           # already stationed; leave the core's feet
+      # ⭐ A BAND, NOT A CEILING. This used to return here whenever `d <= holdR`,
+      # which made the hold a ONE-WAY RATCHET: it pulled us inward toward the
+      # band and never pushed us back out once we were inside it. Combined with
+      # the unarmed errand walking to the centre, we arrived in the middle early
+      # and nothing ever moved us out.
+      #
+      # Measured on 60 paired hosted episodes: we sat at 0.32-0.34 of the ring
+      # radius for the WHOLE episode, flat, while all four leading policies held
+      # 0.55-0.66 and drifted to 0.71-0.88 late as the ring closed on them. The
+      # middle is where the loot cluster is and therefore where everyone fights;
+      # 90% of our deaths are gunfire, the highest rate in that comparison, and
+      # our mean life is 48.5s against a field mean of 76.4s.
+      #
+      # So the band now has BOTH edges. Too far out, come in; too far in, go
+      # back out and let the ring do the work of closing the game. The deadband
+      # keeps us from oscillating across the boundary every frame.
+      if d >= holdR * (1.0 - RingBandSlack) and d <= holdR * (1.0 + RingBandSlack):
+        return                           # inside the band; leave the core's feet
       target = centre + (me - centre) * (holdR / max(d, 1.0))
   let steer = bot.navSteer(client, me, target)
   if steer.len() < 1e-6:
@@ -15488,6 +15699,16 @@ proc runBot(url: string) =
           stderr.writeLine "CGPROBE frames=" & $cgFrames &
             " coShieldCan=" & $cgCoShieldCan & " coNadeCan=" & $cgCoNadeCan &
             " shieldGrabFire=" & $cgShieldGrabFire
+        when defined(healprobe):
+          stderr.writeLine "HEALPROBE slot=" & $bot.slot &
+            " aliveFrames=" & $hpAliveFrames &
+            " belowHalfFrames=" & $hpBelowHalfFrames &
+            " kitsSeenDistinct=" & $hpKitSeenDistinct &
+            " kitSeenFrames=" & $hpKitSeenFrames &
+            " walkReal=" & $hpWalkReal &
+            " walkPhantom=" & $hpWalkPhantom &
+            " pickups=" & $hpPickups &
+            " pickupAmount=" & $hpPickupAmount
         echo "game over, exiting: ", e.msg
         quit(0)
       echo "connect retry: ", e.msg
