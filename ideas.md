@@ -37,7 +37,8 @@
   command `/bin/baseline`. Uploaded as candidate `andre-battleroyale:v3`,
   policy version `ff38a716-95eb-4bc6-af35-e18e1897c31f`. Exact binary clones
   were uploaded as isolated `andre-trial-2:v1` and `andre-trial-2:v2`.
-- XP id: Pending.
+- XP id: Baseline `xreq_ba1db1dd-c9e2-4fca-b716-05a95c557053`;
+  candidate `xreq_5378d2a7-2120-454f-8f44-ebacc53d6047`.
 - Opponents: At Andre's #12 MMR of 1338.99, the three nearest other players
   are David Greis (`Battle Royale Baseline:v1`, 1332.13), softmaxwell
   (`Picasso:v62`, 1353.03), and NanosaurusX (`nancy-br:v1`, 1426.65).
