@@ -40,9 +40,12 @@
   retains its prior hunter behavior; the candidate reports
   `ffaHunterPursueEqual=true`. Their pursuit, six-HP threshold, 300-pixel
   support rejection, 240-pixel arm detour, and ring settings match. Production
-  and hosted artifact verification are pending. Equal-HP activations are
-  labeled `pursue_equal` in artifact samples.
-- Artifact: Pending production image and upload.
+  image extraction passed the same assertions. Hosted artifact verification is
+  pending. Equal-HP activations are labeled `pursue_equal` in artifact samples.
+- Artifact: Production image `andre-battleroyale:candidate-5`, Linux AMD64,
+  command `/bin/baseline`, digest
+  `sha256:a6c02280b56463e8c6d92c63957ecf4703390aee17ad0353cec72678af5ff463`.
+  Upload is pending.
 - XP id: Pending.
 - Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
