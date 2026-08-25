@@ -47,11 +47,14 @@
   (`sivan-br-ringsurfer:v1`, 1470), and NanosaurusX (`nancy-br:v1`, 1479).
   Both requests pin this exact field, use four agents, rotate seats, and run 10
   hosted episodes.
-- Verdict: Inconclusive after the first clean 10 episodes per side because the
-  dashboard frontier confidence bands overlap. Do not keep from the displayed
-  means. Extending the same field by 20 episodes per side with baseline XP
+- Verdict: Kept. The first clean 10 episodes per side were inconclusive, so the
+  same field was extended by 20 episodes per side with baseline XP
   `xreq_f59f6778-4940-4ceb-8062-cd72b8d56909` and candidate XP
-  `xreq_a334c9cc-21f9-4fec-a992-8a21a4260e1e`.
+  `xreq_a334c9cc-21f9-4fec-a992-8a21a4260e1e`. Across all 30 hosted episodes
+  per side, `tools/compare_xp_scores.nim` found a candidate score improvement
+  of 62.30 with a two-sided 95 percent Welch interval of 13.59 to 111.01 and
+  `p=0.013249`. The interval clears zero, so the candidate is significantly
+  better on the exact frozen field.
 
 ### Bootstrap 0: current example champion
 
