@@ -37,8 +37,12 @@
 - Isolation: Native binary settings passed. `tools/extract_doctrine.nim`
   compared the exact submitted control image at `ffaPassiveBand=0.85` with the
   candidate at `0.6`; their combat, arming, support, detour, and ring settings
-  match. Production and hosted artifact verification are pending.
-- Artifact: Pending production image and upload.
+  match. Production image extraction passed the same assertions. Hosted
+  artifact verification is pending.
+- Artifact: Production image `andre-battleroyale:candidate-6`, Linux AMD64,
+  command `/bin/baseline`, digest
+  `sha256:dc358fc6948f1a4230d48604be1cac341b384277a37337c275fd982601cd1aed`.
+  Upload is pending.
 - XP id: Pending.
 - Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
