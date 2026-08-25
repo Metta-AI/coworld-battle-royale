@@ -36,8 +36,13 @@
 - Isolation: Passed locally. `tools/extract_doctrine.nim` compared the exact
   submitted control at `240.0` with the candidate at `480.0`; both start as
   hunter and their other printed doctrine settings are unchanged. The
-  extractor also asserted the production Docker image. Hosted artifact
-  confirmation is pending.
+  extractor also asserted the production Docker image. Hosted logs confirmed
+  240 in control episode request
+  `ereq_f31facac-f594-400f-aa70-e1c7d405bcdd` and 480 in candidate request
+  `ereq_075eee63-fc5a-4dec-853b-63c759e68c9f`. Their artifacts confirmed the
+  behavior fired: the control stayed unarmed with one gun-trip tick, while the
+  candidate reached armed fraction `0.1474` through six trips and 107 gun-trip
+  ticks. This diagnostic is not used as score.
 - Artifact: Production image `andre-battleroyale:candidate-4`, Linux AMD64,
   command `/bin/baseline`, digest
   `sha256:a07a81f930209baa1d0e30683a5bdb0f31bec3c88bdccabebf7a1ccefbd67ade`.
