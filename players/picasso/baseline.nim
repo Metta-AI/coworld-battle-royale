@@ -78,6 +78,11 @@ when defined(ringProbe):
   var rpOutside = 0
   var rpHold = 0
 
+when defined(hpprobe):
+  var hpFrames = 0
+  var hpOldFires = 0
+  var hpNewFires = 0
+
 when defined(tgtprobe):
   var tpFrames = 0
 
@@ -1023,6 +1028,11 @@ const
                               # stated, deterministic, and never fogged, and
                               # at its floor the survivors are in a small
                               # circle together by construction.
+  CriticalHpFrac = 1.0 / 3.0  # "one hit from death" as a FRACTION. Exactly
+                              # reproduces the old `hp == 1` of 3, and matches
+                              # the bucket boundary selfHp already uses for
+                              # our own side, so self and enemy stay on the
+                              # same calibration.
   RingHoldFrac = 0.55         # out of contact, station at this fraction of the
                               # safe radius: inside the band the ring is about
                               # to take, without joining the crowd at dead
@@ -2599,6 +2609,11 @@ type
                               # purpose: Nim zero-inits, and 0 must not alias "red".
     facingRight: bool
     hp: int                   # from the overhead pip bar; 0 = not read
+    hpFrac: float             # (hp+shield)/maxHp, 1.0 when unread. THE gate
+                              # every wounded test should use: `hp` is
+                              # ABSOLUTE, and this tree's wounded idioms were
+                              # written when absolute and fractional were the
+                              # same thing because max hp was 3.
     aimBrads: int             # gun bearing read from the aim-dot line; -1 unknown
     hasArc: bool              # carrying a plasma arc ("plasma arc carried" over
                               # the head) => gun DISABLED, a 136px cone specialist
@@ -2617,6 +2632,7 @@ type
                               # difference between a duel and a three-way melee.
     facingRight: bool
     hp: int                   # last observed hit points; 0 = never read
+    hpFrac: float             # last observed fraction of max; 1.0 = unread
     aimBrads: int             # last observed gun bearing (aim dots); -1 unknown
     hasArc: bool              # last observed plasma-arc possession (disarmed)
     hasShield: bool           # last observed shield possession (6-hp tank, slow fire)
@@ -6793,7 +6809,8 @@ proc actorsFor(client: ProtocolClient, color: string,
         if rot >= 0:
           ab = rotBrads(rot)
       result.add(Actor(pos: client.mapPos(o), facingRight: facingRight,
-        colorId: int8(TeamColorNames.find(color) + 1), aimBrads: ab))
+        colorId: int8(TeamColorNames.find(color) + 1), aimBrads: ab,
+        hpFrac: 1.0))
   # ⚠️ PREFIX-parse the pip bar (v47 audit): the engine label became
   # "hp <n>/<maxHp>[ shield <s>]" on 2026-08-08 — per-seat denominators
   # (armor 4, handicap 2) and a shield tail. The old exact match on
@@ -6801,9 +6818,18 @@ proc actorsFor(client: ProtocolClient, color: string,
   # enemies (the 6hp tanks we most need to read) and armored/handicapped
   # seats were hp-invisible all episode, silently. Parse by prefix instead.
   for (o, lbl) in client.spriteObjectsWithLabelPrefix("hp "):
-    let hp = parseHpLabel(lbl)
+    let
+      hp = parseHpLabel(lbl)
+      (rawHp, maxHp, shield) = parseHpParts(lbl)
     if hp <= 0:
       continue
+    # The denominator is stated on the wire every frame. `selfHp` already
+    # rescales by it for OUR side; nothing ever did for anyone else's, so on a
+    # 20-hp board every "wounded" test below was reading an absolute number
+    # against a 3-point scale and silently never firing.
+    let frac =
+      if maxHp > 0: clamp(float(rawHp + shield) / float(maxHp), 0.0, 1.0)
+      else: 1.0
     let p = client.mapPos(o)
     var best = -1
     var bestD = HpPipRadius
@@ -6814,6 +6840,7 @@ proc actorsFor(client: ProtocolClient, color: string,
         best = i
     if best >= 0:
       result[best].hp = hp
+      result[best].hpFrac = frac
   # Plasma-arc possession: a carrier renders a "plasma arc carried" marker ABOVE
   # its head (higher than the hp pip). The label carries NO color, so — like the
   # hp pip — attribute it to the nearest actor of THIS color (this proc is called
@@ -8162,6 +8189,7 @@ proc updateTracks(bot: Bot, tracks: var seq[Track], seen: seq[Actor]) =
       tracks[best].lastSeen = bot.tick
       if a.hp > 0:
         tracks[best].hp = a.hp
+        tracks[best].hpFrac = a.hpFrac
       tracks[best].aimBrads = a.aimBrads   # -1 when this frame's dots unreadable
       if a.hasArc: tracks[best].hasArc = true  # arc is permanent-for-life: sticky
       # Shield tracks the live marker (a carrier can burn it down / it drops on
@@ -8172,6 +8200,7 @@ proc updateTracks(bot: Bot, tracks: var seq[Track], seen: seq[Actor]) =
     else:
       tracks.add(Track(
         pos: a.pos, lastSeen: bot.tick, facingRight: a.facingRight, hp: a.hp,
+        hpFrac: a.hpFrac,
         colorId: a.colorId,
         aimBrads: a.aimBrads, hasArc: a.hasArc, hasShield: a.hasShield,
         sightings: 1))
@@ -10115,7 +10144,7 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
           # it as more than one gun so we don't press a duel we can't finish. Else
           # weight by hp fraction (a 1-hp enemy is a trigger-pull from gone).
           enemyGuns += (if t.hasShield: ShieldGunWeight
-                        elif t.hp in 1 ..< MaxHp: t.hp.float / MaxHp.float
+                        elif t.hpFrac < 1.0: t.hpFrac
                         else: 1.0)
       for t in bot.mates:
         if bot.tick - t.lastSeen <= LocalFreshTicks and
@@ -10159,7 +10188,7 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
             if bot.tick - t.lastSeen <= LocalFreshTicks and
                 dist(t.pos, me) <= RetreatRadius:
               tgFriend += (if t.hasShield: ShieldGunWeight
-                           elif t.hp in 1 ..< MaxHp: t.hp.float / MaxHp.float
+                           elif t.hpFrac < 1.0: t.hpFrac
                            else: 1.0)
         # B — CONTEST. How many DISTINCT rival colours are fresh inside the same
         # radius the guns were tallied over? >= TradeContestMinTeams means the
@@ -10303,7 +10332,7 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       dist(me, stealTarget) > GrabCommitRing):
     banking = true
     for t in bot.enemies:
-      if bot.tick - t.lastSeen <= TempoFreshTicks and t.hp == 1 and
+      if bot.tick - t.lastSeen <= TempoFreshTicks and t.hpFrac <= CriticalHpFrac and
           dist(t.pos, me) <= FinishRange and
           client.pixelRayClear(me, t.pos):
         banking = false                    # finish-window: convert, don't bank
@@ -12113,7 +12142,7 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
     # flips its focus credit into a debit so it spreads to an uncovered live enemy
     # — the priority form keeps it a nudge (a lone saturated target in range is
     # still engaged), and CommitBonus (400 > 220) still holds a gun in the kill.
-    let satNeed = (if t.hasShield: 4 elif t.hp == 1: 1 else: 2)
+    let satNeed = (if t.hasShield: 4 elif t.hpFrac <= CriticalHpFrac: 1 else: 2)
     # ⭐ FINISH THE KILL (Bug 1): is THIS candidate the target we're already committed to?
     # A committed target that we're one hit from killing (or whose gun is on us) must NOT be
     # abandoned by satCap's spread-debit — satCap redirects a FREE gun, never the one closing
@@ -12159,8 +12188,17 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       anySaturated = true
       prio += SatCapPenalty
     else:
-      if t.hp in 1 ..< MaxHp:
-        pull += float(MaxHp - t.hp) * HpFocusBonus
+      when defined(hpprobe):
+        inc hpFrames
+        if t.hp in 1 ..< MaxHp: inc hpOldFires      # the pre-fix definition
+        if t.hpFrac < 1.0: inc hpNewFires           # the fraction-based one
+        if hpFrames <= 3 or hpFrames mod 300 == 0:
+          stderr.writeLine("HPPROBE frames=" & $hpFrames &
+            " oldWounded=" & $hpOldFires & " newWounded=" & $hpNewFires)
+      if t.hpFrac < 1.0:
+        # Reduces to the old 120/60px at 1 and 2 of 3, and generalises instead
+        # of dying the moment max hp stops being 3.
+        pull += (1.0 - t.hpFrac) * float(MaxHp) * HpFocusBonus
       if mateTargeted[i]:
         # ⭐⭐ PLAN-LAYER FOCUS FIRE: in the opening clash / man-advantage window, the
         # wave must CONCENTRATE fire to remove enemy guns fast and win the trade (the
@@ -12226,7 +12264,7 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       if aimScale > 0.0:
         let closeFrac = clamp(1.0 - d / DangerFalloff, 0.0, 1.0)
         var danger = (AimThreatBonus + DangerCloseBonus * closeFrac) * aimScale
-        if t.hp in 1 ..< MaxHp:
+        if t.hpFrac < 1.0:
           danger += DangerWoundedBonus * aimScale
         pull += danger                     # capped as part of the TOTAL pull below
     elif lvC(74, bot.tune.threatFacingBonus):
@@ -14229,7 +14267,7 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       # — CLOSE the distance while jinking, so the moment our gun is live we are
       # on top of it and finish it in ITS dead time. Only inside a band where
       # closing actually pays; a facing, full-hp gun still gets the duck.
-      ((tp.hp in 1 ..< MaxHp) or not facingMe) and
+      ((tp.hpFrac < 1.0) or not facingMe) and
       dist(tp.pos, me) <= TempoPressRange))
     if pressWorth:
       desiredAim = bradsOf(tp.pos - me)      # pre-lay for the returning shot
