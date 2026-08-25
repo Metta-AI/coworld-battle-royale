@@ -40,8 +40,9 @@
   `upgrade_trip` and `move_upgrade` for isolation.
 - Isolation: `nim check` and the doctrine source-contract suite pass.
   Production startup extraction matches every submitted hunter setting, and
-  the production binary contains both upgrade telemetry markers. Hosted branch
-  verification is pending.
+  the production binary contains both upgrade telemetry markers. All 10
+  initial candidate artifacts were valid and recorded 38 `upgrade_trip` and
+  `move_upgrade` ticks. The branch fired; diagnostics are not score.
 - Artifact: `andre-battleroyale:candidate-9`, Linux AMD64 image
   `sha256:1b1d831c9fd60e597592309afc61a648720fe44f16a4197925e29581bee76fe4`.
   Uploaded unsubmitted as `andre-battleroyale:v10`; exact control and
@@ -49,12 +50,14 @@
   `andre-trial-9:v2`.
 - XP id: Baseline `xreq_835e6afc-41ed-4a3f-bd2e-467c47f8d4e0` and
   candidate `xreq_5897dfe3-eee9-48f3-b1dd-7d2a95d19e87`, 10 hosted episodes
-  per arm.
+  per arm. A same-field 20-episode extension per arm is pending.
 - Opponents: Andre remains #9 at 1466.38. The frozen nearest other players at
   launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
   (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Pending hosted XP significance.
+- Verdict: Initial 10 per arm is inconclusive. Baseline mean 174.7000,
+  candidate mean 192.0000, difference 17.3000, two-sided 95 percent Welch CI
+  [-37.3482, 71.9482], p=0.510652. Do not keep; extend to 30 per arm.
 
 ### Trial 8: vulnerable hunter target selection
 
