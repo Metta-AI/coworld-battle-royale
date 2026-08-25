@@ -12,6 +12,7 @@
 - Switch only the FFA doctrine from legacy to hunter.
 - Add only a conservative hunter ring-safety margin.
 - Allow only safe hunter pursuit against equal-HP opponents.
+- Move only the hunter hold band deeper inside the safe radius.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
@@ -21,6 +22,29 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 6: interior hunter hold band
+
+- Idea: The exact 30 submitted-hunter artifacts contain 69,232 passive-hold
+  ticks and 21,343 ring-retreat ticks. Sampled reasons contain 6,082 holds and
+  1,767 ring retreats. Holding at 85 percent of the continuously shrinking
+  safe radius spends too much time crossing the fixed 80-pixel alarm and
+  retreating. A 60-percent band should reduce that churn and keep the hunter
+  closer to contact without changing its ring alarm.
+- Change: Set only `FfaPassiveBandDefault` from `0.85` to `0.60`. Under the
+  submitted hunter doctrine this is its normal hold radius. Arming, pursuit,
+  firing, late-close, ring alarm, and all other settings are unchanged.
+- Isolation: Native binary settings passed. `tools/extract_doctrine.nim`
+  compared the exact submitted control image at `ffaPassiveBand=0.85` with the
+  candidate at `0.6`; their combat, arming, support, detour, and ring settings
+  match. Production and hosted artifact verification are pending.
+- Artifact: Pending production image and upload.
+- XP id: Pending.
+- Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
+  players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
+  (`nancy-br:v1`, 1355.24), and David Greis
+  (`Battle Royale Baseline:v1`, 1330.31).
+- Verdict: Pending hosted XP significance.
 
 ### Trial 5: pursue equal-HP solo opponents
 

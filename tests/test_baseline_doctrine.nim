@@ -32,6 +32,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN")
     check baseline.contains("CTF_BOT_FFA_HUNTER_RING_MARGIN")
     check baseline.contains("FfaHunterArmDefault = true")
+    check baseline.contains("FfaPassiveBandDefault = 0.60")
     check baseline.contains("FfaHunterFireRangeDefault = true")
     check baseline.contains("FfaHunterPursuitDefault = true")
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
