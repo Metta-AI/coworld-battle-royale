@@ -1,0 +1,38 @@
+{
+  "idempotency_key": "andre-br-trial6-v2-extension-20260825",
+  "target": {
+    "league_id": "league_b88a269b-0de7-4723-b1c7-06dab50fe61d",
+    "variant_id": "br-12"
+  },
+  "game_config_overrides": {
+    "num_agents": 4
+  },
+  "roster": [
+    {
+      "player": {
+        "policy_ref": "andre-trial-6:v2"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "Picasso:v62"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "nancy-br:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "Battle Royale Baseline:v1"
+      },
+      "slot": -1
+    }
+  ],
+  "num_episodes": 20,
+  "notes": "Trial 6 candidate extension: 60 percent hunter hold band, frozen field."
+}

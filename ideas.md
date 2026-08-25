@@ -37,8 +37,9 @@
 - Isolation: Native binary settings passed. `tools/extract_doctrine.nim`
   compared the exact submitted control image at `ffaPassiveBand=0.85` with the
   candidate at `0.6`; their combat, arming, support, detour, and ring settings
-  match. Production image extraction passed the same assertions. Hosted
-  artifact verification is pending.
+  match. Production image extraction and a hosted startup log passed the same
+  assertions. All 10 candidate artifacts exercised the navigation change with
+  2,484 sampled `0.600` band rows. This diagnostic is not used as score.
 - Artifact: Production image `andre-battleroyale:candidate-6`, Linux AMD64,
   command `/bin/baseline`, digest
   `sha256:dc358fc6948f1a4230d48604be1cac341b384277a37337c275fd982601cd1aed`.
@@ -50,7 +51,11 @@
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
   (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Pending hosted XP significance.
+- Verdict: Pending extension. The first 10 hosted episodes per side were
+  inconclusive. Candidate minus baseline was `5.9000`, with a two-sided 95
+  percent Welch interval `[-70.6125, 82.4125]` and `p=0.869076`. Twenty more
+  episodes per side on the same frozen field are queued before a keep or revert
+  decision.
 
 ### Trial 5: pursue equal-HP solo opponents
 
