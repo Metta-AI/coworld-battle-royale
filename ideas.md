@@ -46,7 +46,9 @@
   Uploaded as unsubmitted candidate `andre-battleroyale:v7`; exact binary
   clones are `andre-trial-6:v1` and `andre-trial-6:v2`.
 - XP id: Baseline `xreq_ecd96c93-4e50-48dc-ba1f-941ebf5b05c4`;
-  candidate `xreq_4e9c91e4-86e3-48e3-b4a8-8cddb24c16f6`.
+  candidate `xreq_4e9c91e4-86e3-48e3-b4a8-8cddb24c16f6`. The 20-episode
+  extension uses baseline `xreq_eb7b47cc-e364-4da9-84f4-1f60a906a2e0` and
+  candidate `xreq_2a1c6c2e-f57f-4cd2-9ce3-832dd68bb16e`.
 - Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
@@ -54,8 +56,8 @@
 - Verdict: Pending extension. The first 10 hosted episodes per side were
   inconclusive. Candidate minus baseline was `5.9000`, with a two-sided 95
   percent Welch interval `[-70.6125, 82.4125]` and `p=0.869076`. Twenty more
-  episodes per side on the same frozen field are queued before a keep or revert
-  decision.
+  episodes per side on the same frozen field are running before a keep or
+  revert decision.
 
 ### Trial 5: pursue equal-HP solo opponents
 
