@@ -1012,6 +1012,17 @@ const
                               # hit (2s at FfaTicksPerSec=24) — long enough to fight
                               # through the exchange that just started; a live fight
                               # keeps re-stamping lastDamagedTick and re-arming it.
+                              #
+                              # The obvious trigger is a headcount, and it is
+                              # not available: the `ALIVE <n>` header is a
+                              # SPECTATOR label, absent from the player stream
+                              # — measured, 0 parses across a full match. (The
+                              # reference bot scans for it too, so its own
+                              # advertised endgame never fires either.)
+                              # The ring is the better clock anyway: it is
+                              # stated, deterministic, and never fogged, and
+                              # at its floor the survivors are in a small
+                              # circle together by construction.
   RingHoldFrac = 0.55         # out of contact, station at this fraction of the
                               # safe radius: inside the band the ring is about
                               # to take, without joining the crowd at dead
