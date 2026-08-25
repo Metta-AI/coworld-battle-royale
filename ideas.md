@@ -33,8 +33,14 @@
   30-second trip guards.
 - Change: Set only `FfaHunterArmTripMaxDetourRadiusDefault` from `240.0` to
   `480.0`.
-- Isolation: Pending local and hosted artifact confirmation.
-- Artifact: Pending.
+- Isolation: Passed locally. `tools/extract_doctrine.nim` compared the exact
+  submitted control at `240.0` with the candidate at `480.0`; both start as
+  hunter and their other printed doctrine settings are unchanged. The
+  extractor also asserted the production Docker image. Hosted artifact
+  confirmation is pending.
+- Artifact: Production image `andre-battleroyale:candidate-4`, Linux AMD64,
+  command `/bin/baseline`, digest
+  `sha256:a07a81f930209baa1d0e30683a5bdb0f31bec3c88bdccabebf7a1ccefbd67ade`.
 - XP id: Pending.
 - Opponents: Pending launch-time nearest-player freeze.
 - Verdict: Pending hosted XP significance.
