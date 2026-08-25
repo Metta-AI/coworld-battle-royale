@@ -3128,22 +3128,16 @@ proc poolCtfMap*(
   let n = MapPoolSeeds.len
   generateCtfMap(MapPoolSeeds[((index mod n) + n) mod n], overrides)
 
-var
-  brCanonicalReference: CtfMap
-  brCanonicalReferenceReady = false
-
 proc brPoolCtfMap*(index: int, overrides: MapGenOverrides): CtfMap =
   ## One battle-royale pool map; the index wraps around the pool and always
   ## uses the seed's first attempt before stamping the canonical center.
   let
     n = BrMapPoolSeeds.len
     seed = BrMapPoolSeeds[((index mod n) + n) mod n]
-  if not brCanonicalReferenceReady:
-    brCanonicalReference =
+    canonicalReference =
       generateMapAttempt(BrCanonicalCenterSeed, brCanonicalOverrides())
-    brCanonicalReferenceReady = true
   result = generateMapAttempt(seed, overrides)
-  result.stampBrCanonicalCenter(brCanonicalReference)
+  result.stampBrCanonicalCenter(canonicalReference)
   doAssert result.genSeed == seed
 
 proc shapeSpecNode(shape: ArenaShape): JsonNode =

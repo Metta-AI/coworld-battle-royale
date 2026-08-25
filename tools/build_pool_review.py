@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Builds docs/pool-review.html: a self-contained, zoomable review page for
-the curated terrain pool. Reads the PNGs + manifest.json produced by
-tools/render_map_pool.nim and inlines everything (base64), so the page works
-from a file:// open or any static host.
+"""Builds a self-contained, zoomable review page for a curated terrain pool.
+Reads the PNGs + manifest.json produced by tools/render_map_pool.nim and inlines
+everything (base64), so the page works from a file:// open or any static host.
 
 Usage:
   nim c -r tools/gen_map_pool.nim            # (only when re-curating seeds)
   nim c -r tools/render_map_pool.nim pool-preview
   python3 tools/build_pool_review.py [renderDir] [outHtml]
+  python3 tools/build_pool_review.py brpool-preview docs/br-pool-review.html br
 
-Defaults: renderDir=pool-preview, outHtml=docs/pool-review.html.
+Defaults: renderDir=pool-preview, outHtml=docs/pool-review.html, kind=ctf.
 """
 import base64
 import json
@@ -19,6 +19,10 @@ import sys
 repo = pathlib.Path(__file__).resolve().parent.parent
 render_dir = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else repo / "pool-preview"
 out_path = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else repo / "docs" / "pool-review.html"
+kind = sys.argv[3] if len(sys.argv) > 3 else "ctf"
+if kind not in ("ctf", "br"):
+    raise SystemExit(f"unknown review kind: {kind}")
+is_br = kind == "br"
 
 manifest = json.loads((render_dir / "manifest.json").read_text())
 SIZE_NAMES = {1050: "small", 1235: "standard", 1606: "large",
@@ -55,12 +59,34 @@ for m in manifest:
     counts[m["symmetry"]] += 1
     counts[m.get("endzone", "column")] += 1
 
+if is_br:
+    page_title = "Battle-royale Rotation Pool"
+    heading = "Battle-royale rotation pool"
+    map_path = "brpool"
+    summary = (
+        f"{len(manifest)} maps &middot; huge &middot; "
+        f"{counts['mirror']} mirror / {counts['rot180']} rot180 &middot; "
+        f"{counts['disc']} disc endzones"
+    )
+else:
+    page_title = "CTF Terrain Pool"
+    heading = "CTF terrain pool"
+    map_path = "pool"
+    summary = (
+        f"{len(manifest)} maps &middot; {counts['small']} small / "
+        f"{counts['standard']} standard / {counts['large']} large / "
+        f"{counts['huge']} huge / {counts['giant']} giant &middot; "
+        f"{counts['mirror']} mirror / {counts['rot180']} rot180 &middot; "
+        f"{counts['column']} column / {counts['disc']} disc / "
+        f"{counts['square']} square endzones"
+    )
+
 html = f'''<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CTF Terrain Pool</title>
+<title>{page_title}</title>
 <style>
 :root {{
   --ground:#1a1410; --panel:#241c15; --line:#3a2e21;
@@ -103,8 +129,8 @@ h1 .gv {{ color:var(--glass); }}
 <body>
 <div class="wrap">
 <header class="top"><div>
-  <h1>CTF terrain pool <span class="gv">config-gated (mapPath "pool")</span></h1>
-  <span class="sub">{len(manifest)} maps &middot; {counts['small']} small / {counts['standard']} standard / {counts['large']} large / {counts['huge']} huge / {counts['giant']} giant &middot; {counts['mirror']} mirror / {counts['rot180']} rot180 &middot; {counts['column']} column / {counts['disc']} disc / {counts['square']} square endzones</span>
+  <h1>{heading} <span class="gv">config-gated (mapPath "{map_path}")</span></h1>
+  <span class="sub">{summary}</span>
   <span class="filters">
     <button data-f="size:small" aria-pressed="false">small</button>
     <button data-f="size:standard" aria-pressed="false">standard</button>
