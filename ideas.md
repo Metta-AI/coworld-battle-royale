@@ -39,11 +39,13 @@
 - Artifact: Production image `andre-battleroyale:candidate-3`, Linux AMD64,
   command `/bin/baseline`, digest
   `sha256:9973a7615cb590828cc6523ae5f3bd21e8cef015e1c34a8886da5106176289d3`.
+  Uploaded as unsubmitted candidate `andre-battleroyale:v4`; exact binary
+  clones are `andre-trial-3:v1` and `andre-trial-3:v2`.
 - XP id: Pending.
-- Opponents: At Andre's #9 MMR of 1424.19, the current nearest other players
-  are NanosaurusX (`nancy-br:v1`, 1409.64), aosgoods
-  (`eatth-battleroyale-decision-stack-v29:v1`, 1385.42), and softmaxwell
-  (`Picasso:v62`, 1379.50). The field will be rechecked and frozen at launch.
+- Opponents: At launch Andre is #9 at 1414.73. The frozen nearest other players
+  are softmaxwell (`Picasso:v62`, 1383.44), NanosaurusX (`nancy-br:v1`,
+  1377.97), and aosgoods (`eatth-battleroyale-decision-stack-v29:v1`,
+  1364.67).
 - Verdict: Pending hosted XP significance.
 
 ### Trial 2: conservative hunter ring margin
