@@ -44,7 +44,9 @@
   verification is pending.
 - Artifact: `andre-battleroyale:candidate-9`, Linux AMD64 image
   `sha256:1b1d831c9fd60e597592309afc61a648720fe44f16a4197925e29581bee76fe4`.
-  Upload is pending.
+  Uploaded unsubmitted as `andre-battleroyale:v10`; exact control and
+  candidate images were uploaded as `andre-trial-9:v1` and
+  `andre-trial-9:v2`.
 - XP id: Pending.
 - Opponents: Andre remains #9 at 1466.38. The frozen nearest other players at
   launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
