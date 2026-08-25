@@ -1,5 +1,5 @@
 import
-  std/[json, math, os, strutils]
+  std/[json, math, os, osproc, streams, strutils]
 
 const
   BetaEpsilon = 3.0e-14
@@ -97,8 +97,40 @@ proc criticalT(degrees: float): float
       high = middle
   result = (low + high) / 2.0
 
+proc loadEpisodes(source: string): JsonNode {.raises: [
+  OSError,
+  IOError,
+  ValueError,
+  BattleRoyaleError
+].} =
+  ## Loads episode JSON from a file or a hosted XP request.
+  if not source.startsWith("xreq_"):
+    return parseFile(source)
+  let process = startProcess(
+    "uv",
+    args = [
+      "run",
+      "coworld",
+      "xp-request",
+      "episodes",
+      source,
+      "--json"
+    ],
+    options = {poUsePath}
+  )
+  defer:
+    process.close()
+  let output = process.outputStream.readAll()
+  let exitCode = process.waitForExit()
+  if exitCode != 0:
+    raise newException(
+      BattleRoyaleError,
+      "hosted XP episode request failed: " & source
+    )
+  result = parseJson(output)
+
 proc scoresFor(
-  jsonPaths: string,
+  sources: string,
   policyLabel: string
 ): seq[float] {.raises: [
   OSError,
@@ -106,13 +138,13 @@ proc scoresFor(
   ValueError,
   BattleRoyaleError
 ].} =
-  ## Extracts one policy's scores from hosted XP episode JSON files.
-  for jsonPath in jsonPaths.split(','):
-    let episodes = parseFile(jsonPath)
+  ## Extracts one policy's scores from hosted XP episode sources.
+  for source in sources.split(','):
+    let episodes = loadEpisodes(source)
     if episodes.kind != JArray:
       raise newException(
         BattleRoyaleError,
-        "hosted XP episode JSON is not an array: " & jsonPath
+        "hosted XP episode JSON is not an array: " & source
       )
     for episode in episodes:
       var position = -1
@@ -207,8 +239,8 @@ proc compare(
 if paramCount() != 4:
   raise newException(
     BattleRoyaleError,
-    "usage: compare_xp_scores BASELINE_LABEL BASELINE_JSONS " &
-    "CANDIDATE_LABEL CANDIDATE_JSONS"
+    "usage: compare_xp_scores BASELINE_LABEL BASELINE_SOURCES " &
+    "CANDIDATE_LABEL CANDIDATE_SOURCES"
   )
 
 let
