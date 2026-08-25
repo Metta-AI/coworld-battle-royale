@@ -33,7 +33,13 @@
 - Artifact: `andre-battleroyale:v2`, policy version
   `6e71ddba-557d-4f19-861e-3add5441f0d9`.
 - XP id: Baseline `xreq_dcc0888b-4175-4fbd-9a17-1dd04dcc48d5`;
-  candidate `xreq_8a17f619-bfc0-432c-a4da-4df7fbb5af4d`.
+  candidate `xreq_8a17f619-bfc0-432c-a4da-4df7fbb5af4d`. Those names also
+  appeared in unrelated requests, so their aggregate dashboard bands are not
+  a valid verdict. Exact binary clones were uploaded as isolated
+  `andre-trial-1:v1` (`7c854c18-a236-4c02-96be-c473e75e6aba`) and
+  `andre-trial-1:v2` (`43769fa5-2407-46d3-a811-54c16968a206`). Their clean
+  baseline XP is `xreq_0cdfdd6c-a6a3-4b83-ae56-bf5bd0b6cbc0`; their clean
+  candidate XP is `xreq_add55551-afc6-4947-b615-ba887b99b0da`.
 - Opponents: At Andre's #11 MMR of 1435, the three nearest other players were
   David Greis (`Battle Royale Baseline:v1`, 1441), sivannn
   (`sivan-br-ringsurfer:v1`, 1470), and NanosaurusX (`nancy-br:v1`, 1479).
