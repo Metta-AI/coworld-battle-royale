@@ -87,15 +87,27 @@ artifact. Regenerate them when inspecting a specific entry, then rebuild the
 single committed contact-sheet review page:
 
 ```bash
-nim c -r -d:release tools/gen_map_pool.nim 3001
 nim c -r -d:release tools/render_map_pool.nim --br brpool-preview
 python3 tools/build_pool_review.py brpool-preview docs/br-pool-review.html br
 ```
 
 `brpool-preview/` contains the full-resolution per-entry PNGs and manifest and
-is gitignored; the committed artifact is the downsampled 16×16 contact sheet
-in [br-pool-review.html](br-pool-review.html). The CTF pool review remains at
+is gitignored; the committed artifact is the direct-rendered, indexed-color
+16×16 contact sheet in [br-pool-review.html](br-pool-review.html). The
+renderer also writes local direct-rendered thumbnail inputs beside the
+full-resolution images. The CTF pool review remains at
 [pool-review.html](pool-review.html).
+
+Only when re-curating the pool's seed list, run the scan first:
+
+```bash
+nim c -r -d:release tools/gen_map_pool.nim 3001
+```
+
+Each BR manifest entry includes `centerChecksum`, an MD5 over the in-disc
+center data at `BrCenterKeepOut` (wall mask, trench mask, puddle mask, and
+in-disc med-kit candidate coordinates). All 256 entries must carry the same
+value; the committed review page surfaces that shared value.
 
 Activation is deliberately **not applied in this PR**. The exact future flip
 is:

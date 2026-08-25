@@ -111,6 +111,16 @@ when isMainModule:
       "medKitCandidates": candidates,
     }
     if br:
+      let
+        thumbnailOptions = MapRenderOptions(
+          maxDimension: 320,
+          overlays: {overlayProtected, overlayPickups},
+          pickupKinds: {pickupMedKitActive, pickupMedKitCandidate},
+        )
+        thumbnailName = &"thumb-{i:02}-seed-{seed}.png"
+      renderMap(gameMap, thumbnailOptions).image.writeFile(
+        outDir / thumbnailName)
+      entry["thumbnail"] = %thumbnailName
       entry["centerChecksum"] = %centerChecksum(gameMap)
     manifest.add entry
     echo "rendered ", name

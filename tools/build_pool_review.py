@@ -31,7 +31,7 @@ SIZE_NAMES = {1050: "small", 1235: "standard", 1606: "large",
 
 if is_br:
     try:
-        from PIL import Image
+        from PIL import Image, ImageDraw, ImageFont
     except ModuleNotFoundError as exc:
         raise SystemExit(
             "BR contact-sheet generation requires Python Pillow"
@@ -47,22 +47,44 @@ if is_br:
         )
     center_checksum = checksums.pop()
 
-    cell_width, cell_height = 160, 90
+    cell_width, cell_height = 320, 180
     sheet = Image.new("RGB", (cell_width * 16, cell_height * 16),
                       (15, 11, 8))
+    try:
+        label_font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 16)
+    except OSError:
+        label_font = ImageFont.load_default()
+    marker_color = (255, 40, 220)
+    label_color = (255, 255, 255)
+    label_backing = (20, 12, 8)
     for m in manifest:
-        image = Image.open(render_dir / m["file"]).convert("RGB")
-        image.thumbnail((cell_width - 2, cell_height - 2),
-                        Image.Resampling.LANCZOS)
+        image = Image.open(render_dir / m["thumbnail"]).convert("RGB")
         x = (m["index"] % 16) * cell_width
         y = (m["index"] // 16) * cell_height
-        sheet.paste(
-            image,
-            (x + (cell_width - image.width) // 2,
-             y + (cell_height - image.height) // 2),
+        sheet.paste(image, (x, y))
+        draw = ImageDraw.Draw(sheet)
+        center_x = x + round((m["width"] // 2) * image.width / m["width"])
+        center_y = y + round((m["height"] // 2) * image.height / m["height"])
+        radius = round(260 * image.width / m["width"])
+        draw.ellipse(
+            (center_x - radius, center_y - radius,
+             center_x + radius, center_y + radius),
+            outline=marker_color, width=3,
         )
+        label = f'#{m["index"]:02d} {m["seed"]}'
+        bounds = draw.textbbox((0, 0), label, font=label_font)
+        draw.rectangle(
+            (x + 4, y + 4, x + 8 + bounds[2], y + 8 + bounds[3]),
+            fill=label_backing,
+        )
+        draw.text((x + 6, y + 6), label, fill=label_color, font=label_font)
+
+    raw_png = io.BytesIO()
+    sheet.save(raw_png, format="PNG", optimize=True)
+    raw_png_bytes = len(raw_png.getvalue())
     sheet = sheet.quantize(
-        colors=64,
+        colors=16,
         method=Image.Quantize.MEDIANCUT,
         dither=Image.Dither.NONE,
     )
@@ -70,10 +92,6 @@ if is_br:
     sheet.save(png, format="PNG", optimize=True)
     encoded_sheet = base64.b64encode(png.getvalue()).decode()
 
-    labels = "".join(
-        f'<span class="cell-label">#{m["index"]:02d} · {m["seed"]}</span>'
-        for m in manifest
-    )
     legend = "".join(
         f'<span>#{m["index"]:03d} {m["seed"]}</span>' for m in manifest
     )
@@ -100,12 +118,7 @@ h1 .gv {{ color:var(--glass); }}
 .sub {{ display:block; margin-top:.25rem; }}
 .note {{ margin:1rem 0; }}
 .sheet-wrap {{ position:relative; background:#0f0b08; overflow:auto; }}
-.sheet {{ display:block; width:100%; height:auto; image-rendering:auto; }}
-.cell-labels {{ position:absolute; inset:0; display:grid;
-  grid-template-columns:repeat(16,1fr); grid-template-rows:repeat(16,1fr);
-  pointer-events:none; }}
-.cell-label {{ padding:2px 3px; color:#fff; font:clamp(6px,.72vw,11px)/1.1 ui-monospace,Menlo,monospace;
-  font-weight:700; text-shadow:0 1px 2px #000, 1px 0 2px #000; white-space:nowrap; }}
+.sheet {{ display:block; width:100%; height:auto; image-rendering:pixelated; }}
 .legend {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
   gap:.15rem .8rem; margin-top:1rem; }}
 </style>
@@ -118,14 +131,13 @@ h1 .gv {{ color:var(--glass); }}
   </h1>
   <span class="sub">256 maps · huge · 256 mirror / 0 rot180 · 256 disc endzones</span>
 </header>
-<p class="note">One 16×16 contact sheet of downsampled map thumbnails, ordered
+<p class="note">One 16×16 contact sheet of direct-rendered map thumbnails, ordered
 by pool index. Shared center checksum: <b>{center_checksum}</b> · all 256
 entries match. Full-resolution per-entry renders are local-only; see MAPKIT.md
 for the investigation command.</p>
 <div class="sheet-wrap">
   <img class="sheet" src="data:image/png;base64,{encoded_sheet}"
     alt="16 by 16 battle-royale map contact sheet">
-  <div class="cell-labels">{labels}</div>
 </div>
 <div class="legend">{legend}</div>
 </div>
@@ -134,7 +146,9 @@ for the investigation command.</p>
 '''
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html)
-    print(f"wrote {out_path} ({len(html)} bytes, {len(manifest)} maps)")
+    print(
+        f"sheet raw={raw_png_bytes} bytes, indexed16={len(png.getvalue())} bytes")
+    print(f"wrote {out_path} ({len(html.encode())} bytes, {len(manifest)} maps)")
     raise SystemExit(0)
 
 cards = []
