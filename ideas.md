@@ -49,15 +49,17 @@
   Uploaded as unsubmitted candidate `andre-battleroyale:v5`; exact binary
   clones are `andre-trial-4:v1` and `andre-trial-4:v2`.
 - XP id: Baseline `xreq_20f9ec0a-b835-4425-8279-e55cc31b5c4c`;
-  candidate `xreq_3a955072-9763-42a7-8412-fc7bbf877ea4`.
+  candidate `xreq_3a955072-9763-42a7-8412-fc7bbf877ea4`. The 20-episode
+  extension uses baseline `xreq_25147606-5ff3-4602-9603-67f7acaefa85` and
+  candidate `xreq_2107680c-82fc-4ed6-a167-835e4fe1458e`.
 - Opponents: At launch Andre is #9 at 1466.38. The frozen nearest other players
   are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX (`nancy-br:v1`,
   1355.24), and David Greis (`Battle Royale Baseline:v1`, 1330.31).
 - Verdict: Pending extension. The first 10 hosted episodes per side were
   inconclusive. Candidate minus baseline was `19.8000`, with a two-sided 95
   percent Welch interval `[-46.0627, 85.6627]` and `p=0.527068`. Twenty more
-  episodes per side on the same frozen field are queued before a keep or revert
-  decision.
+  episodes per side on the same frozen field are running before a keep or
+  revert decision.
 
 ### Trial 3: pact doctrine default
 
