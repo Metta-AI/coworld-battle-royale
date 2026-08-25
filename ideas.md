@@ -21,6 +21,25 @@
 
 ## Trial log
 
+### Trial 3: pact doctrine default
+
+- Idea: Coworld v0.1.13 added the pact doctrine and alliance broadcast cue.
+  Pact retains hunter arming, pursuit, combat, and late-close behavior, but in
+  the opening 35 percent of ring shrink it detects a nearby two-player brawl,
+  focuses the weaker participant, and temporarily avoids targeting the other.
+  That should reduce early two-front fights while preserving hunter behavior
+  when no pact opportunity exists.
+- Change: When `CTF_BOT_FFA_DOCTRINE` is unset, select `FfaPact` instead of
+  `FfaHunter`. No pact or hunter parameter is changed.
+- Isolation: Pending local and hosted log confirmation.
+- Artifact: Pending.
+- XP id: Pending.
+- Opponents: At Andre's #9 MMR of 1424.19, the current nearest other players
+  are NanosaurusX (`nancy-br:v1`, 1409.64), aosgoods
+  (`eatth-battleroyale-decision-stack-v29:v1`, 1385.42), and softmaxwell
+  (`Picasso:v62`, 1379.50). The field will be rechecked and frozen at launch.
+- Verdict: Pending hosted XP significance.
+
 ### Trial 2: conservative hunter ring margin
 
 - Idea: The hunter artifact spent 298 ticks retreating to the safe zone and

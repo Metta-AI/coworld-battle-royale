@@ -8,11 +8,11 @@ suite "baseline FFA doctrine":
     baseline = readFile(RepoRoot / "players" / "baseline" / "baseline.nim")
     demo = readFile(RepoRoot / "tools" / "run_ffa_demo.sh")
 
-  test "unset doctrine defaults to hunter":
+  test "unset doctrine defaults to pact":
     check baseline.count("FfaDoctrine = FfaLegacy") == 1
     check baseline.count("if requestedDoctrine.len == 0: FfaLegacy") == 0
-    check baseline.count("if requestedDoctrine.len == 0: FfaHunter") == 1
-    check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 0
+    check baseline.count("if requestedDoctrine.len == 0: FfaHunter") == 0
+    check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 1
     check baseline.count("if requestedDoctrine.len == 0: FfaPassive") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaHybrid") == 0
     check demo.count(
@@ -66,10 +66,10 @@ suite "baseline FFA doctrine":
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
 
-  test "pact is never the default":
+  test "pact default path is explicit":
     check baseline.contains("FfaDoctrineKind = enum\n    FfaHybrid")
     check baseline.count("FfaDoctrine = FfaLegacy") == 1
-    check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 0
+    check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 1
 
   test "per-seat doctrine override is opt-in":
     check baseline.contains(
