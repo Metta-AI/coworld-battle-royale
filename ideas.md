@@ -37,7 +37,9 @@
   compared the exact submitted control at `ffaDoctrine=hunter` with the
   candidate at `ffaDoctrine=passive`; all printed bands, arming, pursuit, and
   ring settings match. Production image extraction passed the same assertions.
-  Hosted artifact verification is pending.
+  All 10 initial candidate hosted logs contain `ffaDoctrine=passive`. Their
+  artifacts contain 26,480 `passive_band` hold actions and zero hunter-only
+  loot trips, proving the doctrine change fired. Diagnostics are not score.
 - Artifact: `andre-battleroyale:candidate-7`, Linux AMD64 image
   `sha256:f91240b1d83820abd61af5e530e1d3e8d1022f4612077dbd410f6943b7c3135e`.
   Uploaded unsubmitted as `andre-battleroyale:v8`; the exact submitted control
@@ -45,12 +47,14 @@
   `andre-trial-7:v1` and `andre-trial-7:v2`.
 - XP id: Baseline `xreq_ff913c8c-526a-487c-a228-168c50829e4f` and
   candidate `xreq_84edd7d4-5907-40f3-8f3a-e1f363e40d32`, 10 hosted episodes
-  per arm.
+  per arm. A same-field 20-episode extension per arm is pending.
 - Opponents: At launch Andre remains #9 at 1466.38. The frozen nearest other
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
   (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Pending hosted XP significance.
+- Verdict: Initial 10 per arm is inconclusive. Baseline mean 192.6000,
+  candidate mean 194.8000, difference 2.2000, two-sided 95 percent Welch CI
+  [-80.6707, 85.0707], p=0.956134. Do not keep; extend to 30 per arm.
 
 ### Trial 6: interior hunter hold band
 
