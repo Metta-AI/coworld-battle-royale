@@ -15,6 +15,7 @@ type
     objectives: CountTable[string]
     actions: CountTable[string]
     reasons: CountTable[string]
+    bands: CountTable[string]
 
 proc artifactFiles(zipPath: string): Table[string, string] {.raises: [
   IOError,
@@ -64,6 +65,7 @@ proc addArtifact(
     if sample["vis"].getInt() > 0:
       inc totals.visibleSamples
     totals.reasons.inc(sample["engageReason"].getStr())
+    totals.bands.inc(sample["band"].getStr())
 
 proc printCounts(label: string, counts: CountTable[string]) =
   ## Prints one aggregate count table in stable key order.
@@ -102,3 +104,4 @@ printCounts("event", totals.events)
 printCounts("objective", totals.objectives)
 printCounts("action", totals.actions)
 printCounts("reason", totals.reasons)
+printCounts("band", totals.bands)
