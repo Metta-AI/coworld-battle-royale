@@ -8623,6 +8623,10 @@ proc arcConeCovers(client: ProtocolClient, me: Vec, aimBrads: int,
     return false                        # outside the linearly widening wedge
   client.pixelRayClear(me, p)           # the policy's paintPathClear analogue
 
+let fastReadyEnabled = getEnv("CTF_BOT_FAST_READY").len > 0
+  ## Lockstep opt-in for local rigs and fixture recording only — see the send
+  ## site in the frame loop for why a competitive build must never set it.
+
 proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
   ## Core policy for one frame.
   when defined(statue):
@@ -15066,12 +15070,17 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
     return
   let
     unarmed = FfaWeapon == LabelWeaponFist or FfaWeapon.len == 0
-    # A fist reaches 70px. Standing in a firefight holding one is not a
-    # fight, it is a delay before dying, so an unarmed cog is allowed to
-    # break contact and go arm itself — UNLESS the enemy is already inside
-    # fist reach, where the core's gunfight is the right and only answer.
-    armErrand = unarmed and FfaSeen.nearestFoe > FistReachPx * 2.0
-  if FfaSeen.enemies > 0 and not armErrand:
+  # ⚠️ AN UNARMED COG MUST NOT BE HANDED THE FEET IN CONTACT. The core's
+  # engage layer closes to its own fire range, and while we are holding a
+  # fist that range IS 70px — so leaving it in charge makes an unarmed cog
+  # SPRINT INTO a gun to punch someone with twenty hit points. Measured: our
+  # seats died at a mean 950 ticks against the stock field's 2170 and scored
+  # one kill between six of them.
+  #
+  # So while unarmed the errand outranks contact at ANY distance. The core
+  # keeps aim and trigger either way, so if something does wander inside fist
+  # reach we still swing at it — we just stop walking toward it.
+  if FfaSeen.enemies > 0 and not unarmed:
     return
   # No contact. Hold station INSIDE the ring rather than walking a phantom
   # objective: keep our angular position (the centre is where every survivor
@@ -15214,6 +15223,20 @@ proc runBot(url: string) =
         if bot.shoutWant.len > 0:
           ws.send(chatBlob(bot.shoutWant), BinaryMessage)
           bot.shoutWant = ""
+        # Done thinking. A fastMode server advances the tick as soon as every
+        # player has said so, and this tree only sends an input when the mask
+        # CHANGES — so on a lockstep server it goes silent the moment its
+        # decision repeats, and the episode deadlocks with the server waiting
+        # on us and us waiting on the server. Older/hosted servers ignore the
+        # packet entirely.
+        #
+        # ⚠️ OFF BY DEFAULT, and that default is load-bearing rather than
+        # cautious: sending ready in LEAGUE play corrupts input-application
+        # timing, the dead-reckoned aim random-walks, and gun accuracy
+        # collapses. League runners never set this env, so a competitive build
+        # never sends it. Fixture and local-rig recording opt in.
+        if fastReadyEnabled:
+          ws.send(readyBlob(), BinaryMessage)
     except Exception as e:
       if everConnected:
         # The game ended and the server went away: exit so the episode
