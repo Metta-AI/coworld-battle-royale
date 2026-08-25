@@ -48,12 +48,16 @@
 - Opponents: At Andre's #12 MMR of 1338.99, the three nearest other players
   are David Greis (`Battle Royale Baseline:v1`, 1332.13), softmaxwell
   (`Picasso:v62`, 1353.03), and NanosaurusX (`nancy-br:v1`, 1426.65).
-- Verdict: The first 10 hosted episodes per side were inconclusive. Candidate
+- Verdict: Reverted. The first 10 hosted episodes per side were inconclusive.
+  Candidate
   minus baseline was `18.4000`, with two-sided 95 percent Welch interval
-  `[-26.9607, 63.7607]` and `p=0.404339`. This is not a keep. Twenty more
-  hosted episodes per side on the same frozen field are running: baseline
+  `[-26.9607, 63.7607]` and `p=0.404339`. Twenty more hosted episodes per side
+  on the same frozen field used baseline
   `xreq_74812ceb-51ef-484c-80fe-e5254d6b62c8` and candidate
-  `xreq_106bc2fb-8a0d-4cea-88a1-09cfea7a8dff`.
+  `xreq_106bc2fb-8a0d-4cea-88a1-09cfea7a8dff`. Across all 30 episodes per
+  side, candidate minus baseline was `6.1667`, with two-sided 95 percent Welch
+  interval `[-28.6703, 41.0036]` and `p=0.724373`. This is inconclusive, so the
+  default returned to `0.0`; `andre-battleroyale:v3` remains unsubmitted.
 
 ### Trial 1: hunter doctrine default
 
