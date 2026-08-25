@@ -40,8 +40,10 @@
   retains its prior hunter behavior; the candidate reports
   `ffaHunterPursueEqual=true`. Their pursuit, six-HP threshold, 300-pixel
   support rejection, 240-pixel arm detour, and ring settings match. Production
-  image extraction passed the same assertions. Hosted artifact verification is
-  pending. Equal-HP activations are labeled `pursue_equal` in artifact samples.
+  image extraction passed the same assertions. Hosted startup logs also
+  confirmed `ffaHunterPursueEqual=true`, but behavioral coverage failed: all
+  10 candidate artifacts contain zero sampled `pursue_equal` activations and
+  only one sampled `pursue_weak` tick.
 - Artifact: Production image `andre-battleroyale:candidate-5`, Linux AMD64,
   command `/bin/baseline`, digest
   `sha256:a6c02280b56463e8c6d92c63957ecf4703390aee17ad0353cec72678af5ff463`.
@@ -53,7 +55,12 @@
   players are softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
   (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Pending hosted XP significance.
+- Verdict: Reverted. The required hosted field did not exercise the intended
+  equal-HP pursuit branch, so its score delta cannot be trusted. The 10 hosted
+  episodes per side were also inconclusive: candidate minus baseline was
+  `1.5000`, with a two-sided 95 percent Welch interval
+  `[-50.1207, 53.1207]` and `p=0.951291`. The equal-HP feature was removed;
+  `andre-battleroyale:v6` remains unsubmitted.
 
 ### Trial 4: wider safe hunter arm detour
 
