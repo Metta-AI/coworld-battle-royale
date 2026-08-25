@@ -5,10 +5,56 @@
 ## Usage: nim c -r tools/render_map_pool.nim [--br] [outDir]
 ## Demo/curation tooling; not part of the server.
 import
-  std/[json, os, sequtils, strformat],
+  std/[json, md5, os, sequtils, strformat],
   pixie,
   ../src/ctf/[map_pool, sim],
   map_render
+
+proc centerData(gameMap: CtfMap): tuple[
+    wall, trench, puddle: string, kits: seq[MapPoint]] =
+  let
+    centerX = gameMap.width div 2
+    centerY = gameMap.height div 2
+    radius2 = BrCenterKeepOut * BrCenterKeepOut
+    obstacles = buildArenaObstacles(gameMap)
+    wallMask = rasterizeRestWallMask(
+      gameMap,
+      obstacles,
+      proc (x, y: int): bool = mapProtectedFloorAt(gameMap, x, y),
+    )
+  for y in centerY - BrCenterKeepOut .. centerY + BrCenterKeepOut:
+    for x in centerX - BrCenterKeepOut .. centerX + BrCenterKeepOut:
+      let
+        dx = x - centerX
+        dy = y - centerY
+      if dx * dx + dy * dy > radius2:
+        continue
+      let index = y * gameMap.width + x
+      result.wall.add char(if wallMask[index]: 1 else: 0)
+      var trench, puddle: bool
+      for shape in gameMap.trenches:
+        if inShape(x, y, shape):
+          trench = true
+          break
+      for item in gameMap.puddles:
+        if inPuddle(x, y, item):
+          puddle = true
+          break
+      result.trench.add char(if trench: 1 else: 0)
+      result.puddle.add char(if puddle: 1 else: 0)
+  for point in gameMap.medKitCandidates:
+    let
+      dx = point.x - centerX
+      dy = point.y - centerY
+    if dx * dx + dy * dy <= radius2:
+      result.kits.add point
+
+proc centerChecksum(gameMap: CtfMap): string =
+  let data = centerData(gameMap)
+  var encoded = data.wall & "\x00" & data.trench & "\x00" & data.puddle
+  for point in data.kits:
+    encoded.add "\x00" & $point.x & "," & $point.y
+  $toMD5(encoded)
 
 when isMainModule:
   let br = paramCount() >= 1 and paramStr(1) == "--br"
@@ -44,7 +90,7 @@ when isMainModule:
     var candidates = newJArray()
     for p in gameMap.medKitCandidates:
       candidates.add %*[p.x, p.y]
-    manifest.add %*{
+    var entry = %*{
       "index": i,
       "seed": seed,
       "file": name,
@@ -64,6 +110,9 @@ when isMainModule:
       "medKitSpawns": kits,
       "medKitCandidates": candidates,
     }
+    if br:
+      entry["centerChecksum"] = %centerChecksum(gameMap)
+    manifest.add entry
     echo "rendered ", name
   if br:
     let

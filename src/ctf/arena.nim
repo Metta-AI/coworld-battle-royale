@@ -1696,14 +1696,11 @@ proc brTouchesCenter(gameMap: CtfMap, puddle: Puddle): bool =
         return true
   false
 
-proc brTouchesCenter(gameMap: CtfMap, point: MapPoint): bool =
-  let
-    dx = point.x - gameMap.width div 2
-    dy = point.y - gameMap.height div 2
-  dx * dx + dy * dy <= BrCenterKeepOut * BrCenterKeepOut
-
 proc stampBrCanonicalCenter*(gameMap: var CtfMap, reference: CtfMap) =
   ## Replaces every whole shape and point touching the canonical center disc.
+  ## Every med-kit point is center furniture on the center column, so both
+  ## med-kit sets are copied wholesale: this keeps the active pair at exactly
+  ## two points and keeps medKitSpawns a subset of medKitCandidates.
   ## The authored obstacle set stays in its seed-half form; no installed arena
   ## globals are consulted or changed.
   if gameMap.width != reference.width or gameMap.height != reference.height or
@@ -1729,16 +1726,8 @@ proc stampBrCanonicalCenter*(gameMap: var CtfMap, reference: CtfMap) =
   for puddle in reference.puddles:
     if reference.brTouchesCenter(puddle):
       gameMap.puddles.add puddle
-  gameMap.medKitCandidates = gameMap.medKitCandidates.filterIt(
-    not gameMap.brTouchesCenter(it))
-  for point in reference.medKitCandidates:
-    if reference.brTouchesCenter(point):
-      gameMap.medKitCandidates.add point
-  gameMap.medKitSpawns = gameMap.medKitSpawns.filterIt(
-    not gameMap.brTouchesCenter(it))
-  for point in reference.medKitSpawns:
-    if reference.brTouchesCenter(point):
-      gameMap.medKitSpawns.add point
+  gameMap.medKitCandidates = reference.medKitCandidates
+  gameMap.medKitSpawns = reference.medKitSpawns
 
 proc rasterizeWallMasks*(
   gameMap: CtfMap, obstacles: seq[ArenaShape]
@@ -3423,7 +3412,9 @@ proc resolveCtfMapMetadata*(config: GameConfig): CtfMap =
               $config.teams & " teams.")
         let index =
           if config.mapPoolIndex >= 0: config.mapPoolIndex else: genSeed
-        brPoolCtfMap(index, config.mapGen)
+        # The BR pool is a curated artifact drawn under a fixed lock; config
+        # generator knobs do not apply to it.
+        brPoolCtfMap(index, brCanonicalOverrides())
       else:
         raise newException(CtfError, "Unknown map: " & name)
   if result.teamCount() != config.teams:

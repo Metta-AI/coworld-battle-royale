@@ -72,6 +72,11 @@ suite "battle-royale rotation pool":
       check gameMap.center == MapPoint(
         x: gameMap.width div 2, y: gameMap.height div 2)
       check centerData(gameMap) == expected
+      check gameMap.medKitSpawns.len == 2
+      check gameMap.medKitSpawns == reference.medKitSpawns
+      check gameMap.medKitCandidates == reference.medKitCandidates
+      for spawn in gameMap.medKitSpawns:
+        check spawn in gameMap.medKitCandidates
       check validateGeneratedMap(gameMap) == ""
 
   test "all entries remain distinct outside the canonical disc":
@@ -97,3 +102,11 @@ suite "battle-royale rotation pool":
     check $toMD5(mapSpecJson(canonical)) == BrGen42SpecMd5
     check mapSpecJson(loadCtfMapMetadata(brConfig)) ==
       mapSpecJson(canonical)
+
+  test "BR pool resolution ignores divergent generator knobs":
+    var config = defaultGameConfig()
+    config.mapPath = BrPoolMapName
+    config.mapPoolIndex = 17
+    config.mapGen.puddles = 8
+    check mapSpecJson(loadCtfMapMetadata(config)) ==
+      mapSpecJson(brPoolCtfMap(config.mapPoolIndex, brCanonicalOverrides()))

@@ -82,7 +82,9 @@ canonical center from seed 42 (the map pinned by `config.br.json`). Whole
 terrain shapes touching the 260 px keep-out radius are replaced, so the final
 ring and heavy loot cluster remain in the recognizable center arena.
 
-Regenerate the pool and its review page from the repository root:
+The full-resolution per-entry renders are a local-only investigation
+artifact. Regenerate them when inspecting a specific entry, then rebuild the
+single committed contact-sheet review page:
 
 ```bash
 nim c -r -d:release tools/gen_map_pool.nim 3001
@@ -90,9 +92,10 @@ nim c -r -d:release tools/render_map_pool.nim --br brpool-preview
 python3 tools/build_pool_review.py brpool-preview docs/br-pool-review.html br
 ```
 
-The CTF pool review remains at [pool-review.html](pool-review.html); the BR
-review is [br-pool-review.html](br-pool-review.html). The BR render directory
-is local-only and its images are inlined into the tracked review page.
+`brpool-preview/` contains the full-resolution per-entry PNGs and manifest and
+is gitignored; the committed artifact is the downsampled 16×16 contact sheet
+in [br-pool-review.html](br-pool-review.html). The CTF pool review remains at
+[pool-review.html](pool-review.html).
 
 Activation is deliberately **not applied in this PR**. The exact future flip
 is:

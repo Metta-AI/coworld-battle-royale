@@ -12,6 +12,7 @@ Usage:
 Defaults: renderDir=pool-preview, outHtml=docs/pool-review.html, kind=ctf.
 """
 import base64
+import io
 import json
 import pathlib
 import sys
@@ -27,6 +28,114 @@ is_br = kind == "br"
 manifest = json.loads((render_dir / "manifest.json").read_text())
 SIZE_NAMES = {1050: "small", 1235: "standard", 1606: "large",
               2223: "huge", 3211: "giant"}
+
+if is_br:
+    try:
+        from PIL import Image
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "BR contact-sheet generation requires Python Pillow"
+        ) from exc
+
+    manifest.sort(key=lambda m: m["index"])
+    if [m["index"] for m in manifest] != list(range(len(manifest))):
+        raise SystemExit("BR manifest indices must be ordered 0..N-1")
+    checksums = {m.get("centerChecksum", "") for m in manifest}
+    if len(manifest) != 256 or len(checksums) != 1 or "" in checksums:
+        raise SystemExit(
+            "BR manifest must contain one shared centerChecksum for 256 maps"
+        )
+    center_checksum = checksums.pop()
+
+    cell_width, cell_height = 160, 90
+    sheet = Image.new("RGB", (cell_width * 16, cell_height * 16),
+                      (15, 11, 8))
+    for m in manifest:
+        image = Image.open(render_dir / m["file"]).convert("RGB")
+        image.thumbnail((cell_width - 2, cell_height - 2),
+                        Image.Resampling.LANCZOS)
+        x = (m["index"] % 16) * cell_width
+        y = (m["index"] // 16) * cell_height
+        sheet.paste(
+            image,
+            (x + (cell_width - image.width) // 2,
+             y + (cell_height - image.height) // 2),
+        )
+    sheet = sheet.quantize(
+        colors=64,
+        method=Image.Quantize.MEDIANCUT,
+        dither=Image.Dither.NONE,
+    )
+    png = io.BytesIO()
+    sheet.save(png, format="PNG", optimize=True)
+    encoded_sheet = base64.b64encode(png.getvalue()).decode()
+
+    labels = "".join(
+        f'<span class="cell-label">#{m["index"]:02d} · {m["seed"]}</span>'
+        for m in manifest
+    )
+    legend = "".join(
+        f'<span>#{m["index"]:03d} {m["seed"]}</span>' for m in manifest
+    )
+    html = f'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battle-royale Rotation Pool</title>
+<style>
+:root {{
+  --ground:#1a1410; --panel:#241c15; --line:#3a2e21;
+  --ink:#e8dcc8; --muted:#9a8a70; --glass:#50dcff;
+}}
+* {{ box-sizing:border-box; }}
+body {{ background:var(--ground); color:var(--ink);
+  font:15px/1.5 system-ui,-apple-system,sans-serif; margin:0; padding:0 0 4rem; }}
+.wrap {{ max-width:1500px; margin:0 auto; padding:0 1.25rem; }}
+header.top {{ position:sticky; top:0; z-index:5; background:color-mix(in srgb,var(--ground) 92%,transparent);
+  backdrop-filter:blur(6px); border-bottom:1px solid var(--line); padding:.7rem 0 .6rem; }}
+h1 {{ font-size:1.05rem; margin:0; letter-spacing:.02em; }}
+h1 .gv {{ color:var(--glass); }}
+.sub, .note, .legend {{ color:var(--muted); font:12px ui-monospace,Menlo,monospace; }}
+.sub {{ display:block; margin-top:.25rem; }}
+.note {{ margin:1rem 0; }}
+.sheet-wrap {{ position:relative; background:#0f0b08; overflow:auto; }}
+.sheet {{ display:block; width:100%; height:auto; image-rendering:auto; }}
+.cell-labels {{ position:absolute; inset:0; display:grid;
+  grid-template-columns:repeat(16,1fr); grid-template-rows:repeat(16,1fr);
+  pointer-events:none; }}
+.cell-label {{ padding:2px 3px; color:#fff; font:clamp(6px,.72vw,11px)/1.1 ui-monospace,Menlo,monospace;
+  font-weight:700; text-shadow:0 1px 2px #000, 1px 0 2px #000; white-space:nowrap; }}
+.legend {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:.15rem .8rem; margin-top:1rem; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <h1>Battle-royale rotation pool
+    <span class="gv">config-gated (mapPath "brpool")</span>
+  </h1>
+  <span class="sub">256 maps · huge · 256 mirror / 0 rot180 · 256 disc endzones</span>
+</header>
+<p class="note">One 16×16 contact sheet of downsampled map thumbnails, ordered
+by pool index. Shared center checksum: <b>{center_checksum}</b> · all 256
+entries match. Full-resolution per-entry renders are local-only; see MAPKIT.md
+for the investigation command.</p>
+<div class="sheet-wrap">
+  <img class="sheet" src="data:image/png;base64,{encoded_sheet}"
+    alt="16 by 16 battle-royale map contact sheet">
+  <div class="cell-labels">{labels}</div>
+</div>
+<div class="legend">{legend}</div>
+</div>
+</body>
+</html>
+'''
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html)
+    print(f"wrote {out_path} ({len(html)} bytes, {len(manifest)} maps)")
+    raise SystemExit(0)
 
 cards = []
 for m in manifest:
