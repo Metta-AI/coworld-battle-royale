@@ -31,8 +31,14 @@
   when no pact opportunity exists.
 - Change: When `CTF_BOT_FFA_DOCTRINE` is unset, select `FfaPact` instead of
   `FfaHunter`. No pact or hunter parameter is changed.
-- Isolation: Pending local and hosted log confirmation.
-- Artifact: Pending.
+- Isolation: Passed locally. `tools/extract_doctrine.nim` compared the exact
+  current-champion commit with the candidate: the control starts as `hunter`,
+  the candidate starts as `pact`, and their printed hunter arming, pursuit,
+  detour, and ring controls are identical. The extractor also asserted the
+  production Docker image directly. Hosted confirmation is pending.
+- Artifact: Production image `andre-battleroyale:candidate-3`, Linux AMD64,
+  command `/bin/baseline`, digest
+  `sha256:9973a7615cb590828cc6523ae5f3bd21e8cef015e1c34a8886da5106176289d3`.
 - XP id: Pending.
 - Opponents: At Andre's #9 MMR of 1424.19, the current nearest other players
   are NanosaurusX (`nancy-br:v1`, 1409.64), aosgoods
