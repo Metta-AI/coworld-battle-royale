@@ -86,3 +86,8 @@ suite "baseline FFA doctrine":
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n      ringRadius, FfaHunterRingMargin)") == 1
     check baseline.count(
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n    ringRadius, FfaShadeRingMargin)") == 1
+
+  test "hunter upgrades use the safe arm-trip path":
+    check baseline.count("if upgrading: \"upgrade_trip\"") == 2
+    check baseline.count("if upgrading: \"move_upgrade\"") == 2
+    check baseline.count("let upgrading = weaponTier > 0") == 2

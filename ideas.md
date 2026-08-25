@@ -14,6 +14,7 @@
 - Allow only safe hunter pursuit against equal-HP opponents.
 - Move only the hunter hold band deeper inside the safe radius.
 - Prefer only a vulnerable hunter target over a closer strong opponent.
+- Allow only safe hunter upgrades after initial arming.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
@@ -24,6 +25,27 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 9: safe hunter weapon upgrades
+
+- Idea: The exact submitted hunter artifacts contain 5,472 unarmed samples,
+  2,072 low-tier samples, 509 mid-tier samples, and zero heavy-tier samples.
+  Hunter already has a bounded, ring-safe, opponent-aware higher-tier gun
+  selector, but returns before using it after initial arming. Safe upgrades may
+  convert more of its weapon-range contacts without increasing trip reach.
+- Change: Let an armed, non-pursuing hunter use the existing gun selector only
+  for a strictly higher weapon tier. The 240-pixel detour cap, 80-pixel ring
+  safety margin, 30-second deadline, enemy avoidance, bands, pursuit, firing,
+  and all other behavior are unchanged. Upgrade movement emits
+  `upgrade_trip` and `move_upgrade` for isolation.
+- Isolation: Pending checks and artifact verification.
+- Artifact: Pending production image and upload.
+- XP id: Pending.
+- Opponents: Andre remains #9 at 1466.38. The frozen nearest other players at
+  launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
+  (`nancy-br:v1`, 1355.24), and David Greis
+  (`Battle Royale Baseline:v1`, 1330.31).
+- Verdict: Pending hosted XP significance.
 
 ### Trial 8: vulnerable hunter target selection
 
