@@ -34,7 +34,9 @@
   and the other printed doctrine parameters are unchanged. Hosted artifact
   confirmation is pending.
 - Artifact: Production image `andre-battleroyale:candidate-2`, Linux AMD64,
-  command `/bin/baseline`. Upload pending.
+  command `/bin/baseline`. Uploaded as candidate `andre-battleroyale:v3`,
+  policy version `ff38a716-95eb-4bc6-af35-e18e1897c31f`. Exact binary clones
+  were uploaded as isolated `andre-trial-2:v1` and `andre-trial-2:v2`.
 - XP id: Pending.
 - Opponents: At Andre's #12 MMR of 1338.99, the three nearest other players
   are David Greis (`Battle Royale Baseline:v1`, 1332.13), softmaxwell
