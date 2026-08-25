@@ -883,6 +883,15 @@ when defined(barrprobe):
   var bpEvac = 0          # frames the body-evacuation override drove the feet
 
 var
+  OwnHpRaw = 0
+    ## Our own hit points AS STATED, not bucketed. `selfHp` deliberately folds
+    ## any denominator onto the 3-point scale the wounded gates compare
+    ## against, which is right for those gates and WRONG for detecting that we
+    ## were just hit: on a 20-hp board the buckets are 14-20, 7-13 and 1-6, so
+    ## a 3-damage gun hit usually lands inside the same bucket and the drop is
+    ## invisible. Roughly two of every three hits went unnoticed — which is the
+    ## sense that arms the turn-toward-the-shooter behaviour and, since
+    ## another lever now reads it too, the "we are being shot at" stamp.
   FfaWeapon = ""
     ## Our own weapon tier this frame, from the `weapon <token>` HUD marker.
     ## In a free-for-all EVERY cog spawns UNARMED and guns are ground loot, so
@@ -993,6 +1002,16 @@ const
                               # this close while we hold one is a threat we
                               # answer with distance, not with a punch.
   UnarmedFleeStepPx = 260.0   # how far to commit the break-off each frame
+  BrTimidEngageMul = 0.5      # BRTIMID: healthy+unpressed voluntary engage/commit
+                              # range is this fraction of the full weapon reach
+                              # (fireRange, itself re-stamped per BR weapon tier —
+                              # see FireRange's FfaWeapon case). A hit restores the
+                              # full 1.0x for BrTimidHoldTicks (return fire, not a
+                              # standing weaker weapon).
+  BrTimidHoldTicks = 48       # BRTIMID: ticks of full engage range after taking a
+                              # hit (2s at FfaTicksPerSec=24) — long enough to fight
+                              # through the exchange that just started; a live fight
+                              # keeps re-stamping lastDamagedTick and re-arming it.
   RingHoldFrac = 0.55         # out of contact, station at this fraction of the
                               # safe radius: inside the band the ring is about
                               # to take, without joining the crowd at dead
@@ -4217,10 +4236,36 @@ type
                               # only moves WHERE the env is read, not the truth table);
                               # LOCKONETEAM=<n>[,<n>] (RAW ENGINE INDEX 0..3) isolates it in
                               # grabprobe, the same shape as RAIDFRAMETEAM/SPRAYCONETEAM.
+    brTimid: bool             # ⭐ BRTIMID (2026-08-25, one-life BR doctrine test). tradeGate
+                              # above is STRUCTURALLY DARK in this mode on two independent
+                              # counts: (1) it is gated `bot.tune.tradeGate and GameTeams > 2`,
+                              # and addMapMarkers in global.nim only ever emits the `game teams`
+                              # marker `if not sim.config.isFfa()` — so GameTeams never leaves
+                              # its default of 2 in a battle royale and the gate cannot open;
+                              # (2) it also sits inside the `onOffense` block keyed on
+                              # `bot.role in {MidTop, MidBottom, ...}`, and brRoleOverride's
+                              # shipped BR role is Overwatch, which is never in that set. So
+                              # reusing tradeGate's own decision site was not possible; this
+                              # reuses its SHAPE instead — one bar, read at the one place BR
+                              # combat already keys its engage distance off of (`maxEngage` in
+                              # decide()'s combat block, read by every BR role including
+                              # Overwatch). FfaSurvivalPointsPerSec=1, FfaKillPoints=10,
+                              # FfaPodiumPoints=[100,40,15] over a ~150-190s one-life episode
+                              # means a kill is worth ~10s of survival and first is worth 100 —
+                              # field replays show us firing ~29 shots/episode at 65% accuracy
+                              # (most combat in the lobby) for 0 wins in 39, while the #2-Elo
+                              # policy fires zero shots. Shrinks the VOLUNTARY commit range
+                              # (BrTimidEngageMul) whenever we have NOT taken damage ourselves
+                              # in the last BrTimidHoldTicks — a bot already being shot at keeps
+                              # its full weapon reach and fights back, this only refuses to go
+                              # looking for a fight while healthy and unpressed ("return fire,
+                              # don't initiate"). Gated on FfaRing.have — a 2-team or ffa4 board
+                              # is untouched. Ships OFF; BRTIMID=1 arms it.
 
   Bot = ref object
     slot: int
     brRoleSet: bool           # the free-for-all role re-stamp has happened
+    prevOwnHpRaw: int         # last frame's UNBUCKETED own hp (see OwnHpRaw)
     ringT0: int               # tick of our FIRST ALIVE frame, the origin we
                               # integrate the ring schedule from. The engine
                               # measures the shrink from the moment the match
@@ -4469,6 +4514,13 @@ type
     lastHitTick: int          # last unseen hit (muzzle ring / freshest track /
                               # behind-our-aim guess) — outlives the short
                               # orient window so the cruise aim can pre-lay it
+    lastDamagedTick: int      # ⭐ BRTIMID: last tick our OWN hp pip bar dropped, full stop —
+                              # unlike lastHitTick above (only stamped for an UNSEEN shooter,
+                              # since "combat handles" a visible one) this fires on every hp
+                              # drop regardless of visibility, so it is a general "we are
+                              # currently being shot at" signal for the BR engage-range gate.
+                              # 0 by default, so a bot that has never been hit reads as
+                              # long-idle (timid) rather than freshly hit.
     arcBreachUntil: int       # ARC BREACHER: once the designated seat commits to the
                               # arc run (a line was live and we broke off for the pickup),
                               # hold the commit until this tick so a FLICKERING line read
@@ -5085,6 +5137,8 @@ proc defaultCombatTune(): CombatTune =
                               # exemption, so the commit bonus can cancel against a second
                               # track of the same enemy (or a genuine crowd) exactly when
                               # the lock is needed most.
+    brTimid: false,           # control: BR engage/commit range is the full weapon reach
+                              # at all times, healthy or not (today's shipped BR posture).
   )
 
 # ════════════════════════════════════════════════════════════════════════
@@ -6205,6 +6259,13 @@ proc shippedCombatTune(): CombatTune =
   # WHERE the env is read (here, once, instead of in decide(), every frame),
   # not the truth table.
   result.lockOne = getEnv("NOLOCKONE").len == 0
+  # ⭐ BRTIMID (2026-08-25) — see the CombatTune field doc for the full argument
+  # and why tradeGate's own decision site is unreachable in this mode. UNPROVEN,
+  # ships OFF like tradeGate/koRelease pending a measurement: BRTIMID=1 arms it.
+  # ⚠️ A bare flag is a MIRROR on the local rig — every bot in one process shares
+  # one env, so BRTIMID=1 arms BOTH our seats and (harmlessly, since the stock
+  # bot never reads it) has no effect on the opposing binary either way.
+  result.brTimid = getEnv("BRTIMID").len > 0
 
 
 when defined(doorprobe):
@@ -6835,6 +6896,7 @@ proc selfHp(client: ProtocolClient, me: Vec, color: string): tuple[have: bool, h
     if d < bestD:
       bestD = d
       let scaled = clamp((hp * MaxHp + maxHp - 1) div maxHp, 1, MaxHp)
+      OwnHpRaw = hp
       result = (have: true, hp: scaled)
 
 proc selfLives(client: ProtocolClient): tuple[have: bool, hp: int, lives: int] =
@@ -9379,6 +9441,20 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       break damageSense
     let prevHp = bot.ownHp
     bot.ownHp = hp
+    # Hit detection reads the RAW value; the bucketed one stays for the wounded
+    # gates it was built for. `hurtNow` is what "we took damage this frame"
+    # actually means on a board where max hp is not 3.
+    let
+      prevRaw = bot.prevOwnHpRaw
+      hurtNow = prevRaw > 0 and OwnHpRaw < prevRaw
+    bot.prevOwnHpRaw = OwnHpRaw
+    if FfaRing.have and hurtNow:
+      # ⭐ BRTIMID: a general "we are currently being shot at" stamp, independent
+      # of tune.damageAware/rearTurn and of whether the shooter is visible (unlike
+      # lastHitTick below, which the "combat handles it" branch deliberately skips
+      # whenever a fresh enemy is already in view). The engage-range gate reads
+      # this to grant full weapon reach back to a bot actually taking fire.
+      bot.lastDamagedTick = bot.tick
     when defined(msprobe):
       # plan #16 heal funnel, TUNE-INDEPENDENT so a MEDSEE-unset run of the SAME
       # binary is the control. A death reads hp as unread (0) on the dead path, so
@@ -9411,8 +9487,8 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
     # v56 rearTurn ARMS this intake: damageAware was shipped OFF, so the whole
     # hp-drop sense (including the muzzle-ring orient it gates) was inert —
     # exactly the "shot from behind and never turned" replay.
-    if lvC(14, not (bot.tune.damageAware or bot.tune.rearTurn) or prevHp <= 0 or
-        hp >= prevHp):
+    if lvC(14, not (bot.tune.damageAware or bot.tune.rearTurn) or
+        not hurtNow):
       break damageSense                  # first read, respawn, or no damage
     # We took a hit. Is a threat already in view? If so, combat handles it.
     var haveFreshVisible = false
@@ -11775,6 +11851,19 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       # must remove enemy guns, not gently reposition. Every seat widens to fireRange.
       maxEngage = max(maxEngage, bot.tune.fireRange)
     else: discard
+  # ⭐ BRTIMID (2026-08-25): the LAST word on the voluntary commit range in a
+  # battle royale, deliberately placed AFTER the planLayer widen above —
+  # teamPhase() is a pure function of tick/pickEdge/efState with no FfaRing.have
+  # check of its own, so PhDefend/PhForce can otherwise re-widen straight back
+  # to full fireRange underneath this gate. Healthy (no hit in the last
+  # BrTimidHoldTicks) and gated to FFA only: shrink whatever the range would
+  # otherwise be to BrTimidEngageMul of it. Already taking fire: leave the
+  # computed value exactly alone, so a bot mid-exchange keeps its full — and
+  # any phase-widened — reach and fights back; this only refuses to go
+  # LOOKING for a fight while unpressed.
+  if FfaRing.have and bot.tune.brTimid and
+      bot.tick - bot.lastDamagedTick > BrTimidHoldTicks:
+    maxEngage = maxEngage * BrTimidEngageMul
   # Focus-fire intel: which remembered enemies sit on a visible mate's aim
   # line right now. A mate's rendered aim dots are an absolute readback of
   # where it is about to shoot; piling our shot onto the same target converts
