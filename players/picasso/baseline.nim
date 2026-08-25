@@ -890,7 +890,7 @@ var
     ## holding the standard gun swings a fist at a target a thousand pixels
     ## away, all game, and never understands why nothing dies.
   FfaSeen: tuple[stamped: bool, alive: bool, enemies: int,
-                 nearestFoe: float, meX, meY: float]
+                 nearestFoe: float, foeX, foeY, meX, meY: float]
     ## The core's own read of this frame, stamped once so the free-for-all
     ## positioning wrapper can ask "were we in contact?" without paying for a
     ## second sweep of every colour.
@@ -989,6 +989,10 @@ const
                               # further along than we can prove.
   FistReachPx = 70.0          # fist is a CONTACT weapon (centre to centre)
   LowGunRangePx = 700.0       # the short pickup tier
+  UnarmedFleeRange = 420.0    # a gun outranges a fist by 10x; anything armed
+                              # this close while we hold one is a threat we
+                              # answer with distance, not with a punch.
+  UnarmedFleeStepPx = 260.0   # how far to commit the break-off each frame
   RingHoldFrac = 0.55         # out of contact, station at this fraction of the
                               # safe radius: inside the band the ring is about
                               # to take, without joining the crowd at dead
@@ -4216,6 +4220,7 @@ type
 
   Bot = ref object
     slot: int
+    brRoleSet: bool           # the free-for-all role re-stamp has happened
     ringT0: int               # tick of our FIRST ALIVE frame, the origin we
                               # integrate the ring schedule from. The engine
                               # measures the shrink from the moment the match
@@ -8623,6 +8628,29 @@ proc arcConeCovers(client: ProtocolClient, me: Vec, aimBrads: int,
     return false                        # outside the linearly widening wedge
   client.pixelRayClear(me, p)           # the policy's paintPathClear analogue
 
+proc brRoleOverride(): tuple[have: bool, role: Role] =
+  ## The ONE role this policy plays in a free-for-all, or none.
+  ##
+  ## `roleForSeat` deals a role from `slot div 2` across the eight seats of a
+  ## CTF team, on the assumption that we hold several of them and want a
+  ## complementary squad. A free-for-all lobby hands us exactly ONE seat, and
+  ## which one is the league's business, not ours — so that arithmetic deals
+  ## us a DIFFERENT role every episode, including Overwatch (a static lane
+  ## sniper posted on a corridor this mode does not have) and HomeDefender
+  ## (guarding a pedestal that does not exist). One seat means the squad-
+  ## complement reasoning has nothing to complement; the only question is
+  ## which single role plays this mode best, and that is a measurement.
+  let want = getEnv("BRROLE").toLowerAscii()
+  case want
+  of "midtop": (true, MidTop)
+  of "midbottom": (true, MidBottom)
+  of "midguard": (true, MidGuard)
+  of "flanktop": (true, FlankTop)
+  of "flankbottom": (true, FlankBottom)
+  of "overwatch": (true, Overwatch)
+  of "homedefender": (true, HomeDefender)
+  else: (false, MidTop)
+
 let fastReadyEnabled = getEnv("CTF_BOT_FAST_READY").len > 0
   ## Lockstep opt-in for local rigs and fixture recording only — see the send
   ## site in the frame loop for why a competitive build must never set it.
@@ -8677,6 +8705,14 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
       of LabelWeaponFist: FistReachPx
       of LabelWeaponLowGun: LowGunRangePx
       else: GunRangePx
+  # Role re-stamp. It has to happen HERE rather than at construction: the role
+  # is dealt before the first frame, and whether this is a free-for-all is not
+  # knowable until the ring marker arrives.
+  if FfaRing.have and not bot.brRoleSet:
+    let ov = brRoleOverride()
+    if ov.have:
+      bot.role = ov.role
+    bot.brRoleSet = true
   # ⭐⭐ COLOR TRUTH. The self marker is the ONE sprite only we ever see, so it
   # is the authoritative statement of our own color. Sweep the active team
   # colors until one answers, then LOCK it: a wrong color makes findSelf
@@ -8963,11 +8999,17 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
     shotReady = client.spriteObjectsWithLabel(LabelFireIcon).len > 0
     seenEnemies = client.actorsForEnemies(myColor, bot.tune.aimRotRead)
     seenMates = client.actorsFor(myColor, bot.tune.aimRotRead)
-  var ffaNearest = Inf
+  var
+    ffaNearest = Inf
+    ffaFoe = me
   for a in seenEnemies:
-    ffaNearest = min(ffaNearest, dist(a.pos, me))
+    let dd = dist(a.pos, me)
+    if dd < ffaNearest:
+      ffaNearest = dd
+      ffaFoe = a.pos
   FfaSeen = (stamped: true, alive: true, enemies: seenEnemies.len,
-             nearestFoe: ffaNearest, meX: me.x, meY: me.y)
+             nearestFoe: ffaNearest, foeX: ffaFoe.x, foeY: ffaFoe.y,
+             meX: me.x, meY: me.y)
   when defined(arprobe):
     if lvC(7, bot.tune.aimRotRead):
       inc arFrames
@@ -14975,7 +15017,19 @@ proc decideCore(bot: Bot, client: ProtocolClient): uint8 =
   # spams; ShoutGapTicks (> the server's ShoutCooldownTicks) keeps us under the
   # cap. Every flavor is independently gated so the harness can A/B one at a
   # time; the whole emitter is off unless tune.shout.
-  if lvC(152, bot.tune.shout and bot.shoutWant.len == 0 and
+  # ⭐ SILENT IN A FREE-FOR-ALL. Every shout flavour below was written for
+  # TEAMMATES, and this mode has none — the lobby is twelve separate sides. A
+  # shout is audible within a fifth of the map width and the engine pins a
+  # bubble for every listener at jittered coordinates, i.e. "a bot learns the
+  # neighborhood a shout came from". So in this mode the emitter is a beacon
+  # that tells the nearest enemies roughly where we are, and there is nobody
+  # left who benefits from hearing it. Our own hosted replays show us calling
+  # out sighted enemies ("E K3") the whole way in on the approach that got us
+  # killed.
+  #
+  # Magnitude UNKNOWN — this is hygiene, not a measured lever: it removes a
+  # transmission with no remaining upside rather than a proven loss.
+  if lvC(152, bot.tune.shout and not FfaRing.have and bot.shoutWant.len == 0 and
       bot.tick - bot.lastShoutTick >= ShoutGapTicks):
     var say = ""
     if lvC(153, bot.tune.shoutSurprise and surprisePos.x >= 0 and
@@ -15123,13 +15177,42 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 =
           bestScore = gd + penalty
           target = gun
           haveTarget = true
+  # ⭐ BREAK OFF. Measured on hosted replays, and it was MY bug: with the
+  # errand owning the feet, an unarmed cog under fire walked its beeline to
+  # the loot without deviating. One trace has us closing from 165px to 124px
+  # of centre through the entire 36-tick exchange that killed us, throwing a
+  # single fist punch at the end — while our own shout log proves we saw the
+  # shooter the whole way. We died at ~300 ticks against a field median of
+  # 1400-2100 in that same match.
+  #
+  # A fist cannot answer a gun, so the answer is distance: while unarmed with
+  # a visible enemy anywhere near, the destination is AWAY from that enemy,
+  # and loot is a problem for after we have stopped being shot at.
+  if unarmed and FfaSeen.enemies > 0 and FfaSeen.nearestFoe < UnarmedFleeRange:
+    let
+      foe = vec(FfaSeen.foeX, FfaSeen.foeY)
+      away = me - foe
+    if away.len() > 1e-6:
+      # Straight away from the threat, but pulled back toward the ring so
+      # fleeing never trades a bullet for the paint.
+      let
+        flee = me + away * (UnarmedFleeStepPx / away.len())
+        pull = centre - flee
+        capped =
+          if pull.len() > holdR: flee + pull * ((pull.len() - holdR) / pull.len())
+          else: flee
+      target = capped
+      haveTarget = true
   if not haveTarget:
     if unarmed:
-      # Unarmed with no gun in sight. Holding station here is the losing line:
-      # loot is clustered at the arena centre and the gun bands are
-      # centre-weighted (heavy in the middle), so a cog that keeps its
-      # distance keeps its fists. Go to the middle and find one. Only once we
-      # are armed does holding off-centre become the better idea.
+      # Unarmed and UNTHREATENED: still go to the middle. It is tempting to
+      # blame the centre for the death trace, but the hosted replays refute
+      # that — we spend 11% of a life unarmed against the field's 95% median,
+      # so the centre walk is what ARMS us and it works. What killed us was
+      # continuing that walk while being shot, which the break-off above now
+      # prevents. Backing the destination off to the outer bands measured as
+      # fewer kills for a few seconds of life, which the score function prices
+      # as a loss: a kill is ten seconds.
       target = centre
     else:
       if d <= holdR:
