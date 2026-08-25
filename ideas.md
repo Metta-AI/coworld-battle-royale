@@ -37,10 +37,11 @@
   inside the safe ring. All movement, firing, arming, bands, ring behavior,
   health thresholds, and support radius are unchanged. Replacement cases emit
   `pursue_vulnerable` for isolation.
-- Isolation: `nim check` and the doctrine source-contract suite pass. Production
-  startup extraction matches the submitted hunter settings, and the production
-  binary contains exactly one `pursue_vulnerable` marker. Hosted branch
-  verification is pending.
+- Isolation: `nim check` and the doctrine source-contract suite passed.
+  Production startup extraction matched the submitted hunter settings, and
+  the binary contained exactly one `pursue_vulnerable` marker. None of the 10
+  candidate hosted artifacts emitted that marker, while ordinary
+  `pursue_weak` appeared in 18 samples. The replacement branch did not fire.
 - Artifact: `andre-battleroyale:candidate-8`, Linux AMD64 image
   `sha256:85d94425bccbf88e1ce3119bafe8efe5146aa80b8f90aa5278e092899c6fa508`.
   Uploaded unsubmitted as `andre-battleroyale:v9`; exact control and candidate
@@ -52,7 +53,11 @@
   launch will be softmaxwell (`Picasso:v62`, 1425.82), NanosaurusX
   (`nancy-br:v1`, 1355.24), and David Greis
   (`Battle Royale Baseline:v1`, 1330.31).
-- Verdict: Pending hosted XP significance.
+- Verdict: Revert. Baseline mean 154.3000, candidate mean 202.9000,
+  difference 48.6000, two-sided 95 percent Welch CI [-28.1790, 125.3790],
+  p=0.200157. The result is inconclusive and the changed branch was inactive.
+  Restored nearest-target selection; uploaded `andre-battleroyale:v9` was not
+  submitted.
 
 ### Trial 7: passive doctrine default
 

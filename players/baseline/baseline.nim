@@ -1868,32 +1868,6 @@ proc ffaPactPositionBefore(a, b: Vec): bool =
   a.x < b.x - 1e-6 or
     (abs(a.x - b.x) < 1e-6 and a.y < b.y - 1e-6)
 
-proc ffaHunterTargetIndex(actors: seq[Actor], me, center: Vec,
-    ringRadius, hp: int): int =
-  ## Returns the nearest unsupported, weaker target inside the safe ring.
-  result = -1
-  var bestDist = 1e18
-  for candidateIndex, candidate in actors:
-    let weaker = candidate.weaponTier == 0 or
-      (candidate.hp > 0 and candidate.hp < hp)
-    if not weaker or
-        dist(candidate.pos, center) > float(max(1, ringRadius)):
-      continue
-    var supported = false
-    for actorIndex, actor in actors:
-      if actorIndex != candidateIndex and
-          dist(actor.pos, candidate.pos) <= FfaHunterSupportRadius:
-        supported = true
-        break
-    if supported:
-      continue
-    let d = dist(me, candidate.pos)
-    if result < 0 or d < bestDist or
-        (abs(d - bestDist) < 1e-6 and
-          ffaPactPositionBefore(candidate.pos, actors[result].pos)):
-      result = candidateIndex
-      bestDist = d
-
 proc ffaPactBrawl(actors: seq[Actor], me, center: Vec,
     ringRadius: int): tuple[found: bool, targetIndex, partnerIndex: int] =
   result = (false, -1, -1)
@@ -2389,19 +2363,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
             nearestOtherDist = d
         targetIndex = nearestOther
         targetDist = if targetIndex >= 0: nearestOtherDist else: 1e18
-  var hunterTargetReplaced = false
-  if FfaDoctrine == FfaHunter and FfaHunterPursuit and
-      not unarmed and hp >= FfaHunterPursuitMinHp:
-    let hunterTargetIndex = actors.ffaHunterTargetIndex(
-      me,
-      center,
-      ringRadius,
-      hp
-    )
-    if hunterTargetIndex >= 0 and hunterTargetIndex != targetIndex:
-      targetIndex = hunterTargetIndex
-      targetDist = dist(me, actors[targetIndex].pos)
-      hunterTargetReplaced = true
   let
     targetCritical = targetIndex >= 0 and actors[targetIndex].hp > 0 and
       actors[targetIndex].hp <= 4
@@ -2520,9 +2481,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     of FfaHybrid:
       intent = hybridFfaIntent(bot, client, me, center, ringRadius,
         elapsedSec, nearby, weaponTier, healthy)
-  if hunterTargetReplaced and intent.engageReason == "pursue_weak":
-    intent.engageReason = "pursue_vulnerable"
-
   let
     moveTarget = intent.moveTarget
     objective = intent.objective

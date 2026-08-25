@@ -86,8 +86,3 @@ suite "baseline FFA doctrine":
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n      ringRadius, FfaHunterRingMargin)") == 1
     check baseline.count(
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n    ringRadius, FfaShadeRingMargin)") == 1
-
-  test "hunter can replace a strong nearest target":
-    check baseline.count("proc ffaHunterTargetIndex") == 1
-    check baseline.count("hunterTargetIndex != targetIndex") == 1
-    check baseline.count("pursue_vulnerable") == 1
