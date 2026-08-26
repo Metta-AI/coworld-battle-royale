@@ -266,7 +266,6 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
-  FfaHunterRingUnstickSkipBlockedOrigin = true
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -427,7 +426,6 @@ type
     stuckTicks: int
     jinkUntil: int
     jinkBits: uint8
-    jinkOriginClear: bool
     nadeCharge: int           # ticks the C button has been held; 0 = idle
     mateFixPos: Vec           # last SEEN position of a mate-carried enemy heart
     mateFixTick: int          # tick of that sighting; 0 = never seen this game
@@ -1752,7 +1750,6 @@ proc resetTransient(bot: Bot) =
   bot.scanHigh = false
   bot.stuckTicks = 0
   bot.jinkUntil = 0
-  bot.jinkOriginClear = false
   bot.behindLines = false
   bot.navGoal = -1
 
@@ -2245,30 +2242,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
   ffaBandIntent(bot, me, center, ringRadius, FfaHoldBand, "HOLD",
     "band_hold", "hold_band")
 
-proc ffaRingUnstickRayClear(
-  bot: Bot,
-  a, b: Vec
-): tuple[clear, originSkipped: bool] =
-  ## Checks an unstick ray after leaving a falsely blocked coarse origin cell.
-  if not FfaHunterRingUnstickSkipBlockedOrigin:
-    return (bot.gridRayClear(a, b), false)
-  let
-    origin = cellOf(a)
-    originBlocked = not bot.cellWalkable[origin]
-    d = b - a
-    steps = int(d.len() / 4.0) + 1
-  for s in 0 .. steps:
-    let cell = cellOf(a + d * (float(s) / float(steps)))
-    if originBlocked and cell == origin:
-      continue
-    if not bot.cellWalkable[cell]:
-      return (false, false)
-  (true, originBlocked)
-
-proc ffaRingUnstickBits(
-  bot: Bot,
-  me, center: Vec
-): tuple[bits: uint8, originSkipped: bool] =
+proc ffaRingUnstickBits(bot: Bot, me, center: Vec): uint8 =
   ## Selects a short open tangential burst to escape a blocked inward path.
   let inward = norm(center - me)
   var side = vec(-inward.y, inward.x)
@@ -2282,20 +2256,14 @@ proc ffaRingUnstickBits(
     inward
   ]
   for direction in candidates:
-    let ray =
-      if bot.navBuilt:
-        bot.ffaRingUnstickRayClear(
-          me,
-          me + direction * FfaHunterRingUnstickProbe
-        )
-      else:
-        (true, false)
-    if ray.clear:
-      result.bits = octantBits(direction)
-      result.originSkipped = ray.originSkipped
-      if result.bits != 0:
+    if not bot.navBuilt or bot.gridRayClear(
+      me,
+      me + direction * FfaHunterRingUnstickProbe
+    ):
+      result = octantBits(direction)
+      if result != 0:
         return
-  result = (ButtonUp, false)
+  result = ButtonUp
 
 proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   ## FFA doctrine chooses a symbolic target; navSteer owns movement state.
@@ -2579,11 +2547,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
   if hunterRingSafety and bot.tick < bot.jinkUntil:
     moveMask = bot.jinkBits
-    action =
-      if bot.jinkOriginClear:
-        "ring_unstick_origin_clear"
-      else:
-        "ring_unstick"
+    action = "ring_unstick"
   if dist(me, bot.lastPos) < 0.8:
     inc bot.stuckTicks
   else:
@@ -2594,15 +2558,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.navGoal = -1
     if hunterRingSafety:
       bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks
-      let selection = bot.ffaRingUnstickBits(me, center)
-      bot.jinkBits = selection.bits
-      bot.jinkOriginClear = selection.originSkipped
+      bot.jinkBits = bot.ffaRingUnstickBits(me, center)
       moveMask = bot.jinkBits
-      action =
-        if bot.jinkOriginClear:
-          "ring_unstick_origin_clear"
-        else:
-          "ring_unstick"
+      action = "ring_unstick"
     else:
       moveMask = octantBits(center - me)
 
@@ -4453,8 +4411,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
-    " ffaHunterRingUnstickSkipBlockedOrigin=",
-      FfaHunterRingUnstickSkipBlockedOrigin,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

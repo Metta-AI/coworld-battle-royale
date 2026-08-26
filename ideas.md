@@ -63,8 +63,12 @@
   `ffaHunterRingUnstickSkipBlockedOrigin=true` only in the candidate while
   candidate and exact submitted control retain Hunter, the 60-tick ring
   unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm safety
-  margin, zero ring margin, and 0.85 hold band. Hosted branch coverage is
-  pending.
+  margin, zero ring margin, and 0.85 hold band. Hosted branch coverage passed:
+  all 10 candidate artifacts are valid and contain 506
+  `ring_unstick_origin_clear` ticks, while all 10 controls contain zero.
+  Candidate artifacts contain 1,501 ordinary `ring_unstick` ticks versus
+  3,382 in control. These diagnostics prove the corrected branch fired; they
+  are not score.
 - Artifact: `andre-battleroyale:candidate-26`, Linux amd64 image digest
   `sha256:c1df0ac0f0c811018ead51fa42f650108c95f9bcf422f16e5f06878284b4186b`.
   Uploaded unsubmitted as `andre-battleroyale:v27`; exact submitted control
@@ -75,7 +79,10 @@
   players are NanosaurusX (`nancy-br:v1`, 1404.98), sivannn
   (`sivan-br-ringsurfer:v1`, 1405.88), and David Greis
   (`Battle Royale Baseline:v1`, 1327.16).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 209.30, candidate mean 194.70, difference
+  -14.60, 95% CI [-128.3584, 99.1584], Welch p=0.782228. The active change is
+  inconclusive and trends worse, so the submitted origin-cell semantics were
+  restored. `andre-battleroyale:v27` remains uploaded but was not submitted.
 
 ### Trial 25: scan only while unarmed hunter holds
 
