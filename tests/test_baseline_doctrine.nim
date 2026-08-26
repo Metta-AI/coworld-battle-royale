@@ -8,11 +8,11 @@ suite "baseline FFA doctrine":
     baseline = readFile(RepoRoot / "players" / "baseline" / "baseline.nim")
     demo = readFile(RepoRoot / "tools" / "run_ffa_demo.sh")
 
-  test "unset doctrine defaults to rush":
+  test "unset doctrine defaults to hunter":
     check baseline.count("FfaDoctrine = FfaLegacy") == 1
     check baseline.count("if requestedDoctrine.len == 0: FfaLegacy") == 0
-    check baseline.count("if requestedDoctrine.len == 0: FfaHunter") == 0
-    check baseline.count("if requestedDoctrine.len == 0: FfaRush") == 1
+    check baseline.count("if requestedDoctrine.len == 0: FfaHunter") == 1
+    check baseline.count("if requestedDoctrine.len == 0: FfaRush") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaPassive") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaHybrid") == 0

@@ -39,15 +39,20 @@
 - Change: When `CTF_BOT_FFA_DOCTRINE` is unset, select the existing `FfaRush`
   doctrine instead of `FfaHunter`. No rush, hunter, combat, item, navigation,
   ring, aiming, or firing parameter changes.
-- Isolation: Production amd64 image startup reports `ffaDoctrine=rush`; hosted
-  artifact check remains pending.
+- Isolation: Production amd64 image startup reports `ffaDoctrine=rush`.
+  All 10 hosted candidate artifacts report the rush doctrine and aggregate
+  4,606 `rush_arm`, 6,328 `converge`, and 1,967 `fight` ticks.
 - Artifact: `andre-battleroyale:v12` and isolated `andre-trial-11:v2`, image
   digest `sha256:9fedb633a90665e587e7d10fc0ad55aea1056ecd81ad8c509418ab17ed42339e`.
-- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- XP id: Baseline `xreq_d70bcadd-c1c1-4ae7-a6a6-409d5bf738c1` and candidate
+  `xreq_9b2441b8-fc23-4f1d-87b5-1b31610fd280`, 10 hosted episodes per arm.
 - Opponents: Frozen outside-top-three nearest-MRR field at launch: Aaron
   (`aaln-br-hunter:v2`), David Greis (`Battle Royale Baseline:v1`), and
   softmaxwell (`Picasso:v63`).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 201.40, candidate mean 82.60, difference
+  -118.80, 95% CI [-216.2395, -21.3605], Welch p=0.019623. Rush is a
+  statistically significant regression. `andre-battleroyale:v12` remains
+  uploaded but was not submitted.
 
 ### Trial 10: kite nearby heavy-gun threats
 
