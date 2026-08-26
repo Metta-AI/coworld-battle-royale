@@ -48,11 +48,20 @@
   and all other behavior are unchanged. When an otherwise eligible gun exists
   only in the submitted 120-to-240-pixel interval, passive holding emits
   `hold_far_gun`.
-- Isolation: `nim check` and the doctrine source-contract suite pass.
-  Production extraction and hosted artifact coverage remain pending.
-- Artifact: Pending Linux amd64 production build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction confirms the candidate
+  uses a 120-pixel radius versus 240 in exact submitted control while both
+  retain the 30-second deadline, 80-pixel safety margin, pursuit, 60-tick
+  unstick, and 0.85 hold band. Hosted artifact coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-18`, Linux amd64 image digest
+  `sha256:5e4aa0d88dbe6bf66b7d0c49e7c3159b8d35c49ea7ce7c3308c468871976d361`.
+  Uploaded unsubmitted as `andre-battleroyale:v19`; exact control and
+  candidate images are `andre-trial-18:v1` and `andre-trial-18:v2`.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: At launch Andre is #12 at 1431.09. The frozen nearest other
+  players are Aaron (`aaln-br-hunter:v2`, 1420.22), ravidear5-code
+  (`shade-doctrine-v1:v1`, 1415.86), and softmaxwell
+  (`Picasso:v63`, 1408.68).
 - Verdict: Pending hosted significance.
 
 ### Trial 17: disable normal hunter pursuit movement
