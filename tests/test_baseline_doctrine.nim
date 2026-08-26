@@ -92,7 +92,18 @@ suite "baseline FFA doctrine":
   test "hunter ring unstick is isolated":
     check baseline.count(
       "hunterRingSafety = FfaDoctrine == FfaHunter and") == 1
-    check baseline.count("action = \"ring_unstick\"") == 2
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "hunter alternates repeated ring unstick sides":
+    check baseline.contains("ffaRingUnstickAttempts: int")
+    check baseline.contains("ffaRingUnstickBaseFlip: bool")
+    check baseline.count(
+      "if bot.ffaRingUnstickAttempts mod 2 == 0:") == 1
+    check baseline.count(
+      "(bot.tick div TargetFps + bot.slot) mod 2 != 0") == 1
+    check baseline.count("inc bot.ffaRingUnstickAttempts") == 1
+    check baseline.count("bot.ffaRingUnstickAttempts = 0") == 2
+    check baseline.count("bot.ffaRingUnstickAction()") == 2
+    check baseline.count("ring_unstick_flip") == 1

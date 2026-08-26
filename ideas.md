@@ -32,6 +32,30 @@
 
 ## Trial log
 
+### Trial 16: alternate repeated ring-unstick sides
+
+- Idea: The corrected `tools/summarize_ring_retreats.nim` includes both
+  normal retreat and the submitted `ring_unstick` action. Across all 60
+  hosted v15 artifacts it found nine ring-cadence fatalities. Unstick occupied
+  84.3 percent of their final retreat samples, but 81.3 percent of consecutive
+  positions were effectively stationary. Several fatalities spent 96 to 100
+  samples in unstick while remaining 98 to 99 percent stationary. The current
+  selector retries every 21 stationary ticks but keeps the same preferred
+  tangential side for up to 120 ticks, repeatedly choosing a locally clear
+  32-pixel probe that can still be globally blocked.
+- Change: Only during the submitted Hunter ring-safety unstick, alternate the
+  preferred tangential side on every repeated stuck retry within one continuous
+  ring retreat. The existing candidate order, 32-pixel clearance probe,
+  20-frame stuck threshold, 60-tick burst, inward fallbacks, ring alarm,
+  looting, combat, and all other behavior are unchanged. A second-side retry
+  emits `ring_unstick_flip`.
+- Isolation: `nim check` and the doctrine source-contract suite pass.
+  Production extraction and hosted artifact coverage remain pending.
+- Artifact: Pending Linux amd64 production build and upload.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
+
 ### Trial 15: remember a fog-hidden gun trip
 
 - Idea: Across all 60 hosted v15 artifacts, Hunter was unarmed in 67.34

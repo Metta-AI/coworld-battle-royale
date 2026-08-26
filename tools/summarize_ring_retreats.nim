@@ -151,11 +151,15 @@ proc retreatStats(
         sample.objective != previousObjective:
       inc result.switches
     previousObjective = sample.objective
-    if sample.action notin ["retreat_ring", "ring_unstick"]:
+    if sample.action notin [
+      "retreat_ring",
+      "ring_unstick",
+      "ring_unstick_flip"
+    ]:
       continue
     retreatSamples.add(sample)
     inc result.samples
-    if sample.action == "ring_unstick":
+    if sample.action in ["ring_unstick", "ring_unstick_flip"]:
       inc result.unstickSamples
     if sample.visible > 0:
       inc result.visible
