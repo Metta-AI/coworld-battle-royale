@@ -4,7 +4,7 @@
 
 - League: Battle Royale, Coworld `battleroyale` v0.1.13.
 - Player: Andre von Houck (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`).
-- Submitted policy: `andre-battleroyale:v2`.
+- Submitted policy: `andre-battleroyale:v15`.
 - Upstream policy base: `a39eb196131ac0083506bb344130359de1c2d9c8`.
 
 ## Backlog
@@ -48,8 +48,10 @@
   are unchanged. Active bursts emit `ring_unstick`.
 - Isolation: `nim check`, the doctrine source-contract suite, and the Linux
   amd64 production build pass. Production startup matches every submitted
-  Hunter setting and reports `ffaHunterRingUnstickTicks=60`; hosted artifact
-  coverage remains pending.
+  Hunter setting and reports `ffaHunterRingUnstickTicks=60`. All 10 initial
+  candidate artifacts are valid and contain 2,871 `ring_unstick` ticks, so the
+  branch fired. Candidate ring-like fatal retreats had 11.1 percent stationary
+  steps versus 60.8 percent in control; this diagnostic is not score.
 - Artifact: `andre-battleroyale:candidate-14`, Linux amd64 image digest
   `sha256:2f1536a688b3dcfbad572bd21a7d830d1a7627e5d290f036faeb2d426414f30a`.
   Uploaded unsubmitted as `andre-battleroyale:v15`; exact control and
@@ -62,13 +64,21 @@
   was +32.3667, 95% CI [-0.1187, 64.8521], Welch p=0.050812. The second
   extension is baseline `xreq_7d8674e2-cd03-43dd-909a-295357314533` and
   candidate `xreq_c174e404-21c6-4ae1-89db-482016e691ff`. At 40 per arm the
-  difference is +24.3500, 95% CI [-2.4177, 51.1177], Welch p=0.073957, so a
-  same-field 20-episode third extension is pending.
+  difference was +24.3500, 95% CI [-2.4177, 51.1177], Welch p=0.073957. The
+  third extension is baseline `xreq_f6a1fa2e-abfc-4129-b400-895d6c2fde01`
+  and candidate `xreq_4d1a774b-8912-4e21-b856-f05b815fa663`, 20 episodes per
+  arm.
 - Opponents: At launch Andre is #16 at 1261.91. The frozen nearest other
   players are Aaron (`aaln-br-hunter:v2`, 1333.14), aosgoods
   (`eatth-battleroyale-decision-stack-v29:v1`, 1376.08), and NanosaurusX
   (`nancy-br:v1`, 1406.29).
-- Verdict: Pending hosted significance.
+- Verdict: Kept. Across all 60 hosted episodes per arm, baseline mean was
+  159.6500 and candidate mean was 192.2667, improvement +32.6167, 95% CI
+  [10.2746, 54.9587], Welch p=0.004598. The Softmax XP dashboard also reports
+  candidate 192.27 and 64% +/- 7% versus control 159.65 and 49% +/- 7%.
+  Submitted `andre-battleroyale:v15` as the new champion with submission
+  `sub_b6881599-8a5b-428b-b970-de03f8e7b703` and active membership
+  `lpm_40b8d55d-c55f-437d-98d5-04a5ba6b0c45`.
 
 ### Trial 13: extended heavy-gun arm reach
 
