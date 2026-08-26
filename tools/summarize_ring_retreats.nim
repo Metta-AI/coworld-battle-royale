@@ -15,6 +15,8 @@ type
   EventData = object
     damages: seq[DamageSample]
     deathTick: int
+    centerX: float
+    centerY: float
   TickSample = object
     tick: int
     x: float
@@ -23,6 +25,7 @@ type
     objective: string
     visible: int
     tier: int
+    safeRadius: float
   RetreatStats = object
     samples: int
     unstickSamples: int
@@ -33,6 +36,10 @@ type
     switches: int
     visible: int
     unarmed: int
+    outwardSteps: int
+    radialProgress: float
+    startSlack: float
+    endSlack: float
 
 proc artifactFiles(zipPath: string): tuple[
     events: string, ticks: string] {.raises: [
@@ -69,7 +76,7 @@ proc parseEventData(text: string): EventData {.raises: [
   OSError,
   ValueError
 ].} =
-  ## Parses damage events and the policy's terminal death tick.
+  ## Parses damage events, map center, and terminal death tick.
   result.deathTick = -1
   for line in text.splitLines():
     if line.len == 0:
@@ -83,6 +90,9 @@ proc parseEventData(text: string): EventData {.raises: [
       ))
     of "death":
       result.deathTick = event["t"].getInt()
+    of "game_params":
+      result.centerX = float(event["mapW"].getInt()) / 2.0
+      result.centerY = float(event["mapH"].getInt()) / 2.0
     else:
       discard
 
@@ -103,7 +113,8 @@ proc parseTickSamples(text: string): seq[TickSample] {.raises: [
       action: sample["act"].getStr(),
       objective: sample["obj"].getStr(),
       visible: sample["vis"].getInt(),
-      tier: sample["tier"].getInt()
+      tier: sample["tier"].getInt(),
+      safeRadius: sample["safeR"].getFloat()
     ))
 
 proc terminalRingRun(events: EventData): seq[DamageSample] =
@@ -143,9 +154,14 @@ proc distance(a, b: TickSample): float =
   ## Returns Euclidean distance between two sampled positions.
   hypot(b.x - a.x, b.y - a.y)
 
+proc centerDistance(sample: TickSample, centerX, centerY: float): float =
+  ## Returns a sample's radial distance from the map and ring center.
+  hypot(sample.x - centerX, sample.y - centerY)
+
 proc retreatStats(
   samples: seq[TickSample],
-  fatalTick: int
+  fatalTick: int,
+  centerX, centerY: float
 ): RetreatStats =
   ## Summarizes retreat motion in the ten seconds before a ring-like death.
   let startTick = fatalTick - WindowSec * TargetFps
@@ -179,12 +195,23 @@ proc retreatStats(
     retreatSamples[0],
     retreatSamples[^1]
   )
+  result.radialProgress = retreatSamples[0].centerDistance(
+    centerX,
+    centerY
+  ) - retreatSamples[^1].centerDistance(centerX, centerY)
+  result.startSlack = retreatSamples[0].safeRadius -
+    retreatSamples[0].centerDistance(centerX, centerY)
+  result.endSlack = retreatSamples[^1].safeRadius -
+    retreatSamples[^1].centerDistance(centerX, centerY)
   for i in 1 ..< retreatSamples.len:
     let step = distance(retreatSamples[i - 1], retreatSamples[i])
     result.path += step
     inc result.steps
     if step < 0.8:
       inc result.zeroSteps
+    if retreatSamples[i].centerDistance(centerX, centerY) >
+        retreatSamples[i - 1].centerDistance(centerX, centerY) + 0.8:
+      inc result.outwardSteps
 
 proc episodeId(path: string): string =
   ## Returns the hosted episode id encoded in an artifact filename.
@@ -228,7 +255,12 @@ proc summarize(artifactDir: string) {.raises: [
       run = terminalRingRun(events)
     if run.len == 0:
       continue
-    let stats = retreatStats(parseTickSamples(streams.ticks), events.deathTick)
+    let stats = retreatStats(
+      parseTickSamples(streams.ticks),
+      events.deathTick,
+      events.centerX,
+      events.centerY
+    )
     inc ringDeaths
     total.samples += stats.samples
     total.unstickSamples += stats.unstickSamples
@@ -239,11 +271,18 @@ proc summarize(artifactDir: string) {.raises: [
     total.switches += stats.switches
     total.visible += stats.visible
     total.unarmed += stats.unarmed
+    total.outwardSteps += stats.outwardSteps
+    total.radialProgress += stats.radialProgress
+    total.startSlack += stats.startSlack
+    total.endSlack += stats.endSlack
     echo &"episode={episodeId(path)} ringHits={run.len} " &
       &"fatalTick={events.deathTick} retreatSamples={stats.samples} " &
       &"unstickSamples={stats.unstickSamples} " &
       &"path={stats.path:.1f} displacement={stats.displacement:.1f} " &
+      &"radialProgress={stats.radialProgress:.1f} " &
+      &"slack={stats.startSlack:.1f}->{stats.endSlack:.1f} " &
       &"zeroStepPct={percent(stats.zeroSteps, stats.steps):.1f} " &
+      &"outwardStepPct={percent(stats.outwardSteps, stats.steps):.1f} " &
       &"switches={stats.switches} visible={stats.visible} " &
       &"unarmed={stats.unarmed}"
   echo "files=", paths.len
@@ -253,7 +292,11 @@ proc summarize(artifactDir: string) {.raises: [
     echo &"unstickPct={percent(total.unstickSamples, total.samples):.1f}"
     echo &"meanPath={total.path / float(ringDeaths):.1f}"
     echo &"meanDisplacement={total.displacement / float(ringDeaths):.1f}"
+    echo &"meanRadialProgress={total.radialProgress / float(ringDeaths):.1f}"
+    echo &"meanStartSlack={total.startSlack / float(ringDeaths):.1f}"
+    echo &"meanEndSlack={total.endSlack / float(ringDeaths):.1f}"
     echo &"zeroStepPct={percent(total.zeroSteps, total.steps):.1f}"
+    echo &"outwardStepPct={percent(total.outwardSteps, total.steps):.1f}"
     echo &"visiblePct={percent(total.visible, total.samples):.1f}"
     echo &"unarmedPct={percent(total.unarmed, total.samples):.1f}"
     echo &"meanSwitches={float(total.switches) / float(ringDeaths):.1f}"
