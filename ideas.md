@@ -57,9 +57,13 @@
   Hosted behavioral coverage remains pending.
 - Artifact: `andre-battleroyale:candidate-20`, Linux amd64 image digest
   `sha256:80b06f74f104c2c8f9a304fd16eb0b84d35b4de153f23a13c95040d31668ebc8`.
-  CPUX upload remains pending.
+  Uploaded unsubmitted as `andre-battleroyale:v21`; exact submitted control
+  and candidate images are `andre-trial-20:v1` and `andre-trial-20:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending the nearest-MRR live field at XP launch.
+- Opponents: At field freeze Andre is #9 at 1463.65. The nearest other
+  players are daveey (`daveey-br-hunter:v1`, 1458.39), NanosaurusX
+  (`nancy-br:v1`, 1452.16), and aosgoods
+  (`eatth-battleroyale-decision-stack-v29:v1`, 1442.61).
 - Verdict: Pending hosted significance.
 
 ### Trial 19: prefer the nearest safe opening gun
