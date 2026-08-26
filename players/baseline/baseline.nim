@@ -266,6 +266,7 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
+  FfaHunterUnarmedScanBand = true
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -2515,7 +2516,12 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     engageReason = intent.engageReason
     hunterRingSafety = FfaDoctrine == FfaHunter and
       intent.action == "retreat_ring"
+    hunterUnarmedScanBand = FfaDoctrine == FfaHunter and
+      FfaHunterUnarmedScanBand and unarmed and targetIndex < 0 and
+      intent.action == "hold_band"
   var action = intent.action
+  if hunterUnarmedScanBand:
+    action = "scan_unarmed_band"
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
@@ -2564,7 +2570,11 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     else:
       moveMask = octantBits(center - me)
 
-  let rotBits = aimRotateBits(desiredAim, bot.estAim, CombatDeadband)
+  let rotBits =
+    if hunterUnarmedScanBand:
+      ButtonB
+    else:
+      aimRotateBits(desiredAim, bot.estAim, CombatDeadband)
   var mask = moveMask or rotBits
   let triggerPressed = wantFire and not bot.firedLast
   if triggerPressed:
@@ -4411,6 +4421,7 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
+    " ffaHunterUnarmedScanBand=", FfaHunterUnarmedScanBand,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

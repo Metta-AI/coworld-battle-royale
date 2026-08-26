@@ -25,6 +25,7 @@
 - Add only a bounded low-health Hunter medkit detour.
 - Prevent only an active Hunter ring-unstick burst from rearming itself.
 - Scan only the Hunter's vision cone while holding without a visible target.
+- Scan only while an unarmed Hunter holds without a visible target.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -38,6 +39,25 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 25: scan only while unarmed hunter holds
+
+- Idea: Trial 24's broad hold scan was inconclusive, but its candidate started
+  1.5 loot trips per episode versus 0.8 in control while also increasing
+  engage ticks from 363 to 670. Restricting the same vision sweep to unarmed
+  holds may preserve weapon discovery without changing armed hold visibility
+  or inviting the extra armed contacts measured by the broad scan.
+- Change: Only for the default Hunter while unarmed, holding with action
+  `hold_band`, and seeing no opponent, rotate the turret clockwise continuously
+  and emit `scan_unarmed_band`. Armed holds, movement, band location, ring
+  retreat, unstick, arming selection, target selection, pursuit, aim after
+  contact, firing, and every other behavior are unchanged.
+- Isolation: Pending checks, production extraction, and hosted behavioral
+  coverage.
+- Artifact: Pending CPUX build and upload.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the nearest-MRR live field at XP launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 24: scan while hunter holds the band
 
