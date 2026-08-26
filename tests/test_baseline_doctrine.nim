@@ -41,9 +41,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
-    check baseline.contains("FfaHunterHeavyStrafe = true")
-    check baseline.contains("FfaHunterHeavyStrafeRange = 400.0")
-    check baseline.contains("FfaHunterHeavyStrafeStep = 240.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
@@ -99,12 +96,3 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
-
-  test "hunter strafes laterally from nearby heavy guns":
-    check baseline.count("proc ffaHunterHeavyStrafeTarget(") == 1
-    check baseline.count(
-      "heavyThreatDist < FfaHunterHeavyStrafeRange") == 1
-    check baseline.count("intent.objective = \"heavy_strafe\"") == 1
-    check baseline.count("intent.action = \"strafe_heavy\"") == 1
-    check baseline.count(
-      "intent.engageReason = \"heavy_threat_lateral\"") == 1

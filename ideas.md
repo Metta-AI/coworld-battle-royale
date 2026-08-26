@@ -66,8 +66,10 @@
   `ffaHunterHeavyStrafe=true`, a 400-pixel range, and a 240-pixel step only in
   the candidate while candidate and exact submitted control retain Hunter,
   the 60-tick ring unstick, 240-pixel arm cap, 30-second arm deadline,
-  80-pixel arm safety margin, zero ring margin, and 0.85 hold band. Hosted
-  branch coverage is pending.
+  80-pixel arm safety margin, zero ring margin, and 0.85 hold band. Across 10
+  hosted artifacts per arm, the candidate records 432 `heavy_strafe` action
+  ticks and 33 sampled `heavy_threat_lateral` decisions versus zero in the
+  exact control, proving the isolated change fired.
 - Artifact: `andre-battleroyale:candidate-27`, Linux amd64 image digest
   `sha256:0e134ff747b8791d50fb00ed5864c4595a951025589eb821fcd3dc57305a35d3`.
   Uploaded unsubmitted as `andre-battleroyale:v28`; exact submitted control
@@ -80,7 +82,12 @@
   players are Kenny Sheftel (`kenshef-my-player:v1`, 1370.51), sivannn
   (`sivan-br-ringsurfer:v1`, 1378.78), and Aaron
   (`aaln-br-hunter:v2`, 1435.28).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. All 10 episodes per arm completed without failure. The
+  exact submitted control scores 166.6000 and the candidate 144.6000, a
+  -22.0000 delta with 95% CI [-98.9697, 54.9697] and Welch p=0.555268.
+  Inconclusive is not a keep, and the candidate trends worse while reducing
+  mean armed fraction from 0.5144 to 0.2116. `andre-battleroyale:v28` remains
+  uploaded but unsubmitted; the submitted champion remains v15.
 
 ### Trial 26: skip a falsely blocked ring-unstick origin cell
 
