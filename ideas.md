@@ -47,11 +47,20 @@
   safety, 60-tick unstick, four-player late close, and every other submitted
   behavior are unchanged. When an otherwise pursuable weak target is declined,
   passive holding emits `hold_no_pursuit` and `pursuit_disabled`.
-- Isolation: `nim check` and the doctrine source-contract suite pass.
-  Production extraction and hosted artifact coverage remain pending.
-- Artifact: Pending Linux amd64 production build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction confirms pursuit is
+  false only in candidate while both images retain Hunter, safe arming,
+  weapon-range firing, 60-tick unstick, zero ring margin, and 0.85 hold band.
+  Hosted artifact coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-17`, Linux amd64 image digest
+  `sha256:3c97c94d6ca52dd654e3c1693cc7be934d26215f9224ba423a5e61ef32c7cc94`.
+  Uploaded unsubmitted as `andre-battleroyale:v18`; exact control and
+  candidate images are `andre-trial-17:v1` and `andre-trial-17:v2`.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: At launch Andre is #13 at 1416.70. The frozen nearest other
+  players are b4kng2dkg5-sudo (`starter-baseline:v1`, 1421.69), David Greis
+  (`Battle Royale Baseline:v1`, 1422.31), and Aaron
+  (`aaln-br-hunter:v2`, 1402.76).
 - Verdict: Pending hosted significance.
 
 ### Trial 16: alternate repeated ring-unstick sides
