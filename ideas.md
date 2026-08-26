@@ -23,6 +23,7 @@
 - Start only the hunter ring-retreat alarm one margin earlier.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
 - Let only Hunter ring-unstick rays leave a falsely blocked coarse origin cell.
+- Cycle only the existing Hunter ring-unstick candidates on repeated retries.
 - Lengthen only the hunter ring-unstick clearance probe.
 - Prefer only inward-diagonal hunter ring-unstick candidates before pure
   tangents.
@@ -43,6 +44,30 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 29: cycle repeated hunter ring-unstick candidates
+
+- Idea: After correcting the hosted ring extractor from 120 to the Coworld's
+  actual 24 FPS, 50 recent exact v15 controls contain 10 ring-like deaths.
+  Nine were completely stationary throughout the final 10 seconds, with all
+  20 samples in `ring_unstick`. Trial 16's two-side retry alternation reduced
+  fatal-retreat stationary steps from 96.7 to 13.7 percent and ring-like
+  deaths from four to two, but remained inconclusive at 10 episodes per arm.
+  Extend that real-motion feedback beyond the two tangents by cycling through
+  the existing five clearance candidates on successive stuck retries.
+- Change: During one continuous default-Hunter ring retreat, leave the first
+  stuck-triggered unstick selection exactly submitted, then rotate which of
+  the existing five candidates is checked first on each repeated stuck retry.
+  The candidate vectors, their base order, 32-pixel probe, preferred initial
+  side, 20-frame stuck trigger, 60-tick burst, ordinary ring retreat, arming,
+  combat, hold band, and every non-Hunter behavior are unchanged. Repeated
+  cycled bursts emit `ring_unstick_cycle`.
+- Isolation: `nim check` and the doctrine source-contract suite pass.
+  Production and hosted artifact checks are pending.
+- Artifact: Pending CPUX.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending live nearest-MMR field freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 28: armed-only inward heavy-gun strafe
 
