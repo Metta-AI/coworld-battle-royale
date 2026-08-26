@@ -52,11 +52,21 @@
   closer to it. Existing ring safety remains higher priority. Pursuit, firing,
   arming, hold band, unstick, targeting, and every other behavior remain
   unchanged. Active detours emit `move_medkit_hunter`.
-- Isolation: Pending checks, production extraction, and hosted behavioral
-  coverage.
-- Artifact: Pending CPUX build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports bounded Hunter
+  healing only in candidate and confirms the candidate retains Hunter, the
+  60-tick ring unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm
+  safety margin, zero ring margin, and 0.85 hold band. Hosted behavioral
+  coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-22`, Linux amd64 image digest
+  `sha256:7acfebf9ac217bafd8bb78935f430eb19f44cb9412d0daff660f532de78420b5`.
+  Uploaded unsubmitted as `andre-battleroyale:v23`; exact submitted control
+  and candidate images are `andre-trial-22:v1` and `andre-trial-22:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending the nearest-MRR live field at XP launch.
+- Opponents: At field freeze Andre is #13 at 1438.70. The nearest other
+  players are NanosaurusX (`nancy-br:v1`, 1443.93), Kenny Sheftel
+  (`kenshef-my-player:v1`, 1432.26), and David Greis
+  (`Battle Royale Baseline:v1`, 1431.24).
 - Verdict: Pending hosted significance.
 
 ### Trial 21: inward-first hunter ring unstick
