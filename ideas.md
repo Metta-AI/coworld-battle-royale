@@ -17,6 +17,8 @@
 - Allow only safe hunter upgrades after initial arming.
 - Persist only a safe hunter gun trip while its target is fog-hidden.
 - Kite only visible nearby heavy-gun threats while preserving hunter fire.
+- Strafe only laterally inward from nearby heavy-gun threats while preserving
+  Hunter fire.
 - Start only the hunter ring-retreat alarm one margin earlier.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
 - Let only Hunter ring-unstick rays leave a falsely blocked coarse origin cell.
@@ -40,6 +42,31 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 27: inward lateral heavy-gun strafe
+
+- Idea: Exact replay attribution across the newest 20 submitted-v15 controls
+  finds 17 deaths: nine to heavy guns, four to the ring, two to mid guns, one
+  to a fist, and one to spray. Trial 10's direct-away heavy evade fired for
+  5,996 ticks but left non-ring deaths unchanged at 13 per arm and tripled
+  ring deaths from three to nine; its final hosted delta was -5.4667, 95% CI
+  [-41.1700, 30.2367]. Direct-away motion also preserves the attacker's
+  bearing, offering little angular displacement against hitscan aim. Test a
+  lateral dodge that explicitly chooses the inward side instead.
+- Change: Only for the default Hunter, when a visible heavy-gun actor is
+  within 400 pixels and existing ring safety is not active, move 240 pixels
+  perpendicular to the threat bearing on the side whose target is closer to
+  the arena center, then clamp it inside the existing 80-pixel safe margin.
+  Target selection, aim, firing, pursuit, arming, hold band, ring priority,
+  60-tick unstick, late close, and every non-Hunter doctrine are unchanged.
+  Active movement emits `heavy_strafe`, `strafe_heavy`, and
+  `heavy_threat_lateral`.
+- Isolation: Pending source checks, production extraction, and hosted branch
+  coverage.
+- Artifact: Pending Linux amd64 production build and upload.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the required live nearest-MRR freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 26: skip a falsely blocked ring-unstick origin cell
 
