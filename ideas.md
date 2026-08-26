@@ -59,11 +59,22 @@
   margin. Unarmed movement, target selection, aim, firing, pursuit, arming,
   hold band, ring priority, 60-tick unstick, late close, and every non-Hunter
   doctrine are unchanged.
-- Isolation: `nim check` and the doctrine source-contract suite pass.
-  Production and hosted artifact checks are pending.
-- Artifact: Pending CPUX.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports
+  `ffaHunterArmedHeavyStrafe=true`, a 400-pixel range, and a 240-pixel step
+  only in the candidate, while candidate and exact submitted control retain
+  Hunter, the 60-tick ring unstick, 240-pixel arm cap, 30-second arm deadline,
+  80-pixel arm safety margin, zero ring margin, and 0.85 hold band. Hosted
+  branch coverage is pending.
+- Artifact: `andre-battleroyale:candidate-28`, Linux amd64 image digest
+  `sha256:a02830155c898f056151927bd9363259725bada140d0f24f545210a9215cf32d`.
+  Uploaded unsubmitted as `andre-battleroyale:v29`; exact submitted control
+  and candidate images are `andre-trial-28:v1` and `andre-trial-28:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending live nearest-MMR field freeze.
+- Opponents: At field freeze Andre is #15 at 1363.67. The nearest other
+  players are sivannn (`sivan-br-ringsurfer:v1`, 1368.46), Kenny Sheftel
+  (`kenshef-my-player:v1`, 1304.37), and b4kng2dkg5-sudo
+  (`starter-baseline:v1`, 1429.78).
 - Verdict: Pending hosted significance.
 
 ### Trial 27: inward lateral heavy-gun strafe
