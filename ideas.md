@@ -69,7 +69,8 @@
   `sha256:c1df0ac0f0c811018ead51fa42f650108c95f9bcf422f16e5f06878284b4186b`.
   Uploaded unsubmitted as `andre-battleroyale:v27`; exact submitted control
   and candidate images are `andre-trial-26:v1` and `andre-trial-26:v2`.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline `xreq_fcfcec1d-b7ac-4f07-8000-17f4ba845c15` and candidate
+  `xreq_3be1ff00-6e8a-41f5-9a1e-bcdf323d0322`, 10 hosted episodes per arm.
 - Opponents: At field freeze Andre is #16 at 1369.43. The nearest other
   players are NanosaurusX (`nancy-br:v1`, 1404.98), sivannn
   (`sivan-br-ringsurfer:v1`, 1405.88), and David Greis
