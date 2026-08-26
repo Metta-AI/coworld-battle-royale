@@ -251,8 +251,6 @@ const
   FfaPassiveBandDefault = 0.85
   FfaShadeRingMarginDefault = 160.0  # one alarm width inside the ring-safety line
   FfaHunterRingMarginDefault = 0.0
-  FfaRingSafetyMargin = 80
-  FfaHunterRingSafetyMargin = 160
   FfaLootOpenSecDefault = 35
   FfaLootCloseSecDefault = 90
   FfaLootTripMaxSecDefault = 30
@@ -2385,11 +2383,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     not unarmed and hp >= FfaHunterPursuitMinHp and hunterTargetWeaker and
     not hunterSupported and
     dist(actors[targetIndex].pos, center) <= float(max(1, ringRadius))
-  let ringSafetyMargin =
-    if FfaDoctrine == FfaHunter:
-      FfaHunterRingSafetyMargin
-    else:
-      FfaRingSafetyMargin
   var
     engage = targetIndex >= 0 and
       (healthy or targetCritical or localAdvantage) and targetDist < 520.0
@@ -2425,28 +2418,18 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     action: "move_ring", phase: "HOLD",
     bandFraction: FfaHoldBand,
     bandRadius: float(max(1, ringRadius)) * FfaHoldBand)
-  if ringDist > float(max(1, ringRadius - ringSafetyMargin)):
+  if ringDist > float(max(1, ringRadius - 80)):
     if FfaDoctrine in {FfaHunter, FfaPact}:
       bot.ffaLootTrip = false
       bot.ffaLootTargetValid = false
       bot.ffaLootTargetTier = 0
       bot.ffaLootStartedTick = 0
-    let earlyHunterRetreat = FfaDoctrine == FfaHunter and
-      ringDist <= float(max(1, ringRadius - FfaRingSafetyMargin))
-    intent.phase =
-      if earlyHunterRetreat: "RING_SAFETY_EARLY"
-      else: "RING_SAFETY"
+    intent.phase = "RING_SAFETY"
     intent.bandFraction = 0.0
     intent.bandRadius = 0.0
-    intent.objective =
-      if earlyHunterRetreat: "safe_zone_early"
-      else: "safe_zone"
-    intent.action =
-      if earlyHunterRetreat: "retreat_ring_early"
-      else: "retreat_ring"
-    intent.engageReason =
-      if earlyHunterRetreat: "ring_early"
-      else: "ring"
+    intent.objective = "safe_zone"
+    intent.action = "retreat_ring"
+    intent.engageReason = "ring"
   elif FfaLateClose and livingCount > 0 and
       livingCount <= (if FfaDoctrine in {FfaHunter, FfaPact}: 4 else: 3) and
       targetIndex >= 0:
@@ -4392,7 +4375,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
-    " ffaHunterRingSafetyMargin=", FfaHunterRingSafetyMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
   artInit(slot, $bot.team, $bot.role, "", FfaGameTicksPerFrame)

@@ -42,18 +42,23 @@
   firing, and all other doctrines are unchanged. Only the added 80-pixel
   interval emits `safe_zone_early`, `retreat_ring_early`, and `ring_early`.
 - Isolation: `nim check`, the doctrine source-contract suite, and the Linux
-  amd64 production build pass. Production startup reports the submitted
-  Hunter settings with `ffaHunterRingSafetyMargin=160`; hosted artifact check
-  remains pending.
+  amd64 production build pass. Production and hosted startup report the
+  submitted Hunter settings with `ffaHunterRingSafetyMargin=160`. All 10
+  candidate artifacts are valid and contain 9,690 `safe_zone_early`,
+  `retreat_ring_early`, and `ring_early` ticks, so the branch fired.
 - Artifact: `andre-battleroyale:candidate-12`, Linux amd64 image digest
   `sha256:bb21dea81cdb9291c7b61c488cb1881faf1d5862089a451b1a5002653e8d7e08`.
   Uploaded unsubmitted as `andre-battleroyale:v13`; exact control and
   candidate images are `andre-trial-12:v1` and `andre-trial-12:v2`.
-- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- XP id: Baseline `xreq_9ec1c567-c2d5-4243-a1a7-e49fcf58533c` and candidate
+  `xreq_2cdc4912-cb48-4173-b529-8c7dea58cc65`, 10 hosted episodes per arm.
 - Opponents: Frozen outside-top-three nearest-MRR field at launch: Aaron
   (`aaln-br-hunter:v2`), NanosaurusX (`nancy-br:v1`), and b4kng2dkg5-sudo
   (`starter-baseline:v1`).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 188.40, candidate mean 180.90, difference
+  -7.50, 95% CI [-48.6252, 33.6252], Welch p=0.705966. The active change is
+  inconclusive and trends worse. `andre-battleroyale:v13` remains uploaded but
+  was not submitted.
 
 ### Trial 11: rush doctrine default
 
