@@ -17,6 +17,7 @@
 - Allow only safe hunter upgrades after initial arming.
 - Kite only visible nearby heavy-gun threats while preserving hunter fire.
 - Start only the hunter ring-retreat alarm one margin earlier.
+- Add only a persistent tangential unstick burst during hunter ring retreat.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
