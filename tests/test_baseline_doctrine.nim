@@ -30,8 +30,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("CTF_BOT_FFA_HUNTER_SUPPORT_RADIUS")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS")
-    check baseline.contains(
-      "CTF_BOT_FFA_HUNTER_HEAVY_ARM_TRIP_MAX_DETOUR_RADIUS")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN")
     check baseline.contains("CTF_BOT_FFA_HUNTER_RING_MARGIN")
     check baseline.contains("FfaHunterArmDefault = true")
@@ -42,8 +40,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
-    check baseline.contains(
-      "FfaHunterHeavyArmTripMaxDetourRadiusDefault = 480.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
@@ -91,11 +87,3 @@ suite "baseline FFA doctrine":
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n      ringRadius, FfaHunterRingMargin)") == 1
     check baseline.count(
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n    ringRadius, FfaShadeRingMargin)") == 1
-
-  test "only heavy guns use the extended hunter arm radius":
-    check baseline.count("heavyMaxDistance = -1.0") == 1
-    check baseline.count(
-      "if tier == FfaWeaponHeavy and heavyMaxDistance > 0.0:") == 1
-    check baseline.count("heavy_loot_trip") == 2
-    check baseline.count("move_heavy_extended") == 2
-    check baseline.count("ffaLootExtendedHeavy = extendedHeavy") == 1

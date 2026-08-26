@@ -45,17 +45,25 @@
   `move_heavy_extended`.
 - Isolation: `nim check`, the doctrine source-contract suite, and the Linux
   amd64 production build pass. Production startup preserves the submitted
-  240-pixel normal radius and reports the isolated 480-pixel heavy radius;
-  hosted artifact coverage remains pending.
+  240-pixel normal radius and reports the isolated 480-pixel heavy radius.
+  Hosted behavioral coverage failed: all 10 candidate artifacts contain zero
+  `heavy_loot_trip` and `move_heavy_extended` ticks. Candidate mean armed
+  fraction was 0.3688 with 1.4 loot trips, versus control 0.5134 with 0.8
+  trips, but these artifact diagnostics are not score.
 - Artifact: `andre-battleroyale:candidate-13`, Linux amd64 image digest
   `sha256:37f653afd3f64e1cb9de52624aa815e2deb6d00cd6df6a7ba10ff171425fbdb2`;
   uploaded unsubmitted as `andre-battleroyale:v14`; exact control and candidate
   images are `andre-trial-13:v1` and `andre-trial-13:v2`.
-- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- XP id: Baseline `xreq_23e52035-9b1a-4e28-8b41-45bd935d4d9a` and candidate
+  `xreq_656c7b1a-958b-4fec-8533-f05594ff30ba`, 10 hosted episodes per arm.
 - Opponents: At launch Andre is #16 at 1268.53. The frozen nearest other
   players are Aaron (`aaln-br-hunter:v2`, 1289.86), NanosaurusX
   (`nancy-br:v1`, 1380.89), and sivannn (`sivan-br-ringsurfer:v1`, 1397.83).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 171.30, candidate mean 151.70, difference
+  -19.60, 95% CI [-93.1792, 53.9792], Welch p=0.582570. The result is
+  inconclusive and trends worse, while the changed extended-heavy branch was
+  inactive in every hosted artifact. `andre-battleroyale:v14` remains
+  uploaded but was not submitted.
 
 ### Trial 12: earlier hunter ring alarm
 
