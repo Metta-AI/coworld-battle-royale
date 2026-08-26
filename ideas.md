@@ -24,6 +24,7 @@
   tangents.
 - Add only a bounded low-health Hunter medkit detour.
 - Prevent only an active Hunter ring-unstick burst from rearming itself.
+- Scan only the Hunter's vision cone while holding without a visible target.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -37,6 +38,26 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 24: scan while hunter holds the band
+
+- Idea: Across the newest 40 exact submitted-control artifacts from Trials 20
+  through 23, Hunter spends 95,069 action ticks holding its passive band but
+  only 1,007 action ticks engaging. When no opponent is visible, FFA aim points
+  at the navigation target, so a Hunter holding its band does not deliberately
+  sweep the fog-of-war vision cone. A turret-only scan can find contacts while
+  preserving the survival behavior that dominates the submitted policy.
+- Change: Only for the default Hunter while its action is `hold_band` and no
+  opponent is visible, rotate the turret clockwise continuously and emit
+  `scan_band`. Movement, band location, ring retreat, unstick, arming, target
+  selection, pursuit, aim after contact, firing, and every other behavior are
+  unchanged.
+- Isolation: Pending checks, production extraction, and hosted behavioral
+  coverage.
+- Artifact: Pending CPUX build and upload.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the nearest-MRR live field at XP launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 23: cap hunter ring-unstick self-rearming
 
