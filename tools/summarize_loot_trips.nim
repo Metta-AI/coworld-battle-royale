@@ -75,7 +75,9 @@ proc addArtifact(
       tick = sample["t"].getInt()
       dead = sample.hasKey("dead") and sample["dead"].getBool()
       tier = sample["tier"].getInt()
-      isTrip = not dead and sample["obj"].getStr() == "loot_trip"
+      objective = sample["obj"].getStr()
+      isTrip = not dead and
+        (objective == "loot_trip" or objective == "loot_memory_trip")
     lastTick = tick
     lastDead = dead
     lastTier = tier

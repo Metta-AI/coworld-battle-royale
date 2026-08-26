@@ -41,6 +41,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
+    check baseline.contains("FfaHunterRememberFoggedGun = true")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
@@ -96,3 +97,13 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "hunter remembers only a safe fog-hidden gun trip":
+    check baseline.count(
+      "rememberFoggedTarget = FfaHunterRememberFoggedGun and") == 1
+    check baseline.count(
+      "FfaDoctrine == FfaHunter and d > FfaLootTargetRadius") == 1
+    check baseline.count(
+      "(not targetPresent and not rememberFoggedTarget)") == 1
+    check baseline.count("loot_memory_trip") == 1
+    check baseline.count("move_gun_memory") == 1

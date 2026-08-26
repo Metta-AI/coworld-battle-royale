@@ -32,6 +32,30 @@
 
 ## Trial log
 
+### Trial 15: remember a fog-hidden gun trip
+
+- Idea: Across all 60 hosted v15 artifacts, Hunter was unarmed in 67.34
+  percent of sampled live state and started 101 trips. The corrected
+  `tools/summarize_loot_trips.nim` found 29 sampled successes and 53 aborts;
+  50 aborts returned directly to passive hold, only three were ring retreats,
+  and median sampled run duration was 0.1 seconds. Coworld's observation code
+  states that a fixed pickup is emitted only while present and inside the
+  seat's real vision, but Hunter currently treats any absent gun sprite as
+  claimed or stale. Preserve the safe commitment through a fog gap.
+- Change: Only for the default Hunter with an active gun trip, allow the
+  committed target to remain valid while its sprite is fog-hidden and the bot
+  is still more than the existing 32-pixel pickup radius away. At or within
+  32 pixels, an absent gun still aborts. The existing 240-pixel detour,
+  30-second deadline, 80-pixel ring margin, opponent-closer guard, ring
+  safety, target selection, combat, and every other doctrine are unchanged.
+  Fog-memory movement emits `loot_memory_trip` and `move_gun_memory`.
+- Isolation: `nim check` and the doctrine source-contract suite pass;
+  production extraction and hosted artifact coverage remain pending.
+- Artifact: Pending Linux amd64 production build and upload.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
+
 ### Trial 14: persistent hunter ring unstick
 
 - Idea: `tools/summarize_ring_retreats.nim` found 11 ring-cadence fatalities
