@@ -57,9 +57,13 @@
   margin, and 0.85 hold band. Hosted behavioral coverage remains pending.
 - Artifact: `andre-battleroyale:candidate-19`, Linux amd64 image digest
   `sha256:48e31433dfd0387c786fcf341a58f43f0e7d7b5e68e2ed2bb795126082ca140b`.
-  CPUX upload remains pending.
+  Uploaded unsubmitted as `andre-battleroyale:v20`; exact control and
+  candidate images are `andre-trial-19:v1` and `andre-trial-19:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending the nearest-MRR live field at XP launch.
+- Opponents: At launch Andre is #13 at 1419.14. The frozen nearest other
+  players are softmaxwell (`Picasso:v63`, 1434.94), David Greis
+  (`Battle Royale Baseline:v1`, 1401.18), and NanosaurusX (`nancy-br:v1`,
+  1395.23).
 - Verdict: Pending hosted significance.
 
 ### Trial 18: shorten hunter arm-trip radius
