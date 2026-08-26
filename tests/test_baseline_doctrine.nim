@@ -35,7 +35,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmDefault = true")
     check baseline.contains("FfaPassiveBandDefault = 0.85")
     check baseline.contains("FfaHunterFireRangeDefault = true")
-    check baseline.contains("FfaHunterPursuitDefault = true")
+    check baseline.contains("FfaHunterPursuitDefault = false")
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
@@ -96,3 +96,11 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "hunter holds instead of pursuing weak targets":
+    check baseline.count(
+      "hunterPursuitOpportunity = FfaDoctrine in {FfaHunter, FfaPact}") == 1
+    check baseline.count(
+      "hunterPursue = FfaHunterPursuit and hunterPursuitOpportunity") == 1
+    check baseline.count("hold_no_pursuit") == 1
+    check baseline.count("pursuit_disabled") == 1

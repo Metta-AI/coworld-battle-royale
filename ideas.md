@@ -32,6 +32,28 @@
 
 ## Trial log
 
+### Trial 17: disable normal hunter pursuit movement
+
+- Idea: `tools/correlate_xp_artifacts.nim` joined hosted scores to all 80
+  exact current-champion artifacts from Trials 14 through 16. Passive-hold
+  ticks were the strongest positive score correlate in all three frozen
+  fields, with Pearson r values 0.7878, 0.8278, and 0.5796. Damage taken was
+  negative in every field, at -0.1523, -0.3219, and -0.3479. The 60-episode
+  field contained 933 normal fight ticks, while current Hunter can still fire
+  at visible in-range targets without pursuing them. Isolate chase movement
+  from the broader Passive doctrine that failed Trial 7.
+- Change: Set only normal Hunter weak-target pursuit movement off by default.
+  Safe initial arming, weapon-range firing, aiming, the 0.85 hold band, ring
+  safety, 60-tick unstick, four-player late close, and every other submitted
+  behavior are unchanged. When an otherwise pursuable weak target is declined,
+  passive holding emits `hold_no_pursuit` and `pursuit_disabled`.
+- Isolation: `nim check` and the doctrine source-contract suite pass.
+  Production extraction and hosted artifact coverage remain pending.
+- Artifact: Pending Linux amd64 production build and upload.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
+
 ### Trial 16: alternate repeated ring-unstick sides
 
 - Idea: The corrected `tools/summarize_ring_retreats.nim` includes both
