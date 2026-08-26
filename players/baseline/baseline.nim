@@ -264,7 +264,6 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
-  FfaHunterRememberFoggedGun = true
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
   FfaPactWindowFractionDefault = 0.35
@@ -1999,20 +1998,13 @@ proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
     d = dist(me, target)
     safeLimit = max(0.0, float(max(1, ringRadius)) -
       FfaHunterArmSafeMargin)
-    targetPresent = ffaGunStillPresent(
-      client,
-      target,
-      bot.ffaLootTargetTier
-    )
-    rememberFoggedTarget = FfaHunterRememberFoggedGun and
-      FfaDoctrine == FfaHunter and d > FfaLootTargetRadius
   if bot.ffaLootStartedTick > 0 and
       ffaGameTicksSince(bot.tick, bot.ffaLootStartedTick) >
         FfaHunterArmTripMaxSec * TargetFps:
     return false
   if d > FfaHunterArmTripMaxDetourRadius or
       dist(target, center) > safeLimit or
-      (not targetPresent and not rememberFoggedTarget):
+      not ffaGunStillPresent(client, target, bot.ffaLootTargetTier):
     return false
   for actor in actors:
     if dist(actor.pos, target) < d:
@@ -2165,26 +2157,9 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
     return
-  let
-    gunStillValid = ffaHunterGunStillValid(
-      bot,
-      client,
-      actors,
-      me,
-      center,
-      ringRadius
-    )
-    fogHiddenGun = gunStillValid and FfaHunterRememberFoggedGun and
-      FfaDoctrine == FfaHunter and not ffaGunStillPresent(
-        client,
-        bot.ffaLootTarget,
-        bot.ffaLootTargetTier
-      )
-  if gunStillValid:
+  if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-      "LOOT",
-      (if fogHiddenGun: "loot_memory_trip" else: "loot_trip"),
-      (if fogHiddenGun: "move_gun_memory" else: "move_gun"))
+      "LOOT", "loot_trip", "move_gun")
     result.moveTarget = bot.ffaLootTarget
     return
   bot.ffaLootTrip = false
@@ -4435,7 +4410,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
-    " ffaHunterRememberFoggedGun=", FfaHunterRememberFoggedGun,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,

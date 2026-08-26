@@ -54,16 +54,23 @@
   `ffaHunterRememberFoggedGun=true` only in the candidate and confirms both
   images retain the submitted Hunter doctrine, 60-tick ring unstick,
   240-pixel detour, zero ring margin, and 0.85 hold band. Hosted artifact
-  coverage remains pending.
+  coverage passed: all 10 candidate artifacts are valid and contain 33
+  `loot_memory_trip` and `move_gun_memory` ticks, while control contains zero,
+  so the branch fired. Candidate unarmed sampled state was 53.93 percent
+  versus 45.24 percent in control; this diagnostic is not score.
 - Artifact: `andre-battleroyale:candidate-15`, Linux amd64 image digest
   `sha256:1db6ac8e281eebe210072c10da80fecdd2f3a78ca0a1853b6eb219fe44545a27`.
   Uploaded unsubmitted as `andre-battleroyale:v16`; exact control and
   candidate images are `andre-trial-15:v1` and `andre-trial-15:v2`.
-- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- XP id: Baseline `xreq_423a2e60-59e7-4dd5-ac2a-18f3dbf11d39` and candidate
+  `xreq_d0238825-ab5c-4905-9575-30204767e6c9`, 10 hosted episodes per arm.
 - Opponents: At launch Andre is #16 at 1301.86. The frozen nearest other
   players are ravidear5-code (`shade-doctrine-v1:v1`, 1367.33), NanosaurusX
   (`nancy-br:v1`, 1375.82), and Aaron (`aaln-br-hunter:v2`, 1396.77).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 177.00, candidate mean 171.20, difference
+  -5.80, 95% CI [-72.9056, 61.3056], Welch p=0.857494. The result is
+  inconclusive and trends worse, so the fog-memory behavior was removed.
+  `andre-battleroyale:v16` remains uploaded but was not submitted.
 
 ### Trial 14: persistent hunter ring unstick
 
