@@ -61,11 +61,22 @@
   60-tick unstick, late close, and every non-Hunter doctrine are unchanged.
   Active movement emits `heavy_strafe`, `strafe_heavy`, and
   `heavy_threat_lateral`.
-- Isolation: Pending source checks, production extraction, and hosted branch
-  coverage.
-- Artifact: Pending Linux amd64 production build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports
+  `ffaHunterHeavyStrafe=true`, a 400-pixel range, and a 240-pixel step only in
+  the candidate while candidate and exact submitted control retain Hunter,
+  the 60-tick ring unstick, 240-pixel arm cap, 30-second arm deadline,
+  80-pixel arm safety margin, zero ring margin, and 0.85 hold band. Hosted
+  branch coverage is pending.
+- Artifact: `andre-battleroyale:candidate-27`, Linux amd64 image digest
+  `sha256:0e134ff747b8791d50fb00ed5864c4595a951025589eb821fcd3dc57305a35d3`.
+  Uploaded unsubmitted as `andre-battleroyale:v28`; exact submitted control
+  and candidate images are `andre-trial-27:v1` and `andre-trial-27:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending the required live nearest-MRR freeze.
+- Opponents: At field freeze Andre is #16 at 1368.83. The nearest other
+  players are Kenny Sheftel (`kenshef-my-player:v1`, 1370.51), sivannn
+  (`sivan-br-ringsurfer:v1`, 1378.78), and Aaron
+  (`aaln-br-hunter:v2`, 1435.28).
 - Verdict: Pending hosted significance.
 
 ### Trial 26: skip a falsely blocked ring-unstick origin cell
