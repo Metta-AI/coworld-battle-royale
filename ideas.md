@@ -57,17 +57,26 @@
   `ffaHunterUnarmedScanBand=true` flag while retaining Hunter, the 60-tick ring
   unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm safety
   margin, zero ring margin, and 0.85 hold band. Hosted behavioral coverage is
-  pending.
+  passed: all 10 candidate artifacts are valid and contain 7,216
+  `scan_unarmed_band` ticks, while all 10 control artifacts contain zero.
+  Candidate artifacts reached 42.05 percent sampled armed state versus 31.77
+  percent in control, started 1.4 loot trips per episode versus 0.5, and
+  recorded 152 engage ticks versus 100. These diagnostics prove the behavior
+  fired; they are not score.
 - Artifact: `andre-battleroyale:candidate-25`, Linux amd64 image digest
   `sha256:f506ee59d6487244430f84bc97a3ed6071d6f7a03dc1852366dd62598cb33162`.
   Uploaded unsubmitted as `andre-battleroyale:v26`; exact submitted control
   and candidate images are `andre-trial-25:v1` and `andre-trial-25:v2`.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline `xreq_081acbae-4435-43ef-9b3b-f6439227fefa` and candidate
+  `xreq_da9cb010-0a79-494b-9c91-a24a0eb9e0e0`, 10 hosted episodes per arm.
 - Opponents: At field freeze Andre is #13 at 1408.17. The nearest other
   players are sivannn (`sivan-br-ringsurfer:v1`, 1401.61), b4kng2dkg5-sudo
   (`starter-baseline:v1`, 1430.17), and softmaxwell
   (`Picasso:v63`, 1383.99).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 121.60, candidate mean 174.40, difference
+  +52.80, 95% CI [-10.0882, 115.6882], Welch p=0.094424. The active change is
+  inconclusive, so unarmed hold scanning was removed under the no-inconclusive-
+  keep rule. `andre-battleroyale:v26` remains uploaded but was not submitted.
 
 ### Trial 24: scan while hunter holds the band
 
