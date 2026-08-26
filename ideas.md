@@ -39,10 +39,14 @@
 - Change: When `CTF_BOT_FFA_DOCTRINE` is unset, select the existing `FfaRush`
   doctrine instead of `FfaHunter`. No rush, hunter, combat, item, navigation,
   ring, aiming, or firing parameter changes.
-- Isolation: Pending production and hosted artifact checks.
-- Artifact: Pending CPUX build and upload.
+- Isolation: Production amd64 image startup reports `ffaDoctrine=rush`; hosted
+  artifact check remains pending.
+- Artifact: `andre-battleroyale:v12` and isolated `andre-trial-11:v2`, image
+  digest `sha256:9fedb633a90665e587e7d10fc0ad55aea1056ecd81ad8c509418ab17ed42339e`.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: Frozen outside-top-three nearest-MRR field at launch: Aaron
+  (`aaln-br-hunter:v2`), David Greis (`Battle Royale Baseline:v1`), and
+  softmaxwell (`Picasso:v63`).
 - Verdict: Pending hosted significance.
 
 ### Trial 10: kite nearby heavy-gun threats
