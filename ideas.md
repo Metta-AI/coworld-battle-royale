@@ -58,11 +58,22 @@
   preferred side, 20-frame trigger, 60-tick burst, ordinary ring retreat,
   arming, combat, hold band, and every other behavior are unchanged. Bursts
   that use the corrected origin semantics emit `ring_unstick_origin_clear`.
-- Isolation: Pending source checks, production extraction, and hosted branch
-  coverage.
-- Artifact: Pending Linux amd64 production build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports
+  `ffaHunterRingUnstickSkipBlockedOrigin=true` only in the candidate while
+  candidate and exact submitted control retain Hunter, the 60-tick ring
+  unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm safety
+  margin, zero ring margin, and 0.85 hold band. Hosted branch coverage is
+  pending.
+- Artifact: `andre-battleroyale:candidate-26`, Linux amd64 image digest
+  `sha256:c1df0ac0f0c811018ead51fa42f650108c95f9bcf422f16e5f06878284b4186b`.
+  Uploaded unsubmitted as `andre-battleroyale:v27`; exact submitted control
+  and candidate images are `andre-trial-26:v1` and `andre-trial-26:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending the required live nearest-MRR freeze.
+- Opponents: At field freeze Andre is #16 at 1369.43. The nearest other
+  players are NanosaurusX (`nancy-br:v1`, 1404.98), sivannn
+  (`sivan-br-ringsurfer:v1`, 1405.88), and David Greis
+  (`Battle Royale Baseline:v1`, 1327.16).
 - Verdict: Pending hosted significance.
 
 ### Trial 25: scan only while unarmed hunter holds
