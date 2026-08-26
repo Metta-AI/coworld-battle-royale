@@ -22,6 +22,7 @@
 - Lengthen only the hunter ring-unstick clearance probe.
 - Prefer only inward-diagonal hunter ring-unstick candidates before pure
   tangents.
+- Add only a bounded low-health Hunter medkit detour.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -35,6 +36,28 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 22: bounded low-health hunter healing
+
+- Idea: Hosted artifact-to-score joins on the two newest exact champion fields
+  show heal events positively correlated with score in both fields, Pearson
+  r=0.4098 and r=0.8938. In the latest field, the 18 heal events were
+  concentrated in four longer-lived episodes. The submitted Hunter inherits
+  Passive movement and never intentionally targets a medkit, so every heal is
+  incidental. A short safe detour may turn a visible heal into survival without
+  broadening combat or navigation.
+- Change: Only for the default Hunter below the existing six-HP retreat
+  threshold, move to the nearest visible medkit within 180 pixels when it is
+  inside the existing 80-pixel ring-safe margin and no visible opponent is
+  closer to it. Existing ring safety remains higher priority. Pursuit, firing,
+  arming, hold band, unstick, targeting, and every other behavior remain
+  unchanged. Active detours emit `move_medkit_hunter`.
+- Isolation: Pending checks, production extraction, and hosted behavioral
+  coverage.
+- Artifact: Pending CPUX build and upload.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the nearest-MRR live field at XP launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 21: inward-first hunter ring unstick
 
