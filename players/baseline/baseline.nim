@@ -264,8 +264,6 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
-  FfaHunterHeavyEvadeRange = 400.0
-  FfaHunterHeavyEvadeStep = 240.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -708,20 +706,6 @@ proc ffaBandTargetAtRadius(bot: Bot, me, center: Vec,
 proc ffaBandRadiusWithRingMargin(bandRadius: float, ringRadius: int,
     margin: float): float =
   min(bandRadius, max(1.0, float(max(1, ringRadius)) - margin))
-
-proc ffaHeavyEscapeTarget(bot: Bot, me, threat, center: Vec,
-    ringRadius: int): Vec =
-  ## Returns a ring-safe target directly away from a heavy-gun threat.
-  var away = me - threat
-  if away.len() < FfaBearingEpsilon:
-    away = ffaSeatBearing(bot.slot)
-  result = me + away.norm() * FfaHunterHeavyEvadeStep
-  let
-    safeRadius = max(1.0, float(max(1, ringRadius)) -
-      FfaHunterArmSafeMargin)
-    fromCenter = result - center
-  if fromCenter.len() > safeRadius:
-    result = center + fromCenter.norm() * safeRadius
 
 proc dot(a, b: Vec): float =
   a.x * b.x + a.y * b.y
@@ -2328,8 +2312,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   var
     targetIndex = -1
     targetDist = 1e18
-    heavyThreatIndex = -1
-    heavyThreatDist = 1e18
     nearby = 0
   for i, actor in actors:
     let d = dist(me, actor.pos)
@@ -2338,9 +2320,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     if d < targetDist:
       targetDist = d
       targetIndex = i
-    if actor.weaponTier == FfaWeaponHeavy and d < heavyThreatDist:
-      heavyThreatDist = d
-      heavyThreatIndex = i
   var pactMemoryFresh = false
   if pactActive:
     let brawl = ffaPactBrawl(actors, me, center, ringRadius)
@@ -2451,21 +2430,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     intent.objective = "safe_zone"
     intent.action = "retreat_ring"
     intent.engageReason = "ring"
-  elif FfaDoctrine == FfaHunter and heavyThreatIndex >= 0 and
-      heavyThreatDist < FfaHunterHeavyEvadeRange:
-    intent.phase = "HEAVY_EVADE"
-    intent.bandFraction = FfaPassiveBand
-    intent.bandRadius = float(max(1, ringRadius)) * FfaPassiveBand
-    intent.moveTarget = ffaHeavyEscapeTarget(
-      bot,
-      me,
-      actors[heavyThreatIndex].pos,
-      center,
-      ringRadius
-    )
-    intent.objective = "heavy_evade"
-    intent.action = "evade_heavy"
-    intent.engageReason = "heavy_threat"
   elif FfaLateClose and livingCount > 0 and
       livingCount <= (if FfaDoctrine in {FfaHunter, FfaPact}: 4 else: 3) and
       targetIndex >= 0:

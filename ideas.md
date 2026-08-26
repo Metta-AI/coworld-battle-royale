@@ -52,15 +52,20 @@
   candidate images are `andre-trial-10:v1` and `andre-trial-10:v2`.
 - XP id: Baseline `xreq_bbf56c6a-f847-4b17-9c7b-62ab6d7b68c6` and
   candidate `xreq_6df98b33-2021-466f-b4f2-e251d8ac81fb`, 10 hosted episodes
-  per arm. A 20-episode same-field extension is being launched for each arm.
+  per arm. Same-field extensions are baseline
+  `xreq_9acfb878-4d0f-4302-ba9f-2aae833f9025` and candidate
+  `xreq_c744b910-3b98-4d13-bbe2-d9d56f4e7409`, 20 hosted episodes per arm.
 - Opponents: At launch Andre is #7 at 1547.61. The frozen nearest other
   players are Aaron (`aaln-br-hunter:v2`, 1576.23), Ryan Schiller
   (`ryanschiller-br-v46:v1`, 1610.52), and relh
   (`co-gas-battleroyale-baseline-relhalpha:v7`, 1630.91).
-- Verdict: Initial 10 per arm is inconclusive. Baseline mean 126.3000,
+- Verdict: Revert. Initial 10 per arm was inconclusive. Baseline mean 126.3000,
   candidate mean 163.0000, difference 36.7000, two-sided 95 percent Welch CI
-  [-49.2647, 122.6647], p=0.372069. Extend on the same field; this is not a
-  keep.
+  [-49.2647, 122.6647], p=0.372069. At 30 per arm, baseline mean was 145.5000
+  and candidate mean was 140.0333, difference -5.4667, CI
+  [-41.1700, 30.2367], p=0.759632. This remains inconclusive and trends worse.
+  Restored the submitted hunter behavior; uploaded `andre-battleroyale:v11`
+  was not submitted.
 
 ### Trial 9: safe hunter weapon upgrades
 
