@@ -1,0 +1,38 @@
+{
+  "idempotency_key": "andre-br-trial15-v2-20260826",
+  "target": {
+    "league_id": "league_b88a269b-0de7-4723-b1c7-06dab50fe61d",
+    "variant_id": "br-12"
+  },
+  "game_config_overrides": {
+    "num_agents": 4
+  },
+  "roster": [
+    {
+      "player": {
+        "policy_ref": "andre-trial-15:v2"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "shade-doctrine-v1:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "nancy-br:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "aaln-br-hunter:v2"
+      },
+      "slot": -1
+    }
+  ],
+  "num_episodes": 10,
+  "notes": "Trial 15 candidate: remember fog-hidden gun trip, frozen nearest-MRR field."
+}

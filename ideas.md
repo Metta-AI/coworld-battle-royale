@@ -49,11 +49,20 @@
   30-second deadline, 80-pixel ring margin, opponent-closer guard, ring
   safety, target selection, combat, and every other doctrine are unchanged.
   Fog-memory movement emits `loot_memory_trip` and `move_gun_memory`.
-- Isolation: `nim check` and the doctrine source-contract suite pass;
-  production extraction and hosted artifact coverage remain pending.
-- Artifact: Pending Linux amd64 production build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports
+  `ffaHunterRememberFoggedGun=true` only in the candidate and confirms both
+  images retain the submitted Hunter doctrine, 60-tick ring unstick,
+  240-pixel detour, zero ring margin, and 0.85 hold band. Hosted artifact
+  coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-15`, Linux amd64 image digest
+  `sha256:1db6ac8e281eebe210072c10da80fecdd2f3a78ca0a1853b6eb219fe44545a27`.
+  Uploaded unsubmitted as `andre-battleroyale:v16`; exact control and
+  candidate images are `andre-trial-15:v1` and `andre-trial-15:v2`.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: At launch Andre is #16 at 1301.86. The frozen nearest other
+  players are ravidear5-code (`shade-doctrine-v1:v1`, 1367.33), NanosaurusX
+  (`nancy-br:v1`, 1375.82), and Aaron (`aaln-br-hunter:v2`, 1396.77).
 - Verdict: Pending hosted significance.
 
 ### Trial 14: persistent hunter ring unstick
