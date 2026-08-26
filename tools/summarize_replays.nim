@@ -21,6 +21,7 @@ type
     damage: int
     survivalTicks: int
     places: int
+    placeSamples: int
     shots: int
     hits: int
     weapons: Table[string, WeaponStats]
@@ -45,15 +46,12 @@ proc percent(part, whole: int): float =
   100.0 * mean(part, whole)
 
 proc placeOf(results: JsonNode, slot: int): int =
-  ## Returns a slot's one-based final placement.
+  ## Returns a slot's one-based final placement or zero when it disconnected.
   let placements = results["placementSlots"]
   for place in 0 ..< placements.len:
     if placements[place].getInt() == slot:
       return place + 1
-  raise newException(
-    BattleRoyaleError,
-    "results have no placement for slot " & $slot
-  )
+  0
 
 proc fatalCause(
   events: openArray[SimEvent],
@@ -179,7 +177,11 @@ proc addReplay(
       BattleRoyaleError,
       "hosted replay did not finish: " & replayPath
     )
-  for slot, name in extraction.slotAddress:
+  var slotNames = extraction.slotAddress
+  for slot in 0 ..< slotNames.len:
+    if slotNames[slot].len == 0:
+      slotNames[slot] = results["names"][slot].getStr()
+  for slot, name in slotNames:
     if name.len == 0:
       raise newException(
         BattleRoyaleError,
@@ -194,7 +196,10 @@ proc addReplay(
     player.deaths += results["deaths"][slot].getInt()
     player.damage += results["damage"][slot].getInt()
     player.survivalTicks += results["survivalTicks"][slot].getInt()
-    player.places += results.placeOf(slot)
+    let place = results.placeOf(slot)
+    if place > 0:
+      player.places += place
+      inc player.placeSamples
     player.shots += extraction.slotShotsFired[slot]
     player.hits += extraction.slotShotsHit[slot]
     stats[name] = player
@@ -206,8 +211,8 @@ proc addReplay(
     elif event.kind == Shot:
       shots[event.actionId] = event
   for i, event in extraction.events:
-    if event.source >= 0 and event.source < extraction.slotAddress.len:
-      let name = extraction.slotAddress[event.source]
+    if event.source >= 0 and event.source < slotNames.len:
+      let name = slotNames[event.source]
       if event.kind == Shot:
         inc stats[name].weapons.mgetOrPut(event.weapon, WeaponStats()).shots
       elif event.kind == Hit:
@@ -308,7 +313,7 @@ proc summarize(replayDir: string) =
       &"{mean(player.deaths, player.episodes):.2f} " &
       &"{mean(player.damage, player.episodes):.2f} " &
       &"{mean(player.survivalTicks, player.episodes):.2f} " &
-      &"{mean(player.places, player.episodes):.2f} " &
+      &"{mean(player.places, player.placeSamples):.2f} " &
       &"{percent(player.hits, player.shots):.2f} " &
       &"{player.weaponText()} " &
       &"{rangeText(player.rangeHits, player.rangeShots)} " &
