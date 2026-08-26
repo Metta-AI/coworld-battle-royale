@@ -49,9 +49,12 @@
   hosted artifact coverage remains pending.
 - Artifact: `andre-battleroyale:candidate-13`, Linux amd64 image digest
   `sha256:37f653afd3f64e1cb9de52624aa815e2deb6d00cd6df6a7ba10ff171425fbdb2`;
-  upload pending.
+  uploaded unsubmitted as `andre-battleroyale:v14`; exact control and candidate
+  images are `andre-trial-13:v1` and `andre-trial-13:v2`.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: At launch Andre is #16 at 1268.53. The frozen nearest other
+  players are Aaron (`aaln-br-hunter:v2`, 1289.86), NanosaurusX
+  (`nancy-br:v1`, 1380.89), and sivannn (`sivan-br-ringsurfer:v1`, 1397.83).
 - Verdict: Pending hosted significance.
 
 ### Trial 12: earlier hunter ring alarm
