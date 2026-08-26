@@ -14,7 +14,7 @@ type
     hp: int
   EventData = object
     damages: seq[DamageSample]
-    endTick: int
+    deathTick: int
   TickSample = object
     tick: int
     x: float
@@ -69,7 +69,8 @@ proc parseEventData(text: string): EventData {.raises: [
   OSError,
   ValueError
 ].} =
-  ## Parses damage events and the terminal artifact tick.
+  ## Parses damage events and the policy's terminal death tick.
+  result.deathTick = -1
   for line in text.splitLines():
     if line.len == 0:
       continue
@@ -80,8 +81,8 @@ proc parseEventData(text: string): EventData {.raises: [
         tick: event["t"].getInt(),
         hp: event["hp"].getInt()
       ))
-    of "game_end":
-      result.endTick = event["t"].getInt()
+    of "death":
+      result.deathTick = event["t"].getInt()
     else:
       discard
 
@@ -107,11 +108,16 @@ proc parseTickSamples(text: string): seq[TickSample] {.raises: [
 
 proc terminalRingRun(events: EventData): seq[DamageSample] =
   ## Returns a fatal unit-damage cadence consistent with the ring.
+  if events.deathTick < 0:
+    return
   var fatal = -1
   for i in countdown(events.damages.high, 0):
     let damage = events.damages[i]
+    if damage.tick > events.deathTick:
+      continue
     if damage.hp == 0 or
-        (damage.hp == 1 and events.endTick - damage.tick in 0 .. 48):
+        (damage.hp == 1 and
+          events.deathTick - damage.tick in 40 .. 56):
       fatal = i
       break
   if fatal < 0:
@@ -128,7 +134,9 @@ proc terminalRingRun(events: EventData): seq[DamageSample] =
     result.add(previous)
     dec i
   result.reverse()
-  if result.len < 3:
+  let terminalRingTick = result[^1].hp == 1 and
+    events.deathTick - result[^1].tick in 40 .. 56
+  if result.len < 3 and not terminalRingTick:
     result.setLen(0)
 
 proc distance(a, b: TickSample): float =
@@ -216,10 +224,11 @@ proc summarize(artifactDir: string) {.raises: [
   for path in paths:
     let
       streams = artifactFiles(path)
-      run = terminalRingRun(parseEventData(streams.events))
+      events = parseEventData(streams.events)
+      run = terminalRingRun(events)
     if run.len == 0:
       continue
-    let stats = retreatStats(parseTickSamples(streams.ticks), run[^1].tick)
+    let stats = retreatStats(parseTickSamples(streams.ticks), events.deathTick)
     inc ringDeaths
     total.samples += stats.samples
     total.unstickSamples += stats.unstickSamples
@@ -231,7 +240,7 @@ proc summarize(artifactDir: string) {.raises: [
     total.visible += stats.visible
     total.unarmed += stats.unarmed
     echo &"episode={episodeId(path)} ringHits={run.len} " &
-      &"fatalTick={run[^1].tick} retreatSamples={stats.samples} " &
+      &"fatalTick={events.deathTick} retreatSamples={stats.samples} " &
       &"unstickSamples={stats.unstickSamples} " &
       &"path={stats.path:.1f} displacement={stats.displacement:.1f} " &
       &"zeroStepPct={percent(stats.zeroSteps, stats.steps):.1f} " &
