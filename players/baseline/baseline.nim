@@ -264,6 +264,7 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
+  FfaHunterNearestGunDefault = true
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
   FfaPactWindowFractionDefault = 0.35
@@ -548,6 +549,7 @@ var
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
+  FfaHunterNearestGun = FfaHunterNearestGunDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
   FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
@@ -1920,7 +1922,8 @@ proc ffaPactMemoryFresh(bot: Bot): bool =
 
 proc bestFfaGun(client: ProtocolClient, me, center: Vec,
     safeRadius: int, currentTier: int, safeMargin = 0.0,
-    maxDistance = 1e18, avoidActors: seq[Actor] = @[]): tuple[
+    maxDistance = 1e18, avoidActors: seq[Actor] = @[],
+    preferNearest = false): tuple[
     found: bool, pos: Vec, tier: int] =
   ## Selects the highest tier in the safe zone, then the nearest one.
   ## Position breaks exact-distance ties so protocol object order is irrelevant.
@@ -1950,14 +1953,24 @@ proc bestFfaGun(client: ProtocolClient, me, center: Vec,
           break
       if opponentCloser:
         continue
-      let sameDistance = abs(d - bestDist) < 1e-6
-      if not result.found or tier > result.tier or
-          (tier == result.tier and
-            (d < bestDist or
+      let
+        sameDistance = abs(d - bestDist) < 1e-6
+        positionBefore = gun.x < result.pos.x or
+          (abs(gun.x - result.pos.x) < 1e-6 and gun.y < result.pos.y)
+        better =
+          if not result.found:
+            true
+          elif preferNearest:
+            d < bestDist or
               (sameDistance and
-                (gun.x < result.pos.x or
-                  (abs(gun.x - result.pos.x) < 1e-6 and
-                    gun.y < result.pos.y))))):
+                (tier > result.tier or
+                  (tier == result.tier and positionBefore)))
+          else:
+            tier > result.tier or
+              (tier == result.tier and
+                (d < bestDist or
+                  (sameDistance and positionBefore)))
+      if better:
         result = (true, gun, tier)
         bestDist = d
 
@@ -2166,8 +2179,32 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
-  let gun = bestFfaGun(client, me, center, ringRadius, weaponTier,
-    FfaHunterArmSafeMargin, FfaHunterArmTripMaxDetourRadius, actors)
+  let
+    gun = bestFfaGun(
+      client,
+      me,
+      center,
+      ringRadius,
+      weaponTier,
+      FfaHunterArmSafeMargin,
+      FfaHunterArmTripMaxDetourRadius,
+      actors,
+      preferNearest = FfaHunterNearestGun
+    )
+    submittedGun =
+      if FfaHunterNearestGun:
+        bestFfaGun(
+          client,
+          me,
+          center,
+          ringRadius,
+          weaponTier,
+          FfaHunterArmSafeMargin,
+          FfaHunterArmTripMaxDetourRadius,
+          actors
+        )
+      else:
+        gun
   if gun.found:
     bot.ffaLootTrip = true
     bot.ffaLootTarget = gun.pos
@@ -2178,6 +2215,11 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       "LOOT", "loot_trip", "move_gun")
     result.moveTarget = gun.pos
     result.lootTripStarted = true
+    if submittedGun.found and
+        (submittedGun.tier != gun.tier or
+          dist(submittedGun.pos, gun.pos) > 1e-6):
+      result.objective = "loot_nearest_gun"
+      result.action = "move_gun_nearest"
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
@@ -4364,6 +4406,10 @@ proc runBot(url: string) =
   FfaHunterArmSafeMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN",
     FfaHunterArmSafeMarginDefault, strict = true))
+  FfaHunterNearestGun = parseEnvBool(
+    "CTF_BOT_FFA_HUNTER_NEAREST_GUN",
+    FfaHunterNearestGunDefault
+  )
   FfaPactWindowFraction = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_PACT_WINDOW_FRACTION", FfaPactWindowFractionDefault))
   FfaPactWindowSec = max(0, parseEnvInt(
@@ -4410,6 +4456,7 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
+    " ffaHunterNearestGun=", FfaHunterNearestGun,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,

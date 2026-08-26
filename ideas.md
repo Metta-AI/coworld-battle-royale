@@ -22,6 +22,7 @@
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
+- Prefer only the nearest safe opening gun over the highest-tier safe gun.
 - Switch only the FFA doctrine from legacy to passive.
 - Switch only the submitted hunter doctrine to passive.
 - Switch only the submitted hunter doctrine to rush.
@@ -31,6 +32,35 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 19: prefer the nearest safe opening gun
+
+- Idea: The corrected hosted-death extractor finds 11 deaths across the newest
+  30 exact v15 control artifacts. Nine deaths occurred unarmed, including all
+  three ring deaths, while only two occurred with even a low-tier gun. Hunter
+  was unarmed for 65.47 percent of sampled live state. Its current bounded
+  selector always chooses the highest visible tier before distance, so it may
+  pass a nearby low gun for a farther high-tier gun inside the same 240-pixel
+  cap. Prefer quicker initial arming without widening reach or adding trips.
+- Change: Only for the default Hunter's initial unarmed gun selection, prefer
+  the nearest eligible gun before tier. Exact-distance ties still prefer the
+  higher tier and stable position. The existing 240-pixel cap, 30-second
+  deadline, 80-pixel safe margin, opponent-closer rejection, ring behavior,
+  pursuit, firing, hold band, and every other doctrine remain unchanged.
+  Selections that differ from submitted tier-first choice emit
+  `loot_nearest_gun` and `move_gun_nearest`.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports
+  `ffaHunterNearestGun=true` only in the candidate and confirms candidate and
+  exact submitted control retain Hunter, the 240-pixel cap, 30-second
+  deadline, 80-pixel arm safety margin, 60-tick ring unstick, zero ring
+  margin, and 0.85 hold band. Hosted behavioral coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-19`, Linux amd64 image digest
+  `sha256:48e31433dfd0387c786fcf341a58f43f0e7d7b5e68e2ed2bb795126082ca140b`.
+  CPUX upload remains pending.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the nearest-MRR live field at XP launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 18: shorten hunter arm-trip radius
 
