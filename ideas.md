@@ -46,11 +46,19 @@
   for a repath. Normal ring retreat, alarm distance, hold band, looting,
   combat, targeting, firing, all other stuck cases, and every other doctrine
   are unchanged. Active bursts emit `ring_unstick`.
-- Isolation: Pending Nim checks, production extraction, and hosted artifact
-  coverage.
-- Artifact: Pending Linux amd64 production build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production startup matches every submitted
+  Hunter setting and reports `ffaHunterRingUnstickTicks=60`; hosted artifact
+  coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-14`, Linux amd64 image digest
+  `sha256:2f1536a688b3dcfbad572bd21a7d830d1a7627e5d290f036faeb2d426414f30a`.
+  Uploaded unsubmitted as `andre-battleroyale:v15`; exact control and
+  candidate images are `andre-trial-14:v1` and `andre-trial-14:v2`.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: At launch Andre is #16 at 1261.91. The frozen nearest other
+  players are Aaron (`aaln-br-hunter:v2`, 1333.14), aosgoods
+  (`eatth-battleroyale-decision-stack-v29:v1`, 1376.08), and NanosaurusX
+  (`nancy-br:v1`, 1406.29).
 - Verdict: Pending hosted significance.
 
 ### Trial 13: extended heavy-gun arm reach
