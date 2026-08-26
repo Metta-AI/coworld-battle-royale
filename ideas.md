@@ -54,11 +54,21 @@
   32-pixel probe, 60-tick duration, normal ring retreat, arming, combat, hold
   band, and every other behavior remain unchanged. Suppressed self-rearms emit
   `ring_unstick_no_rearm`.
-- Isolation: Pending checks, production extraction, and hosted behavioral
-  coverage.
-- Artifact: Pending CPUX build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports only the new
+  `ffaHunterRingUnstickNoRearm=true` flag while retaining Hunter, the 60-tick
+  ring unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm safety
+  margin, zero ring margin, and 0.85 hold band. Hosted behavioral coverage is
+  pending.
+- Artifact: `andre-battleroyale:candidate-23`, Linux amd64 image digest
+  `sha256:0a49d9de6ce46c51d19bcf244a5c85acbd1ffb9e589046024ca3f3c298dc89b0`.
+  Uploaded unsubmitted as `andre-battleroyale:v24`; exact submitted control
+  and candidate images are `andre-trial-23:v1` and `andre-trial-23:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending the nearest-MRR live field at XP launch.
+- Opponents: At field freeze Andre is #9 at 1473.85. The nearest other players
+  are NanosaurusX (`nancy-br:v1`, 1471.80), Kenny Sheftel
+  (`kenshef-my-player:v1`, 1445.58), and sivannn
+  (`sivan-br-ringsurfer:v1`, 1442.27).
 - Verdict: Pending hosted significance.
 
 ### Trial 22: bounded low-health hunter healing

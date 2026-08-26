@@ -1,0 +1,38 @@
+{
+  "idempotency_key": "andre-br-trial23-v2-20260826",
+  "target": {
+    "league_id": "league_b88a269b-0de7-4723-b1c7-06dab50fe61d",
+    "variant_id": "br-12"
+  },
+  "game_config_overrides": {
+    "num_agents": 4
+  },
+  "roster": [
+    {
+      "player": {
+        "policy_ref": "andre-trial-23:v2"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "nancy-br:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "kenshef-my-player:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "sivan-br-ringsurfer:v1"
+      },
+      "slot": -1
+    }
+  ],
+  "num_episodes": 10,
+  "notes": "Trial 23 candidate: cap active Hunter ring-unstick self-rearming, frozen nearest-MRR field."
+}
