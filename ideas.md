@@ -56,18 +56,25 @@
   amd64 production build pass. Production extraction reports only the new
   `ffaHunterScanBand=true` flag while retaining Hunter, the 60-tick ring
   unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm safety
-  margin, zero ring margin, and 0.85 hold band. Hosted behavioral coverage is
-  pending.
+  margin, zero ring margin, and 0.85 hold band. Hosted behavioral coverage
+  passed: all 10 candidate artifacts are valid and contain 19,293 `scan_band`
+  ticks, while all 10 control artifacts contain zero. Candidate artifacts
+  record 670 engage ticks versus 363 in control, but these diagnostics prove
+  that scanning changed contact behavior; they are not score.
 - Artifact: `andre-battleroyale:candidate-24`, Linux amd64 image digest
   `sha256:70910c6979a038c06bce1f39a105f9edfc7d3e5e587c39ff6b632c6456624d04`.
   Uploaded unsubmitted as `andre-battleroyale:v25`; exact submitted control
   and candidate images are `andre-trial-24:v1` and `andre-trial-24:v2`.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline `xreq_7fb9389b-63c9-4e40-b542-d4f496d16481` and candidate
+  `xreq_b5c32bda-3e1a-477a-be07-b16ac2a236e8`, 10 hosted episodes per arm.
 - Opponents: At field freeze Andre is #13 at 1407.86. The nearest other
   players are Aaron (`aaln-br-hunter:v2`, 1415.98), softmaxwell
   (`Picasso:v63`, 1398.07), and ravidear5-code
   (`shade-doctrine-v1:v1`, 1439.06).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 190.30, candidate mean 215.20, difference
+  +24.90, 95% CI [-72.5153, 122.3153], Welch p=0.596338. The completed hosted
+  result is inconclusive, so deliberate hold scanning was removed.
+  `andre-battleroyale:v25` remains uploaded but was not submitted.
 
 ### Trial 23: cap hunter ring-unstick self-rearming
 

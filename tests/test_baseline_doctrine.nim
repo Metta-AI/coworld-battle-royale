@@ -42,7 +42,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
-    check baseline.contains("FfaHunterScanBand = true")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
@@ -97,6 +96,3 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
-    check baseline.count("\"scan_band\"") == 1
-    check baseline.count(
-      "FfaHunterScanBand and targetIndex < 0") == 1
