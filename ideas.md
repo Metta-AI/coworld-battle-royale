@@ -46,10 +46,13 @@
   Hunter settings with `ffaHunterRingSafetyMargin=160`; hosted artifact check
   remains pending.
 - Artifact: `andre-battleroyale:candidate-12`, Linux amd64 image digest
-  `sha256:bb21dea81cdb9291c7b61c488cb1881faf1d5862089a451b1a5002653e8d7e08`;
-  upload pending.
+  `sha256:bb21dea81cdb9291c7b61c488cb1881faf1d5862089a451b1a5002653e8d7e08`.
+  Uploaded unsubmitted as `andre-battleroyale:v13`; exact control and
+  candidate images are `andre-trial-12:v1` and `andre-trial-12:v2`.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: Frozen outside-top-three nearest-MRR field at launch: Aaron
+  (`aaln-br-hunter:v2`), NanosaurusX (`nancy-br:v1`), and b4kng2dkg5-sudo
+  (`starter-baseline:v1`).
 - Verdict: Pending hosted significance.
 
 ### Trial 11: rush doctrine default
