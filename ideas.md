@@ -52,11 +52,21 @@
   and emit `scan_unarmed_band`. Armed holds, movement, band location, ring
   retreat, unstick, arming selection, target selection, pursuit, aim after
   contact, firing, and every other behavior are unchanged.
-- Isolation: Pending checks, production extraction, and hosted behavioral
-  coverage.
-- Artifact: Pending CPUX build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports only the new
+  `ffaHunterUnarmedScanBand=true` flag while retaining Hunter, the 60-tick ring
+  unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm safety
+  margin, zero ring margin, and 0.85 hold band. Hosted behavioral coverage is
+  pending.
+- Artifact: `andre-battleroyale:candidate-25`, Linux amd64 image digest
+  `sha256:f506ee59d6487244430f84bc97a3ed6071d6f7a03dc1852366dd62598cb33162`.
+  Uploaded unsubmitted as `andre-battleroyale:v26`; exact submitted control
+  and candidate images are `andre-trial-25:v1` and `andre-trial-25:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending the nearest-MRR live field at XP launch.
+- Opponents: At field freeze Andre is #13 at 1408.17. The nearest other
+  players are sivannn (`sivan-br-ringsurfer:v1`, 1401.61), b4kng2dkg5-sudo
+  (`starter-baseline:v1`, 1430.17), and softmaxwell
+  (`Picasso:v63`, 1383.99).
 - Verdict: Pending hosted significance.
 
 ### Trial 24: scan while hunter holds the band
