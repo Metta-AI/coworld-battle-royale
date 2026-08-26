@@ -20,12 +20,30 @@
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
 - Switch only the submitted hunter doctrine to passive.
+- Switch only the submitted hunter doctrine to rush.
 - Switch only the FFA doctrine from legacy to shade.
 - Switch only the FFA doctrine from legacy to pact.
 - Inspect hosted artifacts for avoidable unarmed time, ring damage, and
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 11: rush doctrine default
+
+- Idea: Against the stronger Trial 10 field, the exact submitted hunter
+  averaged 145.50 score, 0.23 kills, 7.87 damage, and place 2.73. Ryan
+  Schiller's current policy averaged 209.17 score, 1.47 kills, 30.33 damage,
+  and place 1.63, with 160 of 203 gun hits coming from heavy guns. The existing
+  rush doctrine goes to center/highest-tier visible gear and engages contacts.
+  Test whether that combat economy can outperform fringe hunter survival.
+- Change: When `CTF_BOT_FFA_DOCTRINE` is unset, select the existing `FfaRush`
+  doctrine instead of `FfaHunter`. No rush, hunter, combat, item, navigation,
+  ring, aiming, or firing parameter changes.
+- Isolation: Pending production and hosted artifact checks.
+- Artifact: Pending CPUX build and upload.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 10: kite nearby heavy-gun threats
 
