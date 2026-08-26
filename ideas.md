@@ -69,14 +69,18 @@
   and candidate images are `andre-trial-25:v1` and `andre-trial-25:v2`.
 - XP id: Baseline `xreq_081acbae-4435-43ef-9b3b-f6439227fefa` and candidate
   `xreq_da9cb010-0a79-494b-9c91-a24a0eb9e0e0`, 10 hosted episodes per arm.
+  An exact same-field 20-episode extension per arm is pending hosted request
+  IDs.
 - Opponents: At field freeze Andre is #13 at 1408.17. The nearest other
   players are sivannn (`sivan-br-ringsurfer:v1`, 1401.61), b4kng2dkg5-sudo
   (`starter-baseline:v1`, 1430.17), and softmaxwell
   (`Picasso:v63`, 1383.99).
-- Verdict: Reverted. Baseline mean 121.60, candidate mean 174.40, difference
-  +52.80, 95% CI [-10.0882, 115.6882], Welch p=0.094424. The active change is
-  inconclusive, so unarmed hold scanning was removed under the no-inconclusive-
-  keep rule. `andre-battleroyale:v26` remains uploaded but was not submitted.
+- Verdict: Reverted pending the exact same-field extension. The initial
+  baseline mean is 121.60 and candidate mean is 174.40, difference +52.80,
+  95% CI [-10.0882, 115.6882], Welch p=0.094424. The active change remains
+  absent from the working champion while more hosted episodes resolve this
+  promising but inconclusive result. `andre-battleroyale:v26` is uploaded but
+  not submitted.
 
 ### Trial 24: scan while hunter holds the band
 

@@ -1,0 +1,38 @@
+{
+  "idempotency_key": "andre-br-trial25-v3-20260826",
+  "target": {
+    "league_id": "league_b88a269b-0de7-4723-b1c7-06dab50fe61d",
+    "variant_id": "br-12"
+  },
+  "game_config_overrides": {
+    "num_agents": 4
+  },
+  "roster": [
+    {
+      "player": {
+        "policy_ref": "andre-trial-25:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "sivan-br-ringsurfer:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "starter-baseline:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "Picasso:v63"
+      },
+      "slot": -1
+    }
+  ],
+  "num_episodes": 20,
+  "notes": "Trial 25 baseline extension: submitted Hunter without unarmed hold scanning, exact frozen field."
+}
