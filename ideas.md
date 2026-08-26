@@ -19,6 +19,7 @@
 - Kite only visible nearby heavy-gun threats while preserving hunter fire.
 - Strafe only laterally inward from nearby heavy-gun threats while preserving
   Hunter fire.
+- Strafe only an armed Hunter laterally inward from nearby heavy-gun threats.
 - Start only the hunter ring-retreat alarm one margin earlier.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
 - Let only Hunter ring-unstick rays leave a falsely blocked coarse origin cell.
@@ -42,6 +43,28 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 28: armed-only inward heavy-gun strafe
+
+- Idea: Trial 27 proved the lateral branch fired, but 15 of its 33 sampled
+  heavy-threat decisions occurred while unarmed and the candidate's mean
+  armed fraction fell from 0.5144 to 0.2116. At the same time, its hosted
+  damage events fell from 131 to 88. Test whether limiting the same inward
+  lateral response to already-armed Hunter states preserves opening weapon
+  trips while retaining a possible combat benefit.
+- Change: Only for an already-armed default Hunter, when a visible heavy-gun
+  actor is within 400 pixels and existing ring safety is inactive, move 240
+  pixels perpendicular to the threat bearing on the side whose target is
+  closer to the arena center, then clamp it inside the existing 80-pixel safe
+  margin. Unarmed movement, target selection, aim, firing, pursuit, arming,
+  hold band, ring priority, 60-tick unstick, late close, and every non-Hunter
+  doctrine are unchanged.
+- Isolation: `nim check` and the doctrine source-contract suite pass.
+  Production and hosted artifact checks are pending.
+- Artifact: Pending CPUX.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending live nearest-MMR field freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 27: inward lateral heavy-gun strafe
 
