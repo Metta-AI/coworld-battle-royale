@@ -11,6 +11,8 @@ type
     lootTrips: int
     samples: int
     visibleSamples: int
+    heavyStrafeSamples: int
+    armedHeavyStrafeSamples: int
     events: CountTable[string]
     objectives: CountTable[string]
     actions: CountTable[string]
@@ -65,6 +67,10 @@ proc addArtifact(
     inc totals.samples
     if sample["vis"].getInt() > 0:
       inc totals.visibleSamples
+    if sample["engageReason"].getStr() == "heavy_threat_lateral":
+      inc totals.heavyStrafeSamples
+      if sample["tier"].getInt() > 0:
+        inc totals.armedHeavyStrafeSamples
     totals.reasons.inc(sample["engageReason"].getStr())
     totals.bands.inc(sample["band"].getStr())
     totals.tiers.inc($sample["tier"].getInt())
@@ -102,6 +108,10 @@ echo "meanArmedFrac=", totals.armedFraction / float(totals.files)
 echo "meanLootTrips=", float(totals.lootTrips) / float(totals.files)
 echo "visibleSampleFrac=", float(totals.visibleSamples) /
   float(max(1, totals.samples))
+echo "heavyStrafeSamples=", totals.heavyStrafeSamples
+echo "armedHeavyStrafeSamples=", totals.armedHeavyStrafeSamples
+echo "unarmedHeavyStrafeSamples=",
+  totals.heavyStrafeSamples - totals.armedHeavyStrafeSamples
 printCounts("event", totals.events)
 printCounts("objective", totals.objectives)
 printCounts("action", totals.actions)
