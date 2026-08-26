@@ -264,9 +264,6 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
-  FfaHunterArmedHeavyStrafe = true
-  FfaHunterArmedHeavyStrafeRange = 400.0
-  FfaHunterArmedHeavyStrafeStep = 240.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
   FfaPactWindowFractionDefault = 0.35
@@ -711,37 +708,6 @@ proc ffaBandTargetAtRadius(bot: Bot, me, center: Vec,
 proc ffaBandRadiusWithRingMargin(bandRadius: float, ringRadius: int,
     margin: float): float =
   min(bandRadius, max(1.0, float(max(1, ringRadius)) - margin))
-
-proc ffaHunterArmedHeavyStrafeTarget(
-  bot: Bot,
-  me, threat, center: Vec,
-  ringRadius: int
-): Vec =
-  ## Returns the inward lateral target for one armed Hunter.
-  var away = me - threat
-  if away.len() < FfaBearingEpsilon:
-    away = ffaSeatBearing(bot.slot)
-  let
-    side = vec(-away.y, away.x).norm()
-    first = me + side * FfaHunterArmedHeavyStrafeStep
-    second = me - side * FfaHunterArmedHeavyStrafeStep
-    firstRadius = dist(first, center)
-    secondRadius = dist(second, center)
-  result =
-    if firstRadius < secondRadius - FfaBearingEpsilon:
-      first
-    elif secondRadius < firstRadius - FfaBearingEpsilon:
-      second
-    elif bot.slot mod 2 == 0:
-      first
-    else:
-      second
-  let
-    safeRadius = max(1.0, float(max(1, ringRadius)) -
-      FfaHunterArmSafeMargin)
-    fromCenter = result - center
-  if fromCenter.len() > safeRadius:
-    result = center + fromCenter.norm() * safeRadius
 
 proc dot(a, b: Vec): float =
   a.x * b.x + a.y * b.y
@@ -2371,8 +2337,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   var
     targetIndex = -1
     targetDist = 1e18
-    heavyThreatIndex = -1
-    heavyThreatDist = 1e18
     nearby = 0
   for i, actor in actors:
     let d = dist(me, actor.pos)
@@ -2381,9 +2345,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     if d < targetDist:
       targetDist = d
       targetIndex = i
-    if actor.weaponTier == FfaWeaponHeavy and d < heavyThreatDist:
-      heavyThreatDist = d
-      heavyThreatIndex = i
   var pactMemoryFresh = false
   if pactActive:
     let brawl = ffaPactBrawl(actors, me, center, ringRadius)
@@ -2494,22 +2455,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     intent.objective = "safe_zone"
     intent.action = "retreat_ring"
     intent.engageReason = "ring"
-  elif FfaDoctrine == FfaHunter and FfaHunterArmedHeavyStrafe and
-      not unarmed and heavyThreatIndex >= 0 and
-      heavyThreatDist < FfaHunterArmedHeavyStrafeRange:
-    intent.phase = "ARMED_HEAVY_STRAFE"
-    intent.bandFraction = FfaPassiveBand
-    intent.bandRadius = float(max(1, ringRadius)) * FfaPassiveBand
-    intent.moveTarget = ffaHunterArmedHeavyStrafeTarget(
-      bot,
-      me,
-      actors[heavyThreatIndex].pos,
-      center,
-      ringRadius
-    )
-    intent.objective = "armed_heavy_strafe"
-    intent.action = "strafe_armed_heavy"
-    intent.engageReason = "armed_heavy_threat_lateral"
   elif FfaLateClose and livingCount > 0 and
       livingCount <= (if FfaDoctrine in {FfaHunter, FfaPact}: 4 else: 3) and
       targetIndex >= 0:
@@ -4465,9 +4410,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
-    " ffaHunterArmedHeavyStrafe=", FfaHunterArmedHeavyStrafe,
-    " ffaHunterArmedHeavyStrafeRange=", FfaHunterArmedHeavyStrafeRange,
-    " ffaHunterArmedHeavyStrafeStep=", FfaHunterArmedHeavyStrafeStep,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,

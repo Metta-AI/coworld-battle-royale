@@ -64,8 +64,11 @@
   `ffaHunterArmedHeavyStrafe=true`, a 400-pixel range, and a 240-pixel step
   only in the candidate, while candidate and exact submitted control retain
   Hunter, the 60-tick ring unstick, 240-pixel arm cap, 30-second arm deadline,
-  80-pixel arm safety margin, zero ring margin, and 0.85 hold band. Hosted
-  branch coverage is pending.
+  80-pixel arm safety margin, zero ring margin, and 0.85 hold band. Across 10
+  hosted artifacts per arm, the candidate records 315
+  `strafe_armed_heavy` action ticks and 26 sampled
+  `armed_heavy_threat_lateral` decisions versus zero in the exact control,
+  proving the isolated change fired.
 - Artifact: `andre-battleroyale:candidate-28`, Linux amd64 image digest
   `sha256:a02830155c898f056151927bd9363259725bada140d0f24f545210a9215cf32d`.
   Uploaded unsubmitted as `andre-battleroyale:v29`; exact submitted control
@@ -78,7 +81,11 @@
   players are sivannn (`sivan-br-ringsurfer:v1`, 1368.46), Kenny Sheftel
   (`kenshef-my-player:v1`, 1304.37), and b4kng2dkg5-sudo
   (`starter-baseline:v1`, 1429.78).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. All 10 episodes per arm completed without failure. The
+  exact submitted control scores 182.5000 and the candidate 155.9000, a
+  -26.6000 delta with 95% CI [-89.4252, 36.2252] and Welch p=0.373417.
+  Inconclusive is not a keep. `andre-battleroyale:v29` remains uploaded but
+  unsubmitted; the submitted champion remains v15.
 
 ### Trial 27: inward lateral heavy-gun strafe
 
