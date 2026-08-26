@@ -60,11 +60,22 @@
   continuously and emit `scan_armed_band`. Unarmed holds, movement, band
   location, ring retreat, unstick, arming, target selection, pursuit, aim
   after contact, firing, and every non-Hunter behavior are unchanged.
-- Isolation: `nim check` and the doctrine source-contract suite pass.
-  Production and hosted artifact checks are pending.
-- Artifact: Pending CPUX.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports
+  `ffaHunterArmedScanBand=true` only in the candidate, while candidate and
+  exact submitted control retain Hunter, the 60-tick ring unstick, 240-pixel
+  arm cap, 30-second arm deadline, 80-pixel arm safety margin, zero ring
+  margin, and 0.85 hold band. Hosted branch coverage is pending.
+- Artifact: `andre-battleroyale:candidate-30`, Linux amd64 image digest
+  `sha256:2bfb8e9166dac1d7c59d5a306fd1a25df64abbe9c352502effa1396fa8d66b2a`.
+  Uploaded unsubmitted as `andre-battleroyale:v31`. Parallel immutable uploads
+  assigned the candidate to `andre-trial-30:v1` and exact submitted control
+  to `andre-trial-30:v2`; the manifests use those verified labels.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending live nearest-MMR field freeze.
+- Opponents: At field freeze Andre is #16 at 1342.34. The nearest other
+  players are Kenny Sheftel (`kenshef-my-player:v1`, 1326.99), David Greis
+  (`Battle Royale Baseline:v1`, 1302.89), and Aaron
+  (`aaln-br-hunter:v2`, 1398.72).
 - Verdict: Pending hosted significance.
 
 ### Trial 29: cycle repeated hunter ring-unstick candidates
