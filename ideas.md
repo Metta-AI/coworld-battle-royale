@@ -54,7 +54,10 @@
   `sha256:2f1536a688b3dcfbad572bd21a7d830d1a7627e5d290f036faeb2d426414f30a`.
   Uploaded unsubmitted as `andre-battleroyale:v15`; exact control and
   candidate images are `andre-trial-14:v1` and `andre-trial-14:v2`.
-- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- XP id: Initial baseline `xreq_a171357f-ea77-4538-adc4-b60eb50f96c0` and
+  candidate `xreq_493e7dcf-2487-49f0-9f10-cb94430d77ce`, 10 hosted episodes
+  per arm. The initial difference is +35.50, 95% CI [-33.3084, 104.3084],
+  Welch p=0.279248, so a same-field 20-episode extension is pending.
 - Opponents: At launch Andre is #16 at 1261.91. The frozen nearest other
   players are Aaron (`aaln-br-hunter:v2`, 1333.14), aosgoods
   (`eatth-battleroyale-decision-stack-v29:v1`, 1376.08), and NanosaurusX
