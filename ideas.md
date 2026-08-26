@@ -19,6 +19,7 @@
 - Kite only visible nearby heavy-gun threats while preserving hunter fire.
 - Start only the hunter ring-retreat alarm one margin earlier.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
+- Let only Hunter ring-unstick rays leave a falsely blocked coarse origin cell.
 - Lengthen only the hunter ring-unstick clearance probe.
 - Prefer only inward-diagonal hunter ring-unstick candidates before pure
   tangents.
@@ -39,6 +40,30 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 26: skip a falsely blocked ring-unstick origin cell
+
+- Idea: In the newest 20 exact v15 controls, two deaths followed 19 ring hits
+  each and spent 99.5 percent of their final retreat samples in
+  `ring_unstick`, with 99.0 percent stationary steps. A replay-backed Nim
+  extractor reconstructed all 20 hosted maps and found 319 of 525 sampled
+  unstick positions in a coarse eight-pixel nav cell marked blocked, across 12
+  episodes, while the player's actual footprint was valid in every sample.
+  The current clearance ray tests that false coarse origin before every
+  direction, rejects all candidates, and falls back to fixed `ButtonUp`.
+- Change: Only for the default Hunter's existing 32-pixel ring-unstick
+  clearance ray, ignore the single coarse origin cell when it is marked
+  blocked but the player is already occupying a valid actual position. Every
+  later cell in the ray must remain walkable. Candidate order, probe length,
+  preferred side, 20-frame trigger, 60-tick burst, ordinary ring retreat,
+  arming, combat, hold band, and every other behavior are unchanged. Bursts
+  that use the corrected origin semantics emit `ring_unstick_origin_clear`.
+- Isolation: Pending source checks, production extraction, and hosted branch
+  coverage.
+- Artifact: Pending Linux amd64 production build and upload.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the required live nearest-MRR freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 25: scan only while unarmed hunter holds
 
