@@ -25,6 +25,7 @@ type
     tier: int
   RetreatStats = object
     samples: int
+    unstickSamples: int
     path: float
     displacement: float
     zeroSteps: int
@@ -150,10 +151,12 @@ proc retreatStats(
         sample.objective != previousObjective:
       inc result.switches
     previousObjective = sample.objective
-    if sample.action != "retreat_ring":
+    if sample.action notin ["retreat_ring", "ring_unstick"]:
       continue
     retreatSamples.add(sample)
     inc result.samples
+    if sample.action == "ring_unstick":
+      inc result.unstickSamples
     if sample.visible > 0:
       inc result.visible
     if sample.tier == 0:
@@ -215,6 +218,7 @@ proc summarize(artifactDir: string) {.raises: [
     let stats = retreatStats(parseTickSamples(streams.ticks), run[^1].tick)
     inc ringDeaths
     total.samples += stats.samples
+    total.unstickSamples += stats.unstickSamples
     total.path += stats.path
     total.displacement += stats.displacement
     total.zeroSteps += stats.zeroSteps
@@ -224,6 +228,7 @@ proc summarize(artifactDir: string) {.raises: [
     total.unarmed += stats.unarmed
     echo &"episode={episodeId(path)} ringHits={run.len} " &
       &"fatalTick={run[^1].tick} retreatSamples={stats.samples} " &
+      &"unstickSamples={stats.unstickSamples} " &
       &"path={stats.path:.1f} displacement={stats.displacement:.1f} " &
       &"zeroStepPct={percent(stats.zeroSteps, stats.steps):.1f} " &
       &"switches={stats.switches} visible={stats.visible} " &
@@ -232,6 +237,7 @@ proc summarize(artifactDir: string) {.raises: [
   echo "ringLikeDeaths=", ringDeaths
   if ringDeaths > 0:
     echo &"meanRetreatSamples={float(total.samples) / float(ringDeaths):.1f}"
+    echo &"unstickPct={percent(total.unstickSamples, total.samples):.1f}"
     echo &"meanPath={total.path / float(ringDeaths):.1f}"
     echo &"meanDisplacement={total.displacement / float(ringDeaths):.1f}"
     echo &"zeroStepPct={percent(total.zeroSteps, total.steps):.1f}"
