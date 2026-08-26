@@ -87,3 +87,14 @@ suite "baseline FFA doctrine":
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n      ringRadius, FfaHunterRingMargin)") == 1
     check baseline.count(
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n    ringRadius, FfaShadeRingMargin)") == 1
+
+  test "hunter ring alarm starts one margin earlier":
+    check baseline.contains("FfaRingSafetyMargin = 80")
+    check baseline.contains("FfaHunterRingSafetyMargin = 160")
+    check baseline.count("if FfaDoctrine == FfaHunter:\n      " &
+      "FfaHunterRingSafetyMargin") == 1
+    check baseline.count("safe_zone_early") == 1
+    check baseline.count("retreat_ring_early") == 1
+    check baseline.count("\"ring_early\"") == 1
+    check baseline.count(
+      "\" ffaHunterRingSafetyMargin=\", FfaHunterRingSafetyMargin") == 1

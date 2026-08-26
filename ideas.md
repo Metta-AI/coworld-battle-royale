@@ -16,6 +16,7 @@
 - Prefer only a vulnerable hunter target over a closer strong opponent.
 - Allow only safe hunter upgrades after initial arming.
 - Kite only visible nearby heavy-gun threats while preserving hunter fire.
+- Start only the hunter ring-retreat alarm one margin earlier.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
@@ -27,6 +28,29 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 12: earlier hunter ring alarm
+
+- Idea: Across 70 exact submitted-hunter control replays from Trials 9-11,
+  ring damage caused 21 documented fatalities. The latest exact-field Hunter
+  spent 10,939 ticks in ring retreat and lost four of six deaths to the ring.
+  The existing alarm waits until 80 pixels from the continuously shrinking
+  boundary. Test an earlier alarm without changing the Hunter hold target.
+- Change: Only for the default `FfaHunter` doctrine, begin the existing
+  centerward ring retreat at a 160-pixel margin instead of 80 pixels. The
+  0.85 hold band, hold target, arming, pursuit, target selection, aiming,
+  firing, and all other doctrines are unchanged. Only the added 80-pixel
+  interval emits `safe_zone_early`, `retreat_ring_early`, and `ring_early`.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production startup reports the submitted
+  Hunter settings with `ffaHunterRingSafetyMargin=160`; hosted artifact check
+  remains pending.
+- Artifact: `andre-battleroyale:candidate-12`, Linux amd64 image digest
+  `sha256:bb21dea81cdb9291c7b61c488cb1881faf1d5862089a451b1a5002653e8d7e08`;
+  upload pending.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 11: rush doctrine default
 
