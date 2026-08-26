@@ -15,6 +15,7 @@
 - Move only the hunter hold band deeper inside the safe radius.
 - Prefer only a vulnerable hunter target over a closer strong opponent.
 - Allow only safe hunter upgrades after initial arming.
+- Kite only visible nearby heavy-gun threats while preserving hunter fire.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
@@ -25,6 +26,27 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 10: kite nearby heavy-gun threats
+
+- Idea: Exact submitted-champion replays across 30 hosted episodes attribute
+  11 of its 21 deaths to heavy guns. The champion averages 3,067.50 survival
+  ticks and place 2.10, but only 6.10 damage. Its locked gun aim is already
+  within 1.59 brads of the inferred target at release, and compensating for
+  shooter motion improves only 12.50 percent of shots. Preserve firing and
+  convert the survival leak by kiting the weapon that causes most deaths.
+- Change: Only under the submitted hunter doctrine, when a visible heavy-gun
+  actor is within 400 pixels and ring safety is not already active, move 240
+  pixels directly away and clamp the escape target inside the existing
+  80-pixel safe margin. Target selection, aim, firing, pursuit, arming, hold
+  band, ring alarm, and every non-hunter doctrine are unchanged. The branch
+  emits `heavy_evade`, `evade_heavy`, and `heavy_threat` for isolation.
+- Isolation: Pending production and hosted artifact checks. The 30 hosted
+  control replays and the replay summarizer are diagnostics, not score.
+- Artifact: Pending CPUX build and upload.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 9: safe hunter weapon upgrades
 

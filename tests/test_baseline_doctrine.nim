@@ -40,6 +40,8 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
+    check baseline.contains("FfaHunterHeavyEvadeRange = 400.0")
+    check baseline.contains("FfaHunterHeavyEvadeStep = 240.0")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
@@ -86,3 +88,10 @@ suite "baseline FFA doctrine":
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n      ringRadius, FfaHunterRingMargin)") == 1
     check baseline.count(
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n    ringRadius, FfaShadeRingMargin)") == 1
+
+  test "hunter kites nearby heavy guns":
+    check baseline.count("proc ffaHeavyEscapeTarget(") == 1
+    check baseline.count("heavyThreatDist < FfaHunterHeavyEvadeRange") == 1
+    check baseline.count("intent.objective = \"heavy_evade\"") == 1
+    check baseline.count("intent.action = \"evade_heavy\"") == 1
+    check baseline.count("intent.engageReason = \"heavy_threat\"") == 1
