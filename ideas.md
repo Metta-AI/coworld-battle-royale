@@ -20,6 +20,8 @@
 - Start only the hunter ring-retreat alarm one margin earlier.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
 - Lengthen only the hunter ring-unstick clearance probe.
+- Prefer only inward-diagonal hunter ring-unstick candidates before pure
+  tangents.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -33,6 +35,29 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 21: inward-first hunter ring unstick
+
+- Idea: The newest 10 exact submitted-control artifacts contain four deaths,
+  all while unarmed. Two are ring-cadence fatalities. Unstick occupied 97.5
+  percent of their final retreat samples and 93.8 percent of sampled steps
+  were stationary. One fatal escape still moved 165 pixels but sustained 19
+  ring hits because the submitted selector checks both pure tangents before
+  either inward diagonal. Escaping an obstacle without gaining inward
+  clearance can still lose the ring race.
+- Change: Reorder only the default Hunter ring-unstick clearance candidates so
+  the preferred and opposite inward diagonals are checked before the two pure
+  tangents. Preferred-side selection, 32-pixel probe, 20-frame stuck trigger,
+  60-tick burst, direct-inward fallback, normal ring retreat, arming, combat,
+  hold band, and every other behavior remain unchanged. A burst emits
+  `ring_unstick_inward_first` only when the new order selects different
+  movement bits than the submitted order.
+- Isolation: Pending checks, production extraction, and hosted behavioral
+  coverage.
+- Artifact: Pending CPUX build and upload.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the nearest-MRR live field at XP launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 20: longer ring-unstick clearance probe
 
