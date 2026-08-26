@@ -31,6 +31,7 @@
 - Prevent only an active Hunter ring-unstick burst from rearming itself.
 - Scan only the Hunter's vision cone while holding without a visible target.
 - Scan only while an unarmed Hunter holds without a visible target.
+- Scan only while an armed Hunter holds without a visible target.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -44,6 +45,27 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 30: scan only while armed hunter holds
+
+- Idea: Broad hold scanning in Trial 24 increased fight ticks from 363 to 670
+  and had a +24.90 hosted score trend, while the 30-episode unarmed-only scan
+  in Trial 25 finished at only +4.57. The newest exact v15 control contains
+  104 armed-visible samples but only 70 fight ticks, and a dedicated extractor
+  finds zero unused mid/heavy targets beyond the current 520-pixel fire gate.
+  Isolate better armed contact acquisition without changing movement, weapon
+  reach, or unarmed loot discovery.
+- Change: Only for the default Hunter while armed, holding with action
+  `hold_band`, and seeing no opponent, rotate the turret clockwise
+  continuously and emit `scan_armed_band`. Unarmed holds, movement, band
+  location, ring retreat, unstick, arming, target selection, pursuit, aim
+  after contact, firing, and every non-Hunter behavior are unchanged.
+- Isolation: `nim check` and the doctrine source-contract suite pass.
+  Production and hosted artifact checks are pending.
+- Artifact: Pending CPUX.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending live nearest-MMR field freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 29: cycle repeated hunter ring-unstick candidates
 
