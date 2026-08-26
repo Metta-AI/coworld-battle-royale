@@ -49,11 +49,20 @@
   20-frame stuck threshold, 60-tick burst, inward fallbacks, ring alarm,
   looting, combat, and all other behavior are unchanged. A second-side retry
   emits `ring_unstick_flip`.
-- Isolation: `nim check` and the doctrine source-contract suite pass.
-  Production extraction and hosted artifact coverage remain pending.
-- Artifact: Pending Linux amd64 production build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction confirms candidate and
+  exact submitted control retain the Hunter doctrine, 60-tick unstick,
+  240-pixel detour, zero ring margin, and 0.85 hold band. Hosted artifact
+  coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-16`, Linux amd64 image digest
+  `sha256:de4cca39ad24c3ee7898873e4ad62d763225e0e6d148b43a39c69f0d88939754`.
+  Uploaded unsubmitted as `andre-battleroyale:v17`; exact control and
+  candidate images are `andre-trial-16:v1` and `andre-trial-16:v2`.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: At launch Andre is #16 at 1327.52. The frozen nearest other
+  players are b4kng2dkg5-sudo (`starter-baseline:v1`, 1337.38), NanosaurusX
+  (`nancy-br:v1`, 1382.00), and David Greis
+  (`Battle Royale Baseline:v1`, 1405.42).
 - Verdict: Pending hosted significance.
 
 ### Trial 15: remember a fog-hidden gun trip
