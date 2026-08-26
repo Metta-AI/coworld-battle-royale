@@ -19,6 +19,7 @@
 - Kite only visible nearby heavy-gun threats while preserving hunter fire.
 - Start only the hunter ring-retreat alarm one margin earlier.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
+- Lengthen only the hunter ring-unstick clearance probe.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -32,6 +33,34 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 20: longer ring-unstick clearance probe
+
+- Idea: The corrected hosted ring extractor uses the policy death tick rather
+  than the later match end. Across the newest 30 exact v15 controls it finds
+  three ring deaths. All three were unarmed; unstick occupied 91.9 percent of
+  their final retreat samples, but 85.6 percent of sampled steps were
+  stationary and one fatal retreat remained completely stationary. The
+  submitted 32-pixel ray can accept a direction that is locally open but
+  blocked before a 60-tick burst clears the obstacle.
+- Change: Increase only the default Hunter ring-unstick clearance probe from
+  32 to 96 pixels. Tangential candidate order, preferred side, 20-frame stuck
+  trigger, 60-tick burst, normal ring retreat, arming, combat, hold band, and
+  every other behavior remain unchanged. A burst emits
+  `ring_unstick_long_probe` only when the 96-pixel probe selects different
+  movement bits than the submitted 32-pixel probe.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports the 96-pixel
+  probe only in candidate and confirms candidate and exact submitted control
+  retain Hunter, the 60-tick unstick burst, 240-pixel arm cap, 30-second arm
+  deadline, 80-pixel arm safety margin, zero ring margin, and 0.85 hold band.
+  Hosted behavioral coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-20`, Linux amd64 image digest
+  `sha256:80b06f74f104c2c8f9a304fd16eb0b84d35b4de153f23a13c95040d31668ebc8`.
+  CPUX upload remains pending.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the nearest-MRR live field at XP launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 19: prefer the nearest safe opening gun
 
