@@ -51,17 +51,26 @@
   amd64 production build pass. Production extraction confirms pursuit is
   false only in candidate while both images retain Hunter, safe arming,
   weapon-range firing, 60-tick unstick, zero ring margin, and 0.85 hold band.
-  Hosted artifact coverage remains pending.
+  Hosted behavioral coverage failed: all 10 candidate artifacts are valid but
+  contain zero `hold_no_pursuit` and `pursuit_disabled` ticks. Candidate has
+  zero normal fight ticks, while control has only 21 fight ticks and two
+  sampled `pursue_weak` rows, so the required field never exercised the
+  disabled-chase branch.
 - Artifact: `andre-battleroyale:candidate-17`, Linux amd64 image digest
   `sha256:3c97c94d6ca52dd654e3c1693cc7be934d26215f9224ba423a5e61ef32c7cc94`.
   Uploaded unsubmitted as `andre-battleroyale:v18`; exact control and
   candidate images are `andre-trial-17:v1` and `andre-trial-17:v2`.
-- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- XP id: Baseline `xreq_456a079c-44da-4004-80d3-513205bc86fc` and candidate
+  `xreq_ae965246-3d0c-4d42-b3f0-3aa945b7d16e`, 10 hosted episodes per arm.
 - Opponents: At launch Andre is #13 at 1416.70. The frozen nearest other
   players are b4kng2dkg5-sudo (`starter-baseline:v1`, 1421.69), David Greis
   (`Battle Royale Baseline:v1`, 1422.31), and Aaron
   (`aaln-br-hunter:v2`, 1402.76).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 183.00, candidate mean 167.80, difference
+  -15.20, 95% CI [-68.4058, 38.0058], Welch p=0.555676. The result is
+  inconclusive and trends worse, but more importantly the changed branch was
+  inactive, so the XP delta is not a valid strategy measurement. Pursuit was
+  restored; `andre-battleroyale:v18` remains uploaded but was not submitted.
 
 ### Trial 16: alternate repeated ring-unstick sides
 
