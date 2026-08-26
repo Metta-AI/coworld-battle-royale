@@ -62,7 +62,11 @@
   Candidate artifacts reached 42.05 percent sampled armed state versus 31.77
   percent in control, started 1.4 loot trips per episode versus 0.5, and
   recorded 152 engage ticks versus 100. These diagnostics prove the behavior
-  fired; they are not score.
+  fired; they are not score. All 20 extension candidate artifacts are also
+  valid and contain 13,945 `scan_unarmed_band` ticks, while the 20 extension
+  controls contain zero. Extension armed state is 51.50 percent in candidate
+  versus 46.14 percent in control, with 1.1 versus 1.0 loot trips per episode
+  and 915 versus 375 engage ticks. These remain coverage diagnostics only.
 - Artifact: `andre-battleroyale:candidate-25`, Linux amd64 image digest
   `sha256:f506ee59d6487244430f84bc97a3ed6071d6f7a03dc1852366dd62598cb33162`.
   Uploaded unsubmitted as `andre-battleroyale:v26`; exact submitted control
@@ -76,12 +80,13 @@
   players are sivannn (`sivan-br-ringsurfer:v1`, 1401.61), b4kng2dkg5-sudo
   (`starter-baseline:v1`, 1430.17), and softmaxwell
   (`Picasso:v63`, 1383.99).
-- Verdict: Reverted pending the exact same-field extension. The initial
-  baseline mean is 121.60 and candidate mean is 174.40, difference +52.80,
-  95% CI [-10.0882, 115.6882], Welch p=0.094424. The active change remains
-  absent from the working champion while more hosted episodes resolve this
-  promising but inconclusive result. `andre-battleroyale:v26` is uploaded but
-  not submitted.
+- Verdict: Reverted. The initial 10 episodes per arm were inconclusive at
+  +52.80, 95% CI [-10.0882, 115.6882], Welch p=0.094424. Across the exact
+  same-field 30 episodes per arm, baseline mean is 144.3667 and candidate mean
+  is 148.9333, difference +4.5667, 95% CI [-31.0363, 40.1696], Welch
+  p=0.798101. The active change is conclusively unproven after extension, so
+  the working source remains the submitted v15 behavior.
+  `andre-battleroyale:v26` remains uploaded but was not submitted.
 
 ### Trial 24: scan while hunter holds the band
 
