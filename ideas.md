@@ -23,6 +23,7 @@
 - Prefer only inward-diagonal hunter ring-unstick candidates before pure
   tangents.
 - Add only a bounded low-health Hunter medkit detour.
+- Prevent only an active Hunter ring-unstick burst from rearming itself.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -36,6 +37,29 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 23: cap hunter ring-unstick self-rearming
+
+- Idea: Across the newest three exact submitted-control fields, unstick ticks
+  correlate negatively with hosted score at Pearson r=-0.5039, -0.5737, and
+  -0.4430. The latest ring fatality spent all 100 final retreat samples in
+  `ring_unstick` without moving at all. Although the kept Trial 14 behavior is
+  specified as a 60-tick burst, the shared 21-tick stuck detector can fire
+  during that burst and extend `jinkUntil` by another 60 ticks repeatedly, so
+  one failed direction can remain active until death.
+- Change: Only while the submitted Hunter's 60-tick ring-unstick burst is
+  already active, suppress a repeated stuck trigger instead of extending and
+  reselecting the burst. Once the original burst expires, the unchanged
+  20-frame detector may start another burst. Direction order, preferred side,
+  32-pixel probe, 60-tick duration, normal ring retreat, arming, combat, hold
+  band, and every other behavior remain unchanged. Suppressed self-rearms emit
+  `ring_unstick_no_rearm`.
+- Isolation: Pending checks, production extraction, and hosted behavioral
+  coverage.
+- Artifact: Pending CPUX build and upload.
+- XP id: Pending exact same-field hosted requests.
+- Opponents: Pending the nearest-MRR live field at XP launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 22: bounded low-health hunter healing
 

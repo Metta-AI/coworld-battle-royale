@@ -266,6 +266,7 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
+  FfaHunterRingUnstickNoRearm = true
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -2557,10 +2558,13 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.stuckTicks = 0
     bot.navGoal = -1
     if hunterRingSafety:
-      bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks
-      bot.jinkBits = bot.ffaRingUnstickBits(me, center)
-      moveMask = bot.jinkBits
-      action = "ring_unstick"
+      if FfaHunterRingUnstickNoRearm and bot.tick < bot.jinkUntil:
+        action = "ring_unstick_no_rearm"
+      else:
+        bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks
+        bot.jinkBits = bot.ffaRingUnstickBits(me, center)
+        moveMask = bot.jinkBits
+        action = "ring_unstick"
     else:
       moveMask = octantBits(center - me)
 
@@ -4411,6 +4415,7 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
+    " ffaHunterRingUnstickNoRearm=", FfaHunterRingUnstickNoRearm,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
