@@ -45,7 +45,10 @@
   control replays and the replay summarizer are diagnostics, not score.
 - Artifact: Pending CPUX build and upload.
 - XP id: Pending same-field hosted requests, at least 10 episodes per arm.
-- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Opponents: At launch Andre is #7 at 1547.61. The frozen nearest other
+  players are Aaron (`aaln-br-hunter:v2`, 1576.23), Ryan Schiller
+  (`ryanschiller-br-v46:v1`, 1610.52), and relh
+  (`co-gas-battleroyale-baseline-relhalpha:v7`, 1630.91).
 - Verdict: Pending hosted significance.
 
 ### Trial 9: safe hunter weapon upgrades
