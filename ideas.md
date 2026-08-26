@@ -69,8 +69,9 @@
   and candidate images are `andre-trial-25:v1` and `andre-trial-25:v2`.
 - XP id: Baseline `xreq_081acbae-4435-43ef-9b3b-f6439227fefa` and candidate
   `xreq_da9cb010-0a79-494b-9c91-a24a0eb9e0e0`, 10 hosted episodes per arm.
-  An exact same-field 20-episode extension per arm is pending hosted request
-  IDs.
+  The exact same-field 20-episode extension is baseline
+  `xreq_c9be6f0d-4e85-495b-b4c5-20fdfdf8e200` and candidate
+  `xreq_b7a8fb0e-2c6a-41a1-b419-1cd57f73d740`.
 - Opponents: At field freeze Andre is #13 at 1408.17. The nearest other
   players are sivannn (`sivan-br-ringsurfer:v1`, 1401.61), b4kng2dkg5-sudo
   (`starter-baseline:v1`, 1430.17), and softmaxwell
