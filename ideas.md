@@ -17,6 +17,7 @@
 - Allow only safe hunter upgrades after initial arming.
 - Kite only visible nearby heavy-gun threats while preserving hunter fire.
 - Start only the hunter ring-retreat alarm one margin earlier.
+- Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Switch only the FFA doctrine from legacy to passive.
@@ -28,6 +29,30 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 13: extended heavy-gun arm reach
+
+- Idea: The broad 480-pixel Trial 4 arm radius raised submitted-Hunter armed
+  time from 31.49 to 49.82 percent and produced 481 sampled heavy-gun ticks
+  versus zero in control. It also increased trips from 22 to 82 and aborts
+  from 3 to 28, masking that useful heavy-gun subeffect in an inconclusive
+  final delta of 5.10. Isolate the heavy pickup without widening low/mid trips.
+- Change: Only for an unarmed default Hunter, allow a ring-safe,
+  opponent-aware heavy gun out to 480 pixels while low and mid guns retain the
+  submitted 240-pixel cap. The 30-second deadline, 80-pixel safe margin,
+  target selection, pursuit, aiming, firing, hold band, and all other
+  doctrines are unchanged. Extended trips emit `heavy_loot_trip` and
+  `move_heavy_extended`.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production startup preserves the submitted
+  240-pixel normal radius and reports the isolated 480-pixel heavy radius;
+  hosted artifact coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-13`, Linux amd64 image digest
+  `sha256:37f653afd3f64e1cb9de52624aa815e2deb6d00cd6df6a7ba10ff171425fbdb2`;
+  upload pending.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
 
 ### Trial 12: earlier hunter ring alarm
 

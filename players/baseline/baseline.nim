@@ -263,6 +263,7 @@ const
   FfaHunterSupportRadiusDefault = 300.0
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
+  FfaHunterHeavyArmTripMaxDetourRadiusDefault = 480.0
   FfaHunterArmSafeMarginDefault = 80.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
@@ -472,6 +473,7 @@ type
     ffaLootTarget: Vec         # selected gear target for that trip
     ffaLootTargetValid: bool
     ffaLootTargetTier: int
+    ffaLootExtendedHeavy: bool
     ffaLootStartedTick: int
     ffaPactTargetPos: Vec
     ffaPactTargetSeen: int
@@ -545,6 +547,8 @@ var
   FfaHunterSupportRadius = FfaHunterSupportRadiusDefault
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
+  FfaHunterHeavyArmTripMaxDetourRadius =
+    FfaHunterHeavyArmTripMaxDetourRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
@@ -1732,6 +1736,7 @@ proc resetTransient(bot: Bot) =
   bot.ffaLootTarget = vec(0, 0)
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
+  bot.ffaLootExtendedHeavy = false
   bot.ffaLootStartedTick = 0
   bot.ffaPactTargetPos = vec(0, 0)
   bot.ffaPactTargetSeen = -1
@@ -1918,7 +1923,8 @@ proc ffaPactMemoryFresh(bot: Bot): bool =
 
 proc bestFfaGun(client: ProtocolClient, me, center: Vec,
     safeRadius: int, currentTier: int, safeMargin = 0.0,
-    maxDistance = 1e18, avoidActors: seq[Actor] = @[]): tuple[
+    maxDistance = 1e18, avoidActors: seq[Actor] = @[],
+    heavyMaxDistance = -1.0): tuple[
     found: bool, pos: Vec, tier: int] =
   ## Selects the highest tier in the safe zone, then the nearest one.
   ## Position breaks exact-distance ties so protocol object order is irrelevant.
@@ -1937,9 +1943,14 @@ proc bestFfaGun(client: ProtocolClient, me, center: Vec,
       let
         gun = client.mapPos(o)
         d = dist(me, gun)
+        distanceLimit =
+          if tier == FfaWeaponHeavy and heavyMaxDistance > 0.0:
+            heavyMaxDistance
+          else:
+            maxDistance
       if dist(gun, center) > float(max(1, safeRadius)):
         continue
-      if dist(gun, center) > safeLimit or d > maxDistance:
+      if dist(gun, center) > safeLimit or d > distanceLimit:
         continue
       var opponentCloser = false
       for actor in avoidActors:
@@ -1994,13 +2005,18 @@ proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
   let
     target = bot.ffaLootTarget
     d = dist(me, target)
+    maxDetour =
+      if bot.ffaLootExtendedHeavy:
+        FfaHunterHeavyArmTripMaxDetourRadius
+      else:
+        FfaHunterArmTripMaxDetourRadius
     safeLimit = max(0.0, float(max(1, ringRadius)) -
       FfaHunterArmSafeMargin)
   if bot.ffaLootStartedTick > 0 and
       ffaGameTicksSince(bot.tick, bot.ffaLootStartedTick) >
         FfaHunterArmTripMaxSec * TargetFps:
     return false
-  if d > FfaHunterArmTripMaxDetourRadius or
+  if d > maxDetour or
       dist(target, center) > safeLimit or
       not ffaGunStillPresent(client, target, bot.ffaLootTargetTier):
     return false
@@ -2143,6 +2159,7 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
+    bot.ffaLootExtendedHeavy = false
     bot.ffaLootStartedTick = 0
     if targetIndex >= 0 and
         targetDist < (if FfaHunterFireRange:
@@ -2153,27 +2170,46 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
+    bot.ffaLootExtendedHeavy = false
     bot.ffaLootStartedTick = 0
     return
   if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):
+    let extendedHeavy = bot.ffaLootExtendedHeavy
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-      "LOOT", "loot_trip", "move_gun")
+      "LOOT",
+      (if extendedHeavy: "heavy_loot_trip" else: "loot_trip"),
+      (if extendedHeavy: "move_heavy_extended" else: "move_gun"))
     result.moveTarget = bot.ffaLootTarget
     return
   bot.ffaLootTrip = false
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
+  bot.ffaLootExtendedHeavy = false
   bot.ffaLootStartedTick = 0
-  let gun = bestFfaGun(client, me, center, ringRadius, weaponTier,
-    FfaHunterArmSafeMargin, FfaHunterArmTripMaxDetourRadius, actors)
+  let gun = bestFfaGun(
+    client,
+    me,
+    center,
+    ringRadius,
+    weaponTier,
+    FfaHunterArmSafeMargin,
+    FfaHunterArmTripMaxDetourRadius,
+    actors,
+    FfaHunterHeavyArmTripMaxDetourRadius
+  )
   if gun.found:
+    let extendedHeavy = gun.tier == FfaWeaponHeavy and
+      dist(me, gun.pos) > FfaHunterArmTripMaxDetourRadius
     bot.ffaLootTrip = true
     bot.ffaLootTarget = gun.pos
     bot.ffaLootTargetValid = true
     bot.ffaLootTargetTier = gun.tier
+    bot.ffaLootExtendedHeavy = extendedHeavy
     bot.ffaLootStartedTick = bot.tick
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-      "LOOT", "loot_trip", "move_gun")
+      "LOOT",
+      (if extendedHeavy: "heavy_loot_trip" else: "loot_trip"),
+      (if extendedHeavy: "move_heavy_extended" else: "move_gun"))
     result.moveTarget = gun.pos
     result.lootTripStarted = true
 
@@ -2219,6 +2255,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
+    bot.ffaLootExtendedHeavy = false
     bot.ffaLootStartedTick = 0
     let gun = bestFfaGun(client, me, center, ringRadius, weaponTier)
     if gun.found:
@@ -2226,6 +2263,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
       bot.ffaLootTarget = gun.pos
       bot.ffaLootTargetValid = true
       bot.ffaLootTargetTier = gun.tier
+      bot.ffaLootExtendedHeavy = false
       bot.ffaLootStartedTick = bot.tick
       result = ffaBandIntent(bot, me, center, ringRadius, FfaLootBand,
         "LOOT", "loot_trip", "move_gun")
@@ -2236,6 +2274,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
   bot.ffaLootTrip = false
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
+  bot.ffaLootExtendedHeavy = false
   bot.ffaLootStartedTick = 0
   ffaBandIntent(bot, me, center, ringRadius, FfaHoldBand, "HOLD",
     "band_hold", "hold_band")
@@ -2423,6 +2462,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       bot.ffaLootTrip = false
       bot.ffaLootTargetValid = false
       bot.ffaLootTargetTier = 0
+      bot.ffaLootExtendedHeavy = false
       bot.ffaLootStartedTick = 0
     intent.phase = "RING_SAFETY"
     intent.bandFraction = 0.0
@@ -4325,6 +4365,13 @@ proc runBot(url: string) =
   FfaHunterArmTripMaxDetourRadius = max(1.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS",
     FfaHunterArmTripMaxDetourRadiusDefault))
+  FfaHunterHeavyArmTripMaxDetourRadius = max(
+    FfaHunterArmTripMaxDetourRadius,
+    parseEnvFloat(
+      "CTF_BOT_FFA_HUNTER_HEAVY_ARM_TRIP_MAX_DETOUR_RADIUS",
+      FfaHunterHeavyArmTripMaxDetourRadiusDefault
+    )
+  )
   FfaHunterArmSafeMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN",
     FfaHunterArmSafeMarginDefault, strict = true))
@@ -4373,6 +4420,8 @@ proc runBot(url: string) =
     " ffaHunterSupportRadius=", FfaHunterSupportRadius,
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
+    " ffaHunterHeavyArmTripMaxDetourRadius=",
+    FfaHunterHeavyArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
