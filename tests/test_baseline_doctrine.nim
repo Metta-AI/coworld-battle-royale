@@ -31,7 +31,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN")
-    check baseline.contains("CTF_BOT_FFA_HUNTER_NEAREST_GUN")
     check baseline.contains("CTF_BOT_FFA_HUNTER_RING_MARGIN")
     check baseline.contains("FfaHunterArmDefault = true")
     check baseline.contains("FfaPassiveBandDefault = 0.85")
@@ -42,7 +41,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
-    check baseline.contains("FfaHunterNearestGunDefault = true")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
@@ -98,8 +96,3 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
-
-  test "hunter prefers a nearer initial gun":
-    check baseline.count("preferNearest = false") == 1
-    check baseline.count("preferNearest = FfaHunterNearestGun") == 1
-    check baseline.count("move_gun_nearest") == 1

@@ -54,17 +54,27 @@
   `ffaHunterNearestGun=true` only in the candidate and confirms candidate and
   exact submitted control retain Hunter, the 240-pixel cap, 30-second
   deadline, 80-pixel arm safety margin, 60-tick ring unstick, zero ring
-  margin, and 0.85 hold band. Hosted behavioral coverage remains pending.
+  margin, and 0.85 hold band. Hosted behavioral coverage failed: all 10
+  candidate artifacts are valid but contain zero `loot_nearest_gun` and
+  `move_gun_nearest` ticks. The nearest-first selector never chose a different
+  gun in the required field, so its score delta is not a valid strategy
+  measurement.
 - Artifact: `andre-battleroyale:candidate-19`, Linux amd64 image digest
   `sha256:48e31433dfd0387c786fcf341a58f43f0e7d7b5e68e2ed2bb795126082ca140b`.
   Uploaded unsubmitted as `andre-battleroyale:v20`; exact control and
   candidate images are `andre-trial-19:v1` and `andre-trial-19:v2`.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline `xreq_b81cba2c-0402-4b96-aeec-6938257f4204` and candidate
+  `xreq_93196311-8dc0-47fa-b9a8-8c521dc55995`, 10 hosted episodes per arm.
 - Opponents: At launch Andre is #13 at 1419.14. The frozen nearest other
   players are softmaxwell (`Picasso:v63`, 1434.94), David Greis
   (`Battle Royale Baseline:v1`, 1401.18), and NanosaurusX (`nancy-br:v1`,
   1395.23).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 142.40, candidate mean 189.70, difference
+  +47.30, 95% CI [-9.1039, 103.7039], Welch p=0.094781. The result is
+  inconclusive, and the changed selection branch was inactive, so more
+  episodes cannot validate this strategy on the frozen field. Tier-first
+  selection was restored; `andre-battleroyale:v20` remains uploaded but was
+  not submitted.
 
 ### Trial 18: shorten hunter arm-trip radius
 
