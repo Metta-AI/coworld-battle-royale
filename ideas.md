@@ -53,17 +53,25 @@
   amd64 production build pass. Production extraction confirms candidate and
   exact submitted control retain the Hunter doctrine, 60-tick unstick,
   240-pixel detour, zero ring margin, and 0.85 hold band. Hosted artifact
-  coverage remains pending.
+  coverage passed: all 10 candidate artifacts are valid and contain 720
+  `ring_unstick_flip` ticks, while control contains zero, so repeated-side
+  alternation fired. In fatal-retreat diagnostics, stationary steps fell from
+  96.7 percent in control to 13.7 percent in candidate and ring-like deaths
+  fell from four to two; these diagnostics are not score.
 - Artifact: `andre-battleroyale:candidate-16`, Linux amd64 image digest
   `sha256:de4cca39ad24c3ee7898873e4ad62d763225e0e6d148b43a39c69f0d88939754`.
   Uploaded unsubmitted as `andre-battleroyale:v17`; exact control and
   candidate images are `andre-trial-16:v1` and `andre-trial-16:v2`.
-- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- XP id: Baseline `xreq_b90bf022-6eea-4633-8367-7bb861db576c` and candidate
+  `xreq_a8fb0180-a7d4-4f72-a72f-b17958fcb551`, 10 hosted episodes per arm.
 - Opponents: At launch Andre is #16 at 1327.52. The frozen nearest other
   players are b4kng2dkg5-sudo (`starter-baseline:v1`, 1337.38), NanosaurusX
   (`nancy-br:v1`, 1382.00), and David Greis
   (`Battle Royale Baseline:v1`, 1405.42).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 187.50, candidate mean 180.20, difference
+  -7.30, 95% CI [-62.6011, 48.0011], Welch p=0.781234. The result is
+  inconclusive and trends worse, so repeated-side alternation was removed.
+  `andre-battleroyale:v17` remains uploaded but was not submitted.
 
 ### Trial 15: remember a fog-hidden gun trip
 
