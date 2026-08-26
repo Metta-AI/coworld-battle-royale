@@ -62,11 +62,21 @@
   side, 20-frame stuck trigger, 60-tick burst, ordinary ring retreat, arming,
   combat, hold band, and every non-Hunter behavior are unchanged. Repeated
   cycled bursts emit `ring_unstick_cycle`.
-- Isolation: `nim check` and the doctrine source-contract suite pass.
-  Production and hosted artifact checks are pending.
-- Artifact: Pending CPUX.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports
+  `ffaHunterRingUnstickCycle=true` only in the candidate, while candidate and
+  exact submitted control retain Hunter, the 60-tick ring unstick, 240-pixel
+  arm cap, 30-second arm deadline, 80-pixel arm safety margin, zero ring
+  margin, and 0.85 hold band. Hosted branch coverage is pending.
+- Artifact: `andre-battleroyale:candidate-29`, Linux amd64 image digest
+  `sha256:8d8e08ef68f4638d2d942a62655aad5dfc365c16bbeebee9982977062a670b74`.
+  Uploaded unsubmitted as `andre-battleroyale:v30`; exact submitted control
+  and candidate images are `andre-trial-29:v1` and `andre-trial-29:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending live nearest-MMR field freeze.
+- Opponents: At field freeze Andre is #16 at 1396.80. The nearest other
+  players are b4kng2dkg5-sudo (`starter-baseline:v1`, 1399.43), sivannn
+  (`sivan-br-ringsurfer:v1`, 1422.78), and Kenny Sheftel
+  (`kenshef-my-player:v1`, 1350.95).
 - Verdict: Pending hosted significance.
 
 ### Trial 28: armed-only inward heavy-gun strafe
