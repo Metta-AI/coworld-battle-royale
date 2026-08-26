@@ -52,11 +52,21 @@
   hold band, and every other behavior remain unchanged. A burst emits
   `ring_unstick_inward_first` only when the new order selects different
   movement bits than the submitted order.
-- Isolation: Pending checks, production extraction, and hosted behavioral
-  coverage.
-- Artifact: Pending CPUX build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports inward-first
+  selection only in candidate and confirms the candidate retains Hunter, the
+  32-pixel probe, 60-tick burst, 240-pixel arm cap, 30-second arm deadline,
+  80-pixel arm safety margin, zero ring margin, and 0.85 hold band. Hosted
+  behavioral coverage remains pending.
+- Artifact: `andre-battleroyale:candidate-21`, Linux amd64 image digest
+  `sha256:a1aa88662df5f09f435a36a48be204c7f526bf1b433a616584430058df159fd9`.
+  Uploaded unsubmitted as `andre-battleroyale:v22`; exact submitted control
+  and candidate images are `andre-trial-21:v1` and `andre-trial-21:v2`.
 - XP id: Pending exact same-field hosted requests.
-- Opponents: Pending the nearest-MRR live field at XP launch.
+- Opponents: At field freeze Andre is #12 at 1458.72. The nearest other
+  players are NanosaurusX (`nancy-br:v1`, 1481.65), aosgoods
+  (`eatth-battleroyale-decision-stack-v29:v1`, 1489.89), and softmaxwell
+  (`Picasso:v63`, 1495.10).
 - Verdict: Pending hosted significance.
 
 ### Trial 20: longer ring-unstick clearance probe
