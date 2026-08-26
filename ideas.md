@@ -58,18 +58,27 @@
   amd64 production build pass. Production extraction reports only the new
   `ffaHunterRingUnstickNoRearm=true` flag while retaining Hunter, the 60-tick
   ring unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm safety
-  margin, zero ring margin, and 0.85 hold band. Hosted behavioral coverage is
-  pending.
+  margin, zero ring margin, and 0.85 hold band. Hosted behavioral coverage
+  passed: all 10 candidate artifacts are valid and contain 38
+  `ring_unstick_no_rearm` ticks, while all 10 control artifacts contain zero,
+  so the changed branch fired only in the candidate. Candidate artifacts also
+  recorded 1,872 ordinary unstick ticks versus 3,166 in control; these
+  diagnostics prove behavior, not score.
 - Artifact: `andre-battleroyale:candidate-23`, Linux amd64 image digest
   `sha256:0a49d9de6ce46c51d19bcf244a5c85acbd1ffb9e589046024ca3f3c298dc89b0`.
   Uploaded unsubmitted as `andre-battleroyale:v24`; exact submitted control
   and candidate images are `andre-trial-23:v1` and `andre-trial-23:v2`.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline `xreq_316c67f5-a7d5-4b40-9264-7070a14e71d6` and candidate
+  `xreq_d76278fe-3fed-46a2-96c8-00d4f96e5fd4`, 10 hosted episodes per arm.
 - Opponents: At field freeze Andre is #9 at 1473.85. The nearest other players
   are NanosaurusX (`nancy-br:v1`, 1471.80), Kenny Sheftel
   (`kenshef-my-player:v1`, 1445.58), and sivannn
   (`sivan-br-ringsurfer:v1`, 1442.27).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 203.80, candidate mean 172.20, difference
+  -31.60, 95% CI [-71.1644, 7.9644], Welch p=0.110024. The completed hosted
+  result is inconclusive and trends worse, so active-burst self-rearm
+  suppression was removed. `andre-battleroyale:v24` remains uploaded but was
+  not submitted.
 
 ### Trial 22: bounded low-health hunter healing
 
