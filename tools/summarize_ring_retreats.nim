@@ -4,7 +4,7 @@ import
 
 const
   RingDamageInterval = 48
-  TargetFps = 120
+  TargetFps = 24
   WindowSec = 10
 
 type
