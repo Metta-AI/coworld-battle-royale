@@ -54,24 +54,31 @@
   retain the 30-second deadline, 80-pixel safety margin, pursuit, 60-tick
   unstick, and 0.85 hold band. Hosted artifact coverage passed: all 10
   candidate artifacts are valid and contain 93 `hold_far_gun` ticks, while
-  control contains zero, so the shortened-radius branch fired. Candidate
-  armed sampled state was 12.05 percent versus 8.85 percent in control, with
-  two loot trips versus six; these artifact diagnostics are not score.
+  control contains zero, so the shortened-radius branch fired. The 20-episode
+  extension adds 725 candidate `hold_far_gun` ticks and zero in control.
+  Initial candidate armed sampled state was 12.05 percent versus 8.85 percent
+  in control, with two loot trips versus six; these artifact diagnostics are
+  not score.
 - Artifact: `andre-battleroyale:candidate-18`, Linux amd64 image digest
   `sha256:5e4aa0d88dbe6bf66b7d0c49e7c3159b8d35c49ea7ce7c3308c468871976d361`.
   Uploaded unsubmitted as `andre-battleroyale:v19`; exact control and
   candidate images are `andre-trial-18:v1` and `andre-trial-18:v2`.
 - XP id: Baseline `xreq_26a9e197-159e-46bc-9e4c-3eac6c704776` and candidate
   `xreq_35fd3484-2df3-4b06-bfe4-e41575a69699`, 10 hosted episodes per arm.
+  The exact same-field 20-episode extension is baseline
+  `xreq_2007988f-6d59-4bed-ab78-a40e1253e4d4` and candidate
+  `xreq_55213f6c-de23-49cb-af23-6648da7261e2`.
 - Opponents: At launch Andre is #12 at 1431.09. The frozen nearest other
   players are Aaron (`aaln-br-hunter:v2`, 1420.22), ravidear5-code
   (`shade-doctrine-v1:v1`, 1415.86), and softmaxwell
   (`Picasso:v63`, 1408.68).
-- Verdict: Initial 10-per-arm result is inconclusive and is not a keep.
-  Baseline mean 146.40, candidate mean 164.00, difference +17.60, 95% CI
-  [-68.6018, 103.8018], Welch p=0.672784. The active candidate remains
-  unsubmitted while the exact frozen field is extended or the change is
-  reverted.
+- Verdict: Reverted. The initial 10-per-arm result was inconclusive: baseline
+  mean 146.40, candidate mean 164.00, difference +17.60, 95% CI [-68.6018,
+  103.8018], Welch p=0.672784. After extending the exact field to 30 per arm,
+  baseline mean was 183.8333 and candidate mean was 166.4667, difference
+  -17.3667, 95% CI [-63.0186, 28.2853], Welch p=0.448425. The shortened
+  radius remains inconclusive and trends worse, so the default returned to
+  240 pixels. `andre-battleroyale:v19` remains uploaded but was not submitted.
 
 ### Trial 17: disable normal hunter pursuit movement
 
