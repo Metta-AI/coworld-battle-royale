@@ -262,7 +262,8 @@ const
   FfaHunterPursuitMinHpDefault = 6
   FfaHunterSupportRadiusDefault = 300.0
   FfaHunterArmTripMaxSecDefault = 30
-  FfaHunterArmTripMaxDetourRadiusDefault = 240.0
+  FfaHunterArmTripMaxDetourRadiusDefault = 120.0
+  FfaHunterSubmittedArmTripMaxDetourRadius = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
@@ -2178,6 +2179,21 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       "LOOT", "loot_trip", "move_gun")
     result.moveTarget = gun.pos
     result.lootTripStarted = true
+  elif FfaHunterArmTripMaxDetourRadius <
+      FfaHunterSubmittedArmTripMaxDetourRadius:
+    let farGun = bestFfaGun(
+      client,
+      me,
+      center,
+      ringRadius,
+      weaponTier,
+      FfaHunterArmSafeMargin,
+      FfaHunterSubmittedArmTripMaxDetourRadius,
+      actors
+    )
+    if farGun.found:
+      result.objective = "hold_far_gun"
+      result.action = "hold_band"
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,

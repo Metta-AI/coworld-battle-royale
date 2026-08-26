@@ -32,6 +32,29 @@
 
 ## Trial log
 
+### Trial 18: shorten hunter arm-trip radius
+
+- Idea: The submitted Hunter started 101 arm trips across 60 hosted v15
+  artifacts, but 53 sampled trips aborted, 50 returned directly to passive
+  hold, and median duration was 0.1 seconds. Widening reach from 240 to 480
+  pixels in Trial 4 increased loot activity and armed time but remained
+  inconclusive at +5.10 after 30 episodes per arm. Persisting more trips in
+  Trial 15 also trended worse. Across 80 exact champion episodes, passive-hold
+  ticks have a consistently strong positive score correlation. Reject more
+  marginal trips while retaining nearby safe arming.
+- Change: Set only the default Hunter initial arm-trip detour radius from 240
+  to 120 pixels. The existing gun tier choice, 30-second deadline, 80-pixel
+  ring margin, opponent-closer guard, ring safety, pursuit, firing, hold band,
+  and all other behavior are unchanged. When an otherwise eligible gun exists
+  only in the submitted 120-to-240-pixel interval, passive holding emits
+  `hold_far_gun`.
+- Isolation: `nim check` and the doctrine source-contract suite pass.
+  Production extraction and hosted artifact coverage remain pending.
+- Artifact: Pending Linux amd64 production build and upload.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
+
 ### Trial 17: disable normal hunter pursuit movement
 
 - Idea: `tools/correlate_xp_artifacts.nim` joined hosted scores to all 80

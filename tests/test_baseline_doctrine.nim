@@ -39,7 +39,9 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
-    check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
+    check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 120.0")
+    check baseline.contains(
+      "FfaHunterSubmittedArmTripMaxDetourRadius = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
@@ -96,3 +98,9 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "hunter holds instead of taking a far arm trip":
+    check baseline.count(
+      "FfaHunterArmTripMaxDetourRadius <\n" &
+      "      FfaHunterSubmittedArmTripMaxDetourRadius") == 1
+    check baseline.count("hold_far_gun") == 1
