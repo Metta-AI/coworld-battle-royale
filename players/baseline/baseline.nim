@@ -264,6 +264,8 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
+  FfaHunterRingUnstickTicks = 60
+  FfaHunterRingUnstickProbe = 32.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -2240,6 +2242,29 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
   ffaBandIntent(bot, me, center, ringRadius, FfaHoldBand, "HOLD",
     "band_hold", "hold_band")
 
+proc ffaRingUnstickBits(bot: Bot, me, center: Vec): uint8 =
+  ## Selects a short open tangential burst to escape a blocked inward path.
+  let inward = norm(center - me)
+  var side = vec(-inward.y, inward.x)
+  if (bot.tick div TargetFps + bot.slot) mod 2 != 0:
+    side = side * -1.0
+  let candidates = [
+    side,
+    side * -1.0,
+    norm(side + inward * 0.5),
+    norm(side * -1.0 + inward * 0.5),
+    inward
+  ]
+  for direction in candidates:
+    if not bot.navBuilt or bot.gridRayClear(
+      me,
+      me + direction * FfaHunterRingUnstickProbe
+    ):
+      result = octantBits(direction)
+      if result != 0:
+        return
+  result = ButtonUp
+
 proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   ## FFA doctrine chooses a symbolic target; navSteer owns movement state.
   let
@@ -2484,11 +2509,13 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   let
     moveTarget = intent.moveTarget
     objective = intent.objective
-    action = intent.action
     phase = intent.phase
     bandFraction = intent.bandFraction
     bandRadius = intent.bandRadius
     engageReason = intent.engageReason
+    hunterRingSafety = FfaDoctrine == FfaHunter and
+      intent.action == "retreat_ring"
+  var action = intent.action
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
@@ -2518,6 +2545,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
             fireToleranceBrads(targetDist))
   let steer = bot.navSteer(client, me, moveTarget)
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
+  if hunterRingSafety and bot.tick < bot.jinkUntil:
+    moveMask = bot.jinkBits
+    action = "ring_unstick"
   if dist(me, bot.lastPos) < 0.8:
     inc bot.stuckTicks
   else:
@@ -2526,7 +2556,13 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   if bot.stuckTicks > 20:
     bot.stuckTicks = 0
     bot.navGoal = -1
-    moveMask = octantBits(center - me)
+    if hunterRingSafety:
+      bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks
+      bot.jinkBits = bot.ffaRingUnstickBits(me, center)
+      moveMask = bot.jinkBits
+      action = "ring_unstick"
+    else:
+      moveMask = octantBits(center - me)
 
   let rotBits = aimRotateBits(desiredAim, bot.estAim, CombatDeadband)
   var mask = moveMask or rotBits
@@ -4374,6 +4410,7 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
+    " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

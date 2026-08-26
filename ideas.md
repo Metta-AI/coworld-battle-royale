@@ -31,6 +31,28 @@
 
 ## Trial log
 
+### Trial 14: persistent hunter ring unstick
+
+- Idea: `tools/summarize_ring_retreats.nim` found 11 ring-cadence fatalities
+  across 50 exact submitted-Hunter artifacts from Trials 4, 11, and 13. About
+  76 percent of sampled retreat steps were effectively stationary, 10 of 11
+  deaths had at most 24 pixels of net movement during the final 10 seconds,
+  and no opponent was visible in those retreat windows. The existing stuck
+  fallback issues only one direct-center input before returning to the same
+  blocked path. Persist a short tangential escape long enough to clear it.
+- Change: Only for the default Hunter while its existing 80-pixel ring-safety
+  retreat is active, after the existing 20-frame stuck threshold choose an
+  open tangential direction, hold it for 60 ticks, and invalidate the nav goal
+  for a repath. Normal ring retreat, alarm distance, hold band, looting,
+  combat, targeting, firing, all other stuck cases, and every other doctrine
+  are unchanged. Active bursts emit `ring_unstick`.
+- Isolation: Pending Nim checks, production extraction, and hosted artifact
+  coverage.
+- Artifact: Pending Linux amd64 production build and upload.
+- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Opponents: Pending a fresh nearest-MRR field at request launch.
+- Verdict: Pending hosted significance.
+
 ### Trial 13: extended heavy-gun arm reach
 
 - Idea: The broad 480-pixel Trial 4 arm radius raised submitted-Hunter armed
