@@ -57,17 +57,25 @@
   healing only in candidate and confirms the candidate retains Hunter, the
   60-tick ring unstick, 240-pixel arm cap, 30-second arm deadline, 80-pixel arm
   safety margin, zero ring margin, and 0.85 hold band. Hosted behavioral
-  coverage remains pending.
+  coverage failed: all 10 candidate artifacts are valid but contain zero
+  `move_medkit_hunter` and `heal_trip` ticks. Candidate recorded 24 incidental
+  heal events versus 12 in control, but the changed movement branch never
+  caused a detour, so those diagnostics are not a strategy measurement.
 - Artifact: `andre-battleroyale:candidate-22`, Linux amd64 image digest
   `sha256:7acfebf9ac217bafd8bb78935f430eb19f44cb9412d0daff660f532de78420b5`.
   Uploaded unsubmitted as `andre-battleroyale:v23`; exact submitted control
   and candidate images are `andre-trial-22:v1` and `andre-trial-22:v2`.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline `xreq_697a7c4e-bb14-48bb-b524-d257ff2d8e3e` and candidate
+  `xreq_db14cf3f-a746-41d7-a45b-7847de99bb9b`, 10 hosted episodes per arm.
 - Opponents: At field freeze Andre is #13 at 1438.70. The nearest other
   players are NanosaurusX (`nancy-br:v1`, 1443.93), Kenny Sheftel
   (`kenshef-my-player:v1`, 1432.26), and David Greis
   (`Battle Royale Baseline:v1`, 1431.24).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 197.30, candidate mean 192.10, difference
+  -5.20, 95% CI [-53.1966, 42.7966], Welch p=0.820313. The result is
+  inconclusive and trends worse, but more importantly the changed branch was
+  inactive. Bounded Hunter healing was removed; `andre-battleroyale:v23`
+  remains uploaded but was not submitted.
 
 ### Trial 21: inward-first hunter ring unstick
 

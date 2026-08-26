@@ -42,8 +42,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
-    check baseline.contains("FfaHunterHeal = true")
-    check baseline.contains("FfaHunterHealMaxDetour = 180.0")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
@@ -98,10 +96,3 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
-
-  test "hunter healing is isolated":
-    check baseline.count("\"move_medkit_hunter\"") == 1
-    check baseline.count(
-      "FfaDoctrine == FfaHunter and FfaHunterHeal") == 1
-    check baseline.count(
-      "let kit = bestFfaMedKit(client, actors, me, center, ringRadius)") == 1
