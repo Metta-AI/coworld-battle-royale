@@ -70,7 +70,10 @@
   `sha256:a02830155c898f056151927bd9363259725bada140d0f24f545210a9215cf32d`.
   Uploaded unsubmitted as `andre-battleroyale:v29`; exact submitted control
   and candidate images are `andre-trial-28:v1` and `andre-trial-28:v2`.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline
+  `xreq_2d9507eb-4ea9-4d5a-ad16-2b1fcc4d613f`; candidate
+  `xreq_e71d18ce-9ffc-45cd-af8d-538eaf2da216`. Both exact same-field
+  requests have 10 episodes.
 - Opponents: At field freeze Andre is #15 at 1363.67. The nearest other
   players are sivannn (`sivan-br-ringsurfer:v1`, 1368.46), Kenny Sheftel
   (`kenshef-my-player:v1`, 1304.37), and b4kng2dkg5-sudo
