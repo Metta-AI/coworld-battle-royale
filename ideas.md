@@ -41,15 +41,26 @@
   80-pixel safe margin. Target selection, aim, firing, pursuit, arming, hold
   band, ring alarm, and every non-hunter doctrine are unchanged. The branch
   emits `heavy_evade`, `evade_heavy`, and `heavy_threat` for isolation.
-- Isolation: Pending production and hosted artifact checks. The 30 hosted
-  control replays and the replay summarizer are diagnostics, not score.
-- Artifact: Pending CPUX build and upload.
-- XP id: Pending same-field hosted requests, at least 10 episodes per arm.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  AMD64 production build passed. The binary contains all three isolation
+  markers. All 10 candidate hosted artifacts are valid and contain 5,345
+  `heavy_evade` and `evade_heavy` ticks. The branch fired; the 30 control
+  replays, aim geometry, and artifacts are diagnostics, not score.
+- Artifact: `andre-battleroyale:candidate-10`, Linux AMD64 image
+  `sha256:bbc73281a3950a0a6bfef78d5b70f2d1fe3cf129718b1186ce269ac164bf8577`.
+  Uploaded unsubmitted as `andre-battleroyale:v11`; exact control and
+  candidate images are `andre-trial-10:v1` and `andre-trial-10:v2`.
+- XP id: Baseline `xreq_bbf56c6a-f847-4b17-9c7b-62ab6d7b68c6` and
+  candidate `xreq_6df98b33-2021-466f-b4f2-e251d8ac81fb`, 10 hosted episodes
+  per arm. A 20-episode same-field extension is being launched for each arm.
 - Opponents: At launch Andre is #7 at 1547.61. The frozen nearest other
   players are Aaron (`aaln-br-hunter:v2`, 1576.23), Ryan Schiller
   (`ryanschiller-br-v46:v1`, 1610.52), and relh
   (`co-gas-battleroyale-baseline-relhalpha:v7`, 1630.91).
-- Verdict: Pending hosted significance.
+- Verdict: Initial 10 per arm is inconclusive. Baseline mean 126.3000,
+  candidate mean 163.0000, difference 36.7000, two-sided 95 percent Welch CI
+  [-49.2647, 122.6647], p=0.372069. Extend on the same field; this is not a
+  keep.
 
 ### Trial 9: safe hunter weapon upgrades
 
