@@ -265,8 +265,7 @@ const
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
-  FfaHunterRingUnstickProbe = 96.0
-  FfaHunterSubmittedRingUnstickProbe = 32.0
+  FfaHunterRingUnstickProbe = 32.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -427,7 +426,6 @@ type
     stuckTicks: int
     jinkUntil: int
     jinkBits: uint8
-    ffaRingProbeChanged: bool
     nadeCharge: int           # ticks the C button has been held; 0 = idle
     mateFixPos: Vec           # last SEEN position of a mate-carried enemy heart
     mateFixTick: int          # tick of that sighting; 0 = never seen this game
@@ -1752,7 +1750,6 @@ proc resetTransient(bot: Bot) =
   bot.scanHigh = false
   bot.stuckTicks = 0
   bot.jinkUntil = 0
-  bot.ffaRingProbeChanged = false
   bot.behindLines = false
   bot.navGoal = -1
 
@@ -2245,12 +2242,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
   ffaBandIntent(bot, me, center, ringRadius, FfaHoldBand, "HOLD",
     "band_hold", "hold_band")
 
-proc ffaRingUnstickBits(
-  bot: Bot,
-  me,
-  center: Vec,
-  probe = FfaHunterRingUnstickProbe
-): uint8 =
+proc ffaRingUnstickBits(bot: Bot, me, center: Vec): uint8 =
   ## Selects a short open tangential burst to escape a blocked inward path.
   let inward = norm(center - me)
   var side = vec(-inward.y, inward.x)
@@ -2266,7 +2258,7 @@ proc ffaRingUnstickBits(
   for direction in candidates:
     if not bot.navBuilt or bot.gridRayClear(
       me,
-      me + direction * probe
+      me + direction * FfaHunterRingUnstickProbe
     ):
       result = octantBits(direction)
       if result != 0:
@@ -2555,11 +2547,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
   if hunterRingSafety and bot.tick < bot.jinkUntil:
     moveMask = bot.jinkBits
-    action =
-      if bot.ffaRingProbeChanged:
-        "ring_unstick_long_probe"
-      else:
-        "ring_unstick"
+    action = "ring_unstick"
   if dist(me, bot.lastPos) < 0.8:
     inc bot.stuckTicks
   else:
@@ -2570,19 +2558,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.navGoal = -1
     if hunterRingSafety:
       bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks
-      let submittedBits = bot.ffaRingUnstickBits(
-        me,
-        center,
-        FfaHunterSubmittedRingUnstickProbe
-      )
       bot.jinkBits = bot.ffaRingUnstickBits(me, center)
-      bot.ffaRingProbeChanged = bot.jinkBits != submittedBits
       moveMask = bot.jinkBits
-      action =
-        if bot.ffaRingProbeChanged:
-          "ring_unstick_long_probe"
-        else:
-          "ring_unstick"
+      action = "ring_unstick"
     else:
       moveMask = octantBits(center - me)
 
@@ -4433,7 +4411,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
-    " ffaHunterRingUnstickProbe=", FfaHunterRingUnstickProbe,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

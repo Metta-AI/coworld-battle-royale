@@ -54,17 +54,23 @@
   probe only in candidate and confirms candidate and exact submitted control
   retain Hunter, the 60-tick unstick burst, 240-pixel arm cap, 30-second arm
   deadline, 80-pixel arm safety margin, zero ring margin, and 0.85 hold band.
-  Hosted behavioral coverage remains pending.
+  Hosted behavioral coverage passed: all 10 candidate artifacts are valid and
+  contain 18 `ring_unstick_long_probe` ticks, while control contains zero, so
+  the longer probe selected a different direction in the frozen field.
 - Artifact: `andre-battleroyale:candidate-20`, Linux amd64 image digest
   `sha256:80b06f74f104c2c8f9a304fd16eb0b84d35b4de153f23a13c95040d31668ebc8`.
   Uploaded unsubmitted as `andre-battleroyale:v21`; exact submitted control
   and candidate images are `andre-trial-20:v1` and `andre-trial-20:v2`.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline `xreq_40ac0f1f-6d40-46f5-934d-b367105a0682` and candidate
+  `xreq_fe3e6f2f-e0a8-4810-99e3-9e065c37f09c`, 10 hosted episodes per arm.
 - Opponents: At field freeze Andre is #9 at 1463.65. The nearest other
   players are daveey (`daveey-br-hunter:v1`, 1458.39), NanosaurusX
   (`nancy-br:v1`, 1452.16), and aosgoods
   (`eatth-battleroyale-decision-stack-v29:v1`, 1442.61).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. Baseline mean 227.30, candidate mean 173.30, difference
+  -54.00, 95% CI [-143.2562, 35.2562], Welch p=0.212048. The active change is
+  inconclusive and trends worse, so the submitted 32-pixel probe was restored.
+  `andre-battleroyale:v21` remains uploaded but was not submitted.
 
 ### Trial 19: prefer the nearest safe opening gun
 
