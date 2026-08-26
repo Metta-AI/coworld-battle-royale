@@ -3,7 +3,7 @@ import
   zippy/ziparchives
 
 const
-  TicksPerSec = 24.0
+  TicksPerSec = 120.0
 
 type
   BattleRoyaleError = object of CatchableError
@@ -12,6 +12,7 @@ type
   LootRun = object
     ticks: int
     outcome: LootOutcome
+    nextObjective: string
   LootTotals = object
     files: int
     exactStarts: int
@@ -35,12 +36,14 @@ proc addRun(
   totals: var LootTotals,
   startTick: int,
   endTick: int,
-  outcome: LootOutcome
+  outcome: LootOutcome,
+  nextObjective = ""
 ) =
   ## Adds one sampled loot-trip run to the aggregate.
   totals.runs.add(LootRun(
     ticks: max(0, endTick - startTick),
-    outcome: outcome
+    outcome: outcome,
+    nextObjective: nextObjective
   ))
 
 proc addArtifact(
@@ -91,7 +94,12 @@ proc addArtifact(
           LootSuccess
         else:
           LootAbort
-      totals.addRun(startTick, tick, outcome)
+      totals.addRun(
+        startTick,
+        tick,
+        outcome,
+        sample["obj"].getStr()
+      )
       inTrip = false
   if inTrip:
     let outcome =
@@ -141,11 +149,14 @@ if totals.files == 0:
 var
   durations: seq[int]
   outcomes: array[LootOutcome, int]
+  abortObjectives: CountTable[string]
   totalTicks = 0
 for run in totals.runs:
   durations.add(run.ticks)
   totalTicks += run.ticks
   inc outcomes[run.outcome]
+  if run.outcome == LootAbort:
+    abortObjectives.inc(run.nextObjective)
 durations.sort()
 
 echo "files=", totals.files
@@ -165,3 +176,9 @@ echo "maxDurationSec=", percentile(durations, 1.0) / TicksPerSec
 echo "atLeast10Sec=", totals.runs.countAtLeast(10.0)
 echo "atLeast20Sec=", totals.runs.countAtLeast(20.0)
 echo "atLeast29Sec=", totals.runs.countAtLeast(29.0)
+var objectiveNames: seq[string]
+for objective in abortObjectives.keys:
+  objectiveNames.add(objective)
+objectiveNames.sort()
+for objective in objectiveNames:
+  echo "abortNext ", objective, "=", abortObjectives[objective]

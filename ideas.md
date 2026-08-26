@@ -15,6 +15,7 @@
 - Move only the hunter hold band deeper inside the safe radius.
 - Prefer only a vulnerable hunter target over a closer strong opponent.
 - Allow only safe hunter upgrades after initial arming.
+- Persist only a safe hunter gun trip while its target is fog-hidden.
 - Kite only visible nearby heavy-gun threats while preserving hunter fire.
 - Start only the hunter ring-retreat alarm one margin earlier.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
