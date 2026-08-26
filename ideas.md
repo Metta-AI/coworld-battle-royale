@@ -67,7 +67,9 @@
   `ffaHunterRingUnstickCycle=true` only in the candidate, while candidate and
   exact submitted control retain Hunter, the 60-tick ring unstick, 240-pixel
   arm cap, 30-second arm deadline, 80-pixel arm safety margin, zero ring
-  margin, and 0.85 hold band. Hosted branch coverage is pending.
+  margin, and 0.85 hold band. Across 10 hosted artifacts per arm, the
+  candidate records 4,407 `ring_unstick_cycle` action ticks versus zero in
+  the exact control, proving the repeated-retry change fired.
 - Artifact: `andre-battleroyale:candidate-29`, Linux amd64 image digest
   `sha256:8d8e08ef68f4638d2d942a62655aad5dfc365c16bbeebee9982977062a670b74`.
   Uploaded unsubmitted as `andre-battleroyale:v30`; exact submitted control
@@ -80,7 +82,12 @@
   players are b4kng2dkg5-sudo (`starter-baseline:v1`, 1399.43), sivannn
   (`sivan-br-ringsurfer:v1`, 1422.78), and Kenny Sheftel
   (`kenshef-my-player:v1`, 1350.95).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. All 10 episodes per arm completed without failure. The
+  exact submitted control scores 207.6000 and the candidate 159.1000, a
+  -48.5000 delta with 95% CI [-101.1964, 4.1964] and Welch p=0.068826.
+  Inconclusive is not a keep, and the candidate trends strongly worse while
+  recording six death events versus one in control. `andre-battleroyale:v30`
+  remains uploaded but unsubmitted; the submitted champion remains v15.
 
 ### Trial 28: armed-only inward heavy-gun strafe
 
