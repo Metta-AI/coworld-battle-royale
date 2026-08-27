@@ -266,8 +266,6 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
-  FfaHunterDamageScan = true
-  FfaHunterDamageScanTicks = 52
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -481,7 +479,6 @@ type
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
     ffaPactPartnerSeen: int
-    ffaDamageScanUntil: int
 
 proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   case doctrine
@@ -2281,7 +2278,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.ffaPactTargetSeen = -1
     bot.ffaPactPartnerPos = vec(0, 0)
     bot.ffaPactPartnerSeen = -1
-    bot.ffaDamageScanUntil = 0
     artFrame(FrameSnap(tick: bot.tick, alive: false,
       x: int(bot.lastPos.x), y: int(bot.lastPos.y), hp: 0,
       objective: "dead", action: "dead", engageDist: -1))
@@ -2308,8 +2304,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     else: 0
   let unarmed = weaponTier == 0
 
-  let previousHp = bot.hp
-  var hp = previousHp
+  var hp = bot.hp
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
     discard o
     let tail = label[LabelPrefixHp.len .. ^1]
@@ -2319,7 +2314,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         hp = parseInt(tail[0 ..< slash])
       except ValueError:
         discard
-  let tookDamage = previousHp > 0 and hp < previousHp
   bot.hp = hp
   let
     actors = client.ffaActorsFor()
@@ -2521,18 +2515,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     engageReason = intent.engageReason
     hunterRingSafety = FfaDoctrine == FfaHunter and
       intent.action == "retreat_ring"
-  if FfaDoctrine == FfaHunter and
-      FfaHunterDamageScan and
-      tookDamage and
-      targetIndex < 0 and
-      not hunterRingSafety:
-    bot.ffaDamageScanUntil = bot.tick + FfaHunterDamageScanTicks
-  let hunterDamageScan = FfaDoctrine == FfaHunter and
-    FfaHunterDamageScan and targetIndex < 0 and
-    bot.tick < bot.ffaDamageScanUntil and not hunterRingSafety
   var action = intent.action
-  if hunterDamageScan:
-    action = "scan_damage"
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
@@ -2581,11 +2564,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     else:
       moveMask = octantBits(center - me)
 
-  let rotBits =
-    if hunterDamageScan:
-      ButtonB
-    else:
-      aimRotateBits(desiredAim, bot.estAim, CombatDeadband)
+  let rotBits = aimRotateBits(desiredAim, bot.estAim, CombatDeadband)
   var mask = moveMask or rotBits
   let triggerPressed = wantFire and not bot.firedLast
   if triggerPressed:
@@ -4432,8 +4411,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
-    " ffaHunterDamageScan=", FfaHunterDamageScan,
-    " ffaHunterDamageScanTicks=", FfaHunterDamageScanTicks,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

@@ -33,7 +33,6 @@
 - Scan only while an unarmed Hunter holds without a visible target.
 - Scan only while an armed Hunter holds without a visible target.
 - Detour only an unarmed, unshielded Hunter to a nearby safe shield.
-- Scan only the Hunter's turret for one revolution after unseen damage.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -69,20 +68,28 @@
   `ffaHunterDamageScan=true` and `ffaHunterDamageScanTicks=52`; candidate and
   exact control retain Hunter, the 60-tick ring unstick, 240-pixel arm cap,
   30-second arm deadline, 80-pixel safety margin, zero ring margin, and 0.85
-  hold band. Hosted `scan_damage` branch coverage is pending.
+  hold band. All 10 hosted artifacts per arm are valid. The candidate records
+  485 `scan_damage` ticks versus zero in control, so the isolated branch
+  fired; artifact coverage is not score.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-33`, digest
   `sha256:8f833b8ff3b614d451123783a80986ee51b346373fa20e552027955bfd326f43`.
   Uploaded unsubmitted as `andre-battleroyale:v34`; immutable candidate
   `andre-trial-33:v1`; exact v15 control `andre-trial-33:v2`.
 - XP id: Baseline `xreq_98135c80-02c9-4178-8d20-a6f71ac1fd1a` and candidate
-  `xreq_18b73bdc-0401-4547-8913-4c8485181975`, 10 hosted episodes per arm.
+  `xreq_18b73bdc-0401-4547-8913-4c8485181975`, both complete at 10 hosted
+  episodes with zero failures.
 - Opponents: Frozen outside-top-three field at request creation: Andre #10 at
   1547.12 MMR versus nearest unique other players softmaxwell at 1599.14
   (`Picasso:v63`), Ryan Schiller at 1602.50
   (`ryanschiller-br-v95edge:v1`), and richard at 1490.52
   (`co-gas-battleroyale-baseline-richard:v3`). Both arms use this exact roster
   and ordering.
-- Verdict: Pending hosted significance.
+- Verdict: Revert. Baseline mean 159.1000 versus candidate 182.4000,
+  difference +23.3000, Welch 95 percent CI [-73.4221, 120.0221], p=0.606962.
+  The active change is inconclusive with an extremely wide interval and weak
+  evidence, so it is not a keep and does not merit a large same-field
+  extension. `andre-battleroyale:v34` remains uploaded but unsubmitted;
+  champion `andre-battleroyale:v15` remains live.
 
 ### Trial 32: reactive inward jink after non-ring damage
 
