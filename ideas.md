@@ -83,7 +83,9 @@
   candidate clones are `andre-trial-36:v1` and `andre-trial-36:v2`.
 - XP id: Baseline `xreq_36c71215-03cf-41ee-bdf8-48a6a60f64fc` and candidate
   `xreq_a4758084-920b-4769-ab3a-2afc6d3cc400`, both requested at 10 hosted
-  episodes. A 20-per-arm exact same-field extension is pending.
+  episodes. The 20-per-arm exact same-field extension is baseline
+  `xreq_f88fc756-e8a3-4064-bb60-a44aedfec217` and candidate
+  `xreq_d267aece-f852-4d9e-afda-fe34d5c59fd9`.
 - Opponents: Frozen outside-top-three field at request creation: Andre #14 at
   1414.54 MMR versus nearest unique other players ravidear5-code at 1415.51
   (`shade-doctrine-v1:v1`), NishadIota at 1370.38
