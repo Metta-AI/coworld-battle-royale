@@ -33,6 +33,7 @@
 - Scan only while an unarmed Hunter holds without a visible target.
 - Scan only while an armed Hunter holds without a visible target.
 - Detour only an unarmed, unshielded Hunter to a nearby safe shield.
+- Scan only the Hunter's turret for one revolution after unseen damage.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -46,6 +47,29 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 33: reactive turret scan after unseen damage
+
+- Idea: The newest 10 exact v15 control artifacts record 69 non-ring sampled
+  HP drops with zero opponent visibility. All four deaths occur while holding
+  the passive band with zero visible opponents, including one heavy-gun and
+  one two-damage terminal hit. Trial 32's damage-triggered navigation jink
+  fired but trended worse, while broad proactive scans in Trials 24, 25, and
+  30 were inconclusive. Preserve movement and scan only after evidence of an
+  unseen attacker.
+- Change: Only for the default Hunter, after actual HP loss with no visible
+  opponent while existing ring safety is inactive, rotate the turret clockwise
+  for 52 ticks, one full 256-brad revolution at the engine's five brads per
+  tick, and emit `scan_damage`. Navigation, ring retreat, ring unstick, arming,
+  hold band, target selection, aim and fire after contact, weapons, and every
+  non-Hunter doctrine are unchanged. Seeing a target immediately restores the
+  existing combat aim; ring safety suppresses the scan.
+- Isolation: `nim check` and the doctrine source-contract suite pass.
+  Production extraction and hosted `scan_damage` branch coverage are pending.
+- Artifact: Pending CPUX.
+- XP id: Pending paired hosted requests.
+- Opponents: Pending fresh nearest-MRR field freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 32: reactive inward jink after non-ring damage
 

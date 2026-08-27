@@ -42,6 +42,8 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
+    check baseline.contains("FfaHunterDamageScan = true")
+    check baseline.contains("FfaHunterDamageScanTicks = 52")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
@@ -96,3 +98,11 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "only hunter scans after unseen non-ring damage":
+    check baseline.count("action = \"scan_damage\"") == 1
+    check baseline.count(
+      "bot.ffaDamageScanUntil = bot.tick + FfaHunterDamageScanTicks") == 1
+    check baseline.count(
+      "FfaHunterDamageScan and targetIndex < 0") == 1
+    check baseline.count("if hunterDamageScan:") == 2
