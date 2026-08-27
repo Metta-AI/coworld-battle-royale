@@ -28,10 +28,14 @@ type
   GunTotals = object
     files: int
     unarmedTicks: int
+    armedTicks: int
     submittedChoiceTicks: int
     contest: ChangeCounts
     narrow: ChangeCounts
     wide: ChangeCounts
+    submittedUpgrade: ChangeCounts
+    narrowUpgrade: ChangeCounts
+    wideUpgrade: ChangeCounts
 
 proc distance(x1, y1, x2, y2: int): float =
   ## Returns Euclidean distance between two replay positions.
@@ -185,6 +189,25 @@ proc addChange(
       inc counts.mid
   active = changed
 
+proc addUpgrade(
+  counts: var ChangeCounts,
+  choice: GunChoice,
+  weaponTier: int,
+  active: var bool
+) =
+  ## Adds one visible strictly-better gun opportunity for an armed player.
+  let qualifies = choice.found and choice.tier > weaponTier
+  if qualifies:
+    inc counts.ticks
+    if not active:
+      inc counts.windows
+    inc counts.upgrades
+    if choice.tier == FfaWeaponHeavy:
+      inc counts.heavy
+    elif choice.tier == FfaWeaponMid:
+      inc counts.mid
+  active = qualifies
+
 proc addReplay(
   totals: var GunTotals,
   replayPath, policyName: string
@@ -199,6 +222,12 @@ proc addReplay(
     fileContest = false
     fileNarrow = false
     fileWide = false
+    submittedUpgradeActive = false
+    narrowUpgradeActive = false
+    wideUpgradeActive = false
+    fileSubmittedUpgrade = false
+    fileNarrowUpgrade = false
+    fileWideUpgrade = false
   inc totals.files
   while replay.playing:
     replay.stepReplay(game)
@@ -207,12 +236,46 @@ proc addReplay(
       if index < 0:
         continue
     let player = game.players[index]
-    if not player.alive or player.weaponTier != FfaWeaponUnarmed:
+    if not player.alive:
       narrowActive = false
       wideActive = false
+      submittedUpgradeActive = false
+      narrowUpgradeActive = false
+      wideUpgradeActive = false
+      continue
+    discard game.refreshPlayerFov(index)
+    if player.weaponTier != FfaWeaponUnarmed:
+      inc totals.armedTicks
+      let
+        submitted = game.bestGun(index, SubmittedRadius)
+        narrow = game.bestGun(index, NarrowRadius)
+        wide = game.bestGun(index, WideRadius)
+      totals.submittedUpgrade.addUpgrade(
+        submitted,
+        player.weaponTier,
+        submittedUpgradeActive
+      )
+      totals.narrowUpgrade.addUpgrade(
+        narrow,
+        player.weaponTier,
+        narrowUpgradeActive
+      )
+      totals.wideUpgrade.addUpgrade(
+        wide,
+        player.weaponTier,
+        wideUpgradeActive
+      )
+      fileSubmittedUpgrade = fileSubmittedUpgrade or
+        (submitted.found and submitted.tier > player.weaponTier)
+      fileNarrowUpgrade = fileNarrowUpgrade or
+        (narrow.found and narrow.tier > player.weaponTier)
+      fileWideUpgrade = fileWideUpgrade or
+        (wide.found and wide.tier > player.weaponTier)
       continue
     inc totals.unarmedTicks
-    discard game.refreshPlayerFov(index)
+    submittedUpgradeActive = false
+    narrowUpgradeActive = false
+    wideUpgradeActive = false
     let
       standard = game.bestGun(index, SubmittedRadius)
       contest = game.bestGun(index, SubmittedRadius, false)
@@ -237,6 +300,12 @@ proc addReplay(
     inc totals.narrow.files
   if fileWide:
     inc totals.wide.files
+  if fileSubmittedUpgrade:
+    inc totals.submittedUpgrade.files
+  if fileNarrowUpgrade:
+    inc totals.narrowUpgrade.files
+  if fileWideUpgrade:
+    inc totals.wideUpgrade.files
 
 proc printChange(label: string, counts: ChangeCounts) =
   ## Prints one candidate radius's changed-choice coverage.
@@ -267,10 +336,14 @@ proc summarize(
     totals.addReplay(path, policyName)
   echo "files=", totals.files
   echo "unarmedTicks=", totals.unarmedTicks
+  echo "armedTicks=", totals.armedTicks
   echo "submittedChoiceTicks=", totals.submittedChoiceTicks
   printChange("contest", totals.contest)
   printChange("narrow", totals.narrow)
   printChange("wide", totals.wide)
+  printChange("submittedUpgrade", totals.submittedUpgrade)
+  printChange("narrowUpgrade", totals.narrowUpgrade)
+  printChange("wideUpgrade", totals.wideUpgrade)
 
 if paramCount() != 2:
   raise newException(

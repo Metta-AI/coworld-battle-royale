@@ -33,6 +33,18 @@ type
     farUnarmedTicks: int
     farUnarmedWindows: int
     farUnarmedFiles: int
+    visibleNearTicks: int
+    visibleNearWindows: int
+    visibleNearFiles: int
+    visibleMediumTicks: int
+    visibleMediumWindows: int
+    visibleMediumFiles: int
+    visibleFarTicks: int
+    visibleFarWindows: int
+    visibleFarFiles: int
+    visibleFarArmedTicks: int
+    visibleFarArmedWindows: int
+    visibleFarArmedFiles: int
 
 proc distance(x1, y1, x2, y2: int): float =
   ## Returns Euclidean distance between two replay positions.
@@ -61,7 +73,8 @@ proc opponentCloser(
 
 proc safeShieldDistances(
   game: SimServer,
-  playerIndex: int
+  playerIndex: int,
+  visibleOnly = false
 ): seq[float] =
   ## Returns distances to present, ring-safe, uncontested shields.
   let
@@ -72,6 +85,11 @@ proc safeShieldDistances(
     safeRadius = max(0.0, float(ringRadius) - ShieldSafeMargin)
   for spawn in game.shieldSpawns:
     if not spawn.present or
+      (visibleOnly and not game.fovVisibleAt(
+        playerIndex,
+        spawn.x,
+        spawn.y
+      )) or
       distance(spawn.x, spawn.y, centerX, centerY) > safeRadius:
         continue
     let playerDistance = distance(
@@ -104,12 +122,20 @@ proc addReplay(
     nearUnarmedActive = false
     mediumUnarmedActive = false
     farUnarmedActive = false
+    visibleNearActive = false
+    visibleMediumActive = false
+    visibleFarActive = false
+    visibleFarArmedActive = false
     fileNear = false
     fileMedium = false
     fileFar = false
     fileNearUnarmed = false
     fileMediumUnarmed = false
     fileFarUnarmed = false
+    fileVisibleNear = false
+    fileVisibleMedium = false
+    fileVisibleFar = false
+    fileVisibleFarArmed = false
   inc totals.files
   while replay.playing:
     replay.stepReplay(game)
@@ -132,10 +158,19 @@ proc addReplay(
       nearUnarmedActive = false
       mediumUnarmedActive = false
       farUnarmedActive = false
+      visibleNearActive = false
+      visibleMediumActive = false
+      visibleFarActive = false
+      visibleFarArmedActive = false
       continue
+    discard game.refreshPlayerFov(index)
     let distances = game.safeShieldDistances(index)
+    let visibleDistances = game.safeShieldDistances(index, visibleOnly = true)
     let nearest =
       if distances.len > 0: distances.min()
+      else: Inf
+    let visibleNearest =
+      if visibleDistances.len > 0: visibleDistances.min()
       else: Inf
     let
       near = nearest <= ShieldNearRadius
@@ -145,6 +180,10 @@ proc addReplay(
       nearUnarmed = near and unarmed
       mediumUnarmed = unarmed and nearest <= ShieldMediumRadius
       farUnarmed = unarmed and nearest <= ShieldFarRadius
+      visibleNear = visibleNearest <= ShieldNearRadius
+      visibleMedium = visibleNearest <= ShieldMediumRadius
+      visibleFar = visibleNearest <= ShieldFarRadius
+      visibleFarArmed = visibleFar and not unarmed
     if near:
       inc totals.nearTicks
       fileNear = true
@@ -175,12 +214,36 @@ proc addReplay(
       fileFarUnarmed = true
       if not farUnarmedActive:
         inc totals.farUnarmedWindows
+    if visibleNear:
+      inc totals.visibleNearTicks
+      fileVisibleNear = true
+      if not visibleNearActive:
+        inc totals.visibleNearWindows
+    if visibleMedium:
+      inc totals.visibleMediumTicks
+      fileVisibleMedium = true
+      if not visibleMediumActive:
+        inc totals.visibleMediumWindows
+    if visibleFar:
+      inc totals.visibleFarTicks
+      fileVisibleFar = true
+      if not visibleFarActive:
+        inc totals.visibleFarWindows
+    if visibleFarArmed:
+      inc totals.visibleFarArmedTicks
+      fileVisibleFarArmed = true
+      if not visibleFarArmedActive:
+        inc totals.visibleFarArmedWindows
     nearActive = near
     mediumActive = medium
     farActive = far
     nearUnarmedActive = nearUnarmed
     mediumUnarmedActive = mediumUnarmed
     farUnarmedActive = farUnarmed
+    visibleNearActive = visibleNear
+    visibleMediumActive = visibleMedium
+    visibleFarActive = visibleFar
+    visibleFarArmedActive = visibleFarArmed
   if index < 0:
     raise newException(
       BattleRoyaleError,
@@ -198,6 +261,14 @@ proc addReplay(
     inc totals.mediumUnarmedFiles
   if fileFarUnarmed:
     inc totals.farUnarmedFiles
+  if fileVisibleNear:
+    inc totals.visibleNearFiles
+  if fileVisibleMedium:
+    inc totals.visibleMediumFiles
+  if fileVisibleFar:
+    inc totals.visibleFarFiles
+  if fileVisibleFarArmed:
+    inc totals.visibleFarArmedFiles
 
 proc summarize(
   replayDir, policyName: string
@@ -237,6 +308,18 @@ proc summarize(
   echo "farUnarmedTicks=", totals.farUnarmedTicks
   echo "farUnarmedWindows=", totals.farUnarmedWindows
   echo "farUnarmedFiles=", totals.farUnarmedFiles
+  echo "visibleNearTicks=", totals.visibleNearTicks
+  echo "visibleNearWindows=", totals.visibleNearWindows
+  echo "visibleNearFiles=", totals.visibleNearFiles
+  echo "visibleMediumTicks=", totals.visibleMediumTicks
+  echo "visibleMediumWindows=", totals.visibleMediumWindows
+  echo "visibleMediumFiles=", totals.visibleMediumFiles
+  echo "visibleFarTicks=", totals.visibleFarTicks
+  echo "visibleFarWindows=", totals.visibleFarWindows
+  echo "visibleFarFiles=", totals.visibleFarFiles
+  echo "visibleFarArmedTicks=", totals.visibleFarArmedTicks
+  echo "visibleFarArmedWindows=", totals.visibleFarArmedWindows
+  echo "visibleFarArmedFiles=", totals.visibleFarArmedFiles
 
 if paramCount() != 2:
   raise newException(
