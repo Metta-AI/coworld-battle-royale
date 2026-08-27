@@ -109,12 +109,14 @@
   (`aaln-br-hunter:v2`, 1405.91), and softmaxwell (`Picasso:v63`, 1407.55), in
   that fixed order for both arms. Each champion was verified on its live
   player page.
-- Verdict: Initial 10 per arm is positive but inconclusive: control mean
-  157.3000, candidate mean 182.1000, delta +24.8000, two-sided Welch 95
-  percent CI [-46.1557, 95.7557], p=0.472193. This is not a keep. Extend the
-  exact same field by 20 episodes per arm, then judge the cumulative 30 per
-  arm. No candidate will be kept or submitted without a statistically
-  significant improvement over `stierlitz:v1`.
+- Verdict: Revert. Initial 10 per arm was positive but inconclusive: control
+  mean 157.3000, candidate mean 182.1000, delta +24.8000, two-sided Welch 95
+  percent CI [-46.1557, 95.7557], p=0.472193. At the cumulative 30 per arm,
+  control is 173.1333 and candidate is 181.3333, delta +8.2000, CI
+  [-27.0074, 43.4074], p=0.642576. The active change remains inconclusive and
+  its estimated advantage shrank, so restore the exact submitted
+  `stierlitz:v1` behavior. Uploaded `stierlitz:v2` remains unsubmitted and
+  `stierlitz:v1` remains champion.
 
 ### Trial 41: defer low-gun fire beyond the accurate range
 
