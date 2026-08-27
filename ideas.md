@@ -89,7 +89,9 @@
   `sha256:19e3111c091abe00c8c86f33656c5fb699b68636a94457536e07808309cae490`.
   Uploaded unsubmitted as main candidate `andre-battleroyale:v42` and immutable
   XP candidate `andre-trial-41:v1` after source commit `d2cc3d5` was pushed.
-- XP id: Pending exact same-field hosted control and candidate requests.
+- XP id: Initial ten-episode control
+  `xreq_d4f9a9ec-55bf-400c-9b50-2aca1da2c6ff`; initial ten-episode candidate
+  `xreq_130cee1e-dd48-44b2-9c65-23b41b9fc195`.
 - Opponents: At freeze our player is #17 at 1377.34 MRR. The nearest three
   unique other players are softmaxwell (`Picasso:v63`, 1384.90), David Greis
   (`Battle Royale Baseline:v1`, 1348.84), and NanosaurusX (`nancy-br:v1`,
