@@ -64,6 +64,42 @@
 
 ## Trial log
 
+### Trial 43: hold instead of normal weak-target pursuit
+
+- Idea: Trial 17 could not test this strategy because its frozen hosted field
+  produced only 21 control fight ticks and two sampled `pursue_weak` rows;
+  none of the 10 candidate artifacts exercised the disabled branch. The newest
+  exact `stierlitz:v1` controls now provide behavioral coverage: 7 of 29
+  artifacts contain `fight` and `engage` activity, totaling 1,013 fight ticks,
+  and 7 files contain sampled `pursue_weak` decisions. Within those controls,
+  score correlates negatively with fight ticks (`r=-0.2225`) and positively
+  with hold ticks (`r=0.8066`). Retest the isolated movement decision on a
+  field where it can actually fire; correlations select the experiment but
+  are not score.
+- Change: Set only normal Hunter weak-target pursuit movement off by default.
+  Safe initial arming, weapon-range firing, aiming, the submitted 0.85 hold
+  band, ring safety, 60-tick unstick, four-player late close, and every other
+  submitted behavior remain unchanged. An otherwise eligible chase emits
+  objective `hold_no_pursuit` and reason `pursuit_disabled` while the Hunter
+  continues its normal fire-range gate.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production startup reports Hunter with
+  `ffaHunterPursuit=false`, while retaining `ffaHunterFireRange=true`, safe
+  arming, the submitted 0.85 hold band, 240-pixel arm cap, 80-pixel safety
+  margin, zero ring margin, and 60-tick ring unstick. Hosted artifact branch
+  confirmation is pending. Replays and logs prove behavior only and are not
+  score.
+- Artifact: Local Linux amd64 `stierlitz:candidate-43`, command
+  `/bin/baseline`, digest
+  `sha256:3c97c94d6ca52dd654e3c1693cc7be934d26215f9224ba423a5e61ef32c7cc94`.
+  This deterministic build matches the prior Trial 17 implementation, whose
+  old field failed coverage. CPUX upload is pending; the candidate will remain
+  unsubmitted unless it beats exact champion `stierlitz:v1` with hosted
+  statistical significance.
+- XP id: Pending matched hosted requests with at least 10 episodes per arm.
+- Opponents: Pending a fresh live leaderboard freeze immediately before XP.
+- Verdict: Pending hosted significance; inconclusive is not a keep.
+
 ### Trial 42: safe Hunter weapon upgrades within 320 pixels
 
 - Idea: Across the newest 20 exact champion controls, the submitted Hunter is
