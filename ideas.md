@@ -80,9 +80,15 @@
   pre-CPUX behavior isolation, not score; hosted branch coverage is pending.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-35`, digest
   `sha256:10771195b95d74a81c4eebd32e5592ac78a1b87a3e4f900fd246292b29777c3f`.
-  Upload pending CPUX.
+  Uploaded unsubmitted as `andre-battleroyale:v36`; exact v15 control and
+  candidate images are `andre-trial-35:v1` and `andre-trial-35:v2`.
 - XP id: Pending.
-- Opponents: Pending field freeze at request creation.
+- Opponents: Frozen outside-top-three field at request creation: Andre #10 at
+  1493.11 MMR versus nearest unique other players aosgoods at 1490.81
+  (`eatth-battleroyale-decision-stack-v29:v1`), richard at 1505.15
+  (`co-gas-battleroyale-baseline-richard:v3`), and relh at 1532.00
+  (`co-gas-battleroyale-baseline-relhalpha:v7`). Both arms use this exact
+  roster and ordering.
 - Verdict: Pending hosted significance.
 
 ### Trial 34: throw already-carried grenades at safe visible targets
