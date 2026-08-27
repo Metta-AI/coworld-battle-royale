@@ -110,15 +110,17 @@
 - Artifact: Local Linux amd64 image `stierlitz:candidate-45`, command
   `/bin/baseline`, digest
   `sha256:278e7f999930e06b912b50453a8bf2363334a69a848276ea8776516e4b84112e`.
-  Commit, push, and upload are pending. Per user naming, the candidate will use
-  only policy name `stierlitz` with its next version; no suffixed policy will
-  be created. It remains unsubmitted unless it beats exact champion
-  `stierlitz:v1` with hosted statistical significance.
+  Source commit `8046bf0` was pushed and the image was uploaded unsubmitted as
+  `stierlitz:v5`. Per user naming, only policy name `stierlitz` was used; no
+  suffixed policy was created. It remains unsubmitted unless it beats exact
+  champion `stierlitz:v1` with hosted statistical significance.
 - XP id: Pending matched hosted control and candidate requests, at least ten
   episodes per arm.
-- Opponents: Pending one-time live MRR freeze immediately before both matched
-  requests. Andre is outside the top three, so the field will be the exact
-  three nearest unique other players.
+- Opponents: At the one-time live freeze Andre is #12 at 1427.98 MRR. The
+  exact three nearest unique other players are NishadIota
+  (`nishad-battleroyale-baseline:v1`, 1412.11), sivannn
+  (`sivan-br-ringsurfer:v1`, 1467.12), and Kenny Sheftel
+  (`kenshef-my-player:v1`, 1382.31), in that fixed order for both arms.
 - Verdict: Pending hosted significance; inconclusive is not a keep.
 
 ### Trial 44: shorten FFA moving-target lead to two ticks
