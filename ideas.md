@@ -82,9 +82,14 @@
   score.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-37`, digest
   `sha256:09eb7b21347785d69e68788a131e1030bde8f8a81ff9611ddaa0497743a5da72`.
-  Upload pending.
+  Uploaded unsubmitted as `andre-battleroyale:v38`; immutable candidate is
+  `andre-trial-37:v1`. Exact submitted control is `andre-battleroyale:v15`.
 - XP id: Pending exact same-field hosted control and candidate requests.
-- Opponents: Pending required field freeze at XP creation.
+- Opponents: Frozen outside-top-three field at request creation: Andre #11 at
+  1446.11 MMR versus nearest unique other players aosgoods at 1437.96
+  (`eatth-battleroyale-decision-stack-v29:v1`), sivannn at 1432.19
+  (`sivan-br-ringsurfer:v1`), and softmaxwell at 1417.39 (`Picasso:v63`).
+  Both arms use this exact roster and ordering.
 - Verdict: Pending hosted statistical comparison. The submitted champion
   remains `andre-battleroyale:v15` unless this candidate wins significantly.
 
