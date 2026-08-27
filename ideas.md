@@ -3,9 +3,15 @@
 ## Current state
 
 - League: Battle Royale, Coworld `battleroyale` v0.1.14.
-- Player: Stierlitz (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`), renamed
-  in place from Andre von Houck with all ladder history preserved.
-- Submitted policy: `andre-battleroyale:v15`.
+- Player: Andre von Houck (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`).
+- Submitted policy: `stierlitz:v1`.
+- Administrative relabel: Uploaded the exact `andre-battleroyale:v15`
+  champion image digest
+  `sha256:2f1536a688b3dcfbad572bd21a7d830d1a7627e5d290f036faeb2d426414f30a`
+  as `stierlitz:v1`, then submitted it without a behavior change. Submission
+  `sub_4f99978c-613f-4b49-aab0-15fc01b9916c` placed as active champion
+  membership `lpm_0864a407-a8f9-4180-a6a9-b9f9430dced7`. This was not an
+  experiment and used no XP requests.
 - Upstream policy base: `a39eb196131ac0083506bb344130359de1c2d9c8`.
 - Game update audit: The live v0.1.14 variant keeps generated huge maps and
   rotates seat ownership over the same fixed spawn pads using the episode
