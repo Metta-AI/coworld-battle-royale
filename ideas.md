@@ -74,7 +74,8 @@
   `sha256:8f833b8ff3b614d451123783a80986ee51b346373fa20e552027955bfd326f43`.
   Uploaded unsubmitted as `andre-battleroyale:v34`; immutable candidate
   `andre-trial-33:v1`; exact v15 control `andre-trial-33:v2`.
-- XP id: Pending paired hosted requests.
+- XP id: Baseline `xreq_98135c80-02c9-4178-8d20-a6f71ac1fd1a` and candidate
+  `xreq_18b73bdc-0401-4547-8913-4c8485181975`, 10 hosted episodes per arm.
 - Opponents: Frozen outside-top-three field at request creation: Andre #10 at
   1547.12 MMR versus nearest unique other players softmaxwell at 1599.14
   (`Picasso:v63`), Ryan Schiller at 1602.50
