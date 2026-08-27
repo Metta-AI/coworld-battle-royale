@@ -266,7 +266,6 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
-  FfaHunterOwnMotionAim = true
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -1990,24 +1989,6 @@ proc ffaWeaponFireRange(weaponTier: int): float =
   else:
     520.0
 
-proc ffaOwnMotionAimTarget(
-  me, previousMe, moveTarget, aimTarget: Vec,
-  frameAdvance: int
-): tuple[target: Vec, active: bool] =
-  ## Compensates a Hunter shot for its continuing windup displacement.
-  result = (aimTarget, false)
-  let
-    advance = float(max(1, frameAdvance))
-    velocity = (me - previousMe) * (1.0 / advance)
-    movement = moveTarget - me
-  if abs(velocity.x) > 3.0 or abs(velocity.y) > 3.0 or
-      len(velocity) < 0.5 or len(movement) < 12.0 or
-      dot(velocity, movement) <= 0.0:
-    return
-  result.target = aimTarget -
-    velocity * float(SimTypes.FireWindupTicks)
-  result.active = true
-
 proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
     actors: seq[Actor], me, center: Vec, ringRadius: int): bool =
   if not bot.ffaLootTrip or not bot.ffaLootTargetValid:
@@ -2535,10 +2516,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     hunterRingSafety = FfaDoctrine == FfaHunter and
       intent.action == "retreat_ring"
   var action = intent.action
+
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
   var rayClear = false
-  var ownMotionAim = false
   if targetIndex >= 0:
     let target = actors[targetIndex]
     var aimTarget = target.pos
@@ -2548,17 +2529,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       if d < bestTrackD:
         bestTrackD = d
         aimTarget = track.pos + track.vel * LeadTicks
-    if FfaDoctrine == FfaHunter and FfaHunterOwnMotionAim and
-        not unarmed and intent.action != "retreat_ring":
-      let adjusted = ffaOwnMotionAimTarget(
-        me,
-        bot.lastPos,
-        moveTarget,
-        aimTarget,
-        client.frameAdvance
-      )
-      aimTarget = adjusted.target
-      ownMotionAim = adjusted.active
     desiredAim = bradsOf(aimTarget - me)
     let
       fireRange = ffaWeaponFireRange(weaponTier)
@@ -2573,8 +2543,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         else:
           abs(bradsErr(desiredAim, bot.estAim)) <=
             fireToleranceBrads(targetDist))
-  if ownMotionAim:
-    action = "aim_own_motion"
   let steer = bot.navSteer(client, me, moveTarget)
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
   if hunterRingSafety and bot.tick < bot.jinkUntil:
@@ -4444,7 +4412,6 @@ proc runBot(url: string) =
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
-    " ffaHunterOwnMotionAim=", FfaHunterOwnMotionAim,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
   artInit(slot, $bot.team, $bot.role, "", FfaGameTicksPerFrame)

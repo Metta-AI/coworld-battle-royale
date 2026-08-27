@@ -3,7 +3,8 @@
 ## Current state
 
 - League: Battle Royale, Coworld `battleroyale` v0.1.14.
-- Player: Andre von Houck (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`).
+- Player: Stierlitz (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`), renamed
+  in place from Andre von Houck with all ladder history preserved.
 - Submitted policy: `andre-battleroyale:v15`.
 - Upstream policy base: `a39eb196131ac0083506bb344130359de1c2d9c8`.
 - Game update audit: The live v0.1.14 variant keeps generated huge maps and
@@ -103,12 +104,16 @@
   (`eatth-battleroyale-decision-stack-v29:v1`), sivannn at 1432.19
   (`sivan-br-ringsurfer:v1`), and softmaxwell at 1417.39 (`Picasso:v63`).
   Both arms use this exact roster and ordering.
-- Verdict: Pending extension. The initial 10-per-arm result is control 144.50
-  versus candidate 160.60, difference +16.1000, 95 percent Welch CI
-  [-40.9430, 73.1430], p=0.557337. This is inconclusive, not a keep. Because
-  the branch is active and the point estimate is positive, the exact frozen
-  field is running 20 more episodes per arm. The submitted champion remains
-  `andre-battleroyale:v15` unless the combined result wins significantly.
+- Verdict: Revert. The initial 10-per-arm result was control 144.50 versus
+  candidate 160.60, difference +16.1000, 95 percent Welch CI [-40.9430,
+  73.1430], p=0.557337. Across all 30 hosted episodes per arm, exact control
+  mean is 139.7000 and candidate mean is 152.9000, difference +13.2000, 95
+  percent CI [-24.7615, 51.1615], Welch p=0.489126. The dashboard confirms all
+  30 candidate episodes, mean 152.9 and 43 percent +/- 10 percent. The active
+  change remains inconclusive after extension and its effect is too small
+  relative to variance to justify a much larger field. Exact v15 behavior was
+  restored; `andre-battleroyale:v38` stays uploaded but unsubmitted, and
+  champion `andre-battleroyale:v15` remains live.
 
 ### Trial 36: center search while an unarmed hunter sees no gun
 

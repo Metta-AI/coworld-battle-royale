@@ -96,11 +96,3 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
-
-  test "hunter own-motion aim is isolated":
-    check baseline.count("FfaHunterOwnMotionAim = true") == 1
-    check baseline.count("ffaOwnMotionAimTarget(") == 2
-    check baseline.count("action = \"aim_own_motion\"") == 1
-    check baseline.contains(
-      "FfaDoctrine == FfaHunter and FfaHunterOwnMotionAim")
-    check baseline.contains("intent.action != \"retreat_ring\"")
