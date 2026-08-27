@@ -72,10 +72,17 @@
   trigger tolerance, navigation, ring behavior, arming, pursuit, items, hold
   band, and every non-Hunter doctrine are unchanged. Active samples emit
   `aim_own_motion`.
-- Isolation: Pending doctrine checks, production extraction, and hosted
-  candidate artifact coverage. Replay diagnostics are behavior evidence only,
-  never score.
-- Artifact: Pending CPUX.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. The exhaustive suite stayed green through the
+  engine, manifest, roster, client, and map-editor service suites before its
+  long generated-map validation shard was stopped. Production startup reports
+  `ffaHunterOwnMotionAim=true` while retaining Hunter, the 0.85 hold band,
+  240-pixel arm cap, and 60-tick ring unstick. Hosted candidate artifact
+  coverage is pending. Replay diagnostics are behavior evidence only, never
+  score.
+- Artifact: Local linux/amd64 `andre-battleroyale:candidate-37`, digest
+  `sha256:09eb7b21347785d69e68788a131e1030bde8f8a81ff9611ddaa0497743a5da72`.
+  Upload pending.
 - XP id: Pending exact same-field hosted control and candidate requests.
 - Opponents: Pending required field freeze at XP creation.
 - Verdict: Pending hosted statistical comparison. The submitted champion
