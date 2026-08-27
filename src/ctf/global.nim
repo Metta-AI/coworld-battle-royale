@@ -362,6 +362,7 @@ const
   HeavyGunPickupSpriteId = 1432
   GunPickupSize = RigCanvas
   GunPickupObjectBase = 40500
+  DroppedGunObjectBase* = GunPickupObjectBase + 48
   ## Cardboard barriers (config-gated pickups + standing half-hexes).
   ## Static sprites sit in the 1488..1499 gap (above the bubble deform
   ## variants at 1424..1487, clear of the corpses at 1500); the standing pool
@@ -877,6 +878,7 @@ const
     ("rot diamonds", RotDiamondObjectBase, 8),
     ("plasma arc pickups", PlasmaArcPickupObjectBase, 4),
     ("gun pickups", GunPickupObjectBase, 48),
+    ("dropped gun pickups", DroppedGunObjectBase, FfaMaxPlayers),
     ("plasma arc carry markers", PlasmaArcCarryObjectBase, MaxPlayers),
     ("plasma arc fx", PlasmaArcFxObjectBase,
       PlasmaArcMaxFlashes * PlasmaArcFxPulses),
@@ -6235,6 +6237,39 @@ proc addGuns(
   addFamily(sim.midGunSpawns, MidGunPickupSpriteId, 16, LabelWeaponMidGun)
   addFamily(sim.heavyGunSpawns, HeavyGunPickupSpriteId, 32,
     LabelWeaponHeavyGun)
+  for i, drop in sim.droppedGuns:
+    if not drop.present:
+      continue
+    let
+      spriteId =
+        case drop.tier
+        of FfaWeaponLow: LowGunPickupSpriteId
+        of FfaWeaponMid: MidGunPickupSpriteId
+        of FfaWeaponHeavy: HeavyGunPickupSpriteId
+        else: -1
+      label =
+        case drop.tier
+        of FfaWeaponLow: LabelWeaponLowGun
+        of FfaWeaponMid: LabelWeaponMidGun
+        of FfaWeaponHeavy: LabelWeaponHeavyGun
+        else: ""
+    if spriteId < 0:
+      continue
+    if viewerIndex >= 0 and
+        not sim.fovVisibleAt(viewerIndex, drop.x, drop.y):
+      continue
+    if spriteDefs.spriteDefinitionIndex(spriteId) < 0:
+      packet.addBoardSpriteChanged(
+        spriteDefs, spriteId, GunPickupSize, GunPickupSize,
+        rigGunPixels(Red, 0, boardScale), label,
+        native = boardScale
+      )
+    let objectId = DroppedGunObjectBase + i
+    currentIds.add(objectId)
+    packet.addBoardObject(
+      objectId, drop.x - GunPickupSize div 2,
+      drop.y - GunPickupSize div 2, drop.y, MapLayerId, spriteId
+    )
 
 proc plasmaArcRenderPose*(
   sim: SimServer, flashIndex: int

@@ -49,6 +49,7 @@ proc defaultGameConfig*(): GameConfig =
     perkMods: DefaultPerkMods,
     puddleDamagePct: DefaultPuddleDamagePct,
     barrierPickups: 0,
+    dropWeaponOnDeath: false,
     barrageMaxPerSec: 0,
     barrageStartPerSec: BarrageStartPerSec,
     barrageStartSec: BarrageStartSec,
@@ -849,6 +850,7 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("assistWindowTicks", config.assistWindowTicks)
   node.readConfigPodiumPoints(config)
   node.readConfigBool("ringEnabled", config.ringEnabled)
+  node.readConfigBool("dropWeaponOnDeath", config.dropWeaponOnDeath)
   node.readConfigInt("ringShrinkSec", config.ringShrinkSec)
   node.readConfigInt("ringFloorAreaPct", config.ringFloorAreaPct)
   node.readConfigInt("ringDamageTicks", config.ringDamageTicks)
@@ -1110,6 +1112,8 @@ proc configJson*(config: GameConfig): string =
     node["ringRecoveryTicks"] = %config.ringRecoveryTicks
     node["ringDamageRampTicks"] = %config.ringDamageRampTicks
     node["ringDamageMax"] = %config.ringDamageMax
+    if config.dropWeaponOnDeath:
+      node["dropWeaponOnDeath"] = %config.dropWeaponOnDeath
     node["passivityRadius"] = %config.passivityRadius
     node["passivityGraceTicks"] = %config.passivityGraceTicks
     node["passivityDamageTicks"] = %config.passivityDamageTicks

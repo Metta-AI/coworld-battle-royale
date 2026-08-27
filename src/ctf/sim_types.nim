@@ -1313,6 +1313,10 @@ type
                                   ## default, byte-identical to the
                                   ## pre-barrier game (no spawns, no carries,
                                   ## no placements, no new RNG draws).
+    dropWeaponOnDeath*: bool      ## ffa: a non-unarmed victim leaves one
+                                  ## consumed-once weapon pickup at the death
+                                  ## site. False is dormant and byte-identical
+                                  ## to the pre-drop path.
     mode*: string                 ## match rules: CtfMode (the default) or
                                   ## FfaMode. Every ffa branch in the sim
                                   ## reads exactly this field, so a ctf game
@@ -1671,7 +1675,8 @@ type
     weapon*: string            ## weapon or hazard token; phase name for
                                ## PhaseChange, "" = n/a.
     amount*: int               ## hp delta for Damage/Kill/Heal, the new
-                               ## phase ordinal for PhaseChange, else 0.
+                               ## phase ordinal for PhaseChange, dropped
+                               ## weapon tier for Death, else 0.
     hp*: int                   ## the affected player's remaining hit points
                                ## AFTER the event, floored at 0 (a fatal
                                ## overkill still reads 0): the victim on
@@ -1709,6 +1714,13 @@ type
     x*, y*: int
     present*: bool
     respawnAt*: int            ## tick the pickup refills (when not present).
+
+  DroppedWeapon* = object
+    ## One FFA weapon left at a death site when the dormant drop rule is on.
+    x*, y*: int
+    tier*: int
+    present*: bool
+    dropTick*: int
 
   PlacedBarrier* = object
     ## One standing cardboard barrier: three sides of a hexagon (a half-hex)
@@ -1853,6 +1865,10 @@ type
                                ## assistWindowTicks. Empty in ctf. Appended
                                ## at the END of the type, and out of
                                ## gameHash, for the placedBarriers reasons.
+    droppedGuns*: seq[DroppedWeapon]  ## consumed-once FFA weapon drops.
+                               ## Appended at the END of the type: keyframes
+                               ## are flatty-positional, and this state is
+                               ## empty on dormant/default games.
 
 
 # Team endzone display colors (shared by the map bake and the paint FX).

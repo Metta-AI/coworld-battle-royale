@@ -287,11 +287,33 @@ proc firstBlood*(ledger: Ledger): LedgerRow =
       return row
   LedgerRow(tick: -1, source: -1, target: -1, hp: -1)
 
+proc isFixedTierPickup(item: string): bool {.inline.} =
+  item == "low gun" or item == "mid gun" or item == "heavy gun"
+
+proc isDroppedTierPickup(item: string): bool {.inline.} =
+  item == "dropped low gun" or item == "dropped mid gun" or
+    item == "dropped heavy gun"
+
 proc tierPickups*(ledger: Ledger, seat: int): seq[LedgerRow] =
-  ## One seat's WEAPON-TIER pickups ("low gun" / "mid gun" / "heavy gun"),
-  ## which are the FFA loot ladder; other pickups (med kit, shield, grenade,
-  ## spray can, barrier) are not tiers and stay out.
+  ## One seat's WEAPON-TIER pickups, including both fixed-spawn and
+  ## death-site drops. Other pickups (med kit, shield, grenade, spray can,
+  ## barrier) are not tiers and stay out. Existing callers get the combined
+  ## ladder; use fixedTierPickups/droppedTierPickups to split its sources.
   for row in ledger.rows:
     if row.kind == "item_pickup" and row.source == seat and
-        row.item.endsWith(" gun"):
+        (row.item.isFixedTierPickup() or row.item.isDroppedTierPickup()):
+      result.add(row)
+
+proc fixedTierPickups*(ledger: Ledger, seat: int): seq[LedgerRow] =
+  ## Fixed map-spawn weapon pickups for one seat.
+  for row in ledger.rows:
+    if row.kind == "item_pickup" and row.source == seat and
+        row.item.isFixedTierPickup():
+      result.add(row)
+
+proc droppedTierPickups*(ledger: Ledger, seat: int): seq[LedgerRow] =
+  ## Death-site weapon drops collected by one seat.
+  for row in ledger.rows:
+    if row.kind == "item_pickup" and row.source == seat and
+        row.item.isDroppedTierPickup():
       result.add(row)
