@@ -82,14 +82,23 @@
   `sha256:10771195b95d74a81c4eebd32e5592ac78a1b87a3e4f900fd246292b29777c3f`.
   Uploaded unsubmitted as `andre-battleroyale:v36`; exact v15 control and
   candidate images are `andre-trial-35:v1` and `andre-trial-35:v2`.
-- XP id: Pending.
+- XP id: Baseline `xreq_d873f708-a1bb-442a-a5c9-ae671926af6c` and candidate
+  `xreq_322bf754-9512-45a7-8f97-efdbf310584c`, both complete at 10 hosted
+  episodes with zero failures.
 - Opponents: Frozen outside-top-three field at request creation: Andre #10 at
   1493.11 MMR versus nearest unique other players aosgoods at 1490.81
   (`eatth-battleroyale-decision-stack-v29:v1`), richard at 1505.15
   (`co-gas-battleroyale-baseline-richard:v3`), and relh at 1532.00
   (`co-gas-battleroyale-baseline-relhalpha:v7`). Both arms use this exact
   roster and ordering.
-- Verdict: Pending hosted significance.
+- Verdict: Revert. All 10 hosted artifacts per arm are valid. The candidate
+  records 422 `ring_unstick_fine_ray` ticks versus zero in exact control, so
+  the isolated branch fired. Baseline mean is 179.0000 versus candidate
+  180.0000, difference +1.0000, Welch 95 percent CI [-42.9579, 44.9579],
+  p=0.962187. The completed hosted result is decisively inconclusive and the
+  point estimate is negligible, so it does not merit a same-field extension.
+  Exact v15 behavior was restored; `andre-battleroyale:v36` remains uploaded
+  but unsubmitted.
 
 ### Trial 34: throw already-carried grenades at safe visible targets
 
