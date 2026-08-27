@@ -32,6 +32,7 @@
 - Scan only the Hunter's vision cone while holding without a visible target.
 - Scan only while an unarmed Hunter holds without a visible target.
 - Scan only while an armed Hunter holds without a visible target.
+- Detour only an unarmed, unshielded Hunter to a nearby safe shield.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -45,6 +46,37 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 31: nearby safe shield for an unarmed hunter
+
+- Idea: Across the newest 30 exact v15 controls from Trials 28 through 30,
+  replay resimulation finds 22 deaths without a shield and only three
+  incidental shield pickups. A conservative Nim extractor counts only
+  present shields at least 80 pixels inside the ring and rejects a shield if
+  any living opponent is closer. It finds 17 unarmed opportunity windows in
+  eight of 30 files within 160 pixels, totaling 1,805 ticks. The submitted
+  Hunter ignores shields even while unarmed, despite a shield absorbing three
+  damage before base HP.
+- Change: Only for the default Hunter while unarmed and not already carrying
+  a shield, detour to the nearest protocol-visible shield within 160 pixels
+  when it is inside the existing 80-pixel safety margin and no visible
+  opponent is closer to it. Ring safety still has outer priority. Gun
+  selection, combat, firing, pursuit, hold band, ring unstick, armed movement,
+  and every non-Hunter doctrine are unchanged. Active movement emits
+  `shield_trip` and `move_shield`.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports
+  `ffaHunterShieldDetour=true` and a 160-pixel radius only in the candidate,
+  while candidate and exact submitted control retain Hunter, the 60-tick
+  ring unstick, 240-pixel arm cap, 30-second arm-trip cap, 80-pixel safety
+  margin, zero ring margin, and 0.85 hold band. Hosted branch coverage is
+  pending.
+- Artifact: `andre-battleroyale:candidate-31`, Linux amd64 image digest
+  `sha256:7f4e0ca0152cc0531a649ed5f341c018c4ade2f6230650f3cbd98e04396de8e2`.
+  Upload pending CPUX.
+- XP id: Pending paired hosted requests.
+- Opponents: Pending fresh nearest-MRR field freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 30: scan only while armed hunter holds
 

@@ -42,6 +42,8 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
+    check baseline.contains("FfaHunterShieldDetour = true")
+    check baseline.contains("FfaHunterShieldDetourRadius = 160.0")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
@@ -96,3 +98,10 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "only unarmed hunter detours to visible safe shields":
+    check baseline.count("\"shield_trip\", \"move_shield\"") == 1
+    check baseline.count(
+      "if FfaDoctrine == FfaHunter and FfaHunterShieldDetour and") == 1
+    check baseline.count(
+      "d > FfaHunterShieldDetourRadius or") == 1
