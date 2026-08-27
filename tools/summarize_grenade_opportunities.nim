@@ -59,12 +59,15 @@ proc replayPaths(replayDir: string): Table[string, string] =
 
 proc policySlot(extraction: ExtractResult, policyName: string): int =
   ## Returns one hosted policy's stable replay slot.
+  var names: seq[string]
   for slot, name in extraction.slotAddress:
+    names.add($slot & "=" & name)
     if name == policyName:
       return slot
   raise newException(
     BattleRoyaleError,
-    "hosted replay has no policy named: " & policyName
+    "hosted replay has no policy named " & policyName &
+      "; available seats: " & names.join(", ")
   )
 
 proc frameForTick(extraction: ExtractResult, tick: int): int =

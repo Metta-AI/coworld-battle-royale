@@ -266,6 +266,7 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
+  FfaHunterGrenadeThrow = true
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -479,6 +480,7 @@ type
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
     ffaPactPartnerSeen: int
+    ffaNadeAim: int
 
 proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   case doctrine
@@ -2278,6 +2280,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.ffaPactTargetSeen = -1
     bot.ffaPactPartnerPos = vec(0, 0)
     bot.ffaPactPartnerSeen = -1
+    bot.nadeCharge = 0
+    bot.nadeNeed = 0
+    bot.ffaNadeAim = -1
     artFrame(FrameSnap(tick: bot.tick, alive: false,
       x: int(bot.lastPos.x), y: int(bot.lastPos.y), hp: 0,
       objective: "dead", action: "dead", engageDist: -1))
@@ -2303,6 +2308,15 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     elif weapon == LabelWeaponLowGun: 1
     else: 0
   let unarmed = weaponTier == 0
+  var carryingNade = false
+  for o in client.spriteObjectsWithLabel(LabelGrenadeCarried):
+    if dist(client.mapPos(o), me) <= 30.0:
+      carryingNade = true
+      break
+  if not carryingNade and bot.nadeCharge > 0:
+    bot.nadeCharge = 0
+    bot.nadeNeed = 0
+    bot.ffaNadeAim = -1
 
   var hp = bot.hp
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
@@ -2515,7 +2529,22 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     engageReason = intent.engageReason
     hunterRingSafety = FfaDoctrine == FfaHunter and
       intent.action == "retreat_ring"
+    hunterGrenadeTarget = FfaDoctrine == FfaHunter and
+      FfaHunterGrenadeThrow and carryingNade and targetIndex >= 0 and
+      targetDist >= NadeMinRange and targetDist <= NadeMaxRange and
+      not hunterRingSafety
+  if bot.nadeCharge == 0 and hunterGrenadeTarget:
+    bot.ffaNadeAim = bradsOf(actors[targetIndex].pos - me)
+    bot.nadeNeed = max(3, int(float(NadeFullChargeTicks) *
+      (targetDist - 30.0) / (NadeMaxRange - 30.0)))
+  elif bot.nadeCharge > 0 and hunterGrenadeTarget:
+    bot.ffaNadeAim = bradsOf(actors[targetIndex].pos - me)
+  let hunterGrenade = FfaDoctrine == FfaHunter and
+    FfaHunterGrenadeThrow and carryingNade and
+    (bot.nadeCharge > 0 or hunterGrenadeTarget)
   var action = intent.action
+  if hunterGrenade:
+    action = "aim_grenade"
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
@@ -2543,6 +2572,9 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         else:
           abs(bradsErr(desiredAim, bot.estAim)) <=
             fireToleranceBrads(targetDist))
+  if hunterGrenade:
+    desiredAim = bot.ffaNadeAim
+    wantFire = false
   let steer = bot.navSteer(client, me, moveTarget)
   var moveMask = if len(steer) < 12.0: 0'u8 else: octantBits(steer)
   if hunterRingSafety and bot.tick < bot.jinkUntil:
@@ -2569,6 +2601,18 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
   let triggerPressed = wantFire and not bot.firedLast
   if triggerPressed:
     mask = moveMask or ButtonA
+  if hunterGrenade and
+      (bot.nadeCharge > 0 or
+        abs(bradsErr(desiredAim, bot.estAim)) <= CombatDeadband + 2):
+    if bot.nadeCharge < bot.nadeNeed:
+      mask = mask or ButtonC
+      inc bot.nadeCharge
+      action = "charge_grenade"
+    else:
+      bot.nadeCharge = 0
+      bot.nadeNeed = 0
+      bot.ffaNadeAim = -1
+      action = "throw_grenade"
   bot.firedLast = (mask and ButtonA) != 0
   bot.rotSign =
     if (mask and ButtonB) != 0: 1
@@ -4411,6 +4455,7 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
+    " ffaHunterGrenadeThrow=", FfaHunterGrenadeThrow,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

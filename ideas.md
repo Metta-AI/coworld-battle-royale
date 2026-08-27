@@ -33,6 +33,7 @@
 - Scan only while an unarmed Hunter holds without a visible target.
 - Scan only while an armed Hunter holds without a visible target.
 - Detour only an unarmed, unshielded Hunter to a nearby safe shield.
+- Throw only already-carried Hunter grenades at visible safe-range targets.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -46,6 +47,39 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 34: throw already-carried grenades at safe visible targets
+
+- Idea: Replay-backed Nim extraction over the newest 10 exact v15 controls
+  finds three incidental grenade pickups in three files and zero throws. The
+  Hunter carried a grenade for 443 replay ticks and 23 artifact samples; 21
+  carried samples had a visible target and 19 were in safe throw range. FFA
+  direct grenade damage is four HP, one fifth of the ordinary 20-HP pool and
+  more than a low- or mid-tier gun hit. Isolate the unused weapon without
+  changing how grenades are acquired.
+- Change: Only for the default Hunter that already carries a grenade, charge
+  and throw it at a visible target between the existing conservative 78-pixel
+  self-safety floor and 240-pixel maximum range. The turret tracks the target
+  during charge; seeing no target retains the last safe aim until release.
+  Ring safety still owns navigation, and a charge already started may finish
+  while retreating. Grenade pickup, navigation, arming, hold band, ring
+  retreat, ring unstick, target selection, ordinary aim and firing, and every
+  non-Hunter doctrine are unchanged. Active stages emit `aim_grenade`,
+  `charge_grenade`, and `throw_grenade`.
+- Isolation: `nim check` passes for the policy and grenade-opportunity
+  extractor, and the doctrine source-contract suite and Linux amd64 production
+  build pass. Production startup reports `ffaHunterGrenadeThrow=true` only in
+  the candidate while retaining Hunter, the 60-tick ring unstick, 240-pixel
+  arm cap, 30-second arm deadline, 80-pixel arm safety margin, zero ring
+  margin, and 0.85 hold band. Hosted grenade charge and throw coverage is
+  pending; startup and replay opportunities prove configuration and exposure,
+  not the behavior or score.
+- Artifact: Local linux/amd64 `andre-battleroyale:candidate-34`, digest
+  `sha256:98b2e10c2b402e5627392a12e6fda57a37f37d95e639cc24923583f643ef2f7b`.
+  Upload pending CPUX.
+- XP id: Pending paired hosted requests.
+- Opponents: Pending fresh nearest-MRR field freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 33: reactive turret scan after unseen damage
 
