@@ -91,18 +91,20 @@
   (`shade-doctrine-v1:v1`), NishadIota at 1370.38
   (`nishad-battleroyale-baseline:v1`), and softmaxwell at 1370.00
   (`Picasso:v63`). Both arms use this exact roster and ordering.
-- Verdict: Pending extension. Both initial exact requests completed 10 of 10
-  episodes with zero
-  failures. The hosted dashboard reports exact control 217.00 versus candidate
-  190.10. The request-score comparison is candidate minus control -26.9000,
-  95 percent Welch CI [-112.0643, 58.2643], p=0.514183. The result is
-  inconclusive and is not a keep. Exact replay extraction also finds candidate
-  first gun tick 625.11 versus 1016.20, 1.10 versus 0.20 kills, and placement
-  1.80 versus 1.90, while every roster member has materially shorter survival
-  in the candidate request. That field-wide imbalance merits one same-field
-  extension before rejecting the active mechanism. Working source remains
-  exact v15 while the extension runs; `andre-battleroyale:v37` is unsubmitted
-  and champion `andre-battleroyale:v15` remains live.
+- Verdict: Revert. Both initial exact requests and both extensions completed
+  without failure. The initial 10-per-arm comparison was control 217.00 versus
+  candidate 190.10, difference -26.9000, 95 percent Welch CI [-112.0643,
+  58.2643], p=0.514183. Exact replay extraction found candidate first gun tick
+  625.11 versus 1016.20, 1.10 versus 0.20 kills, and placement 1.80 versus
+  1.90, while every roster member had materially shorter survival in the
+  candidate request, so the exact field was extended. Across all 30 hosted
+  episodes per arm, control mean is 167.0333 and candidate mean is 144.0000,
+  difference -23.0333, 95 percent CI [-72.0013, 25.9347], Welch p=0.350256.
+  The dashboard reports the same 167.03 versus 144.00. The active mechanism
+  remains inconclusive and trends worse after extension, so center search is
+  rejected. Working source is exact v15; `andre-battleroyale:v37` remains
+  uploaded but unsubmitted, and champion `andre-battleroyale:v15` remains
+  live.
 
 ### Trial 35: pixel-accurate hunter ring-unstick clearance
 
