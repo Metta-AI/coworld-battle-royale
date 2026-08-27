@@ -97,7 +97,9 @@
   `sha256:ab74b170b486a57f259d6f00b674ae14c3f4457b10a7f5744bfe53ae3f202a43`.
   Uploaded unsubmitted as main candidate `stierlitz:v2` and immutable XP
   candidate `stierlitz-trial-42:v1` after source commit `93b92a3` was pushed.
-- XP id: Pending matched hosted requests, at least 10 episodes per arm.
+- XP id: Initial ten-episode control
+  `xreq_bf9e9180-2f71-4014-a531-1724e998895c`; initial ten-episode candidate
+  `xreq_9bcbfbbf-ed92-45ca-a952-1d4d92b32f30`.
 - Opponents: At freeze Andre is #15 at 1401.03 MRR. The nearest three unique
   other players are Kenny Sheftel (`kenshef-my-player:v1`, 1402.56), Aaron
   (`aaln-br-hunter:v2`, 1405.91), and softmaxwell (`Picasso:v63`, 1407.55), in
