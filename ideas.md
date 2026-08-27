@@ -73,9 +73,14 @@
   pending.
 - Artifact: `andre-battleroyale:candidate-31`, Linux amd64 image digest
   `sha256:7f4e0ca0152cc0531a649ed5f341c018c4ade2f6230650f3cbd98e04396de8e2`.
-  Upload pending CPUX.
+  Uploaded unsubmitted as `andre-battleroyale:v32`; exact candidate and
+  submitted-control images are `andre-trial-31:v1` and
+  `andre-trial-31:v2`.
 - XP id: Pending paired hosted requests.
-- Opponents: Pending fresh nearest-MRR field freeze.
+- Opponents: At field freeze Andre is #17 at 1348.76. The nearest other
+  players are David Greis (`Battle Royale Baseline:v1`, 1356.82), Aaron
+  (`aaln-br-hunter:v2`, 1386.03), and sivannn
+  (`sivan-br-ringsurfer:v1`, 1405.80).
 - Verdict: Pending hosted significance.
 
 ### Trial 30: scan only while armed hunter holds
