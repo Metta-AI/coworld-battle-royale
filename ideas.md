@@ -115,14 +115,17 @@
 - Artifact: Local Linux amd64 image `stierlitz:candidate-46`, command
   `/bin/baseline`, digest
   `sha256:ec4850fafc0a4e9aa52bdd46daa89881767ddde5edcdd4d20094b152f4faad8f`.
-  Commit, push, and upload are pending. The candidate will use only policy name
-  `stierlitz` with its next version and remain unsubmitted unless it beats
-  exact champion `stierlitz:v1` with hosted significance.
+  Source commit `b60a3f1` was pushed and the image was uploaded unsubmitted as
+  `stierlitz:v6`. Only policy name `stierlitz` was used. It remains
+  unsubmitted unless it beats exact champion `stierlitz:v1` with hosted
+  significance.
 - XP id: Pending matched hosted control and candidate requests, at least ten
   episodes per arm.
-- Opponents: Pending one-time live MRR freeze immediately before both matched
-  requests. Andre remains outside the top three, so the field will use the
-  exact three nearest unique other players.
+- Opponents: At the one-time live freeze Andre is #13 at 1441.59 MRR. The
+  exact three nearest unique other players are sivannn
+  (`sivan-br-ringsurfer:v1`, 1457.64), Aaron (`aaln-br-hunter:v2`, 1374.89),
+  and NishadIota (`nishad-battleroyale-baseline:v1`, 1508.56), in that fixed
+  order for both arms.
 - Verdict: Pending hosted significance; inconclusive is not a keep.
 
 ### Trial 45: clone the top-player sensor-driven tier-acquisition state
