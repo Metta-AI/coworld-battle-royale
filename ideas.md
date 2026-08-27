@@ -119,7 +119,9 @@
   `xreq_c7596a62-7da2-49f4-b122-e04f3c3417e4`. Initial candidate-control is
   +43.0, 95 percent CI [-12.1935, 98.1935], Welch p=0.115120. This is
   inconclusive, so a matched 20-episode-per-arm extension on the exact frozen
-  field is pending rather than keeping or reverting from the point estimate.
+  field uses control `xreq_d20a8bd8-1ec6-4fad-8624-f166d04e5962` and
+  candidate `xreq_dc1191f0-f595-4f3c-be4a-6580c037996d`, rather than keeping
+  or reverting from the point estimate.
 - Opponents: At the one-time live freeze Andre is #12 at 1427.98 MRR. The
   exact three nearest unique other players are NishadIota
   (`nishad-battleroyale-baseline:v1`, 1412.11), sivannn
