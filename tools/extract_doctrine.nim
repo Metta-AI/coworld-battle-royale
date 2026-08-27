@@ -7,19 +7,35 @@ proc inheritedEnv(): StringTableRef =
   for key, value in envPairs():
     result[key] = value
 
+proc removeContainer(name: string) =
+  ## Removes the named temporary Docker container.
+  let process = startProcess(
+    "docker",
+    args = ["rm", "-f", name],
+    options = {poUsePath, poParentStreams}
+  )
+  defer:
+    process.close()
+  discard process.waitForExit()
+
 proc startupLine(source: string): string =
   ## Captures a binary or Docker policy startup line without an override.
-  let env = inheritedEnv()
+  let
+    env = inheritedEnv()
+    isDocker = source.startsWith("docker:")
+    containerName = "coworld-doctrine-" & $getCurrentProcessId()
   env["COWORLD_PLAYER_WS_URL"] = "ws://127.0.0.1:1/?slot=0"
   env.del("COGAMES_ENGINE_WS_URL")
   env.del("CTF_BOT_FFA_DOCTRINE")
   let process =
-    if source.startsWith("docker:"):
+    if isDocker:
       startProcess(
         "docker",
         args = [
           "run",
           "--rm",
+          "--name",
+          containerName,
           "--network=none",
           "-e",
           "COWORLD_PLAYER_WS_URL=ws://127.0.0.1:1/?slot=0",
@@ -35,6 +51,8 @@ proc startupLine(source: string): string =
         options = {poStdErrToStdOut}
       )
   defer:
+    if isDocker:
+      removeContainer(containerName)
     if process.running:
       process.terminate()
     process.close()

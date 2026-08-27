@@ -33,6 +33,7 @@
 - Scan only while an unarmed Hunter holds without a visible target.
 - Scan only while an armed Hunter holds without a visible target.
 - Detour only an unarmed, unshielded Hunter to a nearby safe shield.
+- Jink only the Hunter inward for one second after actual non-ring damage.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -46,6 +47,32 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 32: reactive inward jink after non-ring damage
+
+- Idea: A Nim extractor over 40 exact v15 controls from Trials 28 through 31
+  finds 411 sampled HP drops. Existing ring safety identifies and excludes
+  357 ring-associated drops, leaving 54 active non-ring damage samples. The
+  newest exact replay field attributes five of eight deaths to guns, including
+  four heavy-gun deaths. Proactive heavy-threat movement in Trials 10, 27,
+  and 28 changed too much movement before a hit and failed; use actual HP loss
+  as a narrow trigger instead.
+- Change: Only for the default Hunter, after actual HP loss while existing ring
+  safety is inactive, navigate 120 pixels inward for 24 ticks and emit
+  `jink_damage`. Target selection, aim, firing, weapons, arming, pursuit, hold
+  band, ring retreat, ring unstick, and every non-Hunter doctrine are
+  unchanged. Ring safety remains outer priority and suppresses the jink.
+- Isolation: `nim check` and the doctrine suite pass. Production-image startup
+  extraction confirms the candidate alone has
+  `ffaHunterDamageJink=true`, `ffaHunterDamageJinkTicks=24`, and
+  `ffaHunterDamageJinkDistance=120.0`; all existing v15 doctrine settings
+  match the exact control. Hosted `jink_damage` branch coverage is pending.
+- Artifact: Local linux/amd64 `andre-battleroyale:candidate-32`, digest
+  `sha256:179168ae02975e384c5aa5543d96436f3b2759d7194724744f3004d61bfa2c60`.
+  Upload pending CPUX.
+- XP id: Pending paired hosted requests.
+- Opponents: Pending fresh nearest-MRR field freeze.
+- Verdict: Pending hosted significance.
 
 ### Trial 31: nearby safe shield for an unarmed hunter
 

@@ -42,6 +42,9 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
+    check baseline.contains("FfaHunterDamageJink = true")
+    check baseline.contains("FfaHunterDamageJinkTicks = 24")
+    check baseline.contains("FfaHunterDamageJinkDistance = 120.0")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
@@ -96,3 +99,12 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "only hunter jinks inward after actual non-ring damage":
+    check baseline.count("action = \"jink_damage\"") == 1
+    check baseline.count(
+      "if tookDamage and not hunterRingSafety:") == 1
+    check baseline.count(
+      "bot.tick + FfaHunterDamageJinkTicks") == 1
+    check baseline.count(
+      "inward.norm() * FfaHunterDamageJinkDistance") == 1
