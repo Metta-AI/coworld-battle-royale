@@ -455,9 +455,12 @@ proc report(totals: Totals, windowTicks: int, radiusPx: float, label: string) =
     echo "  gains by origin: ", (if origins.len == 0: "none" else: origins.join(", "))
     echo &"  gains within the corpse radius: {totals.gainsAtCorpse}   " &
       &"median gain distance {f3(median(totals.gainDistances))} px"
-    echo "  a gain inside the radius is PROXIMITY, not causation: at GV45 " &
-      "nothing drops, so"
-    echo "  every gain here is a map spawn that happened to be near the kill."
+    echo "  radius is PROXIMITY, origin is PROVENANCE — a spawn gain near a " &
+      "corpse is still a spawn gain."
+    if totals.gainsByOrigin.getOrDefault("corpse") == 0:
+      echo "  no corpse-origin gains in this arm: dropWeaponOnDeath was off, " &
+        "so every gain"
+      echo "  above is a map spawn and the return side is zero by construction."
   echo ""
 
   echo "NET — return minus cost, per kill"

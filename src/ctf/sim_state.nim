@@ -231,6 +231,13 @@ proc gameHash*(sim: SimServer): uint64 =
     for spawn in sim.heavyGunSpawns:
       result.mixHashBool(spawn.present)
       result.mixHashInt(spawn.respawnAt)
+  if sim.config.isFfa() and sim.config.dropWeaponOnDeath:
+    result.mixHashInt(sim.droppedGuns.len)
+    for drop in sim.droppedGuns:
+      result.mixHashInt(drop.x)
+      result.mixHashInt(drop.y)
+      result.mixHashInt(drop.tier)
+      result.mixHashBool(drop.present)
   for spawn in sim.medKitSpawns:
     result.mixHashBool(spawn.present)
     result.mixHashInt(spawn.respawnAt)

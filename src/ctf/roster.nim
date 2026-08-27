@@ -620,6 +620,8 @@ proc recordCapture*(sim: var SimServer, playerIndex: int) =
 
 proc playerResultsJson*(sim: SimServer): string =
   ## Returns final player rewards and win states as JSON.
+  ## In FFA, win follows the winner slot because matches are decided by SLOT,
+  ## not the winner's team mask.
   var
     resultSlots: seq[int] = @[]
     names = newJArray()
@@ -684,6 +686,8 @@ proc playerResultsJson*(sim: SimServer): string =
       # mirrored into reward accounts): a slot whose player left reports 0.
       shotsFired = player.shotsFired
       shotsHit = player.shotsHit
+    if sim.config.isFfa():
+      playerWon = sim.ffaWinnerSlot >= 0 and slotIndex == sim.ffaWinnerSlot
     if not hasTeam and slotConfig.hasTeam:
       playerTeam = slotConfig.team
       hasTeam = true

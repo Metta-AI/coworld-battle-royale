@@ -187,6 +187,56 @@ suite "rich analysis events":
     check results["kills"][1].getInt == 1
     check results["kills"][2].getInt == 0
 
+  test "results identify the ffa winner slot and preserve ctf team wins":
+    let ffaConfig = defaultFfaConfig(3)
+    var ffa = initCtfForTest(ffaConfig)
+    for i in 0 ..< 3:
+      discard ffa.addPlayer("results-ffa" & $i)
+    ffa.startGame()
+    ffa.killPlayer(0, 1)
+    ffa.killPlayer(2, 1)
+    let ffaInput = ffa.none()
+    ffa.step(ffaInput, ffaInput)
+    check ffa.phase == GameOver
+    let ffaResults = parseJson(ffa.playerResultsJson())
+    let winnerSlot = ffaResults["winnerSlot"].getInt
+    var winningSlots: seq[int] = @[]
+    for slot in 0 ..< ffaResults["win"].len:
+      let value = ffaResults["win"][slot]
+      if value.getBool:
+        winningSlots.add(slot)
+    check winningSlots.len == 1
+    if winningSlots.len == 1:
+      check winningSlots[0] == winnerSlot
+      check winningSlots[0] == ffaResults["placementSlots"][0].getInt
+
+    let winnerIndex = ffa.playerIndexForSlot(winnerSlot)
+    check winnerIndex >= 0
+    if winnerIndex >= 0:
+      ffa.removePlayerAt(winnerIndex)
+      let winnerAccount = ffa.rewardAccountIndexForSlot(winnerSlot)
+      check winnerAccount >= 0
+      if winnerAccount >= 0:
+        ffa.rewardAccounts[winnerAccount].won = false
+      check parseJson(ffa.playerResultsJson())["win"][winnerSlot].getBool
+
+    var ctf = initCtfForTest(defaultGameConfig())
+    for i in 0 ..< 4:
+      discard ctf.addPlayer("results-ctf" & $i)
+    ctf.startGame()
+    ctf.finishGame(Red)
+    let ctfResults = parseJson(ctf.playerResultsJson())
+    var ctfWinningSlots: seq[int] = @[]
+    for slot in 0 ..< ctfResults["win"].len:
+      let value = ctfResults["win"][slot]
+      let playerIndex = ctf.playerIndexForSlot(slot)
+      check playerIndex >= 0
+      if playerIndex >= 0:
+        check value.getBool == (ctf.players[playerIndex].team == ctf.winner)
+      if value.getBool:
+        ctfWinningSlots.add(slot)
+    check ctfWinningSlots.len > 1
+
   test "action ids remain unique after the lobby resets its tick and slots":
     var game = twoTeamGame(collectEvents = true)
     game.players[0].placeAtCenter(60, MapHeight div 2)

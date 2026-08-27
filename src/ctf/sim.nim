@@ -527,6 +527,7 @@ proc resetPlasmaArcs*(sim: var SimServer) =
 
 proc resetGuns*(sim: var SimServer) =
   ## Places FFA weapon tiers with no opening stagger.
+  sim.droppedGuns = @[]
   if sim.config.isFfa():
     sim.placeFfaPickups(
       sim.lowGunSpawns,
@@ -1232,6 +1233,17 @@ proc killPlayer*(
   # and a respawning ctf player just overwrites it — but only ffa reads it.
   sim.players[targetIndex].deathTick = sim.tickCount
   sim.awardFfaKill(targetIndex, killerIndex)
+  var droppedTier = FfaWeaponUnarmed
+  if sim.config.isFfa() and sim.config.dropWeaponOnDeath and
+      sim.players[targetIndex].weaponTier > FfaWeaponUnarmed:
+    droppedTier = sim.players[targetIndex].weaponTier
+    sim.droppedGuns.add DroppedWeapon(
+      x: sim.players[targetIndex].x + CollisionW div 2,
+      y: sim.players[targetIndex].y + CollisionH div 2,
+      tier: droppedTier,
+      present: true,
+      dropTick: sim.tickCount
+    )
   sim.players[targetIndex].alive = false
   sim.players[targetIndex].velX = 0
   sim.players[targetIndex].velY = 0
@@ -1241,9 +1253,10 @@ proc killPlayer*(
   # the killfeed/scrubber markers diffed from it) records combat only.
   if not elimination:
     sim.recordDeath(targetIndex)
-  # Death is the victim-side record (source = victim, target = killer); the
-  # weapon-attributed Kill is emitted by each weapon's own damage site, where
-  # the weapon is known first-hand.
+  # Death is the victim-side record (source = victim, target = killer);
+  # amount carries the dropped weapon tier, or 0 when no weapon was dropped.
+  # The weapon-attributed Kill is emitted by each weapon's own damage site,
+  # where the weapon is known first-hand.
   sim.emitEvent(
     Death, source = targetIndex, target = killerIndex,
     weapon =
@@ -1255,7 +1268,8 @@ proc killPlayer*(
         "",
     x = float(sim.players[targetIndex].x + CollisionW div 2),
     y = float(sim.players[targetIndex].y + CollisionH div 2),
-    targetSlot = killerSlot
+    targetSlot = killerSlot,
+    amount = droppedTier
   )
   if sim.players[targetIndex].lives > 0:
     dec sim.players[targetIndex].lives
@@ -2509,6 +2523,32 @@ proc tryPickupGuns*(sim: var SimServer, playerIndex: int) =
     px = sim.players[playerIndex].x + CollisionW div 2
     py = sim.players[playerIndex].y + CollisionH div 2
     rangeSq = MedKitPickupRange * MedKitPickupRange
+  var
+    droppedIndex = -1
+    droppedTier = sim.players[playerIndex].weaponTier
+  for i, drop in sim.droppedGuns:
+    if drop.present and drop.tier > droppedTier and
+        distSq(px, py, drop.x, drop.y) <= rangeSq:
+      droppedIndex = i
+      droppedTier = drop.tier
+  if droppedIndex >= 0:
+    let drop = sim.droppedGuns[droppedIndex]
+    sim.droppedGuns[droppedIndex].present = false
+    sim.players[playerIndex].weaponTier = drop.tier
+    sim.players[playerIndex].fireWindup = 0
+    sim.players[playerIndex].windupBrads = -1
+    let token =
+      case drop.tier
+      of FfaWeaponLow: "dropped low gun"
+      of FfaWeaponMid: "dropped mid gun"
+      of FfaWeaponHeavy: "dropped heavy gun"
+      else: ""
+    sim.emitPickup(playerIndex, token, drop.x, drop.y)
+    sim.logGameEvent(
+      playerColorText(sim.players[playerIndex].color) &
+        " picked up a " & token
+    )
+    return
   template take(spawns: untyped, tier: int, token: string) =
     for spawn in spawns.mitems:
       if spawn.present and distSq(px, py, spawn.x, spawn.y) <= rangeSq:

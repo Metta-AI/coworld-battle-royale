@@ -912,6 +912,22 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
     for sp in sim.lowGunSpawns: addPickup("low gun", sp)
     for sp in sim.midGunSpawns: addPickup("mid gun", sp)
     for sp in sim.heavyGunSpawns: addPickup("heavy gun", sp)
+    for drop in sim.droppedGuns:
+      if not drop.present or
+          not sim.fovVisibleAt(playerIndex, drop.x, drop.y):
+        continue
+      case drop.tier
+      of FfaWeaponLow:
+        addEnt("item", "", float(drop.x), float(drop.y), -1, false,
+          %*{"item": "low gun"})
+      of FfaWeaponMid:
+        addEnt("item", "", float(drop.x), float(drop.y), -1, false,
+          %*{"item": "mid gun"})
+      of FfaWeaponHeavy:
+        addEnt("item", "", float(drop.x), float(drop.y), -1, false,
+          %*{"item": "heavy gun"})
+      else:
+        discard
     for sp in sim.barrierSpawns: addPickup("barrier", sp)
 
     # --- paintball beams in flight (sim.recentShots; cosmetic, never hashed) ---
@@ -1045,6 +1061,18 @@ proc firstPersonJson(sim: SimServer, playerIndex: int): JsonNode =
   for sp in sim.lowGunSpawns: addMapItem("low gun", sp)
   for sp in sim.midGunSpawns: addMapItem("mid gun", sp)
   for sp in sim.heavyGunSpawns: addMapItem("heavy gun", sp)
+  for drop in sim.droppedGuns:
+    if not drop.present:
+      continue
+    case drop.tier
+    of FfaWeaponLow:
+      mapItems.add(%*{"x": drop.x, "y": drop.y, "item": "low gun"})
+    of FfaWeaponMid:
+      mapItems.add(%*{"x": drop.x, "y": drop.y, "item": "mid gun"})
+    of FfaWeaponHeavy:
+      mapItems.add(%*{"x": drop.x, "y": drop.y, "item": "heavy gun"})
+    else:
+      discard
   for sp in sim.barrierSpawns: addMapItem("barrier", sp)
 
   let mapJson = %*{

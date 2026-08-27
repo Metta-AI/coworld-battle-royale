@@ -83,6 +83,8 @@ const SampleJson = """{
   "gunRange": {"gunRange": 500},
   "handicaps": {"handicaps": {"red": 0.5}},
   "barrierPickups": {"barrierPickups": 1},
+  "dropWeaponOnDeath": {"dropWeaponOnDeath": true, "mode": "ffa",
+                        "numPlayers": 4},
   "perks": {"perks": {"red": [["armor"], ["scope", "luck"]]}},
   "perkMods": {"perkMods": {"luckChance": 0.25}},
   "hitPoints": {"hitPoints": 5},

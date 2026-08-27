@@ -148,3 +148,36 @@ suite "FFA loot ledger instrumentation":
           explained = true
           break
       check explained
+
+  test "a death-site drop reads as a corpse gain, not a spawn gain":
+    ## The dormant `dropWeaponOnDeath` rule emits "dropped heavy gun" rather
+    ## than a new event kind, so a derivation keyed to the bare tokens would
+    ## keep reporting "no return on a kill" after the knob is activated —
+    ## the one conclusion this tooling exists to test.
+    let path =
+      getTempDir() / ("loot-ledger-drop-" & $getCurrentProcessId() & ".jsonl")
+    writeFile(path, """
+{"tick":10,"kind":"item_pickup","source":0,"target":-1,"item":"heavy gun","x":100.0,"y":100.0}
+{"tick":20,"kind":"item_pickup","source":1,"target":-1,"item":"low gun","x":900.0,"y":900.0}
+{"tick":30,"kind":"kill","source":1,"target":0,"weapon":"low gun","x":110.0,"y":100.0}
+{"tick":30,"kind":"death","source":0,"target":1,"weapon":"low gun","x":110.0,"y":100.0}
+{"tick":40,"kind":"item_pickup","source":1,"target":-1,"item":"dropped heavy gun","x":120.0,"y":100.0}
+""".strip() & "\n")
+    let
+      ledger = loadLedger(path)
+      timeline = ledger.tierTimeline()
+    check ledger.isFfaLedger()
+    check timeline[1][^1].tier == 3
+    check timeline[1][^1].origin == "corpse"
+    check timeline[1][1].origin == "spawn"
+    check ledger.droppedTierPickups(1).len == 1
+    check ledger.fixedTierPickups(1).len == 1
+    check ledger.tierPickups(1).len == 2
+
+    let outcomes = ledger.lootOutcomes(600, 96.0)
+    check outcomes.len == 1
+    check outcomes[0].killerTierBefore == 1
+    check outcomes[0].killerTierAfter == 3
+    check outcomes[0].gainOrigin == "corpse"
+    check outcomes[0].gainAtCorpse
+    removeFile(path)
