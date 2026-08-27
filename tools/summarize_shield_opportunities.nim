@@ -18,6 +18,12 @@ type
     nearTicks: int
     nearWindows: int
     nearFiles: int
+    mediumTicks: int
+    mediumWindows: int
+    mediumFiles: int
+    farTicks: int
+    farWindows: int
+    farFiles: int
     nearUnarmedTicks: int
     nearUnarmedWindows: int
     nearUnarmedFiles: int
@@ -93,10 +99,14 @@ proc addReplay(
     wasAlive = false
     wasShielded = false
     nearActive = false
+    mediumActive = false
+    farActive = false
     nearUnarmedActive = false
     mediumUnarmedActive = false
     farUnarmedActive = false
     fileNear = false
+    fileMedium = false
+    fileFar = false
     fileNearUnarmed = false
     fileMediumUnarmed = false
     fileFarUnarmed = false
@@ -117,6 +127,8 @@ proc addReplay(
     wasShielded = player.shieldHp > 0
     if not player.alive or wasShielded:
       nearActive = false
+      mediumActive = false
+      farActive = false
       nearUnarmedActive = false
       mediumUnarmedActive = false
       farUnarmedActive = false
@@ -127,6 +139,8 @@ proc addReplay(
       else: Inf
     let
       near = nearest <= ShieldNearRadius
+      medium = nearest <= ShieldMediumRadius
+      far = nearest <= ShieldFarRadius
       unarmed = player.weaponTier == FfaWeaponUnarmed
       nearUnarmed = near and unarmed
       mediumUnarmed = unarmed and nearest <= ShieldMediumRadius
@@ -136,6 +150,16 @@ proc addReplay(
       fileNear = true
       if not nearActive:
         inc totals.nearWindows
+    if medium:
+      inc totals.mediumTicks
+      fileMedium = true
+      if not mediumActive:
+        inc totals.mediumWindows
+    if far:
+      inc totals.farTicks
+      fileFar = true
+      if not farActive:
+        inc totals.farWindows
     if nearUnarmed:
       inc totals.nearUnarmedTicks
       fileNearUnarmed = true
@@ -152,6 +176,8 @@ proc addReplay(
       if not farUnarmedActive:
         inc totals.farUnarmedWindows
     nearActive = near
+    mediumActive = medium
+    farActive = far
     nearUnarmedActive = nearUnarmed
     mediumUnarmedActive = mediumUnarmed
     farUnarmedActive = farUnarmed
@@ -162,6 +188,10 @@ proc addReplay(
     )
   if fileNear:
     inc totals.nearFiles
+  if fileMedium:
+    inc totals.mediumFiles
+  if fileFar:
+    inc totals.farFiles
   if fileNearUnarmed:
     inc totals.nearUnarmedFiles
   if fileMediumUnarmed:
@@ -192,6 +222,12 @@ proc summarize(
   echo "nearTicks=", totals.nearTicks
   echo "nearWindows=", totals.nearWindows
   echo "nearFiles=", totals.nearFiles
+  echo "mediumTicks=", totals.mediumTicks
+  echo "mediumWindows=", totals.mediumWindows
+  echo "mediumFiles=", totals.mediumFiles
+  echo "farTicks=", totals.farTicks
+  echo "farWindows=", totals.farWindows
+  echo "farFiles=", totals.farFiles
   echo "nearUnarmedTicks=", totals.nearUnarmedTicks
   echo "nearUnarmedWindows=", totals.nearUnarmedWindows
   echo "nearUnarmedFiles=", totals.nearUnarmedFiles

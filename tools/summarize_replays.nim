@@ -4,6 +4,10 @@ import
   ../src/ctf/sim,
   "extract_events"
 
+const
+  EarlyTicks = 90 * 24
+  InnerRadius = 480.0
+
 type
   BattleRoyaleError = object of CatchableError
   WeaponStats = object
@@ -25,6 +29,7 @@ type
     shots: int
     hits: int
     weapons: Table[string, WeaponStats]
+    pickups: CountTable[string]
     fatalCauses: CountTable[string]
     rangeShots: array[6, int]
     rangeHits: array[6, int]
@@ -34,12 +39,27 @@ type
     aimError: int
     compensatedAimError: int
     compensationBetter: int
+    radialDistance: float
+    radialSamples: int
+    earlyRadialDistance: float
+    earlyRadialSamples: int
+    innerTicks: int
+    firstGunTicks: int
+    firstGunEpisodes: int
+    firstGunRadialDistance: float
+    firstGunRadialSamples: int
 
 proc mean(total, count: int): float =
   ## Returns one arithmetic mean or zero for an empty sample.
   if count == 0:
     return 0.0
   total.float / count.float
+
+proc mean(total: float, count: int): float =
+  ## Returns one floating-point mean or zero for an empty sample.
+  if count == 0:
+    return 0.0
+  total / count.float
 
 proc percent(part, whole: int): float =
   ## Returns one percentage or zero for an empty denominator.
@@ -203,8 +223,28 @@ proc addReplay(
     player.shots += extraction.slotShotsFired[slot]
     player.hits += extraction.slotShotsHit[slot]
     stats[name] = player
-  var triggers: Table[int64, SimEvent]
-  var shots: Table[int64, SimEvent]
+  let center = ffaRingCenter()
+  for frame in 0 ..< extraction.frameCount:
+    let tick = extraction.frameTick(frame)
+    for slot, name in slotNames:
+      let seat = extraction.frameSeat(frame, slot)
+      if (seat.flags and 1) == 0:
+        continue
+      let radial = hypot(
+        seat.x.float - center.x.float,
+        seat.y.float - center.y.float
+      )
+      stats[name].radialDistance += radial
+      inc stats[name].radialSamples
+      if tick <= EarlyTicks:
+        stats[name].earlyRadialDistance += radial
+        inc stats[name].earlyRadialSamples
+      if radial <= InnerRadius:
+        inc stats[name].innerTicks
+  var
+    triggers: Table[int64, SimEvent]
+    shots: Table[int64, SimEvent]
+    firstGunTicks = newSeqWith(slotNames.len, high(int))
   for event in extraction.events:
     if event.kind == GunTrigger:
       triggers[event.actionId] = event
@@ -219,6 +259,19 @@ proc addReplay(
         inc stats[name].weapons.mgetOrPut(event.weapon, WeaponStats()).hits
       elif event.kind == Death:
         stats[name].fatalCauses.inc(extraction.events.fatalCause(i, event.source))
+      elif event.kind == Pickup:
+        stats[name].pickups.inc(event.item)
+        if "gun" in event.item:
+          if firstGunTicks[event.source] == high(int):
+            stats[name].firstGunRadialDistance += hypot(
+              event.x - center.x.float,
+              event.y - center.y.float
+            )
+            inc stats[name].firstGunRadialSamples
+          firstGunTicks[event.source] = min(
+            firstGunTicks[event.source],
+            event.tick
+          )
       elif event.kind == ShotImpact and "gun" in event.weapon:
         let bin = event.distance.rangeBin()
         inc stats[name].rangeShots[bin]
@@ -242,6 +295,10 @@ proc addReplay(
                 target
               )
               stats[name] = player
+  for slot, tick in firstGunTicks:
+    if tick < high(int):
+      stats[slotNames[slot]].firstGunTicks += tick
+      inc stats[slotNames[slot]].firstGunEpisodes
 
 proc weaponText(player: PlayerStats): string =
   ## Returns compact accuracy totals grouped by weapon.
@@ -261,6 +318,15 @@ proc causeText(player: PlayerStats): string =
     if result.len > 0:
       result.add(",")
     result.add(&"{cause}:{player.fatalCauses[cause]}")
+
+proc pickupText(player: PlayerStats): string =
+  ## Returns compact pickup totals grouped by item name.
+  var items = toSeq(player.pickups.keys)
+  items.sort()
+  for item in items:
+    if result.len > 0:
+      result.add(",")
+    result.add(&"{item}:{player.pickups[item]}")
 
 proc rangeText(
   hits: array[6, int],
@@ -303,10 +369,16 @@ proc summarize(replayDir: string) =
   names.sort()
   echo "replays=", paths.len
   echo "name episodes winPct scoreMean killsMean deathsMean damageMean " &
-    "survivalMean placeMean accuracy weapons impacts targets " &
+    "survivalMean placeMean radialMean earlyRadialMean innerPct " &
+    "firstGunTick firstGunRadius accuracy weapons pickups impacts targets " &
     "aimError/compError/compBetterPct fatalCauses"
   for name in names:
-    let player = stats[name]
+    let
+      player = stats[name]
+      firstGunRadius = mean(
+        player.firstGunRadialDistance,
+        player.firstGunRadialSamples
+      )
     echo &"{name} {player.episodes} {percent(player.wins, player.episodes):.2f} " &
       &"{mean(player.score, player.episodes):.2f} " &
       &"{mean(player.kills, player.episodes):.2f} " &
@@ -314,8 +386,13 @@ proc summarize(replayDir: string) =
       &"{mean(player.damage, player.episodes):.2f} " &
       &"{mean(player.survivalTicks, player.episodes):.2f} " &
       &"{mean(player.places, player.placeSamples):.2f} " &
+      &"{mean(player.radialDistance, player.radialSamples):.2f} " &
+      &"{mean(player.earlyRadialDistance, player.earlyRadialSamples):.2f} " &
+      &"{percent(player.innerTicks, player.radialSamples):.2f} " &
+      &"{mean(player.firstGunTicks, player.firstGunEpisodes):.2f} " &
+      &"{firstGunRadius:.2f} " &
       &"{percent(player.hits, player.shots):.2f} " &
-      &"{player.weaponText()} " &
+      &"{player.weaponText()} {player.pickupText()} " &
       &"{rangeText(player.rangeHits, player.rangeShots)} " &
       &"{rangeText(player.targetRangeHits, player.targetRangeShots)} " &
       &"{player.aimText()} {player.causeText()}"
