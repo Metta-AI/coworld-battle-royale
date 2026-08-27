@@ -2,10 +2,17 @@
 
 ## Current state
 
-- League: Battle Royale, Coworld `battleroyale` v0.1.13.
+- League: Battle Royale, Coworld `battleroyale` v0.1.14.
 - Player: Andre von Houck (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`).
 - Submitted policy: `andre-battleroyale:v15`.
 - Upstream policy base: `a39eb196131ac0083506bb344130359de1c2d9c8`.
+- Game update audit: The live v0.1.14 variant keeps generated huge maps and
+  rotates seat ownership over the same fixed spawn pads using the episode
+  seed. New death-site gun drops are dormant because `dropWeaponOnDeath` is
+  false, and the new curated BR map pool is inactive because the variant still
+  uses `mapPath: gen`. Winner and loot-ledger changes are instrumentation. No
+  file under `players/`, including the example policy, changed from the
+  submitted policy base through audited upstream `8363831`.
 
 ## Backlog
 
@@ -84,7 +91,10 @@
   `sha256:09eb7b21347785d69e68788a131e1030bde8f8a81ff9611ddaa0497743a5da72`.
   Uploaded unsubmitted as `andre-battleroyale:v38`; immutable candidate is
   `andre-trial-37:v1`. Exact submitted control is `andre-battleroyale:v15`.
-- XP id: Pending exact same-field hosted control and candidate requests.
+- XP id: Exact submitted control
+  `xreq_794a18a6-23a1-4e79-94cb-cab0fe795a48` and candidate
+  `xreq_51cb4717-324e-44be-bbb7-2c112d665bd5`, both requested at 10 hosted
+  episodes on Coworld v0.1.14.
 - Opponents: Frozen outside-top-three field at request creation: Andre #11 at
   1446.11 MMR versus nearest unique other players aosgoods at 1437.96
   (`eatth-battleroyale-decision-stack-v29:v1`), sivannn at 1432.19
