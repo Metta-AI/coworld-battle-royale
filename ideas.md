@@ -90,8 +90,9 @@
   0.85 passive band, 240-pixel initial-arm cap, 80-pixel safety margin,
   60-tick ring unstick, and every other printed champion setting. The binary
   contains `UPGRADE`, `upgrade_trip`, and `move_upgrade`. Hosted candidate
-  branch confirmation is pending; replay counterfactuals are behavior evidence
-  only and are never score.
+  isolation validates all 10 artifacts and counts 244 `upgrade_trip` objective
+  ticks plus 244 `move_upgrade` actions. The branch fired; artifact and replay
+  diagnostics are behavior evidence only and are never score.
 - Artifact: Local Linux amd64 `stierlitz:candidate-42`, command
   `/bin/baseline`, digest
   `sha256:ab74b170b486a57f259d6f00b674ae14c3f4457b10a7f5744bfe53ae3f202a43`.
@@ -99,15 +100,19 @@
   candidate `stierlitz-trial-42:v1` after source commit `93b92a3` was pushed.
 - XP id: Initial ten-episode control
   `xreq_bf9e9180-2f71-4014-a531-1724e998895c`; initial ten-episode candidate
-  `xreq_9bcbfbbf-ed92-45ca-a952-1d4d92b32f30`.
+  `xreq_9bcbfbbf-ed92-45ca-a952-1d4d92b32f30`. The exact same-field
+  20-episode extension is pending launch for both arms.
 - Opponents: At freeze Andre is #15 at 1401.03 MRR. The nearest three unique
   other players are Kenny Sheftel (`kenshef-my-player:v1`, 1402.56), Aaron
   (`aaln-br-hunter:v2`, 1405.91), and softmaxwell (`Picasso:v63`, 1407.55), in
   that fixed order for both arms. Each champion was verified on its live
   player page.
-- Verdict: Pending hosted statistical comparison. No candidate will be kept or
-  submitted without a statistically significant improvement over
-  `stierlitz:v1` on the exact same field.
+- Verdict: Initial 10 per arm is positive but inconclusive: control mean
+  157.3000, candidate mean 182.1000, delta +24.8000, two-sided Welch 95
+  percent CI [-46.1557, 95.7557], p=0.472193. This is not a keep. Extend the
+  exact same field by 20 episodes per arm, then judge the cumulative 30 per
+  arm. No candidate will be kept or submitted without a statistically
+  significant improvement over `stierlitz:v1`.
 
 ### Trial 41: defer low-gun fire beyond the accurate range
 
