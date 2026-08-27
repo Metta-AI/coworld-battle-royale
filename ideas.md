@@ -77,10 +77,18 @@
   ring behavior, Pact, every other doctrine, and all submitted v15 settings
   are unchanged. A visible low-gun target in the withheld 520-to-700 interval
   emits reason `low_gun_wait`.
-- Isolation: Pending Nim checks, production startup extraction, and hosted
-  candidate branch confirmation. Replay and artifact opportunity counts are
-  behavior evidence only, never score.
-- Artifact: Pending Linux amd64 build, commit, push, and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, the hosted
+  fire-opportunity extractor, and the Linux amd64 production build pass.
+  Production startup reports `ffaHunterLowGunFireRange=520.0` while retaining
+  Hunter, the submitted 0.85 passive band, 240-pixel arm cap, 80-pixel safety
+  margin, 60-tick ring unstick, and every other printed v15 setting. Hosted
+  candidate branch confirmation is pending; replay and artifact opportunity
+  counts are behavior evidence only, never score.
+- Artifact: Local Linux amd64 `andre-battleroyale:candidate-41`, command
+  `/bin/baseline`, digest
+  `sha256:19e3111c091abe00c8c86f33656c5fb699b68636a94457536e07808309cae490`.
+  Uploaded unsubmitted as main candidate `andre-battleroyale:v42` and immutable
+  XP candidate `andre-trial-41:v1` after source commit `d2cc3d5` was pushed.
 - XP id: Pending exact same-field hosted control and candidate requests.
 - Opponents: Pending the required live nearest-MRR freeze at XP creation.
 - Verdict: Pending hosted statistical comparison. Champion
