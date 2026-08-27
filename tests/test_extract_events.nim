@@ -288,7 +288,7 @@ suite "tier-2 event extraction (tools/extract_events)":
     check extraction.frames.len == FramesHeaderBytes +
       extraction.frameCount *
         frameRecordBytes(extraction.frameSlots, extraction.frameTeams)
-    check extraction.frames[0 ..< 8] == "CTFFRM01"
+    check extraction.frames[0 ..< 8] == "CTFFRM02"
     check extraction.frameTick(0) == 1
     check extraction.frameTick(extraction.frameCount - 1) == extraction.ticks
 

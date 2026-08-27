@@ -24,11 +24,37 @@
 ## - a seat's `lives` budget. It is not in the ledger, so "gone for good" is
 ##   derived from a `death` row with no later `respawn` row for that seat,
 ##   which is true for any lives count.
+## - a derived tier is only as good as the assumption that `item_pickup` is the
+##   SOLE tier transition. It holds for both arms of the drop experiment: the
+##   dormant default has nothing to drop, and an activated `dropWeaponOnDeath`
+##   collects through a prefixed pickup row ("dropped heavy gun"). Any FUTURE
+##   rule that moves a tier without an `item_pickup` row silently breaks every
+##   derivation below.
 
-import std/[algorithm, json, os, sets, strutils, tables]
+import std/[algorithm, json, math, os, sets, strutils, tables]
 
 type
   LedgerError* = object of CatchableError
+
+  TierTransition* = object
+    tick*: int
+    tier*: int
+    origin*: string
+    ## "corpse" is reserved for drop-on-death transitions.
+
+  LootOutcome* = object
+    tick*: int
+    killer*: int
+    victim*: int
+    weapon*: string
+    killerTierBefore*: int
+    killerTierAfter*: int
+    victimTier*: int
+    tierGain*: bool
+    gainTick*: int
+    gainDistPx*: float
+    gainAtCorpse*: bool
+    gainOrigin*: string
 
   LedgerRow* = object
     ## One event row, in the emission order the file carries.
@@ -41,6 +67,7 @@ type
     hp*: int
     blocked*: int
     x*, y*: float
+    distance*: float           ## shot_impact: pixels the shot travelled.
     item*: string
     content*: string
 
@@ -78,6 +105,36 @@ type
     row*: LedgerRow
     matched*: bool
 
+let TierByToken* = {
+  "fist": 0,
+  "low gun": 1,
+  "mid gun": 2,
+  "heavy gun": 3
+}.toTable
+
+const DroppedPickupPrefix* = "dropped "
+  ## A death-site drop is the SAME gun as its map-spawn twin, emitted under a
+  ## prefixed item token ("dropped heavy gun"). Match on the prefix rather
+  ## than enumerating the drop tokens: a tier derivation that only knows the
+  ## bare tokens silently stops seeing gains the moment `dropWeaponOnDeath`
+  ## is activated, which is exactly the arm the derivation exists to measure.
+
+proc pickupTier*(item: string): int =
+  ## The tier a pickup item confers, or -1 when it is not a weapon tier.
+  let token =
+    if item.startsWith(DroppedPickupPrefix):
+      item[DroppedPickupPrefix.len .. ^1]
+    else:
+      item
+  if token != "fist" and TierByToken.hasKey(token):
+    TierByToken[token]
+  else:
+    -1
+
+proc pickupOrigin*(item: string): string =
+  ## Where a tier pickup came from: a killed player's gear, or the map.
+  if item.startsWith(DroppedPickupPrefix): "corpse" else: "spawn"
+
 proc fail*(message: string) =
   raise newException(LedgerError, message)
 
@@ -103,6 +160,7 @@ proc readRow(node: JsonNode): LedgerRow =
     blocked: num("blocked"),
     x: real("x"),
     y: real("y"),
+    distance: real("distance"),
     item: text("item"),
     content: text("content")
   )
@@ -165,9 +223,8 @@ proc rowsOf*(ledger: Ledger, kind: string): seq[LedgerRow] =
       result.add(row)
 
 proc seatCount*(ledger: Ledger): int =
-  ## Seats the episode dealt. The summary's roster is authoritative; a ledger
-  ## without one (a truncated file, or the live server's stream) falls back to
-  ## the highest seat any row mentions.
+  ## Seats the episode dealt. Use the larger of the summary roster and the
+  ## highest seat any row mentions because live summaries may omit the roster.
   result = ledger.summary.slotAddress.len
   for row in ledger.rows:
     result = max(result, max(row.source, row.target) + 1)
@@ -301,19 +358,120 @@ proc tierPickups*(ledger: Ledger, seat: int): seq[LedgerRow] =
   ## ladder; use fixedTierPickups/droppedTierPickups to split its sources.
   for row in ledger.rows:
     if row.kind == "item_pickup" and row.source == seat and
-        (row.item.isFixedTierPickup() or row.item.isDroppedTierPickup()):
+        row.item.pickupTier() >= 0:
       result.add(row)
 
 proc fixedTierPickups*(ledger: Ledger, seat: int): seq[LedgerRow] =
   ## Fixed map-spawn weapon pickups for one seat.
   for row in ledger.rows:
     if row.kind == "item_pickup" and row.source == seat and
-        row.item.isFixedTierPickup():
+        row.item.pickupTier() >= 0 and row.item.pickupOrigin() == "spawn":
       result.add(row)
 
 proc droppedTierPickups*(ledger: Ledger, seat: int): seq[LedgerRow] =
   ## Death-site weapon drops collected by one seat.
   for row in ledger.rows:
     if row.kind == "item_pickup" and row.source == seat and
-        row.item.isDroppedTierPickup():
+        row.item.pickupTier() >= 0 and row.item.pickupOrigin() == "corpse":
       result.add(row)
+
+proc isFfaLedger*(ledger: Ledger): bool =
+  ## Whether the ledger carries FFA identity weapon tiers. CTF ledgers use a
+  ## flat "gun" token and have no gun pickups, so tier derivations are
+  ## meaningless there; callers should gate on this instead of reading an
+  ## all-zero timeline.
+  for row in ledger.rows:
+    if TierByToken.hasKey(row.weapon):
+      return true
+    if row.kind == "item_pickup" and row.item.pickupTier() >= 0:
+      return true
+
+proc tierTimeline*(ledger: Ledger): Table[int, seq[TierTransition]] =
+  ## Returns each seat's FFA weapon-tier history, seeded unarmed at tick 0.
+  ## `start` is the seeded state, `spawn` a map pickup, `corpse` a death-site
+  ## drop collected off a killed player.
+  result = initTable[int, seq[TierTransition]]()
+  let seats = ledger.seatCount()
+  for seat in 0 ..< seats:
+    result[seat] = @[
+      TierTransition(tick: 0, tier: 0, origin: "start")
+    ]
+  for row in ledger.rows:
+    if row.kind != "item_pickup" or row.item.pickupTier() < 0:
+      continue
+    if not result.hasKey(row.source):
+      continue
+    result[row.source].add(TierTransition(
+      tick: row.tick,
+      tier: row.item.pickupTier(),
+      origin: row.item.pickupOrigin()
+    ))
+  for seat in result.keys:
+    result[seat].sort(proc (a, b: TierTransition): int = cmp(a.tick, b.tick))
+
+proc tierAt*(
+    timeline: Table[int, seq[TierTransition]], seat, tick: int
+): int =
+  ## Returns the last known tier at or before `tick`, or unarmed.
+  if not timeline.hasKey(seat):
+    return
+  for transition in timeline[seat]:
+    if transition.tick > tick:
+      break
+    result = transition.tier
+
+proc lootOutcomes*(
+    ledger: Ledger, windowTicks: int, radiusPx: float
+): seq[LootOutcome] =
+  ## Derives one outcome per credited kill. With `dropWeaponOnDeath` off --
+  ## the GV45 default -- every tier gain is a `spawn` pickup because nothing
+  ## drops; with it on, a gain off a killed player reads `corpse`. `radiusPx`
+  ## is annotation-only: it lets callers ask whether the gain happened at the
+  ## corpse SITE, without filtering gains that happened farther away, and
+  ## proximity is not the same claim as the `corpse` origin.
+  let timeline = ledger.tierTimeline()
+  for kill in ledger.matchedKills():
+    let
+      windowEnd = kill.tick + max(0, windowTicks)
+      before = timeline.tierAt(kill.source, kill.tick)
+      after = timeline.tierAt(kill.source, windowEnd)
+      victimTier = timeline.tierAt(kill.target, kill.tick)
+    var
+      gainTick = -1
+      gainDist = -1.0
+      gainOrigin = ""
+    if after > before:
+      for transition in timeline.getOrDefault(kill.source, @[]):
+        if transition.tick <= kill.tick:
+          continue
+        if transition.tick > windowEnd:
+          break
+        if transition.tier <= before:
+          continue
+        gainTick = transition.tick
+        gainOrigin = transition.origin
+        for pickup in ledger.rows:
+          if pickup.kind == "item_pickup" and
+              pickup.source == kill.source and
+              pickup.tick == gainTick and
+              pickup.item.pickupTier() == transition.tier:
+            let
+              dx = pickup.x - kill.x
+              dy = pickup.y - kill.y
+            gainDist = hypot(dx, dy)
+            break
+        break
+    result.add(LootOutcome(
+      tick: kill.tick,
+      killer: kill.source,
+      victim: kill.target,
+      weapon: kill.weapon,
+      killerTierBefore: before,
+      killerTierAfter: after,
+      victimTier: victimTier,
+      tierGain: after > before,
+      gainTick: gainTick,
+      gainDistPx: gainDist,
+      gainAtCorpse: gainDist >= 0.0 and gainDist <= radiusPx,
+      gainOrigin: gainOrigin
+    ))
