@@ -92,7 +92,9 @@
   `sha256:b30f9ed7f4833ee0159a4c81661d2b44a73e2d54c9b1914f916e30466523471f`.
   Uploaded unsubmitted as main candidate `andre-battleroyale:v41` and immutable
   XP candidate `andre-trial-40:v1` after source commit `b84399a` was pushed.
-- XP id: Pending exact same-field hosted control and candidate requests.
+- XP id: Initial ten-episode control
+  `xreq_0b54e8df-22b2-4188-87ee-45dc15a7771e`; initial ten-episode candidate
+  `xreq_05f03485-bc0a-4099-99e5-5cd0f032fb90`.
 - Opponents: At freeze Stierlitz is #17 at 1368.61 MRR. The nearest three
   unique other players are Kenny Sheftel (`kenshef-my-player:v1`, 1365.71),
   NanosaurusX (`nancy-br:v1`, 1356.78), and sivannn
