@@ -76,9 +76,16 @@
   not the behavior or score.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-34`, digest
   `sha256:98b2e10c2b402e5627392a12e6fda57a37f37d95e639cc24923583f643ef2f7b`.
-  Upload pending CPUX.
-- XP id: Pending paired hosted requests.
-- Opponents: Pending fresh nearest-MRR field freeze.
+  Uploaded unsubmitted as `andre-battleroyale:v35`; immutable candidate
+  `andre-trial-34:v1`; exact v15 control `andre-trial-34:v2`.
+- XP id: Baseline `xreq_008e14ca-e63c-4bbc-a02c-5021fdc7097e` and candidate
+  `xreq_ee2544d0-d76d-49c6-bd50-dcd5794f9156`, both requested at 10 hosted
+  episodes.
+- Opponents: Frozen outside-top-three field at request creation: Andre #14 at
+  1382.71 MMR versus nearest unique other players ravidear5-code at 1382.25
+  (`shade-doctrine-v1:v1`), Aaron at 1391.38 (`aaln-br-hunter:v2`), and
+  aosgoods at 1365.67 (`eatth-battleroyale-decision-stack-v29:v1`). Both arms
+  use this exact roster and ordering.
 - Verdict: Pending hosted significance.
 
 ### Trial 33: reactive turret scan after unseen damage
