@@ -5,6 +5,9 @@
 - League: Battle Royale, Coworld `battleroyale` v0.1.14.
 - Player: Andre von Houck (`ply_607f17a2-3acf-405b-91fe-d12ef1001c00`).
 - Submitted policy: `stierlitz:v1`.
+- Policy naming: All future uploads use only `stierlitz:vN`. Never create a
+  second policy name or a `stierlitz-*` suffix. The player remains Andre von
+  Houck.
 - Administrative relabel: Uploaded the exact `andre-battleroyale:v15`
   champion image digest
   `sha256:2f1536a688b3dcfbad572bd21a7d830d1a7627e5d290f036faeb2d426414f30a`
