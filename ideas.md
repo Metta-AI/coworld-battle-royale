@@ -83,19 +83,24 @@
   candidate clones are `andre-trial-36:v1` and `andre-trial-36:v2`.
 - XP id: Baseline `xreq_36c71215-03cf-41ee-bdf8-48a6a60f64fc` and candidate
   `xreq_a4758084-920b-4769-ab3a-2afc6d3cc400`, both requested at 10 hosted
-  episodes.
+  episodes. A 20-per-arm exact same-field extension is pending.
 - Opponents: Frozen outside-top-three field at request creation: Andre #14 at
   1414.54 MMR versus nearest unique other players ravidear5-code at 1415.51
   (`shade-doctrine-v1:v1`), NishadIota at 1370.38
   (`nishad-battleroyale-baseline:v1`), and softmaxwell at 1370.00
   (`Picasso:v63`). Both arms use this exact roster and ordering.
-- Verdict: Revert. Both exact requests completed 10 of 10 episodes with zero
+- Verdict: Pending extension. Both initial exact requests completed 10 of 10
+  episodes with zero
   failures. The hosted dashboard reports exact control 217.00 versus candidate
   190.10. The request-score comparison is candidate minus control -26.9000,
   95 percent Welch CI [-112.0643, 58.2643], p=0.514183. The result is
-  inconclusive and trends worse, so it does not merit a same-field extension.
-  Exact v15 behavior was restored; `andre-battleroyale:v37` remains uploaded
-  but unsubmitted, and champion `andre-battleroyale:v15` remains live.
+  inconclusive and is not a keep. Exact replay extraction also finds candidate
+  first gun tick 625.11 versus 1016.20, 1.10 versus 0.20 kills, and placement
+  1.80 versus 1.90, while every roster member has materially shorter survival
+  in the candidate request. That field-wide imbalance merits one same-field
+  extension before rejecting the active mechanism. Working source remains
+  exact v15 while the extension runs; `andre-battleroyale:v37` is unsubmitted
+  and champion `andre-battleroyale:v15` remains live.
 
 ### Trial 35: pixel-accurate hunter ring-unstick clearance
 
