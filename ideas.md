@@ -86,9 +86,13 @@
 - Artifact: Local Linux amd64 `andre-battleroyale:candidate-38`, command
   `/bin/baseline`, digest
   `sha256:84b427cdcd4273f3bf853716373ff6396088a0c7a531ce6e7429f4271633c323`.
-  Upload is pending the committed and pushed source.
+  Uploaded unsubmitted as main candidate `andre-battleroyale:v39` and immutable
+  XP candidate `andre-trial-38:v1` after source commit `e13ed5f` was pushed.
 - XP id: Pending exact same-field hosted control and candidate requests.
-- Opponents: Pending the required live nearest-MRR freeze at XP creation.
+- Opponents: Live champion rating 1455.79 at freeze. The exact nearest three
+  unique other players are Aaron (`aaln-br-hunter:v2`, 1458.92), richard
+  (`co-gas-battleroyale-baseline-richard:v3`, 1449.48), and softmaxwell
+  (`Picasso:v63`, 1472.27), in that fixed order for both arms.
 - Verdict: Pending hosted statistical comparison. Champion
   `andre-battleroyale:v15` remains submitted unless this candidate wins
   significantly.
