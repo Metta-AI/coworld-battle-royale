@@ -21,6 +21,13 @@ type
     visibleUpgradeDistance: float
     towardUpgradeTicks: int
     awayUpgradeTicks: int
+    visibleEnemySamples: int
+    visibleEnemyDistance: float
+    armedEnemySamples: int
+    towardEnemyTicks: int
+    awayEnemyTicks: int
+    inwardTicks: int
+    outwardTicks: int
     fireTicks: int
   SightStats = object
     pickups: int
@@ -191,8 +198,8 @@ proc nearestUpgrades(
   for spawn in sim.heavyGunSpawns:
     sim.addSpawn(playerIndex, 3, spawn, result.any, result.visible)
 
-proc seesEnemy(sim: SimServer, playerIndex: int): bool =
-  ## Reports whether the viewer's estimated policy cone contains an opponent.
+proc nearestVisibleEnemy(sim: SimServer, playerIndex: int): Upgrade =
+  ## Returns the nearest opponent visible through the policy cone.
   for otherIndex, other in sim.players:
     if otherIndex == playerIndex or not other.alive:
       continue
@@ -201,7 +208,18 @@ proc seesEnemy(sim: SimServer, playerIndex: int): bool =
       other.x + CollisionW div 2,
       other.y + CollisionH div 2
     ):
-      return true
+      let distance = hypot(
+        (other.x - sim.players[playerIndex].x).float,
+        (other.y - sim.players[playerIndex].y).float
+      )
+      if not result.valid or distance < result.distance:
+        result = Upgrade(
+          valid: true,
+          tier: other.weaponTier,
+          x: other.x + CollisionW div 2,
+          y: other.y + CollisionH div 2,
+          distance: distance
+        )
 
 proc motionToward(player: Player, upgrade: Upgrade): float =
   ## Returns signed velocity toward one upgrade in pixels per tick.
@@ -219,15 +237,16 @@ proc addTick(
   phase: LogicPhase,
   player: Player,
   motionScale: int,
+  center: Upgrade,
   upgrades: tuple[any, visible: Upgrade],
-  enemyVisible: bool,
+  enemy: Upgrade,
   aimDelta: int
 ) =
   ## Adds one active policy tick to its observable-condition cell.
   let
     tier = clamp(player.weaponTier, 0, 3)
     hasUpgrade = int(upgrades.visible.valid)
-    hasEnemy = int(enemyVisible)
+    hasEnemy = int(enemy.valid)
   var cell = logic.cells[phase][tier][hasUpgrade][hasEnemy]
   inc cell.ticks
   let speed = hypot(
@@ -251,6 +270,21 @@ proc addTick(
       inc cell.towardUpgradeTicks
     elif toward < -0.05:
       inc cell.awayUpgradeTicks
+  if enemy.valid:
+    inc cell.visibleEnemySamples
+    cell.visibleEnemyDistance += enemy.distance
+    if enemy.tier > 0:
+      inc cell.armedEnemySamples
+    let toward = player.motionToward(enemy)
+    if toward > 0.05:
+      inc cell.towardEnemyTicks
+    elif toward < -0.05:
+      inc cell.awayEnemyTicks
+  let inward = player.motionToward(center)
+  if inward > 0.05:
+    inc cell.inwardTicks
+  elif inward < -0.05:
+    inc cell.outwardTicks
   if player.fireWindup > 0 or player.fireCooldown > 0:
     inc cell.fireTicks
   logic.cells[phase][tier][hasUpgrade][hasEnemy] = cell
@@ -312,7 +346,17 @@ proc addReplay(
             else:
               LogicLater
           upgrades = sim.nearestUpgrades(playerIndex)
-          enemyVisible = sim.seesEnemy(playerIndex)
+          enemy = sim.nearestVisibleEnemy(playerIndex)
+          ringCenter = ffaRingCenter()
+          center = Upgrade(
+            valid: true,
+            x: ringCenter.x,
+            y: ringCenter.y,
+            distance: hypot(
+              (ringCenter.x - player.x - CollisionW div 2).float,
+              (ringCenter.y - player.y - CollisionH div 2).float
+            )
+          )
         var prior = previous.getOrDefault(player.address)
         let
           aimDelta =
@@ -348,8 +392,9 @@ proc addReplay(
           phase,
           player,
           sim.config.motionScale,
+          center,
           upgrades,
-          enemyVisible,
+          enemy,
           aimDelta
         )
         stats[player.address] = logic
@@ -424,6 +469,24 @@ proc printCell(
       cell.awayUpgradeTicks,
       cell.visibleUpgradeSamples
     )
+    enemyDistance = mean(
+      cell.visibleEnemyDistance,
+      cell.visibleEnemySamples
+    )
+    armedEnemyPct = percent(
+      cell.armedEnemySamples,
+      cell.visibleEnemySamples
+    )
+    towardEnemyPct = percent(
+      cell.towardEnemyTicks,
+      cell.visibleEnemySamples
+    )
+    awayEnemyPct = percent(
+      cell.awayEnemyTicks,
+      cell.visibleEnemySamples
+    )
+    inwardPct = percent(cell.inwardTicks, cell.ticks)
+    outwardPct = percent(cell.outwardTicks, cell.ticks)
   echo &"LOGIC\t{name}\t{phase.phaseText()}\ttier={tier}" &
     &"\tupgrade={upgrade}\tenemy={enemy}\tticks={cell.ticks}" &
     &"\tstationaryPct={percent(cell.stationaryTicks, cell.ticks):.2f}" &
@@ -434,6 +497,12 @@ proc printCell(
     &"\tvisibleUpgradeDist={visibleDistance:.2f}" &
     &"\ttowardUpgradePct={towardPct:.2f}" &
     &"\tawayUpgradePct={awayPct:.2f}" &
+    &"\tvisibleEnemyDist={enemyDistance:.2f}" &
+    &"\tarmedEnemyPct={armedEnemyPct:.2f}" &
+    &"\ttowardEnemyPct={towardEnemyPct:.2f}" &
+    &"\tawayEnemyPct={awayEnemyPct:.2f}" &
+    &"\tinwardPct={inwardPct:.2f}" &
+    &"\toutwardPct={outwardPct:.2f}" &
     &"\tfirePct={percent(cell.fireTicks, cell.ticks):.2f}"
 
 proc printLogic(stats: Table[string, PlayerLogic]) =
