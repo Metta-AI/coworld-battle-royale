@@ -58,6 +58,45 @@
 
 ## Trial log
 
+### Trial 40: orbit the submitted hunter hold band
+
+- Idea: The newest exact-v15 field produces 17,996 passive-hold ticks while
+  replay attribution records nine deaths in 10 episodes, including four to
+  mid guns. The hold-motion extractor finds 1,515 sampled passive holds across
+  all 10 hosted files, and every one sends a zero movement mask. Across the
+  preceding two exact-control fields, all 3,393 additional sampled holds also
+  send zero movement. In the newest field, 88.53 percent of consecutive hold
+  samples move less than 12 pixels per half-second sample. The submitted
+  radial target collapses onto the Hunter's current position once it reaches
+  the 0.85 band, leaving it stationary against unseen attackers. Preserve the
+  proven survival radius but move tangentially along it. This is distinct from
+  rejected band-depth changes, turret-only scans, and reactive threat jinks.
+- Change: Only for the default Hunter's normal passive-hold fallback, replace
+  its same-bearing radial target with a continuously advancing tangential
+  target at the exact submitted 0.85 radius. Even and odd seats orbit opposite
+  directions, with a fixed 0.50 tangent lead, to balance map orientation.
+  Existing ring safety, persistent ring unstick, gun trips, pursuit, late
+  close, target selection, aim and firing after contact, items, Pact, all
+  other doctrines, and every numeric v15 setting are unchanged. Active
+  fallback decisions emit phase `HUNTER_ORBIT`, objective `hunter_orbit`,
+  action `orbit_band`, and reason `orbit_hold`.
+- Isolation: `nim check`, the doctrine source-contract suite, the hosted
+  hold-motion extractor, and the Linux amd64 production build pass. Production
+  startup reports `ffaHunterOrbit=true` and `ffaHunterOrbitLead=0.5` while
+  preserving the submitted 0.85 passive band, 240-pixel arm cap, 60-tick ring
+  unstick, and every other printed v15 setting. Hosted candidate movement and
+  branch activation are pending; control extraction is behavior evidence
+  only, never score.
+- Artifact: Local Linux amd64 `andre-battleroyale:candidate-40`, command
+  `/bin/baseline`, digest
+  `sha256:b30f9ed7f4833ee0159a4c81661d2b44a73e2d54c9b1914f916e30466523471f`.
+  Upload is pending committed and pushed source.
+- XP id: Pending exact same-field hosted control and candidate requests.
+- Opponents: Pending the required live nearest-MRR freeze at XP creation.
+- Verdict: Pending hosted statistical comparison. Champion
+  `andre-battleroyale:v15` remains submitted unless this candidate wins
+  significantly.
+
 ### Trial 39: inward fallback band only while unarmed
 
 - Idea: The newest 10 exact-v15 controls on live Coworld v0.1.14 put
