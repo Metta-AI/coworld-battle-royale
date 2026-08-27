@@ -258,7 +258,6 @@ const
   FfaPassiveEngageRangeDefault = 120.0
   FfaHunterArmDefault = true
   FfaHunterFireRangeDefault = true
-  FfaHunterLowGunFireRangeDefault = 520.0
   FfaHunterPursuitDefault = true
   FfaHunterPursuitMinHpDefault = 6
   FfaHunterSupportRadiusDefault = 300.0
@@ -543,7 +542,6 @@ var
   FfaPassiveEngageRange = FfaPassiveEngageRangeDefault
   FfaHunterArm = FfaHunterArmDefault
   FfaHunterFireRange = FfaHunterFireRangeDefault
-  FfaHunterLowGunFireRange = FfaHunterLowGunFireRangeDefault
   FfaHunterPursuit = FfaHunterPursuitDefault
   FfaHunterPursuitMinHp = FfaHunterPursuitMinHpDefault
   FfaHunterSupportRadius = FfaHunterSupportRadiusDefault
@@ -1991,13 +1989,6 @@ proc ffaWeaponFireRange(weaponTier: int): float =
   else:
     520.0
 
-proc ffaDoctrineFireRange(weaponTier: int): float =
-  ## Returns the doctrine-specific firing cap for one weapon tier.
-  result = ffaWeaponFireRange(weaponTier)
-  if FfaDoctrine == FfaHunter and
-      FfaHunterFireRange and weaponTier == FfaWeaponLow:
-    result = min(result, FfaHunterLowGunFireRange)
-
 proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
     actors: seq[Actor], me, center: Vec, ringRadius: int): bool =
   if not bot.ffaLootTrip or not bot.ffaLootTargetValid:
@@ -2155,18 +2146,10 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
-    if targetIndex >= 0:
-      let fireRange =
-        if FfaHunterFireRange:
-          ffaDoctrineFireRange(weaponTier)
-        else:
-          FfaPassiveEngageRange
-      if targetDist < fireRange:
-        result.engageReason = "fire_range"
-      elif FfaDoctrine == FfaHunter and FfaHunterFireRange and
-          weaponTier == FfaWeaponLow and
-          targetDist < ffaWeaponFireRange(weaponTier):
-        result.engageReason = "low_gun_wait"
+    if targetIndex >= 0 and
+        targetDist < (if FfaHunterFireRange:
+          ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
+      result.engageReason = "fire_range"
     return
   if not FfaHunterArm:
     bot.ffaLootTrip = false
@@ -2548,7 +2531,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         aimTarget = track.pos + track.vel * LeadTicks
     desiredAim = bradsOf(aimTarget - me)
     let
-      fireRange = ffaDoctrineFireRange(weaponTier)
+      fireRange = ffaWeaponFireRange(weaponTier)
       hunterRangeGate = FfaDoctrine in {FfaHunter, FfaPact} and
         FfaHunterFireRange and
         not unarmed and targetDist < fireRange
@@ -4365,10 +4348,6 @@ proc runBot(url: string) =
     FfaHunterArmDefault)
   FfaHunterFireRange = parseEnvBool("CTF_BOT_FFA_HUNTER_FIRE_RANGE",
     FfaHunterFireRangeDefault)
-  FfaHunterLowGunFireRange = clamp(parseEnvFloat(
-    "CTF_BOT_FFA_HUNTER_LOW_GUN_FIRE_RANGE",
-    FfaHunterLowGunFireRangeDefault
-  ), 1.0, float(FfaLowGunRange))
   FfaHunterPursuit = parseEnvBool("CTF_BOT_FFA_HUNTER_PURSUIT",
     FfaHunterPursuitDefault)
   FfaHunterPursuitMinHp = max(1, parseEnvInt(
@@ -4425,7 +4404,6 @@ proc runBot(url: string) =
     " ffaPassiveEngageRange=", FfaPassiveEngageRange,
     " ffaHunterArm=", FfaHunterArm,
     " ffaHunterFireRange=", FfaHunterFireRange,
-    " ffaHunterLowGunFireRange=", FfaHunterLowGunFireRange,
     " ffaHunterPursuit=", FfaHunterPursuit,
     " ffaHunterPursuitMinHp=", FfaHunterPursuitMinHp,
     " ffaHunterSupportRadius=", FfaHunterSupportRadius,

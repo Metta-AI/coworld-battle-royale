@@ -97,9 +97,14 @@
   (`Battle Royale Baseline:v1`, 1348.84), and NanosaurusX (`nancy-br:v1`,
   1407.58), in that fixed order for both arms. Each champion was verified on
   its live player page.
-- Verdict: Pending hosted statistical comparison. Champion
-  `andre-battleroyale:v15` remains submitted unless this candidate wins
-  significantly.
+- Verdict: Revert. The exact ten-per-arm hosted comparison gives control
+  160.20 and candidate 175.10, delta +14.90, Welch 95 percent CI
+  [-34.1169, 63.9169], p=0.531008. All 10 candidate artifacts are valid, but
+  only two files contain the opportunity and the branch emits just 43 sampled
+  `low_gun_wait` decisions across three windows. The active but sparse change
+  is inconclusive with a weak signal, so do not spend an extension on it.
+  Restore the exact submitted v15 source. `andre-battleroyale:v42` remains
+  uploaded but unsubmitted and `andre-battleroyale:v15` remains champion.
 
 ### Trial 40: orbit the submitted hunter hold band
 
