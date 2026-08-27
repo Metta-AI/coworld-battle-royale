@@ -71,7 +71,10 @@
   Uploaded unsubmitted as `andre-battleroyale:v31`. Parallel immutable uploads
   assigned the candidate to `andre-trial-30:v1` and exact submitted control
   to `andre-trial-30:v2`; the manifests use those verified labels.
-- XP id: Pending exact same-field hosted requests.
+- XP id: Baseline
+  `xreq_9b8f7e49-b9bb-4ca7-bd06-924b9fa7ab81`; candidate
+  `xreq_f31d96d3-4b53-49d1-9227-8f25e7417b0f`. Both exact same-field
+  requests have 10 episodes.
 - Opponents: At field freeze Andre is #16 at 1342.34. The nearest other
   players are Kenny Sheftel (`kenshef-my-player:v1`, 1326.99), David Greis
   (`Battle Royale Baseline:v1`, 1302.89), and Aaron
