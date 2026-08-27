@@ -263,6 +263,8 @@ const
   FfaHunterSupportRadiusDefault = 300.0
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
+  FfaHunterSensorLootCloneDefault = true
+  FfaHunterCloneUpgradeRadiusDefault = 520.0
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
@@ -547,6 +549,8 @@ var
   FfaHunterSupportRadius = FfaHunterSupportRadiusDefault
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
+  FfaHunterSensorLootClone = FfaHunterSensorLootCloneDefault
+  FfaHunterCloneUpgradeRadius = FfaHunterCloneUpgradeRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
@@ -1920,9 +1924,10 @@ proc ffaPactMemoryFresh(bot: Bot): bool =
 
 proc bestFfaGun(client: ProtocolClient, me, center: Vec,
     safeRadius: int, currentTier: int, safeMargin = 0.0,
-    maxDistance = 1e18, avoidActors: seq[Actor] = @[]): tuple[
+    maxDistance = 1e18, avoidActors: seq[Actor] = @[],
+    preferNearest = false): tuple[
     found: bool, pos: Vec, tier: int] =
-  ## Selects the highest tier in the safe zone, then the nearest one.
+  ## Selects a safe gun by tier or distance, with deterministic tie breaks.
   ## Position breaks exact-distance ties so protocol object order is irrelevant.
   result = (false, me, currentTier)
   var bestDist = 1e18
@@ -1951,13 +1956,24 @@ proc bestFfaGun(client: ProtocolClient, me, center: Vec,
       if opponentCloser:
         continue
       let sameDistance = abs(d - bestDist) < 1e-6
-      if not result.found or tier > result.tier or
-          (tier == result.tier and
-            (d < bestDist or
-              (sameDistance and
-                (gun.x < result.pos.x or
-                  (abs(gun.x - result.pos.x) < 1e-6 and
-                    gun.y < result.pos.y))))):
+      let better =
+        if preferNearest:
+          not result.found or d < bestDist or
+            (sameDistance and
+              (tier > result.tier or
+                (tier == result.tier and
+                  (gun.x < result.pos.x or
+                    (abs(gun.x - result.pos.x) < 1e-6 and
+                      gun.y < result.pos.y)))))
+        else:
+          not result.found or tier > result.tier or
+            (tier == result.tier and
+              (d < bestDist or
+                (sameDistance and
+                  (gun.x < result.pos.x or
+                    (abs(gun.x - result.pos.x) < 1e-6 and
+                      gun.y < result.pos.y)))))
+      if better:
         result = (true, gun, tier)
         bestDist = d
 
@@ -1990,7 +2006,9 @@ proc ffaWeaponFireRange(weaponTier: int): float =
     520.0
 
 proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
-    actors: seq[Actor], me, center: Vec, ringRadius: int): bool =
+    actors: seq[Actor], me, center: Vec, ringRadius: int,
+    maxDistance: float): bool =
+  ## Re-checks one committed Hunter gun trip against current safety limits.
   if not bot.ffaLootTrip or not bot.ffaLootTargetValid:
     return false
   let
@@ -2002,7 +2020,7 @@ proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
       ffaGameTicksSince(bot.tick, bot.ffaLootStartedTick) >
         FfaHunterArmTripMaxSec * TargetFps:
     return false
-  if d > FfaHunterArmTripMaxDetourRadius or
+  if d > maxDistance or
       dist(target, center) > safeLimit or
       not ffaGunStillPresent(client, target, bot.ffaLootTargetTier):
     return false
@@ -2141,7 +2159,19 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     result.action = "engage"
     result.engageReason = "pursue_weak"
     return
-  if not unarmed:
+  if not FfaHunterArm:
+    bot.ffaLootTrip = false
+    bot.ffaLootTargetValid = false
+    bot.ffaLootTargetTier = 0
+    bot.ffaLootStartedTick = 0
+    if not unarmed and targetIndex >= 0 and
+        targetDist < (if FfaHunterFireRange:
+          ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
+      result.engageReason = "fire_range"
+    return
+  let cloneUpgrade = FfaHunterSensorLootClone and
+    FfaDoctrine == FfaHunter and weaponTier < FfaWeaponHeavy
+  if not unarmed and not cloneUpgrade:
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
@@ -2151,15 +2181,25 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
           ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
       result.engageReason = "fire_range"
     return
-  if not FfaHunterArm:
-    bot.ffaLootTrip = false
-    bot.ffaLootTargetValid = false
-    bot.ffaLootTargetTier = 0
-    bot.ffaLootStartedTick = 0
-    return
-  if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):
+  let detourRadius =
+    if unarmed:
+      FfaHunterArmTripMaxDetourRadius
+    else:
+      FfaHunterCloneUpgradeRadius
+  if ffaHunterGunStillValid(
+    bot,
+    client,
+    actors,
+    me,
+    center,
+    ringRadius,
+    detourRadius
+  ):
+    let upgrading = not unarmed
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-      "LOOT", "loot_trip", "move_gun")
+      if upgrading: "CLONE_UPGRADE" else: "LOOT",
+      if upgrading: "clone_upgrade_trip" else: "loot_trip",
+      if upgrading: "move_clone_upgrade" else: "move_gun")
     result.moveTarget = bot.ffaLootTarget
     return
   bot.ffaLootTrip = false
@@ -2167,17 +2207,25 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
   let gun = bestFfaGun(client, me, center, ringRadius, weaponTier,
-    FfaHunterArmSafeMargin, FfaHunterArmTripMaxDetourRadius, actors)
+    FfaHunterArmSafeMargin, detourRadius, actors,
+    preferNearest = FfaHunterSensorLootClone)
   if gun.found:
+    let upgrading = not unarmed
     bot.ffaLootTrip = true
     bot.ffaLootTarget = gun.pos
     bot.ffaLootTargetValid = true
     bot.ffaLootTargetTier = gun.tier
     bot.ffaLootStartedTick = bot.tick
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-      "LOOT", "loot_trip", "move_gun")
+      if upgrading: "CLONE_UPGRADE" else: "LOOT",
+      if upgrading: "clone_upgrade_trip" else: "loot_trip",
+      if upgrading: "move_clone_upgrade" else: "move_gun")
     result.moveTarget = gun.pos
     result.lootTripStarted = true
+  elif not unarmed and targetIndex >= 0 and
+      targetDist < (if FfaHunterFireRange:
+        ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
+    result.engageReason = "fire_range"
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
@@ -2515,7 +2563,11 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     engageReason = intent.engageReason
     hunterRingSafety = FfaDoctrine == FfaHunter and
       intent.action == "retreat_ring"
+    hunterSensorScan = FfaDoctrine == FfaHunter and
+      FfaHunterSensorLootClone and targetIndex < 0
   var action = intent.action
+  if hunterSensorScan:
+    action = "clone_sensor_scan"
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
@@ -2564,7 +2616,11 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     else:
       moveMask = octantBits(center - me)
 
-  let rotBits = aimRotateBits(desiredAim, bot.estAim, CombatDeadband)
+  let rotBits =
+    if hunterSensorScan:
+      ButtonB
+    else:
+      aimRotateBits(desiredAim, bot.estAim, CombatDeadband)
   var mask = moveMask or rotBits
   let triggerPressed = wantFire and not bot.firedLast
   if triggerPressed:
@@ -4361,6 +4417,12 @@ proc runBot(url: string) =
   FfaHunterArmTripMaxDetourRadius = max(1.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS",
     FfaHunterArmTripMaxDetourRadiusDefault))
+  FfaHunterSensorLootClone = parseEnvBool(
+    "CTF_BOT_FFA_HUNTER_SENSOR_LOOT_CLONE",
+    FfaHunterSensorLootCloneDefault)
+  FfaHunterCloneUpgradeRadius = max(1.0, parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_CLONE_UPGRADE_RADIUS",
+    FfaHunterCloneUpgradeRadiusDefault))
   FfaHunterArmSafeMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN",
     FfaHunterArmSafeMarginDefault, strict = true))
@@ -4409,6 +4471,8 @@ proc runBot(url: string) =
     " ffaHunterSupportRadius=", FfaHunterSupportRadius,
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
+    " ffaHunterSensorLootClone=", FfaHunterSensorLootClone,
+    " ffaHunterCloneUpgradeRadius=", FfaHunterCloneUpgradeRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
     " ffaHunterRingMargin=", FfaHunterRingMargin,

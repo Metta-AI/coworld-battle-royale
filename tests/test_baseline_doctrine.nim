@@ -40,6 +40,8 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
+    check baseline.contains("FfaHunterSensorLootCloneDefault = true")
+    check baseline.contains("FfaHunterCloneUpgradeRadiusDefault = 520.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
@@ -96,3 +98,14 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "top-player sensor loot clone is isolated":
+    check baseline.count("cloneUpgrade = FfaHunterSensorLootClone") == 1
+    check baseline.count("preferNearest = FfaHunterSensorLootClone") == 1
+    check baseline.count(
+      "hunterSensorScan = FfaDoctrine == FfaHunter") == 1
+    check baseline.count("action = \"clone_sensor_scan\"") == 1
+    check baseline.count("\"clone_upgrade_trip\"") == 2
+    check baseline.count("\"move_clone_upgrade\"") == 2
+    check baseline.contains("CTF_BOT_FFA_HUNTER_SENSOR_LOOT_CLONE")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_CLONE_UPGRADE_RADIUS")

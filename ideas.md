@@ -68,6 +68,59 @@
 
 ## Trial log
 
+### Trial 45: clone the top-player sensor-driven tier-acquisition state
+
+- Idea: A new Nim downloader collected all 160 games from live competition
+  rounds 1822 through 1829 containing at least one exact current policy among
+  `meyer-br-consolidated:v1`, `jbr-v21-champ:v1`,
+  `rshadow-br-v76ctrl:v1`, and submitted `stierlitz:v1`. Hash-validated
+  replay profiles cover 128 meyer-svg, 96 Jordan, 160 Ryan's shadow, and 96
+  Andre appearances. The top three score 136.53 to 147.47 versus Andre's
+  98.05, arm in 85 to 91 percent of games versus 67 percent, and collect
+  0.31 to 0.37 mid guns plus 0.19 to 0.39 heavy guns per game versus 0.073
+  and 0.031. Conditional reconstruction finds the same sensor rule in all
+  three: with no visible enemy they turn by exactly five brads on 84 to 98
+  percent of ticks, then stop sweeping and lock aim when an enemy appears.
+  Submitted Hunter turns on only 10 to 32 percent of no-enemy ticks. Top
+  uninterrupted scan runs average four to ten ticks and reach 56 to 83 ticks
+  for meyer and Jordan, more than a full 51-tick rotation. Their loot logic
+  remains active after the first gun; Hunter disables it. Replay extraction
+  selects and specifies the candidate but is never score.
+- Change: Replace only the default Hunter's item-acquisition state machine
+  with the reconstructed top-player state. While no enemy is protocol-visible,
+  hold the native five-brad turn input continuously while preserving the
+  existing movement intent. On contact, restore the unchanged target aim and
+  fire logic immediately. Keep safe gun memory active below heavy tier,
+  choose the nearest safe higher-tier visible gun, and allow an armed upgrade
+  trip within 520 pixels. Preserve the submitted 240-pixel opening-gun cap,
+  30-second trip lifetime, 80-pixel ring margin, opponent-closer rejection,
+  navigation, pursuit, combat gates, firing, damage behavior, ring retreat,
+  unstick, items other than guns, and every non-Hunter doctrine. This is one
+  coherent item-sensing and tier-acquisition strategy, not separate combat or
+  survival changes. It emits `clone_sensor_scan`, `clone_upgrade_trip`, and
+  `move_clone_upgrade` for hosted branch confirmation.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Two local v0.1.14 isolation episodes produced
+  24 player artifacts. The new sensing branch fired in all 24, totaling
+  16,674 `clone_sensor_scan` ticks. Four artifacts reached
+  `clone_upgrade_trip` for 803 ticks, and one emitted two
+  `move_clone_upgrade` ticks, proving both the persistent upgrade state and
+  upgrade movement are reachable. Replays and logs prove behavior only and
+  are not score. Hosted artifacts must confirm the uploaded candidate too.
+- Artifact: Local Linux amd64 image `stierlitz:candidate-45`, command
+  `/bin/baseline`, digest
+  `sha256:278e7f999930e06b912b50453a8bf2363334a69a848276ea8776516e4b84112e`.
+  Commit, push, and upload are pending. Per user naming, the candidate will use
+  only policy name `stierlitz` with its next version; no suffixed policy will
+  be created. It remains unsubmitted unless it beats exact champion
+  `stierlitz:v1` with hosted statistical significance.
+- XP id: Pending matched hosted control and candidate requests, at least ten
+  episodes per arm.
+- Opponents: Pending one-time live MRR freeze immediately before both matched
+  requests. Andre is outside the top three, so the field will be the exact
+  three nearest unique other players.
+- Verdict: Pending hosted significance; inconclusive is not a keep.
+
 ### Trial 44: shorten FFA moving-target lead to two ticks
 
 - Idea: `tools/summarize_target_leads.nim` reconstructs actual trigger and
