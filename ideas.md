@@ -106,7 +106,11 @@
   `clone_upgrade_trip` for 803 ticks, and one emitted two
   `move_clone_upgrade` ticks, proving both the persistent upgrade state and
   upgrade movement are reachable. Replays and logs prove behavior only and
-  are not score. Hosted artifacts must confirm the uploaded candidate too.
+  are not score. All ten initial hosted `stierlitz:v5` artifacts emit
+  `clone_sensor_scan`, totaling 23,247 ticks. Six emit
+  `clone_upgrade_trip` for 354 ticks, and five emit `move_clone_upgrade` for
+  120 ticks. This confirms the uploaded candidate exercised the reconstructed
+  sensing and upgrade behavior; artifact counts remain branch proof, not score.
 - Artifact: Local Linux amd64 image `stierlitz:candidate-45`, command
   `/bin/baseline`, digest
   `sha256:278e7f999930e06b912b50453a8bf2363334a69a848276ea8776516e4b84112e`.
