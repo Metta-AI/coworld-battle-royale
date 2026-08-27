@@ -258,7 +258,6 @@ const
   FfaPassiveEngageRangeDefault = 120.0
   FfaHunterArmDefault = true
   FfaHunterFireRangeDefault = true
-  FfaTargetLeadTicksDefault = 2.0
   FfaHunterPursuitDefault = true
   FfaHunterPursuitMinHpDefault = 6
   FfaHunterSupportRadiusDefault = 300.0
@@ -543,7 +542,6 @@ var
   FfaPassiveEngageRange = FfaPassiveEngageRangeDefault
   FfaHunterArm = FfaHunterArmDefault
   FfaHunterFireRange = FfaHunterFireRangeDefault
-  FfaTargetLeadTicks = FfaTargetLeadTicksDefault
   FfaHunterPursuit = FfaHunterPursuitDefault
   FfaHunterPursuitMinHp = FfaHunterPursuitMinHpDefault
   FfaHunterSupportRadius = FfaHunterSupportRadiusDefault
@@ -2530,10 +2528,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       let d = dist(track.pos, target.pos)
       if d < bestTrackD:
         bestTrackD = d
-        aimTarget = track.pos + track.vel * FfaTargetLeadTicks
-        if not unarmed and
-            abs(track.vel.x) + abs(track.vel.y) > 0.01:
-          action = "aim_short_lead"
+        aimTarget = track.pos + track.vel * LeadTicks
     desiredAim = bradsOf(aimTarget - me)
     let
       fireRange = ffaWeaponFireRange(weaponTier)
@@ -4353,9 +4348,6 @@ proc runBot(url: string) =
     FfaHunterArmDefault)
   FfaHunterFireRange = parseEnvBool("CTF_BOT_FFA_HUNTER_FIRE_RANGE",
     FfaHunterFireRangeDefault)
-  FfaTargetLeadTicks = max(0.0, parseEnvFloat(
-    "CTF_BOT_FFA_TARGET_LEAD_TICKS", FfaTargetLeadTicksDefault,
-    strict = true))
   FfaHunterPursuit = parseEnvBool("CTF_BOT_FFA_HUNTER_PURSUIT",
     FfaHunterPursuitDefault)
   FfaHunterPursuitMinHp = max(1, parseEnvInt(
@@ -4412,7 +4404,6 @@ proc runBot(url: string) =
     " ffaPassiveEngageRange=", FfaPassiveEngageRange,
     " ffaHunterArm=", FfaHunterArm,
     " ffaHunterFireRange=", FfaHunterFireRange,
-    " ffaTargetLeadTicks=", FfaTargetLeadTicks,
     " ffaHunterPursuit=", FfaHunterPursuit,
     " ffaHunterPursuitMinHp=", FfaHunterPursuitMinHp,
     " ffaHunterSupportRadius=", FfaHunterSupportRadius,

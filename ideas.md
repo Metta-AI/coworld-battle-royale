@@ -90,8 +90,9 @@
   `ffaTargetLeadTicks=2.0` while retaining Hunter, weapon-range firing,
   pursuit, the submitted 0.85 hold band, 240-pixel arm cap, 80-pixel safety
   margin, and 60-tick ring unstick. The source contract confirms CTF still
-  uses its existing six-tick `LeadTicks`. Hosted artifact branch confirmation
-  is pending. Replays and logs prove behavior only and are not score.
+  uses its existing six-tick `LeadTicks`. Hosted artifacts contain 1,678
+  `aim_short_lead` actions across seven of ten candidate episodes, proving the
+  behavior fired. Replays and logs prove behavior only and are not score.
 - Artifact: Local Linux amd64 `stierlitz:candidate-44`, command
   `/bin/baseline`, digest
   `sha256:07d534907760533832de6a4bd65d4765563bd86c6536f6300992972966f6c182`.
@@ -108,7 +109,13 @@
   (`kenshef-my-player:v1`, 1372.89), in that fixed order for both arms. Each
   champion was re-verified on its live player page immediately before Trial
   43 and the live leaderboard still reports the same policies and ratings.
-- Verdict: Pending hosted significance; inconclusive is not a keep.
+- Verdict: Revert. Exact champion control mean 187.8 versus candidate mean
+  213.3 over ten hosted episodes per arm: candidate-control +25.5, 95 percent
+  CI [-42.5675, 93.5675], Welch p=0.433969. The positive point estimate is
+  not statistically significant, so it is not a keep. No extension was run:
+  the user redirected effort from marginal aim tuning to deep top-player
+  strategy reconstruction. `stierlitz:v1` remains the submitted champion;
+  `stierlitz:v4` and `stierlitz-trial-44:v1` remain unsubmitted.
 
 ### Trial 43: hold instead of normal weak-target pursuit
 
