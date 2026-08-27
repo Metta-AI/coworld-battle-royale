@@ -24,7 +24,6 @@ suite "baseline FFA doctrine":
     check baseline.count("requestedDoctrine == \"hunter\"") == 1
     check baseline.count("of FfaHunter: \"hunter\"") == 1
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM")
-    check baseline.contains("CTF_BOT_FFA_HUNTER_UNARMED_BAND")
     check baseline.contains("CTF_BOT_FFA_HUNTER_FIRE_RANGE")
     check baseline.contains("CTF_BOT_FFA_HUNTER_PURSUIT")
     check baseline.contains("CTF_BOT_FFA_HUNTER_PURSUIT_MIN_HP")
@@ -35,7 +34,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("CTF_BOT_FFA_HUNTER_RING_MARGIN")
     check baseline.contains("FfaHunterArmDefault = true")
     check baseline.contains("FfaPassiveBandDefault = 0.85")
-    check baseline.contains("FfaHunterUnarmedBandDefault = 0.70")
     check baseline.contains("FfaHunterFireRangeDefault = true")
     check baseline.contains("FfaHunterPursuitDefault = true")
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
@@ -45,10 +43,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
-    check baseline.contains(
-      "\"HUNTER_UNARMED\",\n      \"unarmed_band\",\n" &
-        "      \"hold_unarmed_band\""
-    )
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
 

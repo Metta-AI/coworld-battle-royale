@@ -86,8 +86,11 @@
   hosted-artifact extractor, and the Linux amd64 production build pass.
   Production startup reports `ffaHunterUnarmedBand=0.7` while preserving the
   submitted `ffaPassiveBand=0.85`, 240-pixel arm cap, 60-tick ring unstick,
-  and all other printed v15 settings. Hosted artifact activation is pending;
-  the control extractor is behavior evidence only, never score.
+  and all other printed v15 settings. All 10 hosted candidate artifacts are
+  valid and record 9,926 `unarmed_band` objective ticks, 9,926
+  `hold_unarmed_band` action ticks, and 832 sampled 0.70-band decisions versus
+  zero in exact control, proving the branch fired. These diagnostics are never
+  score.
 - Artifact: Local Linux amd64 `andre-battleroyale:candidate-39`, command
   `/bin/baseline`, digest
   `sha256:49df8f5f9872ea982b684979c0f874655a72886abdcec9049894d1e8bca96228`.
@@ -100,9 +103,12 @@
   unique other players are softmaxwell (`Picasso:v63`, 1413.97), sivannn
   (`sivan-br-ringsurfer:v1`, 1412.24), and Aaron (`aaln-br-hunter:v2`,
   1443.10), in that fixed order for both arms.
-- Verdict: Pending hosted statistical comparison. Champion
-  `andre-battleroyale:v15` remains submitted unless this candidate wins
-  significantly.
+- Verdict: Revert. The exact ten-per-arm hosted comparison gives control
+  128.70 and candidate 129.40, delta +0.70, Welch 95 percent CI
+  [-73.2705, 74.6705], p=0.984349. The active mechanism is statistically
+  indistinguishable from zero, so do not spend an extension on it. Restore the
+  exact submitted v15 source. `andre-battleroyale:v15` remains champion and
+  `andre-battleroyale:v40` remains uploaded but unsubmitted.
 
 ### Trial 38: pursue an equal-health armed opponent
 
