@@ -88,7 +88,9 @@
   `sha256:84b427cdcd4273f3bf853716373ff6396088a0c7a531ce6e7429f4271633c323`.
   Uploaded unsubmitted as main candidate `andre-battleroyale:v39` and immutable
   XP candidate `andre-trial-38:v1` after source commit `e13ed5f` was pushed.
-- XP id: Pending exact same-field hosted control and candidate requests.
+- XP id: Initial ten-episode control
+  `xreq_0f546494-ddd3-47d5-9855-e51a031bf237`; initial ten-episode candidate
+  `xreq_3979f444-86ca-4c3f-94c6-44ffe49b6455`.
 - Opponents: Live champion rating 1455.79 at freeze. The exact nearest three
   unique other players are Aaron (`aaln-br-hunter:v2`, 1458.92), richard
   (`co-gas-battleroyale-baseline-richard:v3`, 1449.48), and softmaxwell
