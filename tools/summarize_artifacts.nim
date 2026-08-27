@@ -1,5 +1,5 @@
 import
-  std/[algorithm, json, os, strutils, tables],
+  std/[algorithm, json, os, sets, strutils, tables],
   zippy/ziparchives
 
 type
@@ -15,8 +15,11 @@ type
     armedHeavyStrafeSamples: int
     events: CountTable[string]
     objectives: CountTable[string]
+    objectiveFiles: CountTable[string]
     actions: CountTable[string]
+    actionFiles: CountTable[string]
     reasons: CountTable[string]
+    reasonFiles: CountTable[string]
     bands: CountTable[string]
     tiers: CountTable[string]
 
@@ -40,6 +43,15 @@ proc addCounts(
   for key, value in source:
     target.inc(key, value.getInt())
 
+proc addPresentKeys(
+  target: var CountTable[string],
+  source: JsonNode
+) =
+  ## Counts one file for each positive JSON summary counter.
+  for key, value in source:
+    if value.getInt() > 0:
+      target.inc(key)
+
 proc addArtifact(
   totals: var ArtifactTotals,
   zipPath: string
@@ -59,7 +71,10 @@ proc addArtifact(
   totals.lootTrips += summary["lootTrips"].getInt()
   totals.events.addCounts(summary["events"])
   totals.objectives.addCounts(summary["objectiveTicks"])
+  totals.objectiveFiles.addPresentKeys(summary["objectiveTicks"])
   totals.actions.addCounts(summary["actionTicks"])
+  totals.actionFiles.addPresentKeys(summary["actionTicks"])
+  var fileReasons: HashSet[string]
   for line in files["ticks.jsonl"].splitLines():
     if line.len == 0:
       continue
@@ -71,9 +86,13 @@ proc addArtifact(
       inc totals.heavyStrafeSamples
       if sample["tier"].getInt() > 0:
         inc totals.armedHeavyStrafeSamples
-    totals.reasons.inc(sample["engageReason"].getStr())
+    let reason = sample["engageReason"].getStr()
+    totals.reasons.inc(reason)
+    fileReasons.incl(reason)
     totals.bands.inc(sample["band"].getStr())
     totals.tiers.inc($sample["tier"].getInt())
+  for reason in fileReasons:
+    totals.reasonFiles.inc(reason)
 
 proc printCounts(label: string, counts: CountTable[string]) =
   ## Prints one aggregate count table in stable key order.
@@ -114,7 +133,10 @@ echo "unarmedHeavyStrafeSamples=",
   totals.heavyStrafeSamples - totals.armedHeavyStrafeSamples
 printCounts("event", totals.events)
 printCounts("objective", totals.objectives)
+printCounts("objectiveFiles", totals.objectiveFiles)
 printCounts("action", totals.actions)
+printCounts("actionFiles", totals.actionFiles)
 printCounts("reason", totals.reasons)
+printCounts("reasonFiles", totals.reasonFiles)
 printCounts("band", totals.bands)
 printCounts("tier", totals.tiers)
