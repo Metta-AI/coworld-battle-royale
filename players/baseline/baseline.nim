@@ -266,8 +266,6 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
-  FfaHunterShieldDetour = true
-  FfaHunterShieldDetourRadius = 160.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -1963,35 +1961,6 @@ proc bestFfaGun(client: ProtocolClient, me, center: Vec,
         result = (true, gun, tier)
         bestDist = d
 
-proc bestFfaShield(client: ProtocolClient, me, center: Vec,
-    safeRadius: int, actors: seq[Actor]): tuple[found: bool, pos: Vec] =
-  ## Selects a nearby visible shield that is ring-safe and uncontested.
-  result = (false, me)
-  var bestDist = 1e18
-  let safeLimit = max(0.0, float(max(1, safeRadius)) -
-    FfaHunterArmSafeMargin)
-  for o in client.spriteObjectsWithLabel(LabelShield):
-    let
-      shield = client.mapPos(o)
-      d = dist(me, shield)
-    if d > FfaHunterShieldDetourRadius or
-        dist(shield, center) > safeLimit:
-      continue
-    var opponentCloser = false
-    for actor in actors:
-      if dist(actor.pos, shield) < d:
-        opponentCloser = true
-        break
-    if opponentCloser:
-      continue
-    if not result.found or d < bestDist or
-        (abs(d - bestDist) < 1e-6 and
-          (shield.x < result.pos.x or
-            (abs(shield.x - result.pos.x) < 1e-6 and
-              shield.y < result.pos.y))):
-      result = (true, shield)
-      bestDist = d
-
 const
   FfaLootTargetRadius = 32.0
 
@@ -2158,7 +2127,7 @@ proc shadeFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
 
 proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, unarmed, pursue, hasShield: bool): FfaIntent =
+    weaponTier: int, unarmed: bool, pursue: bool): FfaIntent =
   result = passiveFfaIntent(bot, actors, me, center, ringRadius, targetIndex,
     false)
   if FfaHunterRingMargin > 0.0:
@@ -2182,13 +2151,6 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
           ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
       result.engageReason = "fire_range"
     return
-  if FfaDoctrine == FfaHunter and FfaHunterShieldDetour and not hasShield:
-    let shield = bestFfaShield(client, me, center, ringRadius, actors)
-    if shield.found:
-      result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-        "LOOT", "shield_trip", "move_shield")
-      result.moveTarget = shield.pos
-      return
   if not FfaHunterArm:
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
@@ -2222,7 +2184,7 @@ proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     weaponTier: int, unarmed: bool, pursue, pactActive,
     pactMemoryFresh: bool): FfaIntent =
   result = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-    targetIndex, targetDist, weaponTier, unarmed, pursue, false)
+    targetIndex, targetDist, weaponTier, unarmed, pursue)
   if not pactActive or not pactMemoryFresh:
     return
   if unarmed and (result.lootTripStarted or result.objective == "loot_trip"):
@@ -2341,11 +2303,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     elif weapon == LabelWeaponLowGun: 1
     else: 0
   let unarmed = weaponTier == 0
-  var hasShield = false
-  for o in client.spriteObjectsWithLabel(LabelShieldCarried):
-    if dist(client.mapPos(o), me) <= 30.0:
-      hasShield = true
-      break
 
   var hp = bot.hp
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
@@ -2541,8 +2498,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         targetIndex, engage)
     of FfaHunter:
       intent = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-        targetIndex, targetDist, weaponTier, unarmed, hunterPursue,
-        hasShield)
+        targetIndex, targetDist, weaponTier, unarmed, hunterPursue)
     of FfaPact:
       intent = pactFfaIntent(bot, client, actors, me, center, ringRadius,
         targetIndex, targetDist, weaponTier, unarmed, hunterPursue,
@@ -4455,8 +4411,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
-    " ffaHunterShieldDetour=", FfaHunterShieldDetour,
-    " ffaHunterShieldDetourRadius=", FfaHunterShieldDetourRadius,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

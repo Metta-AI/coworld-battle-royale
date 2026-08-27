@@ -69,8 +69,11 @@
   `ffaHunterShieldDetour=true` and a 160-pixel radius only in the candidate,
   while candidate and exact submitted control retain Hunter, the 60-tick
   ring unstick, 240-pixel arm cap, 30-second arm-trip cap, 80-pixel safety
-  margin, zero ring margin, and 0.85 hold band. Hosted branch coverage is
-  pending.
+  margin, zero ring margin, and 0.85 hold band. Hosted startup logs confirm
+  the candidate flag and radius. Behavioral coverage failed: all 10 candidate
+  artifacts are valid but contain zero `shield_trip` and `move_shield`
+  actions, as do all 10 controls. The frozen field did not expose a
+  qualifying protocol-visible shield to the candidate.
 - Artifact: `andre-battleroyale:candidate-31`, Linux amd64 image digest
   `sha256:7f4e0ca0152cc0531a649ed5f341c018c4ade2f6230650f3cbd98e04396de8e2`.
   Uploaded unsubmitted as `andre-battleroyale:v32`; exact candidate and
@@ -82,7 +85,12 @@
   players are David Greis (`Battle Royale Baseline:v1`, 1356.82), Aaron
   (`aaln-br-hunter:v2`, 1386.03), and sivannn
   (`sivan-br-ringsurfer:v1`, 1405.80).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. All 10 episodes per arm completed without failure. The
+  exact submitted control scores 167.0000 and the candidate 164.7000, a
+  -2.3000 delta with 95% CI [-58.8481, 54.2481] and Welch p=0.932607. The
+  result is inconclusive and the changed branch was inactive, so shield
+  detouring was removed without an extension. `andre-battleroyale:v32`
+  remains uploaded but unsubmitted; the submitted champion remains v15.
 
 ### Trial 30: scan only while armed hunter holds
 
