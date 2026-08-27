@@ -71,7 +71,8 @@
   `sha256:179168ae02975e384c5aa5543d96436f3b2759d7194724744f3004d61bfa2c60`.
   Uploaded unsubmitted as `andre-battleroyale:v33`; immutable candidate
   `andre-trial-32:v1`; exact v15 control `andre-trial-32:v2`.
-- XP id: Pending paired hosted requests.
+- XP id: Baseline `xreq_e5b09b07-e2c8-4826-9fe0-219896123f05` and candidate
+  `xreq_e1efe6a4-d5dc-4b6c-a813-30bd67df0cc3`, 10 hosted episodes per arm.
 - Opponents: Frozen outside-top-three field at request creation: Andre #17 at
   1348.76 MMR versus nearest unique other players David Greis at 1356.82
   (`Battle Royale Baseline:v1`), Aaron at 1386.03 (`aaln-br-hunter:v2`), and
