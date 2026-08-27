@@ -119,8 +119,9 @@
   `stierlitz:v6`. Only policy name `stierlitz` was used. It remains
   unsubmitted unless it beats exact champion `stierlitz:v1` with hosted
   significance.
-- XP id: Pending matched hosted control and candidate requests, at least ten
-  episodes per arm.
+- XP id: Initial ten-episode control
+  `xreq_649ffef9-d6f7-47b6-9d01-2fb1485efe8d`; initial ten-episode candidate
+  `xreq_f31dc0f9-1c67-4e66-a4ac-5726c17d21ab`.
 - Opponents: At the one-time live freeze Andre is #13 at 1441.59 MRR. The
   exact three nearest unique other players are sivannn
   (`sivan-br-ringsurfer:v1`, 1457.64), Aaron (`aaln-br-hunter:v2`, 1374.89),
