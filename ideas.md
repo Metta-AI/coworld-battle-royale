@@ -97,7 +97,9 @@
   `stierlitz:v3` and immutable XP candidate `stierlitz-trial-43:v1` after
   source commit `cfa949a` was pushed. It will remain unsubmitted unless it
   beats exact champion `stierlitz:v1` with hosted statistical significance.
-- XP id: Pending matched hosted requests with at least 10 episodes per arm.
+- XP id: Initial ten-episode control
+  `xreq_f1ec9575-8955-4fdb-b57d-449a192be889`; initial ten-episode candidate
+  `xreq_e599cf93-a5a8-49a4-93c1-5f2029ef0d7c`.
 - Opponents: At freeze Andre is #14 at 1395.64 MRR. The nearest three unique
   other players are Aaron (`aaln-br-hunter:v2`, 1383.64), sivannn
   (`sivan-br-ringsurfer:v1`, 1413.89), and Kenny Sheftel
