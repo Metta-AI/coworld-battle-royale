@@ -69,9 +69,14 @@
   match the exact control. Hosted `jink_damage` branch coverage is pending.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-32`, digest
   `sha256:179168ae02975e384c5aa5543d96436f3b2759d7194724744f3004d61bfa2c60`.
-  Upload pending CPUX.
+  Uploaded unsubmitted as `andre-battleroyale:v33`; immutable candidate
+  `andre-trial-32:v1`; exact v15 control `andre-trial-32:v2`.
 - XP id: Pending paired hosted requests.
-- Opponents: Pending fresh nearest-MRR field freeze.
+- Opponents: Frozen outside-top-three field at request creation: Andre #17 at
+  1348.76 MMR versus nearest unique other players David Greis at 1356.82
+  (`Battle Royale Baseline:v1`), Aaron at 1386.03 (`aaln-br-hunter:v2`), and
+  sivannn at 1405.80 (`sivan-br-ringsurfer:v1`). Both arms use this exact
+  roster and ordering.
 - Verdict: Pending hosted significance.
 
 ### Trial 31: nearby safe shield for an unarmed hunter
