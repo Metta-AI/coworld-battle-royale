@@ -30,6 +30,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("CTF_BOT_FFA_HUNTER_SUPPORT_RADIUS")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_UPGRADE_DETOUR_RADIUS")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN")
     check baseline.contains("CTF_BOT_FFA_HUNTER_RING_MARGIN")
     check baseline.contains("FfaHunterArmDefault = true")
@@ -40,6 +41,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
+    check baseline.contains("FfaHunterUpgradeDetourRadiusDefault = 320.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
@@ -96,3 +98,12 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "hunter weapon upgrades are isolated":
+    check baseline.count(
+      "FfaDoctrine != FfaHunter or weaponTier >= FfaWeaponHeavy") == 1
+    check baseline.count("if upgrading: \"UPGRADE\" else: \"LOOT\"") == 2
+    check baseline.count(
+      "if upgrading: \"upgrade_trip\" else: \"loot_trip\"") == 2
+    check baseline.count(
+      "if upgrading: \"move_upgrade\" else: \"move_gun\"") == 2

@@ -64,6 +64,36 @@
 
 ## Trial log
 
+### Trial 42: safe Hunter weapon upgrades within 320 pixels
+
+- Idea: Across the newest 20 exact champion controls, the submitted Hunter is
+  armed for 25,873 replay ticks but never considers a better gun. The existing
+  safe selector finds a strictly better visible gun within 240 pixels for 499
+  ticks across four files. A 320-pixel cap expands this to 1,120 ticks across
+  five files in Trial 40's field while adding no opportunity in Trial 41's
+  mostly-unarmed field. The current leader is armed for 64,541 ticks and has a
+  safe upgrade within 320 pixels for 3,809 ticks, 140 windows, and 23 of 32
+  sampled replays. The leader collects 15 heavy and 13 mid guns versus our one
+  heavy and one mid gun in overlapping rounds. Revisit Trial 9's active but
+  inconclusive 240-pixel upgrade behavior with the evidence-backed 320-pixel
+  reach, leaving initial arming at its submitted 240-pixel cap.
+- Change: Only the default Hunter, when armed below heavy tier and not pursuing
+  a vulnerable opponent, may commit to the existing ring-safe,
+  opponent-aware, strictly higher-tier gun selector within 320 pixels. The
+  submitted 240-pixel initial-arm cap, 80-pixel safety margin, 30-second
+  deadline, target selection, pursuit, firing, bands, ring behavior, Pact,
+  every other doctrine, and all item behavior are unchanged. Active decisions
+  emit phase `UPGRADE`, objective `upgrade_trip`, and action `move_upgrade`.
+- Isolation: `nim check` and the doctrine source-contract suite pass. Hosted
+  candidate branch confirmation is pending; replay counterfactuals are
+  behavior evidence only and are never score.
+- Artifact: Pending CPUX build and upload.
+- XP id: Pending matched hosted requests, at least 10 episodes per arm.
+- Opponents: Pending live nearest-three field freeze immediately before XP.
+- Verdict: Pending hosted statistical comparison. No candidate will be kept or
+  submitted without a statistically significant improvement over
+  `stierlitz:v1` on the exact same field.
+
 ### Trial 41: defer low-gun fire beyond the accurate range
 
 - Idea: The newest exact-v15 hosted controls fire the low gun across its full
