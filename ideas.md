@@ -95,10 +95,17 @@
 - Artifact: Local Linux amd64 `stierlitz:candidate-44`, command
   `/bin/baseline`, digest
   `sha256:07d534907760533832de6a4bd65d4765563bd86c6536f6300992972966f6c182`.
-  CPUX upload is pending; the candidate will remain unsubmitted unless it
-  beats exact champion `stierlitz:v1` with hosted statistical significance.
+  Uploaded unsubmitted as main candidate `stierlitz:v4` and immutable XP
+  candidate `stierlitz-trial-44:v1` after source commit `ff5485e` was pushed.
+  It will remain unsubmitted unless it beats exact champion `stierlitz:v1`
+  with hosted statistical significance.
 - XP id: Pending matched hosted requests with at least 10 episodes per arm.
-- Opponents: Pending a fresh live leaderboard freeze immediately before XP.
+- Opponents: At freeze Andre remains #14 at 1395.64 MRR. The nearest three
+  unique other players are Aaron (`aaln-br-hunter:v2`, 1383.64), sivannn
+  (`sivan-br-ringsurfer:v1`, 1413.89), and Kenny Sheftel
+  (`kenshef-my-player:v1`, 1372.89), in that fixed order for both arms. Each
+  champion was re-verified on its live player page immediately before Trial
+  43 and the live leaderboard still reports the same policies and ratings.
 - Verdict: Pending hosted significance; inconclusive is not a keep.
 
 ### Trial 43: hold instead of normal weak-target pursuit
