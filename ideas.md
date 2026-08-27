@@ -131,7 +131,15 @@
   (`nishad-battleroyale-baseline:v1`, 1412.11), sivannn
   (`sivan-br-ringsurfer:v1`, 1467.12), and Kenny Sheftel
   (`kenshef-my-player:v1`, 1382.31), in that fixed order for both arms.
-- Verdict: Pending hosted significance; inconclusive is not a keep.
+- Verdict: Revert. Initial candidate-control was +43.0 over ten hosted
+  episodes per arm but inconclusive: 95 percent CI [-12.1935, 98.1935],
+  Welch p=0.115120. After the exact-field 20-episode extension, cumulative
+  exact champion control mean is 192.7667 versus candidate 186.8333 over 30
+  hosted episodes per arm: candidate-control -5.9333, 95 percent CI
+  [-38.4767, 26.6101], Welch p=0.715632. The reconstructed state fired in
+  hosted artifacts but did not improve hosted XP significantly, so all Trial
+  45 behavior and source-contract changes were removed. `stierlitz:v1`
+  remains submitted; `stierlitz:v5` remains uploaded but unsubmitted.
 
 ### Trial 44: shorten FFA moving-target lead to two ticks
 
