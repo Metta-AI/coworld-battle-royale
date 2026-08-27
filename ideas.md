@@ -76,7 +76,8 @@
   Uploaded unsubmitted as `andre-battleroyale:v32`; exact candidate and
   submitted-control images are `andre-trial-31:v1` and
   `andre-trial-31:v2`.
-- XP id: Pending paired hosted requests.
+- XP id: Baseline `xreq_2d0e82c7-858d-4898-b052-7833949663a6` and candidate
+  `xreq_b597e2c1-7889-4eb7-a945-ffde406f9f83`, 10 hosted episodes per arm.
 - Opponents: At field freeze Andre is #17 at 1348.76. The nearest other
   players are David Greis (`Battle Royale Baseline:v1`, 1356.82), Aaron
   (`aaln-br-hunter:v2`, 1386.03), and sivannn
