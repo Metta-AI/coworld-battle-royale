@@ -266,9 +266,6 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
-  FfaHunterDamageJink = true
-  FfaHunterDamageJinkTicks = 24
-  FfaHunterDamageJinkDistance = 120.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -482,7 +479,6 @@ type
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
     ffaPactPartnerSeen: int
-    ffaDamageJinkUntil: int
 
 proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   case doctrine
@@ -2294,7 +2290,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     bot.ffaPactTargetSeen = -1
     bot.ffaPactPartnerPos = vec(0, 0)
     bot.ffaPactPartnerSeen = -1
-    bot.ffaDamageJinkUntil = 0
   let statedAim = client.ownAimBrads()
   if statedAim >= 0:
     bot.estAim = statedAim
@@ -2309,8 +2304,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     else: 0
   let unarmed = weaponTier == 0
 
-  let previousHp = bot.hp
-  var hp = previousHp
+  var hp = bot.hp
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
     discard o
     let tail = label[LabelPrefixHp.len .. ^1]
@@ -2320,7 +2314,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         hp = parseInt(tail[0 ..< slash])
       except ValueError:
         discard
-  let tookDamage = previousHp > 0 and hp < previousHp
   bot.hp = hp
   let
     actors = client.ffaActorsFor()
@@ -2513,8 +2506,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     of FfaHybrid:
       intent = hybridFfaIntent(bot, client, me, center, ringRadius,
         elapsedSec, nearby, weaponTier, healthy)
-  var moveTarget = intent.moveTarget
   let
+    moveTarget = intent.moveTarget
     objective = intent.objective
     phase = intent.phase
     bandFraction = intent.bandFraction
@@ -2523,14 +2516,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     hunterRingSafety = FfaDoctrine == FfaHunter and
       intent.action == "retreat_ring"
   var action = intent.action
-  if FfaDoctrine == FfaHunter and FfaHunterDamageJink:
-    if tookDamage and not hunterRingSafety:
-      bot.ffaDamageJinkUntil = bot.tick + FfaHunterDamageJinkTicks
-    if bot.tick < bot.ffaDamageJinkUntil and not hunterRingSafety:
-      let inward = center - me
-      if inward.len() > 1.0:
-        moveTarget = me + inward.norm() * FfaHunterDamageJinkDistance
-        action = "jink_damage"
 
   var desiredAim = bradsOf(moveTarget - me)
   var wantFire = false
@@ -4426,9 +4411,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
-    " ffaHunterDamageJink=", FfaHunterDamageJink,
-    " ffaHunterDamageJinkTicks=", FfaHunterDamageJinkTicks,
-    " ffaHunterDamageJinkDistance=", FfaHunterDamageJinkDistance,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

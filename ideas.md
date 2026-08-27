@@ -33,7 +33,6 @@
 - Scan only while an unarmed Hunter holds without a visible target.
 - Scan only while an armed Hunter holds without a visible target.
 - Detour only an unarmed, unshielded Hunter to a nearby safe shield.
-- Jink only the Hunter inward for one second after actual non-ring damage.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -66,19 +65,26 @@
   extraction confirms the candidate alone has
   `ffaHunterDamageJink=true`, `ffaHunterDamageJinkTicks=24`, and
   `ffaHunterDamageJinkDistance=120.0`; all existing v15 doctrine settings
-  match the exact control. Hosted `jink_damage` branch coverage is pending.
+  match the exact control. All 10 hosted artifacts per arm are valid. The
+  candidate records 1,448 `jink_damage` ticks versus zero in control, so the
+  isolated branch fired materially; artifact coverage is not score.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-32`, digest
   `sha256:179168ae02975e384c5aa5543d96436f3b2759d7194724744f3004d61bfa2c60`.
   Uploaded unsubmitted as `andre-battleroyale:v33`; immutable candidate
   `andre-trial-32:v1`; exact v15 control `andre-trial-32:v2`.
 - XP id: Baseline `xreq_e5b09b07-e2c8-4826-9fe0-219896123f05` and candidate
-  `xreq_e1efe6a4-d5dc-4b6c-a813-30bd67df0cc3`, 10 hosted episodes per arm.
+  `xreq_e1efe6a4-d5dc-4b6c-a813-30bd67df0cc3`, both complete at 10 hosted
+  episodes with zero failures.
 - Opponents: Frozen outside-top-three field at request creation: Andre #17 at
   1348.76 MMR versus nearest unique other players David Greis at 1356.82
   (`Battle Royale Baseline:v1`), Aaron at 1386.03 (`aaln-br-hunter:v2`), and
   sivannn at 1405.80 (`sivan-br-ringsurfer:v1`). Both arms use this exact
   roster and ordering.
-- Verdict: Pending hosted significance.
+- Verdict: Revert. Baseline mean 188.5000 versus candidate 170.2000,
+  difference -18.3000, Welch 95 percent CI [-103.7736, 67.1736], p=0.652011.
+  This is inconclusive with a negative point estimate, so it is not a keep and
+  does not merit a same-field extension. `andre-battleroyale:v33` remains
+  uploaded but unsubmitted; champion `andre-battleroyale:v15` remains live.
 
 ### Trial 31: nearby safe shield for an unarmed hunter
 
