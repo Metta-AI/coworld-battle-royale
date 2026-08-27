@@ -38,6 +38,7 @@
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
 - Prefer only the nearest safe opening gun over the highest-tier safe gun.
+- Search toward the center only while an unarmed Hunter sees no safe gun.
 - Switch only the FFA doctrine from legacy to passive.
 - Switch only the submitted hunter doctrine to passive.
 - Switch only the submitted hunter doctrine to rush.
@@ -47,6 +48,38 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 36: center search while an unarmed hunter sees no gun
+
+- Idea: Same-field replay extraction from the newest 10 exact-v15 Trial 35
+  controls shows Andre scoring 179.00 while aosgoods scores 201.80 and richard
+  scores 200.40. Andre's mean radius during the first 90 seconds is 699.93
+  pixels and only 38.59 percent of alive samples are within 480 pixels of the
+  ring center, versus 310.93 and 92.03 percent for aosgoods and 568.68 and
+  52.61 percent for richard. Andre's first gun arrives at tick 1192.57, versus
+  962.00 and 917.62. First-gun pickup radii are 513.25, 398.85, and 696.22,
+  respectively, so the shared signal is active inward discovery rather than a
+  fixed pickup radius. The submitted fallback instead holds the outer 0.85
+  band whenever no eligible gun is currently visible.
+- Change: Only for the default Hunter while unarmed, outside ring safety and
+  the existing four-player endgame, with no valid committed gun trip and no
+  newly visible safe gun inside the submitted 240-pixel detour cap, navigate
+  toward the ring center instead of the submitted 0.85 passive band. A visible
+  eligible gun still takes priority. The exact submitted ring safety, late
+  close, gun selection and trip rules, armed movement, pursuit, combat,
+  firing, items, and all other doctrines are unchanged. Active fallback
+  samples emit `center_search` and `search_center_gun`.
+- Isolation: The doctrine source-contract suite and `nim check` pass. The
+  Linux amd64 production startup reports `ffaHunterCenterSearch=true` while
+  preserving the submitted `ffaPassiveBand=0.85`, 240-pixel arm cap, 60-tick
+  ring unstick, and all other v15 settings. Replay or hosted-log branch
+  coverage remains pending.
+- Artifact: Local linux/amd64 `andre-battleroyale:candidate-36`, digest
+  `sha256:e886c53329ea131ea697f11fb75bb6487e67f0377d74674db94541c35171160f`.
+  CPUX upload is pending.
+- XP id: Pending.
+- Opponents: Pending live outside-top-three nearest-MRR field freeze.
+- Verdict: Pending hosted XP comparison against exact submitted v15.
 
 ### Trial 35: pixel-accurate hunter ring-unstick clearance
 

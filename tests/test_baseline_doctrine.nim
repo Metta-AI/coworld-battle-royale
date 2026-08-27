@@ -28,6 +28,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("CTF_BOT_FFA_HUNTER_PURSUIT")
     check baseline.contains("CTF_BOT_FFA_HUNTER_PURSUIT_MIN_HP")
     check baseline.contains("CTF_BOT_FFA_HUNTER_SUPPORT_RADIUS")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_CENTER_SEARCH")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_DETOUR_RADIUS")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN")
@@ -38,6 +39,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterPursuitDefault = true")
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
+    check baseline.contains("FfaHunterCenterSearchDefault = true")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
@@ -96,3 +98,10 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "hunter center search is isolated":
+    check baseline.count(
+      "FfaHunterCenterSearch and FfaDoctrine == FfaHunter") == 1
+    check baseline.count("action = \"search_center_gun\"") == 0
+    check baseline.count("\"LOOT\", \"center_search\", " &
+      "\"search_center_gun\"") == 1
