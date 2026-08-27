@@ -78,7 +78,9 @@
   `sha256:e886c53329ea131ea697f11fb75bb6487e67f0377d74674db94541c35171160f`.
   Uploaded unsubmitted as `andre-battleroyale:v37`; exact v15 control and
   candidate clones are `andre-trial-36:v1` and `andre-trial-36:v2`.
-- XP id: Pending.
+- XP id: Baseline `xreq_36c71215-03cf-41ee-bdf8-48a6a60f64fc` and candidate
+  `xreq_a4758084-920b-4769-ab3a-2afc6d3cc400`, both requested at 10 hosted
+  episodes.
 - Opponents: Frozen outside-top-three field at request creation: Andre #14 at
   1414.54 MMR versus nearest unique other players ravidear5-code at 1415.51
   (`shade-doctrine-v1:v1`), NishadIota at 1370.38
