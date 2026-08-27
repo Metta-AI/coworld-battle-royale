@@ -65,8 +65,14 @@
   non-Hunter doctrine are unchanged. Seeing a target immediately restores the
   existing combat aim; ring safety suppresses the scan.
 - Isolation: `nim check` and the doctrine source-contract suite pass.
-  Production extraction and hosted `scan_damage` branch coverage are pending.
-- Artifact: Pending CPUX.
+  Production-image extraction confirms only the candidate adds
+  `ffaHunterDamageScan=true` and `ffaHunterDamageScanTicks=52`; candidate and
+  exact control retain Hunter, the 60-tick ring unstick, 240-pixel arm cap,
+  30-second arm deadline, 80-pixel safety margin, zero ring margin, and 0.85
+  hold band. Hosted `scan_damage` branch coverage is pending.
+- Artifact: Local linux/amd64 `andre-battleroyale:candidate-33`, digest
+  `sha256:8f833b8ff3b614d451123783a80986ee51b346373fa20e552027955bfd326f43`.
+  Upload pending CPUX.
 - XP id: Pending paired hosted requests.
 - Opponents: Pending fresh nearest-MRR field freeze.
 - Verdict: Pending hosted significance.
