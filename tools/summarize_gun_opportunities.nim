@@ -29,6 +29,7 @@ type
     files: int
     unarmedTicks: int
     submittedChoiceTicks: int
+    contest: ChangeCounts
     narrow: ChangeCounts
     wide: ChangeCounts
 
@@ -66,7 +67,8 @@ proc consider(
   choice: var GunChoice,
   game: SimServer,
   playerIndex, tier, spawnX, spawnY: int,
-  maxDistance, safeRadius: float
+  maxDistance, safeRadius: float,
+  respectOpponentLead: bool
 ) =
   ## Considers one visible, present gun under Hunter's selection rules.
   if not game.fovVisibleAt(playerIndex, spawnX, spawnY):
@@ -83,12 +85,11 @@ proc consider(
   let (centerX, centerY) = ffaRingCenter()
   if distance(spawnX, spawnY, centerX, centerY) > safeRadius:
     return
-  if game.opponentCloser(
-    playerIndex,
-    spawnX,
-    spawnY,
-    playerDistance
-  ):
+  if respectOpponentLead and game.opponentCloser(
+      playerIndex,
+      spawnX,
+      spawnY,
+      playerDistance):
     return
   let
     sameDistance = abs(playerDistance - choice.distance) < 1e-6
@@ -110,7 +111,8 @@ proc consider(
 proc bestGun(
   game: SimServer,
   playerIndex: int,
-  highRadius: float
+  highRadius: float,
+  respectOpponentLead = true
 ): GunChoice =
   ## Reconstructs Hunter's tier-first choice with one high-tier radius.
   let
@@ -129,7 +131,8 @@ proc bestGun(
         spawn.x,
         spawn.y,
         SubmittedRadius,
-        safeRadius
+        safeRadius,
+        respectOpponentLead
       )
   for spawn in game.midGunSpawns:
     if spawn.present:
@@ -140,7 +143,8 @@ proc bestGun(
         spawn.x,
         spawn.y,
         highRadius,
-        safeRadius
+        safeRadius,
+        respectOpponentLead
       )
   for spawn in game.heavyGunSpawns:
     if spawn.present:
@@ -151,7 +155,8 @@ proc bestGun(
         spawn.x,
         spawn.y,
         highRadius,
-        safeRadius
+        safeRadius,
+        respectOpponentLead
       )
 
 proc differs(a, b: GunChoice): bool =
@@ -188,8 +193,10 @@ proc addReplay(
   var (game, replay) = openReplay(replayPath)
   var
     index = -1
+    contestActive = false
     narrowActive = false
     wideActive = false
+    fileContest = false
     fileNarrow = false
     fileWide = false
   inc totals.files
@@ -208,12 +215,15 @@ proc addReplay(
     discard game.refreshPlayerFov(index)
     let
       standard = game.bestGun(index, SubmittedRadius)
+      contest = game.bestGun(index, SubmittedRadius, false)
       narrow = game.bestGun(index, NarrowRadius)
       wide = game.bestGun(index, WideRadius)
     if standard.found:
       inc totals.submittedChoiceTicks
+    totals.contest.addChange(standard, contest, contestActive)
     totals.narrow.addChange(standard, narrow, narrowActive)
     totals.wide.addChange(standard, wide, wideActive)
+    fileContest = fileContest or standard.differs(contest)
     fileNarrow = fileNarrow or standard.differs(narrow)
     fileWide = fileWide or standard.differs(wide)
   if index < 0:
@@ -221,6 +231,8 @@ proc addReplay(
       BattleRoyaleError,
       "hosted replay has no player named: " & policyName
     )
+  if fileContest:
+    inc totals.contest.files
   if fileNarrow:
     inc totals.narrow.files
   if fileWide:
@@ -256,6 +268,7 @@ proc summarize(
   echo "files=", totals.files
   echo "unarmedTicks=", totals.unarmedTicks
   echo "submittedChoiceTicks=", totals.submittedChoiceTicks
+  printChange("contest", totals.contest)
   printChange("narrow", totals.narrow)
   printChange("wide", totals.wide)
 

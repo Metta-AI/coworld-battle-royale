@@ -58,6 +58,41 @@
 
 ## Trial log
 
+### Trial 38: pursue an equal-health armed opponent
+
+- Idea: The newest 30 exact-v15 Coworld v0.1.14 controls show that weapon
+  accuracy is not the primary gap. Stierlitz lands 53.04 percent of shots but
+  averages only 0.20 kills and 10.83 damage, versus aosgoods at 0.97 kills and
+  23.30 damage and softmaxwell at 0.90 kills and 30.83 damage. Replay
+  resimulation finds 24,338 armed Hunter ticks and 6,194 ticks with a visible
+  target. The submitted weak-target pursuit qualifies for 2,540 ticks. An
+  equal-health armed target that passes the unchanged solo, HP, and ring gates
+  adds 2,315 ticks across 85 windows in 15 of 30 files. Trial 5 saw zero
+  hosted activations on its older field, so it never measured this strategy;
+  the current field now provides direct coverage. By comparison, ignoring the
+  gun opponent-lead veto changes only seven files, and longer gun reach changes
+  four, so those lower-coverage arming ideas are rejected before XP.
+- Change: Only for the default Hunter, allow its existing armed pursuit when
+  the nearest visible armed opponent has equal HP. The submitted six-HP floor,
+  300-pixel support rejection, ring-safe target gate, weak-target pursuit,
+  target selection, firing, arming, navigation, items, and every other
+  doctrine are unchanged. Active samples emit reason `pursue_equal`.
+- Isolation: `nim check`, the doctrine source-contract suite, the pursuit
+  replay extractor, and the Linux amd64 production build pass. Production
+  startup reports `ffaHunterPursueEqual=true` while preserving the submitted
+  six-HP floor, 300-pixel support radius, 240-pixel arm cap, 60-tick ring
+  unstick, and 0.85 hold band. Replay counterfactual coverage is behavior
+  evidence only, never score; hosted artifact coverage is pending.
+- Artifact: Local Linux amd64 `andre-battleroyale:candidate-38`, command
+  `/bin/baseline`, digest
+  `sha256:84b427cdcd4273f3bf853716373ff6396088a0c7a531ce6e7429f4271633c323`.
+  Upload is pending the committed and pushed source.
+- XP id: Pending exact same-field hosted control and candidate requests.
+- Opponents: Pending the required live nearest-MRR freeze at XP creation.
+- Verdict: Pending hosted statistical comparison. Champion
+  `andre-battleroyale:v15` remains submitted unless this candidate wins
+  significantly.
+
 ### Trial 37: compensate armed hunter aim for own movement
 
 - Idea: Replay-backed extraction over the newest 50 exact-v15 controls finds

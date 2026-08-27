@@ -36,6 +36,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaPassiveBandDefault = 0.85")
     check baseline.contains("FfaHunterFireRangeDefault = true")
     check baseline.contains("FfaHunterPursuitDefault = true")
+    check baseline.contains("FfaHunterPursueEqual = true")
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
@@ -43,6 +44,10 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
+    check baseline.contains(
+      "FfaDoctrine == FfaHunter and\n      FfaHunterPursueEqual"
+    )
+    check baseline.count("\"pursue_equal\"") == 1
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
 

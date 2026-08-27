@@ -259,6 +259,7 @@ const
   FfaHunterArmDefault = true
   FfaHunterFireRangeDefault = true
   FfaHunterPursuitDefault = true
+  FfaHunterPursueEqual = true
   FfaHunterPursuitMinHpDefault = 6
   FfaHunterSupportRadiusDefault = 300.0
   FfaHunterArmTripMaxSecDefault = 30
@@ -2400,12 +2401,19 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
           dist(actor.pos, actors[targetIndex].pos) <= FfaHunterSupportRadius:
         hunterSupported = true
         break
-  let hunterTargetWeaker = targetIndex >= 0 and
-    (actors[targetIndex].weaponTier == 0 or
-      (actors[targetIndex].hp > 0 and actors[targetIndex].hp < hp))
+  let
+    hunterTargetWeaker = targetIndex >= 0 and
+      (actors[targetIndex].weaponTier == 0 or
+        (actors[targetIndex].hp > 0 and actors[targetIndex].hp < hp))
+    hunterTargetEqual = targetIndex >= 0 and
+      actors[targetIndex].weaponTier > FfaWeaponUnarmed and
+      actors[targetIndex].hp > 0 and actors[targetIndex].hp == hp
+    hunterEqualPursue = FfaDoctrine == FfaHunter and
+      FfaHunterPursueEqual and hunterTargetEqual
+    hunterTargetViable = hunterTargetWeaker or hunterEqualPursue
   let hunterPursue = FfaDoctrine in {FfaHunter, FfaPact} and
     FfaHunterPursuit and
-    not unarmed and hp >= FfaHunterPursuitMinHp and hunterTargetWeaker and
+    not unarmed and hp >= FfaHunterPursuitMinHp and hunterTargetViable and
     not hunterSupported and
     dist(actors[targetIndex].pos, center) <= float(max(1, ringRadius))
   var
@@ -2499,6 +2507,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     of FfaHunter:
       intent = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
         targetIndex, targetDist, weaponTier, unarmed, hunterPursue)
+      if hunterEqualPursue:
+        intent.engageReason = "pursue_equal"
     of FfaPact:
       intent = pactFfaIntent(bot, client, actors, me, center, ringRadius,
         targetIndex, targetDist, weaponTier, unarmed, hunterPursue,
@@ -4405,6 +4415,7 @@ proc runBot(url: string) =
     " ffaHunterArm=", FfaHunterArm,
     " ffaHunterFireRange=", FfaHunterFireRange,
     " ffaHunterPursuit=", FfaHunterPursuit,
+    " ffaHunterPursueEqual=", FfaHunterPursueEqual,
     " ffaHunterPursuitMinHp=", FfaHunterPursuitMinHp,
     " ffaHunterSupportRadius=", FfaHunterSupportRadius,
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
