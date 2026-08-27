@@ -68,6 +68,63 @@
 
 ## Trial log
 
+### Trial 46: clone meyer-svg's complete unarmed acquisition state
+
+- Idea: Trial 45 cloned sensing plus armed upgrades but left the submitted
+  unarmed 240-pixel acquisition cap and static 0.85-band fallback intact. Its
+  30 hosted artifacts took 8.43 loot trips per game versus 0.77 in control and
+  reached heavy-tier state for 322 sampled ticks versus two, yet armed fraction
+  fell from 47.58 to 38.12 percent, tier-zero samples rose from 4,765 to 5,961,
+  and dead ticks rose from 4,443 to 8,095. More sensing exposed contacts without
+  cloning the #1 policy's unarmed locomotion. The upgraded Nim policy-logic
+  profiler reconstructs signed motion toward guns, opponents, and the ring
+  across 160 current top-three replays. In the opening with no visible enemy,
+  meyer-svg moves 52.11 pixels per second with no visible gun and 61.93 with
+  one, versus Andre's 33.68 and 32.69; meyer is stationary only 12.74 and 3.80
+  percent versus Andre's 48.00 and 50.31, scans on 86 to 87 percent of ticks,
+  and moves toward the nearest visible higher-tier gun on 85.92 percent. When
+  unarmed contact occurs, all current top three move about 50 to 65 pixels per
+  second and favor outward motion during the opening, while Andre moves 23 to
+  32 and is stationary 47 to 62 percent. After 30 seconds, meyer and Jordan
+  mostly move inward as the ring contracts. This specifies a complete
+  unarmed acquisition state rather than another independent scan or upgrade
+  toggle. Replay reconstruction selects the strategy but is never score.
+- Change: Replace only the default Hunter's unarmed acquisition state with the
+  reconstructed meyer-svg state. While no enemy is protocol-visible, use the
+  native five-brad scan input. Pursue the nearest safe visible gun within 520
+  pixels, retaining the submitted 30-second trip lifetime, 80-pixel ring
+  margin, opponent-closer rejection, and deterministic ties. With no eligible
+  gun, navigate continuously toward an alternating-seat tangential point on
+  the exact submitted 0.85 band; the initially outward target naturally moves
+  inward as the ring contracts. On visible contact, keep the unchanged target
+  aim while preserving acquisition movement. The existing higher-priority ring
+  safety, endgame, armed navigation, armed upgrade prohibition, pursuit,
+  combat gates, firing, damage behavior, items other than the first gun, and
+  every non-Hunter doctrine are unchanged. This is one unarmed acquisition
+  state replacement. It emits `meyer_unarmed_scan`, `meyer_loot_trip`,
+  `move_meyer_gun`, `meyer_open_search`, `meyer_late_search`, and
+  `move_meyer_search` for branch confirmation.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. One local v0.1.14 isolation episode produced 12
+  player artifacts. Ten emit 4,070 `meyer_unarmed_scan` ticks, all 12 emit 674
+  `move_meyer_gun` ticks, and 11 emit 1,752 `move_meyer_search` ticks. The
+  objectives cover 2,168 opening-search, 1,633 late-search, and 2,695
+  first-gun-trip ticks, proving every reconstructed phase is reachable.
+  Replays and logs prove behavior only and are not score. Hosted artifacts
+  must confirm the uploaded candidate too.
+- Artifact: Local Linux amd64 image `stierlitz:candidate-46`, command
+  `/bin/baseline`, digest
+  `sha256:ec4850fafc0a4e9aa52bdd46daa89881767ddde5edcdd4d20094b152f4faad8f`.
+  Commit, push, and upload are pending. The candidate will use only policy name
+  `stierlitz` with its next version and remain unsubmitted unless it beats
+  exact champion `stierlitz:v1` with hosted significance.
+- XP id: Pending matched hosted control and candidate requests, at least ten
+  episodes per arm.
+- Opponents: Pending one-time live MRR freeze immediately before both matched
+  requests. Andre remains outside the top three, so the field will use the
+  exact three nearest unique other players.
+- Verdict: Pending hosted significance; inconclusive is not a keep.
+
 ### Trial 45: clone the top-player sensor-driven tier-acquisition state
 
 - Idea: A new Nim downloader collected all 160 games from live competition

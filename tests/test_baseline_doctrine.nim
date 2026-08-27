@@ -40,6 +40,9 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
+    check baseline.contains("FfaHunterMeyerCloneDefault = true")
+    check baseline.contains("FfaHunterMeyerArmRadiusDefault = 520.0")
+    check baseline.contains("FfaHunterMeyerTangentLeadDefault = 0.5")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
@@ -96,3 +99,15 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "meyer unarmed acquisition clone is isolated":
+    check baseline.count("meyerClone = FfaHunterMeyerClone") == 1
+    check baseline.count("preferNearest = meyerClone") == 1
+    check baseline.count("meyerUnarmedScan = FfaDoctrine == FfaHunter") == 1
+    check baseline.count("action = \"meyer_unarmed_scan\"") == 1
+    check baseline.count("\"meyer_loot_trip\"") == 2
+    check baseline.count("\"move_meyer_gun\"") == 2
+    check baseline.count("\"move_meyer_search\"") == 1
+    check baseline.contains("CTF_BOT_FFA_HUNTER_MEYER_CLONE")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_MEYER_ARM_RADIUS")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_MEYER_TANGENT_LEAD")
