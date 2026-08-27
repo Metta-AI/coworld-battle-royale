@@ -99,7 +99,9 @@
 - XP id: Initial ten-episode control
   `xreq_0b54e8df-22b2-4188-87ee-45dc15a7771e`; initial ten-episode candidate
   `xreq_05f03485-bc0a-4099-99e5-5cd0f032fb90`. The exact same-field
-  20-episode extension is pending creation for both arms.
+  20-episode extension is control
+  `xreq_c58aaf04-5f8e-4d8b-bcad-da1e9dc1af84` and candidate
+  `xreq_8d819d6b-df35-4bb2-9b4c-0bd654783756`.
 - Opponents: At freeze Stierlitz is #17 at 1368.61 MRR. The nearest three
   unique other players are Kenny Sheftel (`kenshef-my-player:v1`, 1365.71),
   NanosaurusX (`nancy-br:v1`, 1356.78), and sivannn
