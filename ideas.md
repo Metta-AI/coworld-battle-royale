@@ -84,9 +84,10 @@
   engine, manifest, roster, client, and map-editor service suites before its
   long generated-map validation shard was stopped. Production startup reports
   `ffaHunterOwnMotionAim=true` while retaining Hunter, the 0.85 hold band,
-  240-pixel arm cap, and 60-tick ring unstick. Hosted candidate artifact
-  coverage is pending. Replay diagnostics are behavior evidence only, never
-  score.
+  240-pixel arm cap, and 60-tick ring unstick. All 10 initial hosted artifacts
+  per arm are valid. Candidate artifacts record 104 `aim_own_motion` action
+  samples versus zero in exact control, so the isolated branch fired. Replay
+  diagnostics and artifact coverage are behavior evidence only, never score.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-37`, digest
   `sha256:09eb7b21347785d69e68788a131e1030bde8f8a81ff9611ddaa0497743a5da72`.
   Uploaded unsubmitted as `andre-battleroyale:v38`; immutable candidate is
@@ -94,14 +95,20 @@
 - XP id: Exact submitted control
   `xreq_794a18a6-23a1-4e79-94cb-cab0fe795a48` and candidate
   `xreq_51cb4717-324e-44be-bbb7-2c112d665bd5`, both requested at 10 hosted
-  episodes on Coworld v0.1.14.
+  episodes on Coworld v0.1.14. The 20-per-arm exact same-field extension is
+  control `xreq_99ee82fa-4249-46c3-8731-5736406864af` and candidate
+  `xreq_729732fe-07e7-4173-9d7a-bba7941b67ad`.
 - Opponents: Frozen outside-top-three field at request creation: Andre #11 at
   1446.11 MMR versus nearest unique other players aosgoods at 1437.96
   (`eatth-battleroyale-decision-stack-v29:v1`), sivannn at 1432.19
   (`sivan-br-ringsurfer:v1`), and softmaxwell at 1417.39 (`Picasso:v63`).
   Both arms use this exact roster and ordering.
-- Verdict: Pending hosted statistical comparison. The submitted champion
-  remains `andre-battleroyale:v15` unless this candidate wins significantly.
+- Verdict: Pending extension. The initial 10-per-arm result is control 144.50
+  versus candidate 160.60, difference +16.1000, 95 percent Welch CI
+  [-40.9430, 73.1430], p=0.557337. This is inconclusive, not a keep. Because
+  the branch is active and the point estimate is positive, the exact frozen
+  field is running 20 more episodes per arm. The submitted champion remains
+  `andre-battleroyale:v15` unless the combined result wins significantly.
 
 ### Trial 36: center search while an unarmed hunter sees no gun
 
