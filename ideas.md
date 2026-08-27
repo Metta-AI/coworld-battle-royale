@@ -90,7 +90,11 @@
   Uploaded unsubmitted as main candidate `andre-battleroyale:v42` and immutable
   XP candidate `andre-trial-41:v1` after source commit `d2cc3d5` was pushed.
 - XP id: Pending exact same-field hosted control and candidate requests.
-- Opponents: Pending the required live nearest-MRR freeze at XP creation.
+- Opponents: At freeze our player is #17 at 1377.34 MRR. The nearest three
+  unique other players are softmaxwell (`Picasso:v63`, 1384.90), David Greis
+  (`Battle Royale Baseline:v1`, 1348.84), and NanosaurusX (`nancy-br:v1`,
+  1407.58), in that fixed order for both arms. Each champion was verified on
+  its live player page.
 - Verdict: Pending hosted statistical comparison. Champion
   `andre-battleroyale:v15` remains submitted unless this candidate wins
   significantly.
