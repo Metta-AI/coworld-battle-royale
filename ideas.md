@@ -110,8 +110,11 @@
   `move_meyer_gun` ticks, and 11 emit 1,752 `move_meyer_search` ticks. The
   objectives cover 2,168 opening-search, 1,633 late-search, and 2,695
   first-gun-trip ticks, proving every reconstructed phase is reachable.
-  Replays and logs prove behavior only and are not score. Hosted artifacts
-  must confirm the uploaded candidate too.
+  All ten hosted `stierlitz:v6` artifacts emit 9,422
+  `meyer_unarmed_scan` ticks and 1,277 `meyer_loot_trip` objective ticks.
+  Nine cover 3,534 opening-search ticks, three cover 4,973 late-search ticks,
+  and eight emit 893 actual `move_meyer_search` ticks. Replays and logs prove
+  behavior only and are not score.
 - Artifact: Local Linux amd64 image `stierlitz:candidate-46`, command
   `/bin/baseline`, digest
   `sha256:ec4850fafc0a4e9aa52bdd46daa89881767ddde5edcdd4d20094b152f4faad8f`.
@@ -127,7 +130,14 @@
   (`sivan-br-ringsurfer:v1`, 1457.64), Aaron (`aaln-br-hunter:v2`, 1374.89),
   and NishadIota (`nishad-battleroyale-baseline:v1`, 1508.56), in that fixed
   order for both arms.
-- Verdict: Pending hosted significance; inconclusive is not a keep.
+- Verdict: Revert. Exact champion control mean is 188.1000 versus candidate
+  147.2000 over ten hosted episodes per arm: candidate-control -40.9000,
+  95 percent CI [-98.4986, 16.6986], Welch p=0.152778. The uploaded state
+  fired extensively in all hosted artifacts, but its point estimate is
+  substantially negative and it does not significantly improve hosted XP, so
+  an extension is unwarranted and all Trial 46 behavior and source-contract
+  changes were removed. `stierlitz:v1` remains submitted; `stierlitz:v6`
+  remains uploaded but unsubmitted.
 
 ### Trial 45: clone the top-player sensor-driven tier-acquisition state
 
