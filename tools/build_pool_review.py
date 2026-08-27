@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Builds docs/pool-review.html: a self-contained, zoomable review page for
-the curated terrain pool. Reads the PNGs + manifest.json produced by
-tools/render_map_pool.nim and inlines everything (base64), so the page works
-from a file:// open or any static host.
+"""Builds a self-contained, zoomable review page for a curated terrain pool.
+Reads the PNGs + manifest.json produced by tools/render_map_pool.nim and inlines
+everything (base64), so the page works from a file:// open or any static host.
 
 Usage:
   nim c -r tools/gen_map_pool.nim            # (only when re-curating seeds)
   nim c -r tools/render_map_pool.nim pool-preview
   python3 tools/build_pool_review.py [renderDir] [outHtml]
+  python3 tools/build_pool_review.py brpool-preview docs/br-pool-review.html br
 
-Defaults: renderDir=pool-preview, outHtml=docs/pool-review.html.
+Defaults: renderDir=pool-preview, outHtml=docs/pool-review.html, kind=ctf.
 """
 import base64
+import io
 import json
 import pathlib
 import sys
@@ -19,10 +20,136 @@ import sys
 repo = pathlib.Path(__file__).resolve().parent.parent
 render_dir = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else repo / "pool-preview"
 out_path = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else repo / "docs" / "pool-review.html"
+kind = sys.argv[3] if len(sys.argv) > 3 else "ctf"
+if kind not in ("ctf", "br"):
+    raise SystemExit(f"unknown review kind: {kind}")
+is_br = kind == "br"
 
 manifest = json.loads((render_dir / "manifest.json").read_text())
 SIZE_NAMES = {1050: "small", 1235: "standard", 1606: "large",
               2223: "huge", 3211: "giant"}
+
+if is_br:
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "BR contact-sheet generation requires Python Pillow"
+        ) from exc
+
+    manifest.sort(key=lambda m: m["index"])
+    if [m["index"] for m in manifest] != list(range(len(manifest))):
+        raise SystemExit("BR manifest indices must be ordered 0..N-1")
+    checksums = {m.get("centerChecksum", "") for m in manifest}
+    if len(manifest) != 256 or len(checksums) != 1 or "" in checksums:
+        raise SystemExit(
+            "BR manifest must contain one shared centerChecksum for 256 maps"
+        )
+    center_checksum = checksums.pop()
+
+    cell_width, cell_height = 320, 180
+    sheet = Image.new("RGB", (cell_width * 16, cell_height * 16),
+                      (15, 11, 8))
+    try:
+        label_font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 16)
+    except OSError:
+        label_font = ImageFont.load_default()
+    marker_color = (255, 40, 220)
+    label_color = (255, 255, 255)
+    label_backing = (20, 12, 8)
+    for m in manifest:
+        image = Image.open(render_dir / m["thumbnail"]).convert("RGB")
+        x = (m["index"] % 16) * cell_width
+        y = (m["index"] // 16) * cell_height
+        sheet.paste(image, (x, y))
+        draw = ImageDraw.Draw(sheet)
+        center_x = x + round((m["width"] // 2) * image.width / m["width"])
+        center_y = y + round((m["height"] // 2) * image.height / m["height"])
+        radius = round(260 * image.width / m["width"])
+        draw.ellipse(
+            (center_x - radius, center_y - radius,
+             center_x + radius, center_y + radius),
+            outline=marker_color, width=3,
+        )
+        label = f'#{m["index"]:02d} {m["seed"]}'
+        bounds = draw.textbbox((0, 0), label, font=label_font)
+        draw.rectangle(
+            (x + 4, y + 4, x + 8 + bounds[2], y + 8 + bounds[3]),
+            fill=label_backing,
+        )
+        draw.text((x + 6, y + 6), label, fill=label_color, font=label_font)
+
+    raw_png = io.BytesIO()
+    sheet.save(raw_png, format="PNG", optimize=True)
+    raw_png_bytes = len(raw_png.getvalue())
+    sheet = sheet.quantize(
+        colors=16,
+        method=Image.Quantize.MEDIANCUT,
+        dither=Image.Dither.NONE,
+    )
+    png = io.BytesIO()
+    sheet.save(png, format="PNG", optimize=True)
+    encoded_sheet = base64.b64encode(png.getvalue()).decode()
+
+    legend = "".join(
+        f'<span>#{m["index"]:03d} {m["seed"]}</span>' for m in manifest
+    )
+    html = f'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battle-royale Rotation Pool</title>
+<style>
+:root {{
+  --ground:#1a1410; --panel:#241c15; --line:#3a2e21;
+  --ink:#e8dcc8; --muted:#9a8a70; --glass:#50dcff;
+}}
+* {{ box-sizing:border-box; }}
+body {{ background:var(--ground); color:var(--ink);
+  font:15px/1.5 system-ui,-apple-system,sans-serif; margin:0; padding:0 0 4rem; }}
+.wrap {{ max-width:1500px; margin:0 auto; padding:0 1.25rem; }}
+header.top {{ position:sticky; top:0; z-index:5; background:color-mix(in srgb,var(--ground) 92%,transparent);
+  backdrop-filter:blur(6px); border-bottom:1px solid var(--line); padding:.7rem 0 .6rem; }}
+h1 {{ font-size:1.05rem; margin:0; letter-spacing:.02em; }}
+h1 .gv {{ color:var(--glass); }}
+.sub, .note, .legend {{ color:var(--muted); font:12px ui-monospace,Menlo,monospace; }}
+.sub {{ display:block; margin-top:.25rem; }}
+.note {{ margin:1rem 0; }}
+.sheet-wrap {{ position:relative; background:#0f0b08; overflow:auto; }}
+.sheet {{ display:block; width:100%; height:auto; image-rendering:pixelated; }}
+.legend {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:.15rem .8rem; margin-top:1rem; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <h1>Battle-royale rotation pool
+    <span class="gv">config-gated (mapPath "brpool")</span>
+  </h1>
+  <span class="sub">256 maps · huge · 256 mirror / 0 rot180 · 256 disc endzones</span>
+</header>
+<p class="note">One 16×16 contact sheet of direct-rendered map thumbnails, ordered
+by pool index. Shared center checksum: <b>{center_checksum}</b> · all 256
+entries match. Full-resolution per-entry renders are local-only; see MAPKIT.md
+for the investigation command.</p>
+<div class="sheet-wrap">
+  <img class="sheet" src="data:image/png;base64,{encoded_sheet}"
+    alt="16 by 16 battle-royale map contact sheet">
+</div>
+<div class="legend">{legend}</div>
+</div>
+</body>
+</html>
+'''
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html)
+    print(
+        f"sheet raw={raw_png_bytes} bytes, indexed16={len(png.getvalue())} bytes")
+    print(f"wrote {out_path} ({len(html.encode())} bytes, {len(manifest)} maps)")
+    raise SystemExit(0)
 
 cards = []
 for m in manifest:
@@ -55,12 +182,34 @@ for m in manifest:
     counts[m["symmetry"]] += 1
     counts[m.get("endzone", "column")] += 1
 
+if is_br:
+    page_title = "Battle-royale Rotation Pool"
+    heading = "Battle-royale rotation pool"
+    map_path = "brpool"
+    summary = (
+        f"{len(manifest)} maps &middot; huge &middot; "
+        f"{counts['mirror']} mirror / {counts['rot180']} rot180 &middot; "
+        f"{counts['disc']} disc endzones"
+    )
+else:
+    page_title = "CTF Terrain Pool"
+    heading = "CTF terrain pool"
+    map_path = "pool"
+    summary = (
+        f"{len(manifest)} maps &middot; {counts['small']} small / "
+        f"{counts['standard']} standard / {counts['large']} large / "
+        f"{counts['huge']} huge / {counts['giant']} giant &middot; "
+        f"{counts['mirror']} mirror / {counts['rot180']} rot180 &middot; "
+        f"{counts['column']} column / {counts['disc']} disc / "
+        f"{counts['square']} square endzones"
+    )
+
 html = f'''<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CTF Terrain Pool</title>
+<title>{page_title}</title>
 <style>
 :root {{
   --ground:#1a1410; --panel:#241c15; --line:#3a2e21;
@@ -103,8 +252,8 @@ h1 .gv {{ color:var(--glass); }}
 <body>
 <div class="wrap">
 <header class="top"><div>
-  <h1>CTF terrain pool <span class="gv">config-gated (mapPath "pool")</span></h1>
-  <span class="sub">{len(manifest)} maps &middot; {counts['small']} small / {counts['standard']} standard / {counts['large']} large / {counts['huge']} huge / {counts['giant']} giant &middot; {counts['mirror']} mirror / {counts['rot180']} rot180 &middot; {counts['column']} column / {counts['disc']} disc / {counts['square']} square endzones</span>
+  <h1>{heading} <span class="gv">config-gated (mapPath "{map_path}")</span></h1>
+  <span class="sub">{summary}</span>
   <span class="filters">
     <button data-f="size:small" aria-pressed="false">small</button>
     <button data-f="size:standard" aria-pressed="false">standard</button>

@@ -57,6 +57,7 @@ players/modulabot/test/parity
 /dist/
 trench-demo.bitreplay
 pool-preview/
+brpool-preview/
 
 # Arena Component Model build outputs (generated bindings remain tracked).
 /arena/.nimcache/

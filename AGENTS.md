@@ -307,6 +307,10 @@ python3 tools/build_pool_review.py pool-preview
 Commit the refreshed `docs/pool-review.html` together with the pool/
 generator change — a stale page misrepresents what the pool serves.
 
+The battle-royale rotation pool has a separate generated review page at
+[docs/br-pool-review.html](docs/br-pool-review.html); pass `br` as the third
+argument to `tools/build_pool_review.py` so it is labeled `mapPath "brpool"`.
+
 ## Map editor
 
 A local service + browser UI for inspecting and authoring map geometry against
