@@ -4,9 +4,9 @@ import
 
 type
   BattleRoyaleError = object of CatchableError
-  HoldTotals = object
+  BandTotals = object
     files: int
-    holdFiles: int
+    bandFiles: int
     samples: int
     windows: int
     zeroMaskSamples: int
@@ -34,7 +34,7 @@ proc tickStream(zipPath: string): string {.raises: [
   )
 
 proc addArtifact(
-  totals: var HoldTotals,
+  totals: var BandTotals,
   zipPath: string
 ) {.raises: [
   IOError,
@@ -43,7 +43,7 @@ proc addArtifact(
   ZippyError,
   BattleRoyaleError
 ].} =
-  ## Adds passive-band input and displacement samples from one artifact.
+  ## Adds passive or orbit band movement samples from one artifact.
   var
     active = false
     fileActive = false
@@ -55,8 +55,11 @@ proc addArtifact(
       continue
     let sample = parseJson(line)
     let qualifies = not sample.hasKey("dead") and
-      sample.hasKey("obj") and sample["obj"].getStr() == "passive_band" and
-      sample.hasKey("act") and sample["act"].getStr() == "hold_band"
+      sample.hasKey("obj") and sample.hasKey("act") and
+      ((sample["obj"].getStr() == "passive_band" and
+        sample["act"].getStr() == "hold_band") or
+       (sample["obj"].getStr() == "hunter_orbit" and
+        sample["act"].getStr() == "orbit_band"))
     if not qualifies:
       active = false
       continue
@@ -84,7 +87,7 @@ proc addArtifact(
     previousX = x
     previousY = y
   if fileActive:
-    inc totals.holdFiles
+    inc totals.bandFiles
 
 proc percent(numerator, denominator: int): float =
   ## Returns a guarded percentage for two integer counters.
@@ -99,7 +102,7 @@ proc summarize(artifactDir: string) {.raises: [
   ZippyError,
   BattleRoyaleError
 ].} =
-  ## Summarizes passive-band immobility in hosted policy artifacts.
+  ## Summarizes passive or orbit band motion in hosted policy artifacts.
   var paths: seq[string]
   for path in walkDirRec(artifactDir):
     if path.endsWith(".zip"):
@@ -110,16 +113,16 @@ proc summarize(artifactDir: string) {.raises: [
       BattleRoyaleError,
       "artifact directory contains no zip files: " & artifactDir
     )
-  var totals: HoldTotals
+  var totals: BandTotals
   for path in paths:
     totals.addArtifact(path)
   echo "files=", totals.files
-  echo "holdFiles=", totals.holdFiles
-  echo "holdSamples=", totals.samples
-  echo "holdWindows=", totals.windows
+  echo "bandFiles=", totals.bandFiles
+  echo "bandSamples=", totals.samples
+  echo "bandWindows=", totals.windows
   echo "zeroMaskSamples=", totals.zeroMaskSamples
   echo "zeroMaskPct=", totals.zeroMaskSamples.percent(totals.samples)
-  echo "holdTransitions=", totals.transitions
+  echo "bandTransitions=", totals.transitions
   echo "stationaryTransitions=", totals.stationaryTransitions
   echo "stationaryPct=",
     totals.stationaryTransitions.percent(totals.transitions)

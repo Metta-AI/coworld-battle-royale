@@ -84,9 +84,13 @@
   hold-motion extractor, and the Linux amd64 production build pass. Production
   startup reports `ffaHunterOrbit=true` and `ffaHunterOrbitLead=0.5` while
   preserving the submitted 0.85 passive band, 240-pixel arm cap, 60-tick ring
-  unstick, and every other printed v15 setting. Hosted candidate movement and
-  branch activation are pending; control extraction is behavior evidence
-  only, never score.
+  unstick, and every other printed v15 setting. All 10 initial hosted candidate
+  artifacts are valid and contain 21,710 `hunter_orbit` objective and
+  `orbit_band` action ticks, so the branch fired in every file. On the exact
+  field, candidate band samples move 13.89 pixels per half-second on average
+  versus 6.74 in control, while 61.22 percent versus 86.13 percent move less
+  than 12 pixels. This confirms increased movement; diagnostics are never
+  score.
 - Artifact: Local Linux amd64 `andre-battleroyale:candidate-40`, command
   `/bin/baseline`, digest
   `sha256:b30f9ed7f4833ee0159a4c81661d2b44a73e2d54c9b1914f916e30466523471f`.
@@ -94,12 +98,17 @@
   XP candidate `andre-trial-40:v1` after source commit `b84399a` was pushed.
 - XP id: Initial ten-episode control
   `xreq_0b54e8df-22b2-4188-87ee-45dc15a7771e`; initial ten-episode candidate
-  `xreq_05f03485-bc0a-4099-99e5-5cd0f032fb90`.
+  `xreq_05f03485-bc0a-4099-99e5-5cd0f032fb90`. The exact same-field
+  20-episode extension is pending creation for both arms.
 - Opponents: At freeze Stierlitz is #17 at 1368.61 MRR. The nearest three
   unique other players are Kenny Sheftel (`kenshef-my-player:v1`, 1365.71),
   NanosaurusX (`nancy-br:v1`, 1356.78), and sivannn
   (`sivan-br-ringsurfer:v1`, 1381.08), in that fixed order for both arms.
-- Verdict: Pending hosted statistical comparison. Champion
+- Verdict: Pending extension. The initial exact ten-per-arm comparison gives
+  control 181.70 and candidate 208.80, delta +27.10, Welch 95 percent CI
+  [-18.6641, 72.8641], p=0.228944. This is positive but inconclusive; because
+  the changed branch is active in every candidate artifact, extend the exact
+  frozen field by 20 episodes per arm. Champion
   `andre-battleroyale:v15` remains submitted unless this candidate wins
   significantly.
 
