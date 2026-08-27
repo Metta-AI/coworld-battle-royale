@@ -84,12 +84,25 @@
   deadline, target selection, pursuit, firing, bands, ring behavior, Pact,
   every other doctrine, and all item behavior are unchanged. Active decisions
   emit phase `UPGRADE`, objective `upgrade_trip`, and action `move_upgrade`.
-- Isolation: `nim check` and the doctrine source-contract suite pass. Hosted
-  candidate branch confirmation is pending; replay counterfactuals are
-  behavior evidence only and are never score.
-- Artifact: Pending CPUX build and upload.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production startup reports
+  `ffaHunterUpgradeDetourRadius=320.0` while retaining Hunter, the submitted
+  0.85 passive band, 240-pixel initial-arm cap, 80-pixel safety margin,
+  60-tick ring unstick, and every other printed champion setting. The binary
+  contains `UPGRADE`, `upgrade_trip`, and `move_upgrade`. Hosted candidate
+  branch confirmation is pending; replay counterfactuals are behavior evidence
+  only and are never score.
+- Artifact: Local Linux amd64 `stierlitz:candidate-42`, command
+  `/bin/baseline`, digest
+  `sha256:ab74b170b486a57f259d6f00b674ae14c3f4457b10a7f5744bfe53ae3f202a43`.
+  Uploaded unsubmitted as main candidate `stierlitz:v2` and immutable XP
+  candidate `stierlitz-trial-42:v1` after source commit `93b92a3` was pushed.
 - XP id: Pending matched hosted requests, at least 10 episodes per arm.
-- Opponents: Pending live nearest-three field freeze immediately before XP.
+- Opponents: At freeze Andre is #15 at 1401.03 MRR. The nearest three unique
+  other players are Kenny Sheftel (`kenshef-my-player:v1`, 1402.56), Aaron
+  (`aaln-br-hunter:v2`, 1405.91), and softmaxwell (`Picasso:v63`, 1407.55), in
+  that fixed order for both arms. Each champion was verified on its live
+  player page.
 - Verdict: Pending hosted statistical comparison. No candidate will be kept or
   submitted without a statistically significant improvement over
   `stierlitz:v1` on the exact same field.
