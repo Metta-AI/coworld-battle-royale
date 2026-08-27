@@ -35,6 +35,8 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmDefault = true")
     check baseline.contains("FfaPassiveBandDefault = 0.85")
     check baseline.contains("FfaHunterFireRangeDefault = true")
+    check baseline.contains("FfaTargetLeadTicksDefault = 2.0")
+    check baseline.contains("CTF_BOT_FFA_TARGET_LEAD_TICKS")
     check baseline.contains("FfaHunterPursuitDefault = true")
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
@@ -96,3 +98,9 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "FFA target velocity lead is isolated":
+    check baseline.count(
+      "aimTarget = track.pos + track.vel * FfaTargetLeadTicks") == 1
+    check baseline.count("aim_short_lead") == 1
+    check baseline.count("track.vel * LeadTicks") == 0

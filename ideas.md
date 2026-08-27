@@ -48,6 +48,7 @@
 - Scan only while an armed Hunter holds without a visible target.
 - Detour only an unarmed, unshielded Hunter to a nearby safe shield.
 - Throw only already-carried Hunter grenades at visible safe-range targets.
+- Shorten only the FFA moving-target aim lead horizon.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
 - Reduce only the hunter arm-trip detour radius.
@@ -63,6 +64,42 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 44: shorten FFA moving-target lead to two ticks
+
+- Idea: `tools/summarize_target_leads.nim` reconstructs actual trigger and
+  release geometry from 40 newest exact `stierlitz:v1` hosted replays. Across
+  245 matched gun releases, including 129 to 136 moving-target samples
+  depending on velocity window, every tested one-, three-, and six-frame
+  velocity model minimizes release-time heading error at a two-tick lead. The
+  submitted shared six-tick lead has mean release error 1.2367 to 1.3020
+  brads; two ticks lowers it to 0.9918 to 1.0163. In the newest 10-replay
+  field alone, six ticks is worse still and a zero-to-one-tick lead is best,
+  so two is the stable choice across fields. Current replay accuracy is 67.39
+  percent but falls to zero beyond 300 pixels; reducing systematic over-lead
+  isolates aim without changing when or where Hunter fights. Replay geometry
+  selects and isolates the candidate but is never score.
+- Change: Only in FFA, reduce the default visible-target velocity lead horizon
+  from the submitted six ticks to two. CTF keeps its existing shared six-tick
+  lead. Enemy tracking, target selection, movement, trigger tolerance, fire
+  range, weapon behavior, arming, pursuit, ring safety, items, and every other
+  submitted setting remain unchanged. Armed moving-target aim samples emit
+  action `aim_short_lead` for hosted branch confirmation.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production startup reports
+  `ffaTargetLeadTicks=2.0` while retaining Hunter, weapon-range firing,
+  pursuit, the submitted 0.85 hold band, 240-pixel arm cap, 80-pixel safety
+  margin, and 60-tick ring unstick. The source contract confirms CTF still
+  uses its existing six-tick `LeadTicks`. Hosted artifact branch confirmation
+  is pending. Replays and logs prove behavior only and are not score.
+- Artifact: Local Linux amd64 `stierlitz:candidate-44`, command
+  `/bin/baseline`, digest
+  `sha256:07d534907760533832de6a4bd65d4765563bd86c6536f6300992972966f6c182`.
+  CPUX upload is pending; the candidate will remain unsubmitted unless it
+  beats exact champion `stierlitz:v1` with hosted statistical significance.
+- XP id: Pending matched hosted requests with at least 10 episodes per arm.
+- Opponents: Pending a fresh live leaderboard freeze immediately before XP.
+- Verdict: Pending hosted significance; inconclusive is not a keep.
 
 ### Trial 43: hold instead of normal weak-target pursuit
 
