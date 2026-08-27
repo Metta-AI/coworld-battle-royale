@@ -86,9 +86,10 @@
   amd64 production build pass. Production startup reports Hunter with
   `ffaHunterPursuit=false`, while retaining `ffaHunterFireRange=true`, safe
   arming, the submitted 0.85 hold band, 240-pixel arm cap, 80-pixel safety
-  margin, zero ring margin, and 60-tick ring unstick. Hosted artifact branch
-  confirmation is pending. Replays and logs prove behavior only and are not
-  score.
+  margin, zero ring margin, and 60-tick ring unstick. All 10 hosted candidate
+  artifacts are valid. Four contain 577 `hold_no_pursuit` objective ticks;
+  sampled rows also contain seven `pursuit_disabled` decisions. The branch
+  fired. Replays and logs prove behavior only and are not score.
 - Artifact: Local Linux amd64 `stierlitz:candidate-43`, command
   `/bin/baseline`, digest
   `sha256:3c97c94d6ca52dd654e3c1693cc7be934d26215f9224ba423a5e61ef32c7cc94`.
@@ -105,7 +106,12 @@
   (`sivan-br-ringsurfer:v1`, 1413.89), and Kenny Sheftel
   (`kenshef-my-player:v1`, 1372.89), in that fixed order for both arms. Each
   champion was verified on its live player page.
-- Verdict: Pending hosted significance; inconclusive is not a keep.
+- Verdict: Reverted. Exact hosted control mean is 163.1000 and candidate mean
+  is 155.5000, a candidate-minus-control difference of -7.6000 with two-sided
+  Welch 95 percent CI [-77.5614, 62.3614] and p=0.820431. The active strategy
+  is inconclusive and trends worse, so do not extend it. Restore the exact
+  submitted `stierlitz:v1` behavior; uploaded `stierlitz:v3` remains
+  unsubmitted.
 
 ### Trial 42: safe Hunter weapon upgrades within 320 pixels
 
