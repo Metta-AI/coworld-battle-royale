@@ -72,8 +72,11 @@
 - Isolation: The doctrine source-contract suite and `nim check` pass. The
   Linux amd64 production startup reports `ffaHunterCenterSearch=true` while
   preserving the submitted `ffaPassiveBand=0.85`, 240-pixel arm cap, 60-tick
-  ring unstick, and all other v15 settings. Replay or hosted-log branch
-  coverage remains pending.
+  ring unstick, and all other v15 settings. All 10 hosted artifacts per arm
+  are valid. Candidate records 4,834 `search_center_gun` samples versus zero
+  in exact control, and candidate sampled armed fraction is 0.7594 versus
+  0.3106 in control, so the changed branch fired and altered the intended
+  state. These are coverage diagnostics, not score.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-36`, digest
   `sha256:e886c53329ea131ea697f11fb75bb6487e67f0377d74674db94541c35171160f`.
   Uploaded unsubmitted as `andre-battleroyale:v37`; exact v15 control and
@@ -86,7 +89,13 @@
   (`shade-doctrine-v1:v1`), NishadIota at 1370.38
   (`nishad-battleroyale-baseline:v1`), and softmaxwell at 1370.00
   (`Picasso:v63`). Both arms use this exact roster and ordering.
-- Verdict: Pending hosted XP comparison against exact submitted v15.
+- Verdict: Revert. Both exact requests completed 10 of 10 episodes with zero
+  failures. The hosted dashboard reports exact control 217.00 versus candidate
+  190.10. The request-score comparison is candidate minus control -26.9000,
+  95 percent Welch CI [-112.0643, 58.2643], p=0.514183. The result is
+  inconclusive and trends worse, so it does not merit a same-field extension.
+  Exact v15 behavior was restored; `andre-battleroyale:v37` remains uploaded
+  but unsubmitted, and champion `andre-battleroyale:v15` remains live.
 
 ### Trial 35: pixel-accurate hunter ring-unstick clearance
 

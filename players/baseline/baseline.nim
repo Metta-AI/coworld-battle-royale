@@ -261,7 +261,6 @@ const
   FfaHunterPursuitDefault = true
   FfaHunterPursuitMinHpDefault = 6
   FfaHunterSupportRadiusDefault = 300.0
-  FfaHunterCenterSearchDefault = true
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
@@ -546,7 +545,6 @@ var
   FfaHunterPursuit = FfaHunterPursuitDefault
   FfaHunterPursuitMinHp = FfaHunterPursuitMinHpDefault
   FfaHunterSupportRadius = FfaHunterSupportRadiusDefault
-  FfaHunterCenterSearch = FfaHunterCenterSearchDefault
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
@@ -2180,11 +2178,6 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       "LOOT", "loot_trip", "move_gun")
     result.moveTarget = gun.pos
     result.lootTripStarted = true
-    return
-  if FfaHunterCenterSearch and FfaDoctrine == FfaHunter:
-    result = ffaBandIntent(bot, me, center, ringRadius, 0.0,
-      "LOOT", "center_search", "search_center_gun")
-    result.moveTarget = center
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
@@ -4362,9 +4355,6 @@ proc runBot(url: string) =
   FfaHunterSupportRadius = max(1.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_SUPPORT_RADIUS",
     FfaHunterSupportRadiusDefault))
-  FfaHunterCenterSearch = parseEnvBool(
-    "CTF_BOT_FFA_HUNTER_CENTER_SEARCH",
-    FfaHunterCenterSearchDefault)
   FfaHunterArmTripMaxSec = max(1, parseEnvInt(
     "CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC",
     FfaHunterArmTripMaxSecDefault))
@@ -4417,7 +4407,6 @@ proc runBot(url: string) =
     " ffaHunterPursuit=", FfaHunterPursuit,
     " ffaHunterPursuitMinHp=", FfaHunterPursuitMinHp,
     " ffaHunterSupportRadius=", FfaHunterSupportRadius,
-    " ffaHunterCenterSearch=", FfaHunterCenterSearch,
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
