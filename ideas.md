@@ -48,6 +48,43 @@
 
 ## Trial log
 
+### Trial 35: pixel-accurate hunter ring-unstick clearance
+
+- Idea: The newest 10 exact v15 controls contain two ring-like deaths. Both
+  spend all 20 final retreat samples in `ring_unstick`, sustain 19 ring hits,
+  and record zero path length or displacement. Replay-backed Nim extraction
+  finds a falsely blocked coarse origin in 200 of 286 unstick samples while
+  the actual player footprint is valid in every sample. At every one of the
+  286 positions, at least one real movement octant is clear for 32 pixels.
+  In one fatal episode the submitted `ButtonUp` fallback is blocked in all 88
+  samples while right is clear in all 88; in the other, up is blocked in all
+  101 while down-left and down are clear in all 101. Use the exact collision
+  map already available to the policy instead of guessing from a rejected
+  coarse origin cell.
+- Change: Only for the default Hunter's existing ring-unstick direction
+  selection, test the unchanged five candidates with pixel-accurate player-
+  footprint clearance instead of the eight-pixel nav grid. Candidate order,
+  32-pixel probe, preferred side, 20-frame stuck trigger, 60-tick burst,
+  repeated rearming, normal ring retreat, combat, arming, hold band, and every
+  non-Hunter behavior are unchanged. A burst whose selected movement bits
+  differ from exact v15 emits `ring_unstick_fine_ray`.
+- Isolation: `nim check` passes for the policy and replay extractor, the
+  doctrine source-contract suite passes, and the Linux amd64 production build
+  passes. Production startup reports `ffaHunterRingUnstickFineRay=true` while
+  retaining Hunter, the 60-tick ring unstick, 240-pixel arm cap, 30-second arm
+  deadline, 80-pixel arm safety margin, zero ring margin, and 0.85 hold band.
+  Exact replay reconstruction predicts different movement bits in 97 of 286
+  newest-control unstick samples, reducing the coarse selector's 203 fallbacks
+  to 106 without changing its five candidate directions. Eighty-four of those
+  predicted differences occur in one fatal zero-motion ring episode. This is
+  pre-CPUX behavior isolation, not score; hosted branch coverage is pending.
+- Artifact: Local linux/amd64 `andre-battleroyale:candidate-35`, digest
+  `sha256:10771195b95d74a81c4eebd32e5592ac78a1b87a3e4f900fd246292b29777c3f`.
+  Upload pending CPUX.
+- XP id: Pending.
+- Opponents: Pending field freeze at request creation.
+- Verdict: Pending hosted significance.
+
 ### Trial 34: throw already-carried grenades at safe visible targets
 
 - Idea: Replay-backed Nim extraction over the newest 10 exact v15 controls
