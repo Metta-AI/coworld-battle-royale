@@ -114,8 +114,9 @@
   `stierlitz:v5`. Per user naming, only policy name `stierlitz` was used; no
   suffixed policy was created. It remains unsubmitted unless it beats exact
   champion `stierlitz:v1` with hosted statistical significance.
-- XP id: Pending matched hosted control and candidate requests, at least ten
-  episodes per arm.
+- XP id: Initial ten-episode control
+  `xreq_30e54719-5adf-4ef5-91bb-38d5b9d8529f`; initial ten-episode candidate
+  `xreq_c7596a62-7da2-49f4-b122-e04f3c3417e4`.
 - Opponents: At the one-time live freeze Andre is #12 at 1427.98 MRR. The
   exact three nearest unique other players are NishadIota
   (`nishad-battleroyale-baseline:v1`, 1412.11), sivannn
