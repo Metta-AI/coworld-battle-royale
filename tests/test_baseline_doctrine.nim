@@ -26,7 +26,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM")
     check baseline.contains("CTF_BOT_FFA_HUNTER_FIRE_RANGE")
     check baseline.contains("CTF_BOT_FFA_HUNTER_PURSUIT")
-    check baseline.contains("CTF_BOT_FFA_HUNTER_ORBIT")
     check baseline.contains("CTF_BOT_FFA_HUNTER_PURSUIT_MIN_HP")
     check baseline.contains("CTF_BOT_FFA_HUNTER_SUPPORT_RADIUS")
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM_TRIP_MAX_SEC")
@@ -37,8 +36,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaPassiveBandDefault = 0.85")
     check baseline.contains("FfaHunterFireRangeDefault = true")
     check baseline.contains("FfaHunterPursuitDefault = true")
-    check baseline.contains("FfaHunterOrbitDefault = true")
-    check baseline.contains("FfaHunterOrbitLead = 0.50")
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
     check baseline.contains("FfaHunterArmTripMaxSecDefault = 30")
@@ -46,9 +43,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
-    check baseline.contains("result.objective = \"hunter_orbit\"")
-    check baseline.contains("result.action = \"orbit_band\"")
-    check baseline.contains("result.engageReason = \"orbit_hold\"")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
 

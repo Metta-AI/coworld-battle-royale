@@ -106,13 +106,15 @@
   unique other players are Kenny Sheftel (`kenshef-my-player:v1`, 1365.71),
   NanosaurusX (`nancy-br:v1`, 1356.78), and sivannn
   (`sivan-br-ringsurfer:v1`, 1381.08), in that fixed order for both arms.
-- Verdict: Pending extension. The initial exact ten-per-arm comparison gives
-  control 181.70 and candidate 208.80, delta +27.10, Welch 95 percent CI
-  [-18.6641, 72.8641], p=0.228944. This is positive but inconclusive; because
-  the changed branch is active in every candidate artifact, extend the exact
-  frozen field by 20 episodes per arm. Champion
-  `andre-battleroyale:v15` remains submitted unless this candidate wins
-  significantly.
+- Verdict: Revert. The initial exact ten-per-arm comparison was positive but
+  inconclusive: control 181.70, candidate 208.80, delta +27.10, Welch 95
+  percent CI [-18.6641, 72.8641], p=0.228944. After the exact same-field
+  extension, all 30 hosted episodes per arm give control 196.3000 and
+  candidate 175.6667, delta -20.6333, 95 percent CI [-52.7356, 11.4689],
+  Welch p=0.203344. The branch is active but the extended score is
+  inconclusive and directionally worse, so restore the exact submitted v15
+  source. `andre-battleroyale:v41` remains uploaded but unsubmitted and
+  `andre-battleroyale:v15` remains champion.
 
 ### Trial 39: inward fallback band only while unarmed
 

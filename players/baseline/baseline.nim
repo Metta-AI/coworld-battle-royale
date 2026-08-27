@@ -259,8 +259,6 @@ const
   FfaHunterArmDefault = true
   FfaHunterFireRangeDefault = true
   FfaHunterPursuitDefault = true
-  FfaHunterOrbitDefault = true
-  FfaHunterOrbitLead = 0.50
   FfaHunterPursuitMinHpDefault = 6
   FfaHunterSupportRadiusDefault = 300.0
   FfaHunterArmTripMaxSecDefault = 30
@@ -545,7 +543,6 @@ var
   FfaHunterArm = FfaHunterArmDefault
   FfaHunterFireRange = FfaHunterFireRangeDefault
   FfaHunterPursuit = FfaHunterPursuitDefault
-  FfaHunterOrbit = FfaHunterOrbitDefault
   FfaHunterPursuitMinHp = FfaHunterPursuitMinHpDefault
   FfaHunterSupportRadius = FfaHunterSupportRadiusDefault
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
@@ -707,22 +704,6 @@ proc ffaBandTargetAtRadius(bot: Bot, me, center: Vec,
       if fromCenter.len() >= FfaBearingEpsilon: norm(fromCenter)
       else: norm(ffaSeatBearing(bot.slot))
   center + bearing * radius
-
-proc ffaOrbitTarget(bot: Bot, me, center: Vec, radius: float): Vec =
-  ## Returns a radius-preserving, seat-balanced tangential hold target.
-  let
-    fromCenter = me - center
-    bearing =
-      if fromCenter.len() >= FfaBearingEpsilon: norm(fromCenter)
-      else: norm(ffaSeatBearing(bot.slot))
-    direction =
-      if floorMod(bot.slot, 2) == 0:
-        1.0
-      else:
-        -1.0
-    tangent = vec(-bearing.y * direction, bearing.x * direction)
-    orbitBearing = norm(bearing + tangent * FfaHunterOrbitLead)
-  center + orbitBearing * radius
 
 proc ffaBandRadiusWithRingMargin(bandRadius: float, ringRadius: int,
     margin: float): float =
@@ -2154,17 +2135,6 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       ringRadius, FfaHunterRingMargin)
     result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
       result.bandRadius)
-  if FfaDoctrine == FfaHunter and FfaHunterOrbit:
-    result.phase = "HUNTER_ORBIT"
-    result.objective = "hunter_orbit"
-    result.action = "orbit_band"
-    result.engageReason = "orbit_hold"
-    result.moveTarget = ffaOrbitTarget(
-      bot,
-      me,
-      center,
-      result.bandRadius
-    )
   if pursue:
     result.moveTarget = actors[targetIndex].pos
     result.objective = "fight"
@@ -4380,8 +4350,6 @@ proc runBot(url: string) =
     FfaHunterFireRangeDefault)
   FfaHunterPursuit = parseEnvBool("CTF_BOT_FFA_HUNTER_PURSUIT",
     FfaHunterPursuitDefault)
-  FfaHunterOrbit = parseEnvBool("CTF_BOT_FFA_HUNTER_ORBIT",
-    FfaHunterOrbitDefault)
   FfaHunterPursuitMinHp = max(1, parseEnvInt(
     "CTF_BOT_FFA_HUNTER_PURSUIT_MIN_HP", FfaHunterPursuitMinHpDefault))
   FfaHunterSupportRadius = max(1.0, parseEnvFloat(
@@ -4437,8 +4405,6 @@ proc runBot(url: string) =
     " ffaHunterArm=", FfaHunterArm,
     " ffaHunterFireRange=", FfaHunterFireRange,
     " ffaHunterPursuit=", FfaHunterPursuit,
-    " ffaHunterOrbit=", FfaHunterOrbit,
-    " ffaHunterOrbitLead=", FfaHunterOrbitLead,
     " ffaHunterPursuitMinHp=", FfaHunterPursuitMinHp,
     " ffaHunterSupportRadius=", FfaHunterSupportRadius,
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
