@@ -65,7 +65,11 @@
   `ffaHunterArmedScanBand=true` only in the candidate, while candidate and
   exact submitted control retain Hunter, the 60-tick ring unstick, 240-pixel
   arm cap, 30-second arm deadline, 80-pixel arm safety margin, zero ring
-  margin, and 0.85 hold band. Hosted branch coverage is pending.
+  margin, and 0.85 hold band. All 10 hosted candidate artifacts are valid and
+  contain 3,519 `scan_armed_band` ticks versus zero in control, proving the
+  isolated branch fired. Candidate artifacts contain 241 fight ticks versus
+  182 in control, but only 0.2158 sampled armed fraction versus 0.3777 and five
+  death events versus two. These diagnostics prove behavior, not score.
 - Artifact: `andre-battleroyale:candidate-30`, Linux amd64 image digest
   `sha256:2bfb8e9166dac1d7c59d5a306fd1a25df64abbe9c352502effa1396fa8d66b2a`.
   Uploaded unsubmitted as `andre-battleroyale:v31`. Parallel immutable uploads
@@ -79,7 +83,12 @@
   players are Kenny Sheftel (`kenshef-my-player:v1`, 1326.99), David Greis
   (`Battle Royale Baseline:v1`, 1302.89), and Aaron
   (`aaln-br-hunter:v2`, 1398.72).
-- Verdict: Pending hosted significance.
+- Verdict: Reverted. All 10 episodes per arm completed without failure. The
+  exact submitted control scores 189.7000 and the candidate 185.7000, a
+  -4.0000 delta with 95% CI [-68.6600, 60.6600] and Welch p=0.895977. The
+  result is inconclusive and trends worse, so armed-only hold scanning was
+  removed. `andre-battleroyale:v31` remains uploaded but unsubmitted; the
+  submitted champion remains v15.
 
 ### Trial 29: cycle repeated hunter ring-unstick candidates
 
