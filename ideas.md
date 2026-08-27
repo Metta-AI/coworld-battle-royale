@@ -82,7 +82,8 @@
   startup reports `ffaHunterPursueEqual=true` while preserving the submitted
   six-HP floor, 300-pixel support radius, 240-pixel arm cap, 60-tick ring
   unstick, and 0.85 hold band. Replay counterfactual coverage is behavior
-  evidence only, never score; hosted artifact coverage is pending.
+  evidence only, never score. The ten hosted candidate artifacts contain zero
+  `pursue_equal` samples, so the new branch did not activate on this XP field.
 - Artifact: Local Linux amd64 `andre-battleroyale:candidate-38`, command
   `/bin/baseline`, digest
   `sha256:84b427cdcd4273f3bf853716373ff6396088a0c7a531ce6e7429f4271633c323`.
@@ -95,9 +96,13 @@
   unique other players are Aaron (`aaln-br-hunter:v2`, 1458.92), richard
   (`co-gas-battleroyale-baseline-richard:v3`, 1449.48), and softmaxwell
   (`Picasso:v63`, 1472.27), in that fixed order for both arms.
-- Verdict: Pending hosted statistical comparison. Champion
-  `andre-battleroyale:v15` remains submitted unless this candidate wins
-  significantly.
+- Verdict: Revert. The exact ten-per-arm hosted comparison gives control
+  205.70 and candidate 151.00, delta -54.70, Welch 95 percent CI
+  [-177.7809, 68.3809], p=0.355953. This is inconclusive and directionally
+  poor, and hosted artifacts show the changed branch never fired. Do not spend
+  an extension on a candidate that was behaviorally inactive; restore the
+  exact submitted v15 source. `andre-battleroyale:v15` remains champion and
+  `andre-battleroyale:v39` remains uploaded but unsubmitted.
 
 ### Trial 37: compensate armed hunter aim for own movement
 
