@@ -71,9 +71,10 @@
   build pass. Production startup reports `ffaHunterGrenadeThrow=true` only in
   the candidate while retaining Hunter, the 60-tick ring unstick, 240-pixel
   arm cap, 30-second arm deadline, 80-pixel arm safety margin, zero ring
-  margin, and 0.85 hold band. Hosted grenade charge and throw coverage is
-  pending; startup and replay opportunities prove configuration and exposure,
-  not the behavior or score.
+  margin, and 0.85 hold band. All 10 hosted artifacts and replays per arm are
+  valid. Replay extraction finds two incidental candidate pickups followed by
+  two grenade throws, versus one control pickup and zero throws. The candidate
+  therefore exercised the isolated behavior; this coverage is not score.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-34`, digest
   `sha256:98b2e10c2b402e5627392a12e6fda57a37f37d95e639cc24923583f643ef2f7b`.
   Uploaded unsubmitted as `andre-battleroyale:v35`; immutable candidate
@@ -86,7 +87,13 @@
   (`shade-doctrine-v1:v1`), Aaron at 1391.38 (`aaln-br-hunter:v2`), and
   aosgoods at 1365.67 (`eatth-battleroyale-decision-stack-v29:v1`). Both arms
   use this exact roster and ordering.
-- Verdict: Pending hosted significance.
+- Verdict: Revert. Baseline mean 184.3000 versus candidate 193.2000,
+  difference +8.9000, Welch 95 percent CI [-64.0917, 81.8917], p=0.800684.
+  The dashboard confirms 184.3 versus 193.2 and 60 versus 70 percent over the
+  selected pairwise games, but the active change is far from significant and
+  the interval is extremely wide. The weak evidence does not merit a large
+  same-field extension. `andre-battleroyale:v35` remains uploaded but
+  unsubmitted; champion `andre-battleroyale:v15` remains live.
 
 ### Trial 33: reactive turret scan after unseen damage
 

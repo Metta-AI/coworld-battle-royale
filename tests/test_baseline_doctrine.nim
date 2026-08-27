@@ -42,7 +42,6 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
-    check baseline.contains("FfaHunterGrenadeThrow = true")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
@@ -97,12 +96,3 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
-
-  test "only hunter throws already-carried grenades at safe targets":
-    check baseline.count("action = \"throw_grenade\"") == 1
-    check baseline.count("action = \"charge_grenade\"") == 1
-    check baseline.count(
-      "FfaHunterGrenadeThrow and carryingNade and targetIndex >= 0") == 1
-    check baseline.count(
-      "targetDist >= NadeMinRange and targetDist <= NadeMaxRange") == 1
-    check baseline.count("if hunterGrenade and") == 1
