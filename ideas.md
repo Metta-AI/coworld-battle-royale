@@ -72,9 +72,15 @@
   hold band. Hosted `scan_damage` branch coverage is pending.
 - Artifact: Local linux/amd64 `andre-battleroyale:candidate-33`, digest
   `sha256:8f833b8ff3b614d451123783a80986ee51b346373fa20e552027955bfd326f43`.
-  Upload pending CPUX.
+  Uploaded unsubmitted as `andre-battleroyale:v34`; immutable candidate
+  `andre-trial-33:v1`; exact v15 control `andre-trial-33:v2`.
 - XP id: Pending paired hosted requests.
-- Opponents: Pending fresh nearest-MRR field freeze.
+- Opponents: Frozen outside-top-three field at request creation: Andre #10 at
+  1547.12 MMR versus nearest unique other players softmaxwell at 1599.14
+  (`Picasso:v63`), Ryan Schiller at 1602.50
+  (`ryanschiller-br-v95edge:v1`), and richard at 1490.52
+  (`co-gas-battleroyale-baseline-richard:v3`). Both arms use this exact roster
+  and ordering.
 - Verdict: Pending hosted significance.
 
 ### Trial 32: reactive inward jink after non-ring damage
