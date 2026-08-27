@@ -101,7 +101,9 @@
 - XP id: Initial ten-episode control
   `xreq_bf9e9180-2f71-4014-a531-1724e998895c`; initial ten-episode candidate
   `xreq_9bcbfbbf-ed92-45ca-a952-1d4d92b32f30`. The exact same-field
-  20-episode extension is pending launch for both arms.
+  20-episode extension is control
+  `xreq_91db9b99-93dc-446f-8ce1-16ffb0ee6134` and candidate
+  `xreq_72e2e4aa-9d6d-4404-8611-edf423d0846e`.
 - Opponents: At freeze Andre is #15 at 1401.03 MRR. The nearest three unique
   other players are Kenny Sheftel (`kenshef-my-player:v1`, 1402.56), Aaron
   (`aaln-br-hunter:v2`, 1405.91), and softmaxwell (`Picasso:v63`, 1407.55), in
