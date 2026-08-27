@@ -58,6 +58,35 @@
 
 ## Trial log
 
+### Trial 41: defer low-gun fire beyond the accurate range
+
+- Idea: The newest exact-v15 hosted controls fire the low gun across its full
+  700-pixel mechanical range. Replay extraction attributes only one hit in 17
+  gun impacts beyond 500 pixels, versus 45 in 118 impacts below 500. The low
+  gun is the only gun that can fire beyond the submitted mid/heavy 520-pixel
+  cap, and it also has the slowest cooldown at 150 percent of the base. Hosted
+  artifact extraction finds 197 visible low-gun samples between 520 and 700
+  pixels, in six sustained windows across six of 10 files. That is 30.35
+  percent of all 649 armed-visible samples, while extending mid/heavy range
+  would affect only eight samples in one file. Defer low-gun fire until the
+  target reaches the accurate 520-pixel band so a long miss cannot consume
+  the cooldown needed for a closer shot.
+- Change: Only for the default Hunter carrying a low gun, cap firing at 520
+  pixels instead of the mechanical 700. Movement, target selection, pursuit,
+  aim, low-gun damage and cooldown, mid/heavy firing, gun acquisition, items,
+  ring behavior, Pact, every other doctrine, and all submitted v15 settings
+  are unchanged. A visible low-gun target in the withheld 520-to-700 interval
+  emits reason `low_gun_wait`.
+- Isolation: Pending Nim checks, production startup extraction, and hosted
+  candidate branch confirmation. Replay and artifact opportunity counts are
+  behavior evidence only, never score.
+- Artifact: Pending Linux amd64 build, commit, push, and upload.
+- XP id: Pending exact same-field hosted control and candidate requests.
+- Opponents: Pending the required live nearest-MRR freeze at XP creation.
+- Verdict: Pending hosted statistical comparison. Champion
+  `andre-battleroyale:v15` remains submitted unless this candidate wins
+  significantly.
+
 ### Trial 40: orbit the submitted hunter hold band
 
 - Idea: The newest exact-v15 field produces 17,996 passive-hold ticks while

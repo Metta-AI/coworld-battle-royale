@@ -25,6 +25,7 @@ suite "baseline FFA doctrine":
     check baseline.count("of FfaHunter: \"hunter\"") == 1
     check baseline.contains("CTF_BOT_FFA_HUNTER_ARM")
     check baseline.contains("CTF_BOT_FFA_HUNTER_FIRE_RANGE")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_LOW_GUN_FIRE_RANGE")
     check baseline.contains("CTF_BOT_FFA_HUNTER_PURSUIT")
     check baseline.contains("CTF_BOT_FFA_HUNTER_PURSUIT_MIN_HP")
     check baseline.contains("CTF_BOT_FFA_HUNTER_SUPPORT_RADIUS")
@@ -35,6 +36,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmDefault = true")
     check baseline.contains("FfaPassiveBandDefault = 0.85")
     check baseline.contains("FfaHunterFireRangeDefault = true")
+    check baseline.contains("FfaHunterLowGunFireRangeDefault = 520.0")
     check baseline.contains("FfaHunterPursuitDefault = true")
     check baseline.contains("FfaHunterPursuitMinHpDefault = 6")
     check baseline.contains("FfaHunterSupportRadiusDefault = 300.0")
@@ -43,6 +45,7 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
+    check baseline.contains("result.engageReason = \"low_gun_wait\"")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
 

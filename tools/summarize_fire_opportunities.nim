@@ -14,6 +14,8 @@ type
     visibleSamples: int
     armedVisibleSamples: int
     lowLongSamples: int
+    lowLongWindows: int
+    lowLongFiles: int
     midHeavyLongSamples: int
     midHeavyLongFiles: int
     midHeavy520To700: int
@@ -51,22 +53,33 @@ proc addArtifact(
 ].} =
   ## Adds visible armed-target distance samples from one artifact.
   inc totals.files
-  var hasMidHeavyLong = false
+  var
+    hasLowLong = false
+    lowLongActive = false
+    hasMidHeavyLong = false
   for line in tickStream(zipPath).splitLines():
     if line.len == 0:
       continue
     let sample = parseJson(line)
     if sample.hasKey("dead") or not sample.hasKey("eng"):
+      lowLongActive = false
       continue
     let
       tier = sample["tier"].getInt()
       distance = sample["eng"].getFloat()
     inc totals.visibleSamples
     if tier <= 0:
+      lowLongActive = false
       continue
     inc totals.armedVisibleSamples
-    if tier == 1 and distance > CurrentRange and distance <= LowGunRange:
+    let lowLong = tier == 1 and
+      distance > CurrentRange and distance <= LowGunRange
+    if lowLong:
       inc totals.lowLongSamples
+      hasLowLong = true
+      if not lowLongActive:
+        inc totals.lowLongWindows
+    lowLongActive = lowLong
     if tier < 2 or distance <= CurrentRange:
       continue
     if distance <= FullGunRange:
@@ -80,6 +93,8 @@ proc addArtifact(
         inc totals.midHeavy900To1050
     else:
       inc totals.midHeavyBeyond1050
+  if hasLowLong:
+    inc totals.lowLongFiles
   if hasMidHeavyLong:
     inc totals.midHeavyLongFiles
 
@@ -108,6 +123,8 @@ proc summarize(artifactDir: string) {.raises: [
   echo "visibleSamples=", totals.visibleSamples
   echo "armedVisibleSamples=", totals.armedVisibleSamples
   echo "lowLongSamples=", totals.lowLongSamples
+  echo "lowLongWindows=", totals.lowLongWindows
+  echo "lowLongFiles=", totals.lowLongFiles
   echo "midHeavyLongSamples=", totals.midHeavyLongSamples
   echo "midHeavyLongFiles=", totals.midHeavyLongFiles
   echo "midHeavy520To700=", totals.midHeavy520To700
