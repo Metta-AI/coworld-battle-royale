@@ -39,6 +39,8 @@ type
     aimError: int
     compensatedAimError: int
     compensationBetter: int
+    velocityAimError: int
+    velocityBetter: int
     radialDistance: float
     radialSamples: int
     earlyRadialDistance: float
@@ -159,12 +161,20 @@ proc addAimSample(
   trigger, shot: SimEvent,
   target: TargetEstimate
 ) =
-  ## Compares locked aim with own-motion-compensated aim at release.
-  let frame = extraction.frameForTick(shot.tick)
-  if frame < 0 or target.slot < 0:
+  ## Compares locked aim with oracle and online own-motion compensation.
+  let
+    frame = extraction.frameForTick(shot.tick)
+    triggerFrame = extraction.frameForTick(trigger.tick)
+    previousFrame = extraction.frameForTick(trigger.tick - 1)
+  if frame < 0 or triggerFrame < 0 or previousFrame < 0 or target.slot < 0:
     return
-  let targetSeat = extraction.frameSeat(frame, target.slot)
-  if (targetSeat.flags and 1) == 0:
+  let
+    targetSeat = extraction.frameSeat(frame, target.slot)
+    triggerSelf = extraction.frameSeat(triggerFrame, trigger.source)
+    previousSelf = extraction.frameSeat(previousFrame, trigger.source)
+  if (targetSeat.flags and 1) == 0 or
+      (triggerSelf.flags and 1) == 0 or
+      (previousSelf.flags and 1) == 0:
     return
   let
     actualX = targetSeat.x.float - shot.x
@@ -178,11 +188,21 @@ proc addAimSample(
     ownY = shot.y - trigger.y
     compensatedHeading = bradsOf(lockedX - ownX, lockedY - ownY)
     compensatedError = bradsError(actualHeading, compensatedHeading)
+    velocityX = float(triggerSelf.x - previousSelf.x)
+    velocityY = float(triggerSelf.y - previousSelf.y)
+    velocityHeading = bradsOf(
+      lockedX - velocityX * float(FireWindupTicks),
+      lockedY - velocityY * float(FireWindupTicks)
+    )
+    velocityError = bradsError(actualHeading, velocityHeading)
   inc player.aimSamples
   player.aimError += currentError
   player.compensatedAimError += compensatedError
   if compensatedError < currentError:
     inc player.compensationBetter
+  player.velocityAimError += velocityError
+  if velocityError < currentError:
+    inc player.velocityBetter
 
 proc addReplay(
   stats: var Table[string, PlayerStats],
@@ -342,12 +362,14 @@ proc rangeText(
     )
 
 proc aimText(player: PlayerStats): string =
-  ## Returns current and own-motion-compensated release aim diagnostics.
+  ## Returns current, oracle, and online own-motion aim diagnostics.
   if player.aimSamples == 0:
-    return "0/0/0"
+    return "0/0/0/0/0"
   &"{mean(player.aimError, player.aimSamples):.2f}/" &
     &"{mean(player.compensatedAimError, player.aimSamples):.2f}/" &
-    &"{percent(player.compensationBetter, player.aimSamples):.2f}"
+    &"{percent(player.compensationBetter, player.aimSamples):.2f}/" &
+    &"{mean(player.velocityAimError, player.aimSamples):.2f}/" &
+    &"{percent(player.velocityBetter, player.aimSamples):.2f}"
 
 proc summarize(replayDir: string) =
   ## Extracts and prints aggregate metrics for one replay directory.
@@ -371,7 +393,8 @@ proc summarize(replayDir: string) =
   echo "name episodes winPct scoreMean killsMean deathsMean damageMean " &
     "survivalMean placeMean radialMean earlyRadialMean innerPct " &
     "firstGunTick firstGunRadius accuracy weapons pickups impacts targets " &
-    "aimError/compError/compBetterPct fatalCauses"
+    "aimError/oracleError/oracleBetterPct/velocityError/velocityBetterPct " &
+    "fatalCauses"
   for name in names:
     let
       player = stats[name]
