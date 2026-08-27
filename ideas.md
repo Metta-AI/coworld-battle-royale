@@ -39,6 +39,7 @@
 - Reduce only the hunter arm-trip detour radius.
 - Prefer only the nearest safe opening gun over the highest-tier safe gun.
 - Search toward the center only while an unarmed Hunter sees no safe gun.
+- Compensate only armed Hunter aim for continuing movement during gun windup.
 - Switch only the FFA doctrine from legacy to passive.
 - Switch only the submitted hunter doctrine to passive.
 - Switch only the submitted hunter doctrine to rush.
@@ -48,6 +49,37 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 37: compensate armed hunter aim for own movement
+
+- Idea: Replay-backed extraction over the newest 50 exact-v15 controls finds
+  339 attributable gun releases. The submitted target lead accounts for enemy
+  motion but locks aim before a five-tick firing windup while the shooter keeps
+  moving. Submitted mean release-time heading error is 2.07 brads. An online
+  counterfactual using only the Hunter's previous-frame velocity lowers it to
+  1.93 brads and improves 21.83 percent of attributable releases. The oracle
+  using actual future displacement reaches 1.84 brads, so most of the
+  available own-motion correction is predictable without changing navigation.
+  In the same controls, extending mid/heavy opening-gun reach from 240 to 320
+  pixels would alter only five ticks in one of 20 newest files, and a visible
+  safe medkit within 180 pixels occurs in only one file; those lower-coverage
+  ideas are rejected before XP.
+- Change: Only for the default armed Hunter with a visible target, outside
+  ring retreat, compensate the already-predicted target point by the Hunter's
+  measured previous-frame velocity over the five-tick gun windup. Apply the
+  correction only while measured velocity remains plausible and points toward
+  the unchanged navigation target. Target selection, enemy-motion lead,
+  trigger tolerance, navigation, ring behavior, arming, pursuit, items, hold
+  band, and every non-Hunter doctrine are unchanged. Active samples emit
+  `aim_own_motion`.
+- Isolation: Pending doctrine checks, production extraction, and hosted
+  candidate artifact coverage. Replay diagnostics are behavior evidence only,
+  never score.
+- Artifact: Pending CPUX.
+- XP id: Pending exact same-field hosted control and candidate requests.
+- Opponents: Pending required field freeze at XP creation.
+- Verdict: Pending hosted statistical comparison. The submitted champion
+  remains `andre-battleroyale:v15` unless this candidate wins significantly.
 
 ### Trial 36: center search while an unarmed hunter sees no gun
 
