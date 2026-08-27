@@ -91,9 +91,13 @@
 - Artifact: Local Linux amd64 `andre-battleroyale:candidate-39`, command
   `/bin/baseline`, digest
   `sha256:49df8f5f9872ea982b684979c0f874655a72886abdcec9049894d1e8bca96228`.
-  Upload is pending committed and pushed source.
+  Uploaded unsubmitted as main candidate `andre-battleroyale:v40` and immutable
+  XP candidate `andre-trial-39:v1` after source commit `2726950` was pushed.
 - XP id: Pending exact same-field hosted control and candidate requests.
-- Opponents: Pending the required live nearest-MRR freeze at XP creation.
+- Opponents: At freeze Stierlitz is #13 at 1416.56 MRR. The nearest three
+  unique other players are softmaxwell (`Picasso:v63`, 1413.97), sivannn
+  (`sivan-br-ringsurfer:v1`, 1412.24), and Aaron (`aaln-br-hunter:v2`,
+  1443.10), in that fixed order for both arms.
 - Verdict: Pending hosted statistical comparison. Champion
   `andre-battleroyale:v15` remains submitted unless this candidate wins
   significantly.

@@ -1,0 +1,38 @@
+{
+  "idempotency_key": "andre-br-trial39-candidate-20260827",
+  "target": {
+    "league_id": "league_b88a269b-0de7-4723-b1c7-06dab50fe61d",
+    "variant_id": "br-12"
+  },
+  "game_config_overrides": {
+    "num_agents": 4
+  },
+  "roster": [
+    {
+      "player": {
+        "policy_ref": "andre-trial-39:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "Picasso:v63"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "sivan-br-ringsurfer:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "aaln-br-hunter:v2"
+      },
+      "slot": -1
+    }
+  ],
+  "num_episodes": 10,
+  "notes": "Trial 39 candidate: unarmed-only 0.70 fallback band, frozen nearest-MRR field."
+}
