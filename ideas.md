@@ -93,11 +93,16 @@
   `/bin/baseline`, digest
   `sha256:3c97c94d6ca52dd654e3c1693cc7be934d26215f9224ba423a5e61ef32c7cc94`.
   This deterministic build matches the prior Trial 17 implementation, whose
-  old field failed coverage. CPUX upload is pending; the candidate will remain
-  unsubmitted unless it beats exact champion `stierlitz:v1` with hosted
-  statistical significance.
+  old field failed coverage. Uploaded unsubmitted as main candidate
+  `stierlitz:v3` and immutable XP candidate `stierlitz-trial-43:v1` after
+  source commit `cfa949a` was pushed. It will remain unsubmitted unless it
+  beats exact champion `stierlitz:v1` with hosted statistical significance.
 - XP id: Pending matched hosted requests with at least 10 episodes per arm.
-- Opponents: Pending a fresh live leaderboard freeze immediately before XP.
+- Opponents: At freeze Andre is #14 at 1395.64 MRR. The nearest three unique
+  other players are Aaron (`aaln-br-hunter:v2`, 1383.64), sivannn
+  (`sivan-br-ringsurfer:v1`, 1413.89), and Kenny Sheftel
+  (`kenshef-my-player:v1`, 1372.89), in that fixed order for both arms. Each
+  champion was verified on its live player page.
 - Verdict: Pending hosted significance; inconclusive is not a keep.
 
 ### Trial 42: safe Hunter weapon upgrades within 320 pixels
