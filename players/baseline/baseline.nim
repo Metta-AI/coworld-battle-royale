@@ -249,6 +249,7 @@ const
   FfaLootBandDefault = 0.60
   FfaHoldBandDefault = 0.50
   FfaPassiveBandDefault = 0.85
+  FfaHunterUnarmedBandDefault = 0.70
   FfaShadeRingMarginDefault = 160.0  # one alarm width inside the ring-safety line
   FfaHunterRingMarginDefault = 0.0
   FfaLootOpenSecDefault = 35
@@ -533,6 +534,7 @@ var
   FfaLootBand = FfaLootBandDefault
   FfaHoldBand = FfaHoldBandDefault
   FfaPassiveBand = FfaPassiveBandDefault
+  FfaHunterUnarmedBand = FfaHunterUnarmedBandDefault
   FfaShadeRingMargin = FfaShadeRingMarginDefault
   FfaHunterRingMargin = FfaHunterRingMarginDefault
   FfaLootOpenSec = FfaLootOpenSecDefault
@@ -2178,6 +2180,19 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       "LOOT", "loot_trip", "move_gun")
     result.moveTarget = gun.pos
     result.lootTripStarted = true
+    return
+  if FfaDoctrine == FfaHunter:
+    result = ffaBandIntent(
+      bot,
+      me,
+      center,
+      ringRadius,
+      FfaHunterUnarmedBand,
+      "HUNTER_UNARMED",
+      "unarmed_band",
+      "hold_unarmed_band"
+    )
+    result.engageReason = "hold_unarmed_band"
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
@@ -4327,6 +4342,10 @@ proc runBot(url: string) =
     FfaHoldBandDefault), 0.0, 1.0)
   FfaPassiveBand = clamp(parseEnvFloat("CTF_BOT_FFA_PASSIVE_BAND",
     FfaPassiveBandDefault), 0.0, 1.0)
+  FfaHunterUnarmedBand = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_UNARMED_BAND",
+    FfaHunterUnarmedBandDefault
+  ), 0.0, 1.0)
   FfaShadeRingMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_SHADE_MARGIN", FfaShadeRingMarginDefault, strict = true))
   FfaHunterRingMargin = max(0.0, parseEnvFloat(
@@ -4396,8 +4415,9 @@ proc runBot(url: string) =
     " ffaDoctrine=", ffaDoctrineName(FfaDoctrine),
     " ffaPerimeterBand=", FfaPerimeterBand,
     " ffaLootBand=", FfaLootBand, " ffaHoldBand=", FfaHoldBand,
-    " ffaPassiveBand=", FfaPassiveBand, " ffaShadeRingMargin=",
-    FfaShadeRingMargin, " ffaLootWindow=",
+    " ffaPassiveBand=", FfaPassiveBand,
+    " ffaHunterUnarmedBand=", FfaHunterUnarmedBand,
+    " ffaShadeRingMargin=", FfaShadeRingMargin, " ffaLootWindow=",
     FfaLootOpenSec, "-", FfaLootCloseSec,
     " ffaLootTripMaxSec=", FfaLootTripMaxSec,
     " ffaPerimeterEngageRange=", FfaPerimeterEngageRange,

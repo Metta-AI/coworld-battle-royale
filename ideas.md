@@ -58,6 +58,46 @@
 
 ## Trial log
 
+### Trial 39: inward fallback band only while unarmed
+
+- Idea: The newest 10 exact-v15 controls on live Coworld v0.1.14 put
+  Stierlitz at a 731.40-pixel mean early radius and first gun tick 1214.71.
+  The exact field opponents average 605.01 pixels and first gun tick 897.43.
+  Scaling the submitted 0.85 band by that radial ratio gives 0.70. Unlike
+  Trial 6's 0.60 band for every Hunter state or Trial 36's unarmed movement
+  all the way to center, test a moderate inward band only during the unarmed
+  fallback. The dedicated hosted-artifact extractor finds 825 submitted
+  unarmed fallback samples in 29 windows across all 10 newest files, plus
+  1,421 samples in 86 windows across all 10 preceding files. This is much
+  broader than extending mid/heavy fire from 520 to its 1050-pixel mechanical
+  range, which changes one sampled opportunity in the same preceding 10 files
+  and none in the newest 10. The fresh XP metadata confirms live v0.1.14, and
+  fetched upstream `origin/main` remains `8363831`, so the mechanics and
+  example policy have not changed since the recorded audit.
+- Change: Only for the default Hunter while unarmed, ring-safe, not pursuing,
+  without a valid committed gun trip, and without a newly eligible gun, use a
+  0.70 fallback band instead of the submitted 0.85 passive band. Armed
+  holding remains exactly 0.85. Ring safety, gun selection and trip behavior,
+  four-player late close, firing, pursuit, target selection, items, Pact, all
+  other doctrines, and every other setting are unchanged. Active decisions
+  emit phase `HUNTER_UNARMED`, objective `unarmed_band`, action and reason
+  `hold_unarmed_band`.
+- Isolation: `nim check`, the doctrine source-contract suite, the unarmed-hold
+  hosted-artifact extractor, and the Linux amd64 production build pass.
+  Production startup reports `ffaHunterUnarmedBand=0.7` while preserving the
+  submitted `ffaPassiveBand=0.85`, 240-pixel arm cap, 60-tick ring unstick,
+  and all other printed v15 settings. Hosted artifact activation is pending;
+  the control extractor is behavior evidence only, never score.
+- Artifact: Local Linux amd64 `andre-battleroyale:candidate-39`, command
+  `/bin/baseline`, digest
+  `sha256:49df8f5f9872ea982b684979c0f874655a72886abdcec9049894d1e8bca96228`.
+  Upload is pending committed and pushed source.
+- XP id: Pending exact same-field hosted control and candidate requests.
+- Opponents: Pending the required live nearest-MRR freeze at XP creation.
+- Verdict: Pending hosted statistical comparison. Champion
+  `andre-battleroyale:v15` remains submitted unless this candidate wins
+  significantly.
+
 ### Trial 38: pursue an equal-health armed opponent
 
 - Idea: The newest 30 exact-v15 Coworld v0.1.14 controls show that weapon
