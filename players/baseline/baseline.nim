@@ -1002,21 +1002,6 @@ proc pixelRayClear(client: ProtocolClient, bot: Bot, a, b: Vec): bool =
     VisionPoint(x: a.x, y: a.y),
     VisionPoint(x: b.x, y: b.y))
 
-proc shotAllowed(
-    client: ProtocolClient,
-    bot: Bot,
-    sightingConfirmed: bool,
-    a, b: Vec
-): bool =
-  vision.shotAllowed(
-    sightingConfirmed,
-    client.walkabilityMask,
-    client.walkabilityWidth,
-    client.walkabilityHeight,
-    bot.diamondBoxes,
-    VisionPoint(x: a.x, y: a.y),
-    VisionPoint(x: b.x, y: b.y))
-
 proc rayClearCoarse(client: ProtocolClient, a, b: Vec, step: float): bool =
   ## Coarsely-sampled walkability raycast for cover scoring and exposure
   ## costing, where an occasional missed thin corner is an acceptable trade.
@@ -2542,9 +2527,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         FfaHunterFireRange and
         not unarmed and targetDist < fireRange
     if (engage or fireWhileHurt or hunterRangeGate) and targetDist < fireRange:
-      # This actor is a live-FOV sighting; the sighting IS the line-of-sight
-      # answer, and the local ray is only a stale-snapshot second opinion.
-      rayClear = true
+      # The ray is truthful outside diamond stamps, and pixelRayClear already
+      # treats diamond-box pixels as unknown, so the only vetoes this drops
+      # are the ones a stale snapshot got wrong.
+      rayClear = client.pixelRayClear(bot, me, target.pos)
       wantFire = rayClear and
         (if unarmed:
           abs(bradsErr(desiredAim, bot.estAim)) <= FfaFistAimHalfBrads
@@ -3649,7 +3635,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
           # This track IS (or shadows) the enemy running our flag: shoot it
           # before anything else — a dead carrier returns the flag instantly.
           prio -= ThiefFocusBonus
-    if client.shotAllowed(bot, t.lastSeen == bot.tick, me, predicted):
+    if client.pixelRayClear(bot, me, predicted):
       if bot.friendlyBlocked(me, predicted, d):
         continue                        # prefer a target with an empty corridor
       if engage < 0 or prio < engagePrio:
@@ -3739,7 +3725,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       let d = dist(p, me)
       if d < NadeMinRange or d > NadeMaxRange or d >= bestD:
         continue
-      let blocked = not client.shotAllowed(bot, t.lastSeen == bot.tick, me, p)
+      let blocked = not client.pixelRayClear(bot, me, p)
       var paired = false
       if not blocked:
         for j in 0 ..< bot.enemies.len:

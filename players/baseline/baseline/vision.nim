@@ -39,14 +39,3 @@ proc maskRayClear*(
     if not mask[y * w + x]:
       return false
   true
-
-proc shotAllowed*(
-    sightingConfirmed: bool,
-    mask: openArray[bool],
-    w, h: int,
-    boxes: openArray[DiamondBox],
-    a, b: VisionPoint
-): bool =
-  if sightingConfirmed:
-    return true
-  maskRayClear(mask, w, h, boxes, a, b)

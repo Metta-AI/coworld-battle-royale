@@ -255,12 +255,15 @@ suite "baseline live geometry trust":
           if oldClear or not liveClear:
             continue
           inc mismatches
-          if not shotAllowed(false, snapshot, width, height, boxes, a, b):
+          if not maskRayClear(snapshot, width, height, boxes, a, b):
             inc boxRayBlocked
           let confirmed = fovCandidateConfirmed(sim, a, b, shadowCache)
           if not confirmed:
             continue
           inc confirmedMismatchPairs
+          if not rayHitsDiamond(boxes, a, b) or
+              not maskRayClear(snapshot, width, height, boxes, a, b):
+            continue
           let laneLength = sqrt(
             (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y))
           if sim.tickCount > DiamondSpinTicksPerFrame and
@@ -289,7 +292,7 @@ suite "baseline live geometry trust":
       if foundStaticWall:
         break
       for x in 20 ..< width - 20:
-        if sim.isWall(x, y):
+        if sim.isWall(x, y) and not sim.windowMask[y * width + x]:
           let
             a = VisionPoint(x: float(x - 12), y: float(y))
             b = VisionPoint(x: float(x + 12), y: float(y))
@@ -298,8 +301,8 @@ suite "baseline live geometry trust":
               not pointInAnyDiamond(finalBoxes, int(a.x), int(a.y)) and
               not pointInAnyDiamond(finalBoxes, int(b.x), int(b.y)) and
               not rayHitsDiamond(finalBoxes, a, b) and
-              not shotAllowed(false, sim.walkMask, width, height,
-                finalBoxes, a, b):
+              not maskRayClear(
+                sim.walkMask, width, height, finalBoxes, a, b):
             foundStaticWall = true
             break
       if foundStaticWall:
@@ -321,12 +324,73 @@ suite "baseline live geometry trust":
       fovConfirmed = serverFovConfirmed(sim, selectedA, selectedB)
       snapshotRefused = not plainRay(
         snapshot, width, height, selectedA, selectedB)
-      sightingAllowed = shotAllowed(
-        true, snapshot, width, height, selectedBoxes, selectedA, selectedB)
+      boxRayAllowed = maskRayClear(
+        snapshot, width, height, selectedBoxes, selectedA, selectedB)
     check liveLos
     check fovConfirmed
     check snapshotRefused
-    check sightingAllowed
+    check boxRayAllowed
+    echo "[OK] INSIDE diamond box: live LOS clear, server FOV confirms, " &
+      "plain snapshot ray refuses, box-aware stale ray allows"
+
+    var
+      foundGlass = false
+      glassA, glassB: VisionPoint
+    block findGlass:
+      for y in 0 ..< height:
+        for x in 0 ..< width:
+          if not sim.windowMask[y * width + x]:
+            continue
+          for horizontal in [true, false]:
+            let
+              a = if horizontal:
+                VisionPoint(x: float(x - 12), y: float(y))
+              else:
+                VisionPoint(x: float(x), y: float(y - 12))
+              b = if horizontal:
+                VisionPoint(x: float(x + 12), y: float(y))
+              else:
+                VisionPoint(x: float(x), y: float(y + 12))
+              ax = int(a.x)
+              ay = int(a.y)
+              bx = int(b.x)
+              by = int(b.y)
+              steps = max(abs(bx - ax), abs(by - ay))
+            if not maskAt(sim.walkMask, width, height, ax, ay) or
+                not maskAt(sim.walkMask, width, height, bx, by) or
+                rayHitsDiamond(finalBoxes, a, b):
+              continue
+            var glassOnly = true
+            var hasGlass = false
+            for s in 0 .. steps:
+              let
+                px = ax + (bx - ax) * s div max(1, steps)
+                py = ay + (by - ay) * s div max(1, steps)
+                index = py * width + px
+              if not sim.walkMask[index]:
+                if not sim.windowMask[index]:
+                  glassOnly = false
+                  break
+                hasGlass = true
+            if not glassOnly or not hasGlass or
+                maskRayClear(
+                  sim.walkMask, width, height, finalBoxes, a, b):
+              continue
+            if serverFovConfirmed(sim, a, b):
+              glassA = a
+              glassB = b
+              foundGlass = true
+              break findGlass
+    check foundGlass
+    if foundGlass:
+      let
+        glassFovConfirmed = serverFovConfirmed(sim, glassA, glassB)
+        glassRayBlocked = not maskRayClear(
+          sim.walkMask, width, height, finalBoxes, glassA, glassB)
+      check glassFovConfirmed
+      check glassRayBlocked
+      echo "[OK] OUTSIDE diamond box: glass ray is FOV-confirmed and " &
+        "box-aware live ray declines it"
 
     when defined(writeStandoffOverlay):
       drawOverlay(
