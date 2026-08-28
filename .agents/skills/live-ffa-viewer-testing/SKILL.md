@@ -455,6 +455,10 @@ What worked (PR #65, "baseline trusts live FOV over the stale walkability mask")
   the logged `targetDist` vs `ffaWeaponFireRange(weaponTier)` (70 / 700 / 520) before
   calling anything a line-of-sight veto. And "cooldown" is not a reason at all: it is
   `wantFire=1 trigger=0` (the trigger is held because it fired last tick).
+  That classification is also the **trigger-discipline audit**: once finite ammo ships,
+  a wasted speculative shot has a price, so counting shots fired vs declined-and-why
+  per situation (the 436-decision study within 70px of the centre med kits) is how you
+  measure whether a policy's trigger discipline is good, not just whether it shoots.
 - **The default battle-royale config has no spinning diamonds.** `config.br.json` uses
   `mapPath: "gen"` / `mapSize: "huge"`; an instrumented bot reported `boxes=0` for a whole
   match there, so anything keyed to the eight rotating centre diamonds is inert. Use the
