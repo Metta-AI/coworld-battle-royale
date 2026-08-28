@@ -117,13 +117,19 @@
 - XP id: Initial exact-field hosted pair is control `stierlitz:v1`
   `xreq_79887045-7e03-4220-beb2-5513cacc3e0c` (10 episodes) and candidate
   `stierlitz:v7` `xreq_ead98a42-c79a-409c-9fae-b156fdd29db9`
-  (10 episodes).
+  (10 episodes). Initial result: control 160.00, candidate 174.00, delta
+  +14.00, 95% CI [-78.52, 106.52], p=0.754119. This is inconclusive, so an
+  exact-field 20-episode-per-arm extension is pending rather than keeping it.
 - Opponents: At the one-time live freeze Andre is #11 at 1446.08 MRR. The
   exact three nearest unique other players are softmaxwell (`Picasso:v63`,
   1453.43), NishadIota (`nishad-battleroyale-baseline:v1`, 1431.44), and Aaron
   (`aaln-br-hunter:v2`, 1411.49), in that fixed order for both arms.
-- Verdict: Pending hosted statistical significance. Never submit on replay
-  evidence or an eyeballed mean.
+- Hosted activation: all ten candidate artifacts downloaded. The exact
+  `top_heal_trip`/`move_medkit_clone` branch ran for 1084 ticks in six files,
+  with 32 total healed HP. The intended change unquestionably fired.
+- Verdict: Inconclusive after 10 episodes per arm, not kept. Extend the exact
+  frozen field to 30 cumulative episodes per arm and decide by hosted
+  significance. Never submit on replay evidence or an eyeballed mean.
 
 ### Trial 46: clone meyer-svg's complete unarmed acquisition state
 
