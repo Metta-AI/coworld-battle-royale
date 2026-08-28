@@ -122,7 +122,9 @@
   exact-field 20-episode-per-arm extension is pending rather than keeping it.
   An initially malformed extension payload was rejected with HTTP 422 and
   created no XP. The corrected extension uses the original API schema and one
-  20-episode request per arm.
+  20-episode request per arm: control `stierlitz:v1`
+  `xreq_6befb75c-a887-4830-ba69-09095827a1a2` and candidate `stierlitz:v7`
+  `xreq_f2138d3d-d01e-4309-9c50-37b7a9a05a3f`.
 - Opponents: At the one-time live freeze Andre is #11 at 1446.08 MRR. The
   exact three nearest unique other players are softmaxwell (`Picasso:v63`,
   1453.43), NishadIota (`nishad-battleroyale-baseline:v1`, 1431.44), and Aaron
