@@ -4272,10 +4272,10 @@ proc advancePolicy(component: var BaselineComponent, advance: int) =
   )
 
 proc policyReplies(component: var BaselineComponent): seq[string] =
-  component.bot.refreshDiamondBoxes(component.client)
   if not component.client.mapCameraReady:
     component.bot.resetTransient()
     return
+  component.bot.refreshDiamondBoxes(component.client)
   if not component.bot.navBuilt and component.client.walkabilityReady:
     component.bot.buildNavGrid(component.client)
   let mask = component.bot.decide(component.client)

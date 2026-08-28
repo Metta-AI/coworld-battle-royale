@@ -1,7 +1,8 @@
 import
   helpers,
   pixie,
-  std/[math, strformat, strutils, tables, unittest],
+  std/[math, os, strformat, strutils, tables, unittest],
+  bitworld/pixelfonts,
   bitworld/spriteprotocol,
   ctf/[arena, global, sim, sim_types],
   baseline/vision
@@ -42,9 +43,8 @@ proc expectedDiamondBoxes(tick: int): seq[DiamondBox] =
     let y0 = spot.cy - size div 2
     result.add(DiamondBox(x0: x0, y0: y0, x1: x0 + size, y1: y0 + size))
 
-proc streamedDiamondBoxes(
-    messages: openArray[SpritePacketMessage],
-    scale: int
+proc boxesFromMessages(
+    messages: openArray[SpritePacketMessage]
 ): seq[DiamondBox] =
   var definitions = initTable[int, tuple[label: string, width, height: int]]()
   for message in messages:
@@ -58,13 +58,36 @@ proc streamedDiamondBoxes(
     let definition = definitions[message.objectDef.spriteId]
     if not definition.label.startsWith("diamond"):
       continue
-    let
-      x0 = message.objectDef.x div scale
-      y0 = message.objectDef.y div scale
-      width = definition.width div scale
-      height = definition.height div scale
     result.add(DiamondBox(
-      x0: x0, y0: y0, x1: x0 + width, y1: y0 + height))
+      x0: message.objectDef.x,
+      y0: message.objectDef.y,
+      x1: message.objectDef.x + definition.width,
+      y1: message.objectDef.y + definition.height))
+
+proc streamedDiamondBoxes(
+    messages: openArray[SpritePacketMessage],
+    scale: int
+): seq[DiamondBox] =
+  for box in boxesFromMessages(messages):
+    result.add(DiamondBox(
+      x0: box.x0 div scale,
+      y0: box.y0 div scale,
+      x1: box.x1 div scale,
+      y1: box.y1 div scale))
+
+proc streamedPlayerDiamondBoxes(
+    sim: var SimServer,
+    playerIndex: int
+): seq[DiamondBox] =
+  var state, nextState: PlayerViewerState
+  let previousDir = getCurrentDir()
+  setCurrentDir(GameDir)
+  try:
+    let packet = sim.buildSpriteProtocolPlayerUpdates(
+      playerIndex, state, nextState, spritesOff = true)
+    result = boxesFromMessages(packet.parseSpritePacket())
+  finally:
+    setCurrentDir(previousDir)
 
 proc sameBoxes(a, b: seq[DiamondBox]): bool =
   if a.len != b.len:
@@ -74,7 +97,45 @@ proc sameBoxes(a, b: seq[DiamondBox]): bool =
       return false
   true
 
-proc fovConfirmed(
+proc fovCandidateConfirmed(
+    sim: var SimServer,
+    a, b: VisionPoint,
+    shadowCache: var Table[int, seq[bool]]
+): bool =
+  if sim.players.len == 0:
+    return false
+  sim.players[0].placeAtCenter(int(a.x), int(a.y))
+  let
+    aimBrads = bradsOfVector(int(b.x - a.x), int(b.y - a.y))
+    (originCx, originCy) = fovCellAt(
+      sim.players[0].x + CollisionW div 2,
+      sim.players[0].y + CollisionH div 2)
+    originKey = fovCellIndex(originCx, originCy)
+  sim.players[0].aimBrads = aimBrads
+  if originKey notin shadowCache:
+    var shadow = newSeq[bool](FovCellCount)
+    sim.computeFovShadowcast(originCx, originCy, shadow)
+    shadowCache[originKey] = shadow
+  let
+    (targetCx, targetCy) = fovCellAt(int(b.x), int(b.y))
+    targetIndex = fovCellIndex(targetCx, targetCy)
+  if not shadowCache[originKey][targetIndex]:
+    return false
+  let
+    (ox, oy) = fovCellCenter(originCx, originCy)
+    (px, py) = fovCellCenter(targetCx, targetCy)
+    (ax, ay) = aimVector(aimBrads)
+    vx = px - ox
+    vy = py - oy
+    d2 = float(vx * vx + vy * vy)
+  if d2 <= float(sim.config.visionBubble * sim.config.visionBubble):
+    return true
+  if d2 > float(sim.visionRange() * sim.visionRange()):
+    return false
+  let dot = float(vx) * ax + float(vy) * ay
+  dot >= cos(float(sim.config.visionConeDeg) * PI / 180.0) * sqrt(d2)
+
+proc serverFovConfirmed(
     sim: var SimServer,
     a, b: VisionPoint
 ): bool =
@@ -89,19 +150,27 @@ proc fovConfirmed(
 proc drawOverlay(
     path: string,
     mask: openArray[bool],
+    staleMask: openArray[bool],
     w, h: int,
     boxes: openArray[DiamondBox],
     a, b: VisionPoint,
-    cropX, cropY: int
+    markStale: bool,
+    title: string
 ) =
-  const half = 120
   let
-    size = half * 2 + 1
-    originX = cropX - half
-    originY = cropY - half
-  var image = newImage(size, size)
-  for y in 0 ..< size:
-    for x in 0 ..< size:
+    ax = int(a.x)
+    ay = int(a.y)
+    bx = int(b.x)
+    by = int(b.y)
+    cropW = max(180, abs(bx - ax) + 60)
+    cropH = max(140, abs(by - ay) + 60)
+    cropX = (ax + bx) div 2
+    cropY = (ay + by) div 2
+    originX = clamp(cropX - cropW div 2, 0, w - cropW)
+    originY = clamp(cropY - cropH div 2, 0, h - cropH)
+  var image = newImage(cropW, cropH)
+  for y in 0 ..< cropH:
+    for x in 0 ..< cropW:
       let
         mx = originX + x
         my = originY + y
@@ -115,29 +184,28 @@ proc drawOverlay(
   for box in boxes:
     for x in box.x0 ..< box.x1:
       for y in [box.y0, box.y1 - 1]:
-        if x >= originX and x < originX + size and
-            y >= originY and y < originY + size:
+        if x >= originX and x < originX + cropW and
+            y >= originY and y < originY + cropH:
           image[x - originX, y - originY] = rgba(60, 150, 240, 255)
     for y in box.y0 ..< box.y1:
       for x in [box.x0, box.x1 - 1]:
-        if x >= originX and x < originX + size and
-            y >= originY and y < originY + size:
+        if x >= originX and x < originX + cropW and
+            y >= originY and y < originY + cropH:
           image[x - originX, y - originY] = rgba(60, 150, 240, 255)
-  let
-    ax = int(a.x)
-    ay = int(a.y)
-    bx = int(b.x)
-    by = int(b.y)
-    steps = max(abs(bx - ax), abs(by - ay))
+  let steps = max(abs(bx - ax), abs(by - ay))
   if steps > 0:
     for s in 0 .. steps:
       let
         x = ax + (bx - ax) * s div steps
         y = ay + (by - ay) * s div steps
-      if x >= originX and x < originX + size and
-          y >= originY and y < originY + size:
+      if x >= originX and x < originX + cropW and
+          y >= originY and y < originY + cropH:
         image[x - originX, y - originY] = rgba(240, 45, 45, 255)
-  image.writeFile(path)
+        if markStale and not staleMask[y * w + x]:
+          image[x - originX, y - originY] = rgba(255, 190, 40, 255)
+  let font = readTiny5Font()
+  image.drawText(font, title, 5, 5, rgba(255, 255, 255, 255))
+  image.resize(cropW * 3, cropH * 3).writeFile(path)
 
 suite "baseline live geometry trust":
   test "confirmed sightings survive the stale diamond snapshot":
@@ -155,13 +223,17 @@ suite "baseline live geometry trust":
 
     var
       mismatches = 0
+      confirmedMismatchPairs = 0
       boxRayBlocked = 0
       selectedTick = -1
       selectedA, selectedB: VisionPoint
+      selectedDistance = -1.0
       selectedLiveMask: seq[bool]
       selectedBoxes: seq[DiamondBox]
+      shadowCache = initTable[int, seq[bool]]()
     for _ in 1 .. spinTicks:
       sim.step(sim.none(), sim.none())
+      shadowCache.clear()
       let boxes = expectedDiamondBoxes(sim.tickCount)
       var points: seq[VisionPoint]
       for kit in sim.medKitSpawns:
@@ -183,19 +255,31 @@ suite "baseline live geometry trust":
           if oldClear or not liveClear:
             continue
           inc mismatches
-          check shotAllowed(true, snapshot, width, height, boxes, a, b)
           if not shotAllowed(false, snapshot, width, height, boxes, a, b):
             inc boxRayBlocked
-          if selectedTick < 0:
+          let confirmed = fovCandidateConfirmed(sim, a, b, shadowCache)
+          if not confirmed:
+            continue
+          inc confirmedMismatchPairs
+          let laneLength = sqrt(
+            (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y))
+          if sim.tickCount > DiamondSpinTicksPerFrame and
+              laneLength > selectedDistance:
             selectedTick = sim.tickCount
             selectedA = a
             selectedB = b
-            selectedLiveMask = sim.walkMask
+            selectedDistance = laneLength
+            selectedLiveMask = newSeq[bool](sim.walkMask.len)
+            for k in 0 ..< sim.walkMask.len:
+              selectedLiveMask[k] = sim.walkMask[k]
             selectedBoxes = boxes
 
     check mismatches > 0
+    check confirmedMismatchPairs > 0
     let blockedRate = float(boxRayBlocked) / float(max(1, mismatches))
-    echo &"stale-mask mismatches={mismatches} box-ray-blocked={boxRayBlocked} " &
+    echo &"stale-mask mismatches={mismatches} " &
+      &"fov-confirmed-mismatches={confirmedMismatchPairs} " &
+      &"box-ray-blocked={boxRayBlocked} " &
       &"wrongly-blocked-rate={blockedRate:.4f}"
     check blockedRate <= 0.05
 
@@ -227,24 +311,35 @@ suite "baseline live geometry trust":
     check sameBoxes(
       streamedDiamondBoxes(messages, boardRenderScaleFor(MapWidth, MapHeight)),
       finalBoxes)
+    check sameBoxes(streamedPlayerDiamondBoxes(sim, 0), finalBoxes)
+
+    check selectedTick > DiamondSpinTicksPerFrame
+    sim.applyDiamondGeometry(selectedTick)
+    let
+      liveLos = sim.lineOfSightClear(
+        int(selectedA.x), int(selectedA.y), int(selectedB.x), int(selectedB.y))
+      fovConfirmed = serverFovConfirmed(sim, selectedA, selectedB)
+      snapshotRefused = not plainRay(
+        snapshot, width, height, selectedA, selectedB)
+      sightingAllowed = shotAllowed(
+        true, snapshot, width, height, selectedBoxes, selectedA, selectedB)
+    check liveLos
+    check fovConfirmed
+    check snapshotRefused
+    check sightingAllowed
 
     when defined(writeStandoffOverlay):
-      check selectedTick >= 0
-      sim.applyDiamondGeometry(selectedTick)
-      check sim.lineOfSightClear(
-        int(selectedA.x), int(selectedA.y), int(selectedB.x), int(selectedB.y))
-      check sim.fovConfirmed(selectedA, selectedB)
       drawOverlay(
-        "/tmp/stale-mask-standoff.png", snapshot, width, height, selectedBoxes,
-        selectedA, selectedB, int((selectedA.x + selectedB.x) / 2),
-        int((selectedA.y + selectedB.y) / 2))
+        "/tmp/stale-mask-standoff.png", snapshot, snapshot, width, height,
+        selectedBoxes, selectedA, selectedB, true,
+        "stale connect-time snapshot")
       drawOverlay(
-        "/tmp/live-mask-standoff.png", selectedLiveMask, width, height,
-        selectedBoxes,
-        selectedA, selectedB, int((selectedA.x + selectedB.x) / 2),
-        int((selectedA.y + selectedB.y) / 2))
+        "/tmp/live-mask-standoff.png", selectedLiveMask, snapshot, width,
+        height, selectedBoxes, selectedA, selectedB, false,
+        &"live mask, tick {selectedTick}")
       echo &"standoff tick={selectedTick} endpoints=({int(selectedA.x)}," &
         &"{int(selectedA.y)})-({int(selectedB.x)},{int(selectedB.y)}) " &
-        "baseline old ray refused=1 sim FOV confirmed the sighting=1"
+        &"lane-length={selectedDistance:.1f} sim FOV confirmed the sighting=" &
+        (if fovConfirmed: "1" else: "0")
       echo "overlay stale=/tmp/stale-mask-standoff.png " &
         "live=/tmp/live-mask-standoff.png"
