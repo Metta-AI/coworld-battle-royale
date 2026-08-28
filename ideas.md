@@ -116,11 +116,14 @@
 - Artifact: Local Linux AMD64 image `stierlitz:candidate-48`, command
   `/bin/baseline`, image id
   `sha256:e19a5a2c1d7466a79cd6316c92a9143863287f717421d2cd401ae9006c38bba2`.
-  Pending CPUX upload as policy name `stierlitz` only.
+  Source commit `d3b8032` was pushed and the image uploaded unsubmitted as
+  `stierlitz:v8`. Only policy name `stierlitz` was used.
 - XP id: Pending an exact submitted-control/candidate hosted pair with at
   least ten episodes per arm.
-- Opponents: Pending one-time live freeze of the three nearest unique other
-  players because Andre is outside the top three.
+- Opponents: At the one-time live freeze Andre is #14 at 1395.64 MRR. The
+  exact three nearest unique other players are Aaron (`aaln-br-hunter:v2`,
+  1383.64), sivannn (`sivan-br-ringsurfer:v1`, 1413.89), and Kenny Sheftel
+  (`kenshef-my-player:v1`, 1372.89), in that fixed order for both arms.
 - Verdict: Pending hosted significance. The candidate will remain unsubmitted
   unless it significantly beats exact champion `stierlitz:v1`.
 
