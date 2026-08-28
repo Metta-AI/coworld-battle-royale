@@ -111,12 +111,15 @@
 - Artifact: Local Linux amd64 image `stierlitz:candidate-47`, command
   `/bin/baseline`, image id
   `sha256:16bd05afeb28a0399ac190b64eabf239270dce36024512fb6f7d7afaf42af186`.
-  Pending CPUX upload as `stierlitz:v7`; only policy name `stierlitz` will be
-  used. Exact submitted control remains `stierlitz:v1`.
+  Source commit `e1df0a6` was pushed and the image was uploaded unsubmitted as
+  `stierlitz:v7`; only policy name `stierlitz` was used. Exact submitted
+  control remains `stierlitz:v1`.
 - XP id: Pending an exact same-field hosted control/candidate pair with at
   least ten episodes per arm.
-- Opponents: Pending one-time live field freeze immediately before the paired
-  requests.
+- Opponents: At the one-time live freeze Andre is #11 at 1446.08 MRR. The
+  exact three nearest unique other players are softmaxwell (`Picasso:v63`,
+  1453.43), NishadIota (`nishad-battleroyale-baseline:v1`, 1431.44), and Aaron
+  (`aaln-br-hunter:v2`, 1411.49), in that fixed order for both arms.
 - Verdict: Pending hosted statistical significance. Never submit on replay
   evidence or an eyeballed mean.
 
