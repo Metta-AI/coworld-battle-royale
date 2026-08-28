@@ -296,6 +296,17 @@ always drawn — but moving entities are fogged:
   only the terrain, the pedestal hearts, and their own corpse — until they
   respawn (their inputs are ignored).
 
+### The walkability map is a connect-time snapshot
+
+A policy receives the `walkability map` sprite once, when it connects, and never again. The eight centre diamonds spin, and since GV28 each spin frame restamps the movement, bullet and vision masks — every 4 ticks, a mean of 1299 map pixels (max 1376, measured on the arena) change under the ring. The snapshot does not follow them, so near the centre a policy's copy of the mask disagrees with the live world: measured over one full spin on the arena FFA board, 3.80% of standable point pairs within 70px of a centre med kit look blocked on the snapshot while the live mask is clear, and 2.11% look clear while it is blocked.
+
+Two observations already carry the live truth, so a policy does not have to reconstruct the geometry:
+
+- **Diamond objects arrive every frame** with their live bounds, labelled `diamond` (a diamond that has been shot carries `diamond <i> paint <n>`, so match on the prefix). Treat snapshot pixels inside those bounds as unknown rather than as wall.
+- **Enemy sightings are already FOV-gated.** The server ships a player object only when its own live vision says that seat is visible, so a sighting IS the line-of-sight answer. A policy that re-derives line of sight from its snapshot and vetoes the shot is overriding a truthful observation with a stale one: trust the sighting.
+
+Refreshing the snapshot itself was measured and rejected: the mask is a whole-sprite payload of 171 KB compressed, so a truthful resend costs 501 KB/s per player even at only every 8 ticks (8.0 MB/s at 16 seats) against a bot's 6.8 KB/s steady stream.
+
 ## Combat
 
 - **Every player has `hitPoints` (default 3) per life.** Each bullet that hits

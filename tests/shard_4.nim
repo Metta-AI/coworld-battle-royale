@@ -2,6 +2,7 @@
 {.warning[UnusedImport]: off.}
 import
   test_baseline_doctrine,
+  test_baseline_stale_mask,
   test_agent_skins,
   test_barrage,
   test_broadcast_state,
