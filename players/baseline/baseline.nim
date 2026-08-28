@@ -266,8 +266,6 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
-  FfaHunterHealMaxDetour = 320.0
-  FfaHunterHealTripSec = 10
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -477,9 +475,6 @@ type
     ffaLootTargetValid: bool
     ffaLootTargetTier: int
     ffaLootStartedTick: int
-    ffaHealTrip: bool
-    ffaHealTarget: Vec
-    ffaHealStartedTick: int
     ffaPactTargetPos: Vec
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
@@ -1740,9 +1735,6 @@ proc resetTransient(bot: Bot) =
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
-  bot.ffaHealTrip = false
-  bot.ffaHealTarget = vec(0, 0)
-  bot.ffaHealStartedTick = 0
   bot.ffaPactTargetPos = vec(0, 0)
   bot.ffaPactTargetSeen = -1
   bot.ffaPactPartnerPos = vec(0, 0)
@@ -2019,53 +2011,6 @@ proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
       return false
   true
 
-proc bestFfaMedKit(
-  client: ProtocolClient,
-  me,
-  center: Vec,
-  ringRadius: int
-): tuple[found: bool, pos: Vec] =
-  ## Selects the nearest visible, ring-safe medkit in clone reach.
-  result = (false, me)
-  var bestDistance = 1e18
-  let safeLimit = max(
-    0.0,
-    float(max(1, ringRadius)) - FfaHunterArmSafeMargin
-  )
-  for pickup in client.spriteObjectsWithLabel(LabelMedKit):
-    let
-      kit = client.mapPos(pickup)
-      kitDistance = dist(me, kit)
-    if kitDistance > FfaHunterHealMaxDetour or
-        dist(kit, center) > safeLimit:
-      continue
-    let sameDistance = abs(kitDistance - bestDistance) < 1e-6
-    if not result.found or kitDistance < bestDistance or
-        (sameDistance and ffaPactPositionBefore(kit, result.pos)):
-      result = (true, kit)
-      bestDistance = kitDistance
-
-proc ffaHunterHealStillValid(
-  bot: Bot,
-  me,
-  center: Vec,
-  ringRadius,
-  hp,
-  maxHp: int
-): bool =
-  ## Reports whether the persistent top-style medkit trip remains valid.
-  if not bot.ffaHealTrip or maxHp <= 0 or hp >= maxHp:
-    return false
-  if ffaGameTicksSince(bot.tick, bot.ffaHealStartedTick) >
-      FfaHunterHealTripSec * TargetFps:
-    return false
-  let safeLimit = max(
-    0.0,
-    float(max(1, ringRadius)) - FfaHunterArmSafeMargin
-  )
-  dist(bot.ffaHealTarget, center) <= safeLimit and
-    dist(me, bot.ffaHealTarget) <= FfaHunterHealMaxDetour + 80.0
-
 proc ffaBandIntent(bot: Bot, me, center: Vec, ringRadius: int,
     fraction: float, phase, objective, action: string): FfaIntent =
   result.phase = phase
@@ -2182,8 +2127,7 @@ proc shadeFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
 
 proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, unarmed: bool, hp, maxHp: int,
-    pursue: bool): FfaIntent =
+    weaponTier: int, unarmed: bool, pursue: bool): FfaIntent =
   result = passiveFfaIntent(bot, actors, me, center, ringRadius, targetIndex,
     false)
   if FfaHunterRingMargin > 0.0:
@@ -2191,28 +2135,6 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       ringRadius, FfaHunterRingMargin)
     result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
       result.bandRadius)
-  if FfaDoctrine == FfaHunter and maxHp > 0 and hp < maxHp:
-    if not bot.ffaHunterHealStillValid(
-      me,
-      center,
-      ringRadius,
-      hp,
-      maxHp
-    ):
-      bot.ffaHealTrip = false
-      let kit = bestFfaMedKit(client, me, center, ringRadius)
-      if kit.found:
-        bot.ffaHealTrip = true
-        bot.ffaHealTarget = kit.pos
-        bot.ffaHealStartedTick = bot.tick
-    if bot.ffaHealTrip:
-      result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-        "HEAL", "top_heal_trip", "move_medkit_clone")
-      result.moveTarget = bot.ffaHealTarget
-      result.engageReason = "heal_any_damage"
-      return
-  else:
-    bot.ffaHealTrip = false
   if pursue:
     result.moveTarget = actors[targetIndex].pos
     result.objective = "fight"
@@ -2259,11 +2181,10 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, unarmed: bool, hp, maxHp: int,
-    pursue, pactActive,
+    weaponTier: int, unarmed: bool, pursue, pactActive,
     pactMemoryFresh: bool): FfaIntent =
   result = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-    targetIndex, targetDist, weaponTier, unarmed, hp, maxHp, pursue)
+    targetIndex, targetDist, weaponTier, unarmed, pursue)
   if not pactActive or not pactMemoryFresh:
     return
   if unarmed and (result.lootTripStarted or result.objective == "loot_trip"):
@@ -2383,9 +2304,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     else: 0
   let unarmed = weaponTier == 0
 
-  var
-    hp = bot.hp
-    maxHp = hp
+  var hp = bot.hp
   for (o, label) in client.spriteObjectsWithLabelPrefix(LabelPrefixHp):
     discard o
     let tail = label[LabelPrefixHp.len .. ^1]
@@ -2393,7 +2312,6 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     if slash > 0:
       try:
         hp = parseInt(tail[0 ..< slash])
-        maxHp = parseInt(tail[slash + 1 .. ^1])
       except ValueError:
         discard
   bot.hp = hp
@@ -2580,12 +2498,11 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         targetIndex, engage)
     of FfaHunter:
       intent = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-        targetIndex, targetDist, weaponTier, unarmed, hp, maxHp,
-        hunterPursue)
+        targetIndex, targetDist, weaponTier, unarmed, hunterPursue)
     of FfaPact:
       intent = pactFfaIntent(bot, client, actors, me, center, ringRadius,
-        targetIndex, targetDist, weaponTier, unarmed, hp, maxHp,
-        hunterPursue, pactActive, pactMemoryFresh)
+        targetIndex, targetDist, weaponTier, unarmed, hunterPursue,
+        pactActive, pactMemoryFresh)
     of FfaHybrid:
       intent = hybridFfaIntent(bot, client, me, center, ringRadius,
         elapsedSec, nearby, weaponTier, healthy)
@@ -4494,8 +4411,6 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingUnstickTicks=", FfaHunterRingUnstickTicks,
-    " ffaHunterHealMaxDetour=", FfaHunterHealMaxDetour,
-    " ffaHunterHealTripSec=", FfaHunterHealTripSec,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint

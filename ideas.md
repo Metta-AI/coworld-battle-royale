@@ -37,7 +37,11 @@
 - Strafe only laterally inward from nearby heavy-gun threats while preserving
   Hunter fire.
 - Strafe only an armed Hunter laterally inward from nearby heavy-gun threats.
-- Start only the hunter ring-retreat alarm one margin earlier.
+- Start only the Hunter ring-retreat alarm at 160 pixels instead of 80. The
+  160-game top-policy corpus shows Ryan's shadow at zero meaningful outside
+  time and a 117-pixel late-game mean margin, while Andre spends 259 seconds
+  outside across 96 games and a hosted fatal retreat moved outward on 52.6
+  percent of samples. Test earlier commitment without changing pathfinding.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
 - Let only Hunter ring-unstick rays leave a falsely blocked coarse origin cell.
 - Cycle only the existing Hunter ring-unstick candidates on repeated retries.
@@ -134,9 +138,12 @@
   and exact replay extraction finds three medkit pickups restoring 12 HP,
   versus zero pickups and zero restored HP for control. The intended change
   unquestionably fired.
-- Verdict: Inconclusive after 10 episodes per arm, not kept. Extend the exact
-  frozen field to 30 cumulative episodes per arm and decide by hosted
-  significance. Never submit on replay evidence or an eyeballed mean.
+- Verdict: Reverted, not submitted. Across the exact frozen field's 30 hosted
+  episodes per arm, control mean is 172.77 and candidate mean is 162.17:
+  delta -10.60, 95% CI [-48.86, 27.66], p=0.581236. This remains
+  inconclusive and its cumulative point estimate is negative, so it is not a
+  keep. Source was restored exactly to the submitted behavior; `stierlitz:v1`
+  remains champion and uploaded `stierlitz:v7` remains unsubmitted.
 
 ### Trial 46: clone meyer-svg's complete unarmed acquisition state
 
