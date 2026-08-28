@@ -68,6 +68,58 @@
 
 ## Trial log
 
+### Trial 47: clone top-player persistent damage recovery
+
+- Idea: Current-top replay reconstruction over 160 hosted competition games
+  finds a large, shared survival gap that the old low-health experiment did
+  not test. Exact `stierlitz:v1` restores zero HP in 96 appearances. Ryan's
+  shadow restores 1,000 HP across 123 medkits in 160 appearances (6.25 HP per
+  game), and meyer-svg restores 246 HP across 22 medkits in 127 appearances
+  (1.94 HP per game). Ryan heals across every pre-pickup HP from 1 through 19,
+  with 62 of 123 pickups at 15 through 18 HP and 68 within one second of the
+  latest damage. Meyer also heals across a broad 1 through 15 HP range. Five
+  seconds before pickup, Ryan and meyer are already 195 and 169 pixels from
+  the eventual kit and closing on 60 and 73 percent of samples; at eight
+  seconds they are 247 and 227 pixels away. They do not require isolation:
+  at five seconds, an opponent is within 300 pixels in 72 and 68 percent of
+  samples. By contrast, Trial 22 required HP below six, 180-pixel reach, and
+  rejected a kit when an opponent was closer. Across Andre's 96 exact current
+  replays that old trigger has only three windows in two games. Any-damage
+  visibility within 320 pixels has 123 windows across 24 games, while removing
+  only the contest veto nearly doubles eligible 240-pixel time. Replay
+  reconstruction selects the strategy and is never score.
+- Change: Replace only the default Hunter's absence of recovery logic with a
+  persistent top-player medkit state. At any base HP below the protocol-stated
+  maximum, acquire the nearest visible medkit within 320 pixels and inside the
+  unchanged 80-pixel ring-safe margin, without rejecting it because an
+  opponent is closer. Persist the exact target through fog for up to ten
+  seconds, matching the reconstructed eight-second approaches. The existing
+  higher-priority ring retreat remains unchanged. Target selection, aim,
+  firing while hurt, weapon acquisition, pursuit, band navigation, unstick,
+  all other items, and every non-Hunter doctrine are unchanged. The active
+  state emits `top_heal_trip`, `move_medkit_clone`, and `heal_any_damage`.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  amd64 production build pass. Production extraction reports Hunter with the
+  new 320-pixel/ten-second recovery state while retaining the submitted
+  240-pixel arm cap, 60-tick ring unstick, 80-pixel item safety margin, and
+  0.85 hold band. Five unscored current-world local episodes across seeds
+  47201 through 47205 produced no medkit pickup and therefore no recovery
+  activation; they are explicitly not branch proof. The exact current-policy
+  replay counterfactual finds 123 qualifying 320-pixel windows across 24 of 96
+  hosted games, proving the observation condition exists. Candidate hosted
+  artifacts must emit `top_heal_trip` or the XP delta will not be trusted.
+- Artifact: Local Linux amd64 image `stierlitz:candidate-47`, command
+  `/bin/baseline`, image id
+  `sha256:16bd05afeb28a0399ac190b64eabf239270dce36024512fb6f7d7afaf42af186`.
+  Pending CPUX upload as `stierlitz:v7`; only policy name `stierlitz` will be
+  used. Exact submitted control remains `stierlitz:v1`.
+- XP id: Pending an exact same-field hosted control/candidate pair with at
+  least ten episodes per arm.
+- Opponents: Pending one-time live field freeze immediately before the paired
+  requests.
+- Verdict: Pending hosted statistical significance. Never submit on replay
+  evidence or an eyeballed mean.
+
 ### Trial 46: clone meyer-svg's complete unarmed acquisition state
 
 - Idea: Trial 45 cloned sensing plus armed upgrades but left the submitted

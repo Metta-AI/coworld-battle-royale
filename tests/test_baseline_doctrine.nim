@@ -42,6 +42,8 @@ suite "baseline FFA doctrine":
     check baseline.contains("FfaHunterArmTripMaxDetourRadiusDefault = 240.0")
     check baseline.contains("FfaHunterArmSafeMarginDefault = 80.0")
     check baseline.contains("FfaHunterRingUnstickTicks = 60")
+    check baseline.contains("FfaHunterHealMaxDetour = 320.0")
+    check baseline.contains("FfaHunterHealTripSec = 10")
     check baseline.contains("FfaHunterRingMarginDefault = 0.0")
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
@@ -96,3 +98,12 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "hunter medkit clone is isolated":
+    check baseline.count("\"move_medkit_clone\"") == 1
+    check baseline.count("\"top_heal_trip\"") == 1
+    check baseline.count(
+      "FfaDoctrine == FfaHunter and maxHp > 0 and hp < maxHp") == 1
+    check baseline.count(
+      "let kit = bestFfaMedKit(client, me, center, ringRadius)") == 1
+    check baseline.count("bot.ffaHunterHealStillValid(") == 1

@@ -272,7 +272,8 @@ proc printStats(name: string, stats: MedKitStats) =
     echo &"  at-{seconds}s samples={history.samples}" &
       &" distance={mean(history.distance, history.samples):.2f}" &
       &" closing={percent(history.closing, history.samples):.2f}%" &
-      &" enemyDistance={mean(history.enemyDistance, history.enemySamples):.2f}" &
+      &" enemyDistance=" &
+      &"{mean(history.enemyDistance, history.enemySamples):.2f}" &
       &" near100={percent(history.enemyNear100, history.enemySamples):.2f}%" &
       &" near200={percent(history.enemyNear200, history.enemySamples):.2f}%" &
       &" near300={percent(history.enemyNear300, history.enemySamples):.2f}%"
