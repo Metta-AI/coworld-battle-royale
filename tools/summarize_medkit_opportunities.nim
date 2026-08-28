@@ -8,6 +8,7 @@ const
   NearRadius = 180.0
   SubmittedRadius = 240.0
   SafeMargin = 80.0
+  AuditRadii = [180.0, 240.0, 320.0, 520.0]
 
 type
   BattleRoyaleError = object of CatchableError
@@ -20,6 +21,9 @@ type
     damagedTicks: int
     lowHealthTicks: int
     pickupEvents: int
+    damagedVisible: OpportunityCounts
+    damagedRadii: array[AuditRadii.len, OpportunityCounts]
+    damagedSafeSubmitted: OpportunityCounts
     damagedNear: OpportunityCounts
     damagedSubmitted: OpportunityCounts
     lowHealthNear: OpportunityCounts
@@ -55,8 +59,13 @@ proc opponentCloser(
       return true
   false
 
-proc nearestMedKit(game: SimServer, playerIndex: int): float =
-  ## Returns the nearest visible, safe, uncontested medkit distance.
+proc nearestMedKit(
+  game: SimServer,
+  playerIndex: int,
+  requireSafe,
+  requireUncontested: bool
+): float =
+  ## Returns the nearest visible medkit passing optional safety gates.
   result = Inf
   let
     player = game.players[playerIndex]
@@ -69,7 +78,8 @@ proc nearestMedKit(game: SimServer, playerIndex: int): float =
   for spawn in game.medKitSpawns:
     if not spawn.present or
         not game.fovVisibleAt(playerIndex, spawn.x, spawn.y) or
-        distance(spawn.x, spawn.y, centerX, centerY) > safeRadius:
+        (requireSafe and
+          distance(spawn.x, spawn.y, centerX, centerY) > safeRadius):
       continue
     let playerDistance = distance(
       playerX,
@@ -78,12 +88,13 @@ proc nearestMedKit(game: SimServer, playerIndex: int): float =
       spawn.y
     )
     if playerDistance < result and
-        not game.opponentCloser(
-          playerIndex,
-          spawn.x,
-          spawn.y,
-          playerDistance
-        ):
+        (not requireUncontested or
+          not game.opponentCloser(
+            playerIndex,
+            spawn.x,
+            spawn.y,
+            playerDistance
+          )):
       result = playerDistance
 
 proc addOpportunity(
@@ -106,33 +117,48 @@ proc addReplay(
   var (game, replay) = openReplay(replayPath)
   var
     index = -1
+    counted = false
     wasAlive = false
     previousHp = 0
     damagedNearActive = false
     damagedSubmittedActive = false
     lowHealthNearActive = false
+    damagedVisibleActive = false
+    damagedRadiusActive: array[AuditRadii.len, bool]
+    damagedSafeSubmittedActive = false
+    fileDamagedVisible = false
+    fileDamagedRadii: array[AuditRadii.len, bool]
+    fileDamagedSafeSubmitted = false
     fileDamagedNear = false
     fileDamagedSubmitted = false
     fileLowHealthNear = false
-  inc totals.files
   while replay.playing:
     replay.stepReplay(game)
     if index < 0:
       index = game.playerIndex(policyName)
       if index < 0:
         continue
+      if not counted:
+        inc totals.files
+        counted = true
     let player = game.players[index]
     if wasAlive and player.alive and player.hp > previousHp:
       inc totals.pickupEvents
     wasAlive = player.alive
     previousHp = player.hp
     if not player.alive:
+      damagedVisibleActive = false
+      damagedRadiusActive = default(array[AuditRadii.len, bool])
+      damagedSafeSubmittedActive = false
       damagedNearActive = false
       damagedSubmittedActive = false
       lowHealthNearActive = false
       continue
     let maxHp = game.config.maxHpFor(player.team, player.perks)
     if player.hp >= maxHp:
+      damagedVisibleActive = false
+      damagedRadiusActive = default(array[AuditRadii.len, bool])
+      damagedSafeSubmittedActive = false
       damagedNearActive = false
       damagedSubmittedActive = false
       lowHealthNearActive = false
@@ -141,7 +167,30 @@ proc addReplay(
     if player.hp < LowHealth:
       inc totals.lowHealthTicks
     discard game.refreshPlayerFov(index)
-    let nearest = game.nearestMedKit(index)
+    let
+      nearestVisible = game.nearestMedKit(index, false, false)
+      nearestSafe = game.nearestMedKit(index, true, false)
+      nearest = game.nearestMedKit(index, true, true)
+    let damagedVisible = nearestVisible < Inf
+    totals.damagedVisible.addOpportunity(
+      damagedVisible,
+      damagedVisibleActive
+    )
+    fileDamagedVisible = fileDamagedVisible or damagedVisible
+    for i, radius in AuditRadii:
+      let withinRadius = nearestVisible <= radius
+      totals.damagedRadii[i].addOpportunity(
+        withinRadius,
+        damagedRadiusActive[i]
+      )
+      fileDamagedRadii[i] = fileDamagedRadii[i] or withinRadius
+    let damagedSafeSubmitted = nearestSafe <= SubmittedRadius
+    totals.damagedSafeSubmitted.addOpportunity(
+      damagedSafeSubmitted,
+      damagedSafeSubmittedActive
+    )
+    fileDamagedSafeSubmitted =
+      fileDamagedSafeSubmitted or damagedSafeSubmitted
     let
       damagedNear = nearest <= NearRadius
       damagedSubmitted = nearest <= SubmittedRadius
@@ -162,10 +211,14 @@ proc addReplay(
     fileDamagedSubmitted = fileDamagedSubmitted or damagedSubmitted
     fileLowHealthNear = fileLowHealthNear or lowHealthNear
   if index < 0:
-    raise newException(
-      BattleRoyaleError,
-      "hosted replay has no player named: " & policyName
-    )
+    return
+  if fileDamagedVisible:
+    inc totals.damagedVisible.files
+  for i in 0 ..< AuditRadii.len:
+    if fileDamagedRadii[i]:
+      inc totals.damagedRadii[i].files
+  if fileDamagedSafeSubmitted:
+    inc totals.damagedSafeSubmitted.files
   if fileDamagedNear:
     inc totals.damagedNear.files
   if fileDamagedSubmitted:
@@ -203,6 +256,16 @@ proc summarize(
   echo "damagedTicks=", totals.damagedTicks
   echo "lowHealthTicks=", totals.lowHealthTicks
   echo "pickupEvents=", totals.pickupEvents
+  printOpportunities("damagedVisible", totals.damagedVisible)
+  for i, radius in AuditRadii:
+    printOpportunities(
+      "damagedWithin" & $int(radius),
+      totals.damagedRadii[i]
+    )
+  printOpportunities(
+    "damagedSafeWithin" & $int(SubmittedRadius),
+    totals.damagedSafeSubmitted
+  )
   printOpportunities("damagedNear", totals.damagedNear)
   printOpportunities("damagedSubmitted", totals.damagedSubmitted)
   printOpportunities("lowHealthNear", totals.lowHealthNear)
