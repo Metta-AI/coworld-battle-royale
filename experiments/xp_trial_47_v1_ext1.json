@@ -1,32 +1,38 @@
 {
+  "idempotency_key": "andre-br-trial47-control-ext1-20260827",
   "target": {
-    "kind": "league",
-    "id": "league_b88a269b-0de7-4723-b1c7-06dab50fe61d",
+    "league_id": "league_b88a269b-0de7-4723-b1c7-06dab50fe61d",
     "variant_id": "br-12"
   },
-  "overrides": {
+  "game_config_overrides": {
     "num_agents": 4
   },
-  "roster": {
-    "participants": [
-      {
-        "slot": -1,
-        "policy": "stierlitz:v1"
+  "roster": [
+    {
+      "player": {
+        "policy_ref": "stierlitz:v1"
       },
-      {
-        "slot": -1,
-        "policy": "Picasso:v63"
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "Picasso:v63"
       },
-      {
-        "slot": -1,
-        "policy": "nishad-battleroyale-baseline:v1"
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "nishad-battleroyale-baseline:v1"
       },
-      {
-        "slot": -1,
-        "policy": "aaln-br-hunter:v2"
-      }
-    ]
-  },
-  "num_episodes": 10,
-  "notes": "Trial 47 control extension 1: exact frozen nearest-MRR field."
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "aaln-br-hunter:v2"
+      },
+      "slot": -1
+    }
+  ],
+  "num_episodes": 20,
+  "notes": "Trial 47 control extension: exact frozen nearest-MRR field."
 }

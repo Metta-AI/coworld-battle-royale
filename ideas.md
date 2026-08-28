@@ -120,8 +120,9 @@
   (10 episodes). Initial result: control 160.00, candidate 174.00, delta
   +14.00, 95% CI [-78.52, 106.52], p=0.754119. This is inconclusive, so an
   exact-field 20-episode-per-arm extension is pending rather than keeping it.
-  The service rejected 20 episodes in one request with HTTP 422 and created no
-  XP; the extension is therefore split into two 10-episode batches per arm.
+  An initially malformed extension payload was rejected with HTTP 422 and
+  created no XP. The corrected extension uses the original API schema and one
+  20-episode request per arm.
 - Opponents: At the one-time live freeze Andre is #11 at 1446.08 MRR. The
   exact three nearest unique other players are softmaxwell (`Picasso:v63`,
   1453.43), NishadIota (`nishad-battleroyale-baseline:v1`, 1431.44), and Aaron
