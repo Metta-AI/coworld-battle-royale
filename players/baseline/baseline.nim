@@ -266,6 +266,8 @@ const
   FfaHunterArmSafeMarginDefault = 80.0
   FfaHunterRingUnstickTicks = 60
   FfaHunterRingUnstickProbe = 32.0
+  FfaJordanKiteStep = 240.0
+  FfaJordanKiteSafeMargin = 80.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -708,6 +710,27 @@ proc ffaBandTargetAtRadius(bot: Bot, me, center: Vec,
 proc ffaBandRadiusWithRingMargin(bandRadius: float, ringRadius: int,
     margin: float): float =
   min(bandRadius, max(1.0, float(max(1, ringRadius)) - margin))
+
+proc ffaJordanContactKite(bot: Bot, me, enemy, center: Vec,
+    ringRadius: int): Vec =
+  ## Returns Jordan's replay-derived full-speed contact-retreat target.
+  let
+    enemyOffset = me - enemy
+    centerOffset = me - center
+    away =
+      if enemyOffset.len() >= FfaBearingEpsilon:
+        norm(enemyOffset)
+      elif centerOffset.len() >= FfaBearingEpsilon:
+        norm(centerOffset)
+      else:
+        norm(ffaSeatBearing(bot.slot))
+    desired = me + away * FfaJordanKiteStep
+    desiredOffset = desired - center
+    safeRadius = max(1.0, float(max(1, ringRadius)) -
+      FfaJordanKiteSafeMargin)
+  if desiredOffset.len() <= safeRadius:
+    return desired
+  center + norm(desiredOffset) * safeRadius
 
 proc dot(a, b: Vec): float =
   a.x * b.x + a.y * b.y
@@ -2127,7 +2150,7 @@ proc shadeFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
 
 proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, unarmed: bool, pursue: bool): FfaIntent =
+    weaponTier: int, unarmed, pursue, contactKite: bool): FfaIntent =
   result = passiveFfaIntent(bot, actors, me, center, ringRadius, targetIndex,
     false)
   if FfaHunterRingMargin > 0.0:
@@ -2135,7 +2158,7 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       ringRadius, FfaHunterRingMargin)
     result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
       result.bandRadius)
-  if pursue:
+  if pursue and not contactKite:
     result.moveTarget = actors[targetIndex].pos
     result.objective = "fight"
     result.action = "engage"
@@ -2146,7 +2169,19 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
-    if targetIndex >= 0 and
+    if contactKite and targetIndex >= 0:
+      result.moveTarget = ffaJordanContactKite(bot, me,
+        actors[targetIndex].pos, center, ringRadius)
+      result.objective = "jordan_contact_kite"
+      result.action = "kite_visible_contact"
+      if pursue:
+        result.engageReason = "jordan_kite_pursuit"
+      elif targetDist < (if FfaHunterFireRange:
+          ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
+        result.engageReason = "jordan_kite_fire"
+      else:
+        result.engageReason = "jordan_kite_contact"
+    elif targetIndex >= 0 and
         targetDist < (if FfaHunterFireRange:
           ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
       result.engageReason = "fire_range"
@@ -2184,7 +2219,7 @@ proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     weaponTier: int, unarmed: bool, pursue, pactActive,
     pactMemoryFresh: bool): FfaIntent =
   result = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-    targetIndex, targetDist, weaponTier, unarmed, pursue)
+    targetIndex, targetDist, weaponTier, unarmed, pursue, false)
   if not pactActive or not pactMemoryFresh:
     return
   if unarmed and (result.lootTripStarted or result.objective == "loot_trip"):
@@ -2498,7 +2533,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         targetIndex, engage)
     of FfaHunter:
       intent = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-        targetIndex, targetDist, weaponTier, unarmed, hunterPursue)
+        targetIndex, targetDist, weaponTier, unarmed, hunterPursue, true)
     of FfaPact:
       intent = pactFfaIntent(bot, client, actors, me, center, ringRadius,
         targetIndex, targetDist, weaponTier, unarmed, hunterPursue,

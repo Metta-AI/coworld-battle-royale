@@ -96,3 +96,19 @@ suite "baseline FFA doctrine":
     check baseline.count(
       "bot.jinkUntil = bot.tick + FfaHunterRingUnstickTicks") == 1
     check baseline.count("bot.ffaRingUnstickBits(me, center)") == 1
+
+  test "Jordan contact kite is isolated to armed Hunter contact":
+    check baseline.count("proc ffaJordanContactKite(") == 1
+    check baseline.contains("FfaJordanKiteStep = 240.0")
+    check baseline.contains("FfaJordanKiteSafeMargin = 80.0")
+    check baseline.count("result.objective = \"jordan_contact_kite\"") == 1
+    check baseline.count("result.action = \"kite_visible_contact\"") == 1
+    check baseline.contains(
+      "weaponTier: int, unarmed, pursue, contactKite: bool")
+    check baseline.count(
+      "targetIndex, targetDist, weaponTier, unarmed, pursue, false)") == 1
+    check baseline.count(
+      "targetIndex, targetDist, weaponTier, unarmed, hunterPursue, true)") == 1
+    check baseline.contains(
+      "if contactKite and targetIndex >= 0:\n" &
+      "      result.moveTarget = ffaJordanContactKite")

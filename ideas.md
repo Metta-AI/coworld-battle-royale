@@ -37,11 +37,8 @@
 - Strafe only laterally inward from nearby heavy-gun threats while preserving
   Hunter fire.
 - Strafe only an armed Hunter laterally inward from nearby heavy-gun threats.
-- Start only the Hunter ring-retreat alarm at 160 pixels instead of 80. The
-  160-game top-policy corpus shows Ryan's shadow at zero meaningful outside
-  time and a 117-pixel late-game mean margin, while Andre spends 259 seconds
-  outside across 96 games and a hosted fatal retreat moved outward on 52.6
-  percent of samples. Test earlier commitment without changing pathfinding.
+- Do not repeat the 160-pixel Hunter ring-retreat alarm. Trial 12 already
+  tested exactly that 80-to-160 alarm change and reverted it after hosted XP.
 - Add only a persistent tangential unstick burst during hunter ring retreat.
 - Let only Hunter ring-unstick rays leave a falsely blocked coarse origin cell.
 - Cycle only the existing Hunter ring-unstick candidates on repeated retries.
@@ -84,6 +81,48 @@
   target-contact gaps, then add one evidence-backed idea at a time.
 
 ## Trial log
+
+### Trial 48: clone Jordan's armed visible-contact navigation
+
+- Idea: The current-top replay corpus gives a large, specific combat-motion
+  gap. During armed visible contact, Jordan is stationary on only 6.64 percent
+  of opening low-gun ticks, 2.08 percent of opening mid-gun ticks, and 8.76 to
+  22.25 percent of later low-through-heavy-gun ticks. Jordan moves away from
+  the visible opponent on 70.22 and 78.75 percent of opening low/mid ticks and
+  47.11 to 53.52 percent later. Submitted `stierlitz:v1` is stationary on
+  45.74 to 62.14 percent of opening low/mid ticks and 52.42 to 56.35 percent
+  later; it moves away on only 4.89 to 14.92 percent. Jordan still fires on
+  roughly 59 to 65 percent of these contact ticks, so the clone should change
+  locomotion, not firing. This broader all-armed-contact state is distinct
+  from Trial 10, which kited only a visible heavy gun within 400 pixels.
+- Change: Replace only the default Hunter's armed visible-contact movement
+  with a continuously recomputed 240-pixel target directly away from the
+  selected visible opponent, clamped inside the existing 80-pixel ring-safe
+  margin. Higher-priority ring retreat and endgame remain unchanged. Target
+  selection, aim lead, fire-range and line-of-sight gates, trigger cadence,
+  arming, items, no-contact band navigation, and every non-Hunter doctrine are
+  unchanged. The branch emits objective `jordan_contact_kite` and action
+  `kite_visible_contact` for exact artifact confirmation.
+- Isolation: `nim check`, the doctrine source-contract suite, and the Linux
+  AMD64 production build pass. Production extraction confirms unchanged
+  Hunter settings including the 0.85 passive band, 240-pixel arm detour,
+  60-tick ring unstick, and zero optional ring margin. One completed unscored
+  local v0.1.14 fixture from the final image produced 12 policy artifacts. The
+  existing Nim artifact summarizer found exactly 289 `jordan_contact_kite`
+  and `kite_visible_contact` ticks across eight artifacts. This proves the
+  exact branch is reachable. Local scores are
+  ignored, and candidate hosted artifacts must independently confirm the
+  branch before any XP delta is trusted.
+- Artifact: Local Linux AMD64 image `stierlitz:candidate-48`, command
+  `/bin/baseline`, image id
+  `sha256:e19a5a2c1d7466a79cd6316c92a9143863287f717421d2cd401ae9006c38bba2`.
+  Pending CPUX upload as policy name `stierlitz` only.
+- XP id: Pending an exact submitted-control/candidate hosted pair with at
+  least ten episodes per arm.
+- Opponents: Pending one-time live freeze of the three nearest unique other
+  players because Andre is outside the top three.
+- Verdict: Pending hosted significance. The candidate will remain unsubmitted
+  unless it significantly beats exact champion `stierlitz:v1`.
 
 ### Trial 47: clone top-player persistent damage recovery
 
