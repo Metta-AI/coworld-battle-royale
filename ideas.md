@@ -114,8 +114,10 @@
   Source commit `e1df0a6` was pushed and the image was uploaded unsubmitted as
   `stierlitz:v7`; only policy name `stierlitz` was used. Exact submitted
   control remains `stierlitz:v1`.
-- XP id: Pending an exact same-field hosted control/candidate pair with at
-  least ten episodes per arm.
+- XP id: Initial exact-field hosted pair is control `stierlitz:v1`
+  `xreq_79887045-7e03-4220-beb2-5513cacc3e0c` (10 episodes) and candidate
+  `stierlitz:v7` `xreq_ead98a42-c79a-409c-9fae-b156fdd29db9`
+  (10 episodes).
 - Opponents: At the one-time live freeze Andre is #11 at 1446.08 MRR. The
   exact three nearest unique other players are softmaxwell (`Picasso:v63`,
   1453.43), NishadIota (`nishad-battleroyale-baseline:v1`, 1431.44), and Aaron
