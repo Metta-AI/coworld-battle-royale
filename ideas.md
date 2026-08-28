@@ -55,6 +55,19 @@
 - Scan only while an armed Hunter holds without a visible target.
 - Detour only an unarmed, unshielded Hunter to a nearby safe shield.
 - Throw only already-carried Hunter grenades at visible safe-range targets.
+- Do not test Ryan's `truce?` spam without new evidence. Across 160 current
+  top-field replays, Ryan's two policies emit it 25,214 times at essentially
+  every one-second cooldown. The apparent replies are almost entirely the two
+  Ryan policies echoing one another; softmaxwell sends only 18 opaque `Pq` or
+  `Pw` messages. Ryan deals damage within three seconds of 17 to 19 percent
+  of shouts and receives it after 13 to 16 percent, so this is not an honored
+  ceasefire protocol in the observed field.
+- Replace only armed visible-contact navigation with Jordan's replay-derived
+  full-speed kite. Across the current corpus Jordan moves away from armed
+  contacts on roughly 47 to 70 percent of low-through-heavy gun ticks and is
+  stationary on only 7 to 22 percent; Andre moves toward low/mid contacts on
+  48 to 58 percent, away on only 5 to 15 percent, and is stationary on 46 to
+  62 percent. Preserve aim, fire gates, items, and no-contact navigation.
 - Shorten only the FFA moving-target aim lead horizon.
 - Extend only the hunter heavy-gun arm reach.
 - Shorten only the hunter opening arm-trip deadline.
