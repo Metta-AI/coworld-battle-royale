@@ -11,7 +11,7 @@
     "participants": [
       {
         "slot": -1,
-        "policy": "stierlitz:v1"
+        "policy": "stierlitz:v7"
       },
       {
         "slot": -1,
@@ -28,5 +28,5 @@
     ]
   },
   "num_episodes": 10,
-  "notes": "Trial 47 control extension 1: exact frozen nearest-MRR field."
+  "notes": "Trial 47 candidate extension 2: exact frozen nearest-MRR field."
 }
