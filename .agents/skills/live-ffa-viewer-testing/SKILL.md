@@ -428,3 +428,70 @@ the state has to be sampled WHILE playback runs. What worked:
 ## Devin Secrets Needed
 
 None — the server and viewer run locally with no auth.
+
+## Testing POLICY (players/baseline) behaviour on the live board
+
+Presentation work only needs eyes on the board; a *policy* change (firing gates,
+line-of-sight, nav) needs a falsifiable per-decision record plus a pre-change control.
+What worked (PR #65, "baseline trusts live FOV over the stale walkability mask"):
+
+- **PREFLIGHT, before any of the rest: prove the change actually ENGAGES on
+  `config.br.json`.** The league runs that file and nothing else; a mechanism that
+  only exists on another map costs a whole session and fixes nothing live. One probe
+  answers it — instantiate the real config in-process
+  (`var c = defaultFfaConfig(12); c.update(readFile("config.br.json"))`,
+  `initCtfForTest(c)`) and count the thing your change keys on before you write the
+  change. PR #65 was diagnosed, built, tested and shipped against the eight rotating
+  arena diamonds; the live BR map (`mapPath: "gen"`, huge) has `AnimatedDiamonds = 0`
+  and streams `boxes=0` for all 8640 ticks, so the mechanism it fixes does not occur
+  there. That check costs 20 seconds and was skipped.
+- **Baseline already carries per-decision telemetry — do not re-instrument.**
+  `CTF_BOT_TRACE=1` makes each bot print one `FFA_TRACE` line per decision at the
+  finalized seam (`slot tick x y objective target targetDist aimError rayClear
+  wantFire trigger reason weaponTier doctrine …`), which is enough to classify every
+  declined shot offline. Two traps in the `reason=` field: `los-blocked` is printed
+  for any unset `rayClear`, but `rayClear` is only ever computed *inside* the
+  weapon-range gate, so most `los-blocked` rows are a RANGE gate — separate them with
+  the logged `targetDist` vs `ffaWeaponFireRange(weaponTier)` (70 / 700 / 520) before
+  calling anything a line-of-sight veto. And "cooldown" is not a reason at all: it is
+  `wantFire=1 trigger=0` (the trigger is held because it fired last tick).
+- **The default battle-royale config has no spinning diamonds.** `config.br.json` uses
+  `mapPath: "gen"` / `mapSize: "huge"`; an instrumented bot reported `boxes=0` for a whole
+  match there, so anything keyed to the eight rotating centre diamonds is inert. Use the
+  hand-tuned map instead — a config with `"mapPath": "arena"` (plus `hitPoints` raised and
+  `ringShrinkSec` stretched so the match stays watchable long enough to film).
+- **A/B with two servers side by side**: build the PR head and the merge-base into two
+  worktrees (`/tmp/br-instr`, `/tmp/br-base`), run one server per port (9500 fix / 9501
+  base) with the SAME config file, 12 bots each, and open both `/client/global` tabs.
+- **Instrument the decision, not the outcome.** Add a temporary `echo` in the fire path
+  (gated on an env var, e.g. `CTF_BOT_STALEFIRE=1`) printing what the OLD code would have
+  decided next to the new one: `slot tick oldRay newRay mx my tx ty dist boxes`. Counting
+  `oldRay=false` decisions is the only way to prove the fix reached the live board. Never
+  commit the instrumentation — throwaway worktrees only.
+- **Launch gotchas**: the server takes `--config-path:<file>` / `--port:<n>` with a COLON
+  (`--config <file>` is parsed as inline JSON and fails at "offset 19"), must run with the
+  repo root as CWD (`data/ascii.png`), and bots read the URL from
+  `COWORLD_PLAYER_WS_URL`. Backgrounding a long `env VAR=… binary &` line straight from an
+  agent shell has been observed to lose args/env — write a tiny `/tmp/run_*.sh` and
+  `nohup` that instead; it is reliable.
+
+## Offline geometry ground truth (walls, stuck bots, shots through walls)
+
+Screenshots cannot prove "nothing shot through a wall". Two dumps make it arithmetic:
+
+- `nim c -d:release -o:/tmp/dumpmask tools/dump_map_mask.nim` then
+  `/tmp/dumpmask /tmp/arena_mask.png arena --raw /tmp/arena_mask.bin` gives a headerless
+  `W*H` byte array (0 floor, 1 stone, 2 glass) — the STATIC terrain the sim collides
+  against, with no dynamic restamps in it.
+- `/tmp/xevents <replay> --out ev.jsonl --frames frames.bin` gives per-tick seat state.
+  `CTFFRM02` layout: 16-byte header (`magic|u16 slots|u16 mapW|u16 mapH|u16 teams`), then
+  per tick `u32 tick|u8 phase|u8 pad`, `slots x 11 bytes` (`i16 x, i16 y`, then 7 u8s),
+  `teams x 5 bytes`. **A seat record is 11 bytes, not 9** — get the stride wrong and
+  positions silently drift into nonsense like `x=-766`; sanity-check by confirming
+  `(len-16) % stride == 0` and that tick fields increase by 1.
+- With those you can check, without any UI: seat samples that land on stone (nav
+  regression), longest run a seat spends inside an obstacle's bounds (wedging), whether a
+  `hit` event's shooter→impact segment crosses stone (shooting through walls), and
+  per-shot whether an exempted ray's blocker was the dynamic object or real terrain.
+  Always run the same script over the PRE-CHANGE replay: "bots linger in the ring" is only
+  a regression if the base build does not do it too.
