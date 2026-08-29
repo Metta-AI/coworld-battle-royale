@@ -311,6 +311,33 @@ Two traps: `boardRenderScaleFor` lives in `ctf/global`, not in the `ctf/sim` re-
 (import both, or you get `undeclared identifier`), and **sim coordinates must be multiplied
 by that board scale** — cropping with unscaled coords (or passing `scale = 1` to
 `renderBoardFrame`) yields an all-black tile and looks exactly like "the FX never rendered".
+### Ground-item lifecycle (drop-on-death, consumed-once pickups)
+
+An item that appears at a death site and vanishes when someone walks over it lives for only
+a few dozen ticks, so the live board is the wrong place to judge it. What works:
+
+1. Record one match headlessly (`tools/run_ffa_demo.sh <n> <seed> DEFAULT`, `DEMO_BUILD=0`
+   to reuse the binaries you already built, `DEMO_DIR=/tmp/demoN` to keep the artifacts).
+   The harness writes the server's own events JSONL next to the replay.
+2. Pair the rows in that ledger: a `death` row and the later `item_pickup` row whose `item`
+   string carries the drop wording (e.g. `dropped heavy gun`) at the SAME `x`/`y`. That pair
+   gives you three ticks to screenshot: before the death, inside the window, after the pickup.
+3. Serve the replay (`--load-replay:<file> --port:<p>`) and use `?t=<simTick>` + a minimap
+   click on the ledger coordinates for an identical crop at each of the three ticks.
+   Absence-then-presence-then-absence at one fixed camera is the falsifiable evidence;
+   a single "I see an item" screenshot cannot distinguish a drop from an uncollected
+   spawn item.
+4. Corroborate the consumer: the taker's nameplate weapon pips should change between the
+   before/after ticks (e.g. 0 pips -> 3), which also demonstrates the strictly-lower-tier rule.
+
+On the LIVE board the same run is much harder to pin down: `/client/global` re-streams the
+~7 MB atlas on every reload (30-60 s black) and can then lag tens of seconds behind the sim,
+so a 5-second item window is routinely missed. Two mitigations: give the config `maxGames > 1`
+so the viewer stays warm across games (bots stay connected and a new game starts), and judge
+the live board at/near GAME OVER, when uncollected drops are still lying at the death cluster.
+Map ledger coordinates to screen with `x_screen = mapX/MapWidth * boardCanvasWidth` before
+cropping, otherwise you cannot tell a drop from a spawn item.
+
 ## Proving no new sprite family/label reached the streams
 
 Serve the SAME replay file on both builds (`--load-replay`, two ports), connect a python
