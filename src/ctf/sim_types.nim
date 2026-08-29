@@ -543,6 +543,16 @@ const
   FfaLowGunSpawns* = 0        ## FFA low-tier count override; zero derives N.
   FfaMidGunSpawns* = 0        ## FFA mid-tier count override; zero derives N/4.
   FfaHeavyGunSpawns* = 0      ## FFA heavy-tier count override; zero derives N/4.
+  FfaLowGunMagazine* = 60     ## finite-ammo rounds in a low-tier gun.
+  FfaMidGunMagazine* = 40     ## finite-ammo rounds in a mid-tier gun.
+  FfaHeavyGunMagazine* = 15   ## finite-ammo rounds in a heavy-tier gun.
+  FfaSprayActiveBudget* = 100 ## finite-ammo active spray trigger ticks.
+  LauncherBlastRadius* = 96   ## grenade-launcher blast radius in map pixels.
+  LauncherDamage* = 4         ## grenade-launcher damage per caught player.
+  LauncherAmmoRounds* = 3     ## rounds in a fresh grenade launcher.
+  LauncherSpawnCount* = 2     ## centre-map launcher pickups.
+  LauncherCooldownTicks* = 36 ## launcher fire cooldown in ticks.
+  LauncherSpawnSeedSalt* = 13579 ## odd salt for the private launcher stream.
   FfaSpawnRingPermille* = 800 ## ffa spawn pads sit on a ring this far out
                               ## (permille) of the largest circle the map
                               ## border allows: maximum pairwise spacing
@@ -1373,6 +1383,12 @@ type
     ffaLowGunSpawns*: int         ## ffa: low-tier count override; 0 derives.
     ffaMidGunSpawns*: int         ## ffa: mid-tier count override; 0 derives.
     ffaHeavyGunSpawns*: int       ## ffa: heavy-tier count override; 0 derives.
+    finiteAmmo*: bool             ## ffa: guns and spray cans consume finite
+                                  ## ammunition. False is dormant and
+                                  ## byte-identical to the pre-ammo path.
+    grenadeLauncher*: bool        ## ffa: enables the dormant center-map
+                                  ## grenade launcher. False is dormant and
+                                  ## byte-identical to the pre-launcher path.
 
   Player* = object
     x*, y*: int
@@ -1482,6 +1498,10 @@ type
                                ## accumulator is derived in-process, so no
                                ## GameVersion bump is needed; the hp it costs
                                ## remains hashed.
+    gunAmmo*: int              ## ffa: rounds remaining in the carried gun.
+    sprayTicks*: int           ## ffa: active spray ticks remaining.
+    hasLauncher*: bool         ## ffa: carrying the grenade launcher.
+    launcherAmmo*: int         ## ffa: launcher rounds remaining.
 
   FfaDamageHit* = object
     ## One ffa damage event, kept just long enough to resolve assists
@@ -1721,6 +1741,7 @@ type
     tier*: int
     present*: bool
     dropTick*: int
+    ammo*: int
 
   PlacedBarrier* = object
     ## One standing cardboard barrier: three sides of a hexagon (a half-hex)
@@ -1869,6 +1890,8 @@ type
                                ## Appended at the END of the type: keyframes
                                ## are flatty-positional, and this state is
                                ## empty on dormant/default games.
+    launcherSpawns*: seq[PickupSpawn]  ## dormant FFA launcher pickups at center.
+    launcherSpawnTick*: int            ## private-stream spawn tick; -1 when off.
 
 
 # Team endzone display colors (shared by the map bake and the paint FX).
@@ -1989,6 +2012,14 @@ proc teams*(gameMap: CtfMap): Slice[Team] =
 proc teams*(sim: SimServer): Slice[Team] =
   ## Returns the active teams in one game.
   sim.gameMap.teams()
+
+proc ffaMagazineForTier*(tier: int): int =
+  ## Returns the finite magazine size for an FFA weapon tier.
+  case tier
+  of FfaWeaponLow: FfaLowGunMagazine
+  of FfaWeaponMid: FfaMidGunMagazine
+  of FfaWeaponHeavy: FfaHeavyGunMagazine
+  else: 0
 
 
 proc teamText*(team: Team): string =

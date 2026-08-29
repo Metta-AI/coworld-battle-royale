@@ -101,6 +101,8 @@ Per-map descriptor `CtfMap` [sim_types.nim:733](../src/ctf/sim_types.nim#L733) c
 | `puddleDamagePct` | int / `20` | `0..100` | Percent chance of 1 damage per full second of continuous paint-puddle occupancy; inert on maps without puddles (`mapPuddles`). |
 | `barrierPickups` | int / `0` | `0..2` ([sim_config.nim](../src/ctf/sim_config.nim) validate, cap `MaxBarrierPickupsPerTeam`) | Cardboard-barrier pickups PER TEAM, staged between base anchor and map center ([sim.nim `barrierSpawnPoints`](../src/ctf/sim.nim)); 0 = none (the default — echo omitted, no GV bump). |
 | `dropWeaponOnDeath` | bool / `false` | `true` enables the dormant FFA rule | Dormant by default: when enabled, a non-unarmed victim leaves a one-use gun at the death site. Activation is a gameplay rule change requiring a future GameVersion bump. Measure from `Death.amount`, dropped pickup tokens, existing event tick/x/y data, and existing position tracking for nearby non-collectors; this change does not activate it or claim metagame improvement. |
+| `finiteAmmo` | bool / `false` | FFA only | Dormant by default: weapon instances carry finite magazines and spray cans consume active ticks when armed ([sim_config.nim:878](../src/ctf/sim_config.nim), [sim.nim:1849](../src/ctf/sim.nim)). |
+| `grenadeLauncher` | bool / `false` | FFA only | Dormant by default: deterministic centre launchers activate on a private seed-derived tick when armed ([sim_config.nim:879](../src/ctf/sim_config.nim), [sim.nim:2189](../src/ctf/sim.nim)). |
 | `mode` | string / `"ctf"` | `mode` | `"ctf"` or `"ffa"` | Match rules. `"ctf"` is the classic team game and every ffa branch is gated off it (a ctf game draws no new RNG and hashes exactly as before); `"ffa"` is battle royale: single life, no hearts, N-derived spawn ring with seed-rotated seat-to-pad ownership, last player standing. Echoed into the replay config only in ffa. |
 | `numPlayers` | int / `0` | `numPlayers` | `2..16` in ffa; must be `0` in ctf | ffa seat count N. Explicit values win; when omitted, FFA derives N from `players` length, or `tokens` length when no `players` roster is authored. Everything ffa derives from it — the fixed spawn-pad ring and its seed-derived per-episode rotation ([sim_state.nim `ffaSpawnPosition`](../src/ctf/sim_state.nim)), the lobby's `minPlayers` default, every per-player container. |
 | `ringEnabled` | bool / `false` | `ringEnabled` | ffa only | Enables the shrinking circular safe zone; omitted ffa configs enable it by default. |
@@ -192,6 +194,16 @@ for curved/organic terrain. Trenches are also `ArenaShape` (the generator emits
 | Med kits | 2 (sides) / up to 4 (4-team) | `MedKitPickupRange`=12, `MedKitRespawnTicks`=720 |
 | Shields | 1 per team endzone | `ShieldRespawnTicks`=720, `ShieldLayerHp`=3, `ShieldFireSlowdown`=3 |
 | Plasma arcs (spray) | 1 per team endzone | `PlasmaArcRespawnTicks`=720 (`30 * ReplayFps`), `PlasmaArcPickupRange`=12, `PlasmaArcSpawnInset`=`GrenadeSpawnInset`, `PlasmaArcSquare`=`SoldierBodyPx`=34, `PlasmaArcReach`=170 (5 squares), `PlasmaArcMaxWidth`=85 (cone width at max reach), `PlasmaArcBodyRadius`=17, `PlasmaArcDamage`=3 (ffa: `ffaSprayDamage`=4), `PlasmaArcActiveTicks`=5 / `PlasmaArcResetTicks`=20 (one burst every 25 ticks; the can is never consumed), fx-only `PlasmaArcFxReach`=136 / `PlasmaArcFxMaxWidth`=68 / `PlasmaArcFxTicks`=4 |
+| `FfaLowGunMagazine` | 60 rounds | FFA finite-ammo low-tier magazine ([sim_types.nim:546](../src/ctf/sim_types.nim)). |
+| `FfaMidGunMagazine` | 40 rounds | FFA finite-ammo mid-tier magazine ([sim_types.nim:547](../src/ctf/sim_types.nim)). |
+| `FfaHeavyGunMagazine` | 15 rounds | FFA finite-ammo heavy-tier magazine ([sim_types.nim:548](../src/ctf/sim_types.nim)). |
+| `FfaSprayActiveBudget` | 100 active ticks | FFA finite-ammo spray budget, consumed only during active arc ticks ([sim_types.nim:549](../src/ctf/sim_types.nim)). |
+| `LauncherBlastRadius` | 96 px | FFA grenade-launcher blast radius ([sim_types.nim:550](../src/ctf/sim_types.nim)). |
+| `LauncherDamage` | 4 hp | FFA grenade-launcher direct blast damage ([sim_types.nim:551](../src/ctf/sim_types.nim)). |
+| `LauncherAmmoRounds` | 3 rounds | FFA grenade-launcher magazine size ([sim_types.nim:552](../src/ctf/sim_types.nim)). |
+| `LauncherSpawnCount` | 2 pickups | Number of centre-map launcher pickups ([sim_types.nim:553](../src/ctf/sim_types.nim)). |
+| `LauncherCooldownTicks` | 36 ticks | FFA grenade-launcher fire cooldown ([sim_types.nim:554](../src/ctf/sim_types.nim)). |
+| `LauncherSpawnSeedSalt` | 13579 | Odd salt for the private launcher spawn stream ([sim_types.nim:555](../src/ctf/sim_types.nim)). |
 | Trenches | via `mapGen.pits`/`pitDensity` | `TrenchSize`=56, `TrenchSpeedDivisor`=5, `TrenchFireSlowdown`=3, `TrenchMissPct`=70 |
 | Paint puddles | via `mapGen.puddles` (`mapPuddles`) | `PuddleSize`=64, `PuddleRollTicks`=24, `DefaultPuddleDamagePct`=20 (config `puddleDamagePct`), `MaxPuddles`=64 |
 | Cardboard barriers | via `barrierPickups` (per team) | `BarrierHp`=10, `BarrierRadius`=24, `BarrierHalfThick`=2, `BarrierRespawnTicks`=720, `MaxBarriersPlaced`=16 ([sim_types.nim](../src/ctf/sim_types.nim)) |
