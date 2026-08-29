@@ -184,12 +184,12 @@ proc ffaLootSeed(sim: SimServer): int =
     sim.config.seed
 
 proc ffaLauncherSpawnTick*(sim: SimServer): int =
-  ## Drawn from a private stream seeded off the episode seed, never from
-  ## sim.rng: the main draw order is identical whether the knob is armed or
-  ## not.
+  ## Drawn from a private stream seeded off the episode seed, deliberately
+  ## not the map-derived loot seed, and never from sim.rng: the main draw
+  ## order is identical whether the knob is armed or not.
   if not (sim.config.isFfa() and sim.config.grenadeLauncher):
     return -1
-  var seed = sim.ffaLootSeed() + LauncherSpawnSeedSalt
+  var seed = sim.config.seed + LauncherSpawnSeedSalt
   if seed == 0:
     seed = LauncherSpawnSeedSalt
   var rng = initRand(seed)
@@ -554,8 +554,9 @@ proc resetGuns*(sim: var SimServer) =
     if sim.config.grenadeLauncher:
       let (cx, cy) = ffaRingCenter()
       var launcherTargets: seq[tuple[x, y: int]] = @[]
-      for _ in 0 ..< LauncherSpawnCount:
-        launcherTargets.add((x: cx, y: cy))
+      for i in 0 ..< LauncherSpawnCount:
+        let offset = (2 * i - (LauncherSpawnCount - 1)) * LauncherBlastRadius
+        launcherTargets.add((x: cx + offset, y: cy))
       sim.placeWalkablePickups(
         launcherSpawns,
         launcherTargets
@@ -2075,12 +2076,16 @@ proc launcherImpact(
   let
     sx = sim.players[shooterIndex].x + CollisionW div 2
     sy = sim.players[shooterIndex].y + CollisionH div 2
+  var
+    lastX = sx
+    lastY = sy
+    lastDistance = 0
   for step in 1 .. maxRange:
     let
       rx = sx + int(round(ux * float(step)))
       ry = sy + int(round(uy * float(step)))
     if sim.isWall(rx, ry):
-      return (rx, ry, -1, step)
+      return (lastX, lastY, -1, lastDistance)
     for i in 0 ..< sim.players.len:
       if i == shooterIndex or not sim.players[i].alive:
         continue
@@ -2089,6 +2094,9 @@ proc launcherImpact(
         py = sim.players[i].y + CollisionH div 2
       if abs(rx - px) <= PlayerHalf and abs(ry - py) <= PlayerHalf:
         return (rx, ry, i, step)
+    lastX = rx
+    lastY = ry
+    lastDistance = step
   (
     sx + int(round(ux * float(maxRange))),
     sy + int(round(uy * float(maxRange))),
@@ -2756,7 +2764,7 @@ proc tryPickupPlasmaArcs*(sim: var SimServer, playerIndex: int) =
     sim.emitPickup(playerIndex, "spray_can", spawn.x, spawn.y)
     sim.logGameEvent(
       playerColorText(sim.players[playerIndex].color) &
-      " picked up a spray can"
+        " picked up a spray can"
     )
 
 proc tryPickupLaunchers*(sim: var SimServer, playerIndex: int) =
