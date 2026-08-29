@@ -137,14 +137,15 @@ suite "FFA loot ledger instrumentation":
     for outcome in outcomes:
       if not outcome.tierGain:
         continue
-      check outcome.gainOrigin == "spawn"
+      check outcome.gainOrigin in ["spawn", "corpse"]
       check outcome.gainTick > outcome.tick
       check outcome.gainDistPx >= 0.0
       var explained = false
       for row in ledger.rows:
         if row.kind == "item_pickup" and row.source == outcome.killer and
-            row.tick == outcome.gainTick and TierByToken.hasKey(row.item) and
-            TierByToken[row.item] > outcome.killerTierBefore:
+            row.tick == outcome.gainTick and
+            row.item.pickupTier() > outcome.killerTierBefore:
+          check row.item.pickupOrigin() == outcome.gainOrigin
           explained = true
           break
       check explained

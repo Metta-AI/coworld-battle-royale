@@ -214,7 +214,7 @@ timelines) and scanned/seeked by `test_replay_scan.nim`. Current fixtures:
 | `wipe-lives1.bitreplay` | 10,001 | 152 KB |
 | `ffa-scorebug.bitreplay` | 4,172 | 70 KB |
 | `gen-small-pits.bitreplay` | 2,506 | 47 KB |
-| `capture-seed1.bitreplay` | 2,256 | 45 KB |
+| `capture-seed6.bitreplay` | 1,434 | 30 KB |
 | `draw-nokill.bitreplay` | 1,700 | 34 KB |
 | `gen-colossal-4team.bitreplay` | 516 | 24 KB |
 
