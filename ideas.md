@@ -117,13 +117,24 @@
   `/bin/baseline`, image id
   `sha256:e19a5a2c1d7466a79cd6316c92a9143863287f717421d2cd401ae9006c38bba2`.
   Source commit `d3b8032` was pushed and the image uploaded unsubmitted as
-  `stierlitz:v8`. Only policy name `stierlitz` was used.
-- XP id: Pending an exact submitted-control/candidate hosted pair with at
-  least ten episodes per arm.
+  `stierlitz:v8`, policy version
+  `86c39f8e-75ca-4862-9049-d638d72b7bdc`. Only policy name `stierlitz` was
+  used.
+- XP id: Initial exact-field hosted pair is control `stierlitz:v1`
+  `xreq_5a24e2f0-c436-43c8-8e85-1404f44eefd1` and candidate `stierlitz:v8`
+  `xreq_eb5d6807-92e8-4c09-958b-b575e64d8d48`, ten episodes per arm. Control
+  mean is 171.40 and candidate mean 211.80: delta +40.40, 95 percent CI
+  [-39.28, 120.08], Welch p=0.293054. This is inconclusive, so an exact-field
+  20-episode-per-arm extension is pending rather than keeping it.
 - Opponents: At the one-time live freeze Andre is #14 at 1395.64 MRR. The
   exact three nearest unique other players are Aaron (`aaln-br-hunter:v2`,
   1383.64), sivannn (`sivan-br-ringsurfer:v1`, 1413.89), and Kenny Sheftel
   (`kenshef-my-player:v1`, 1372.89), in that fixed order for both arms.
+- Hosted activation: All ten initial candidate artifacts downloaded. The exact
+  `jordan_contact_kite` and `kite_visible_contact` branch ran for 1,499 ticks
+  across six artifacts. Sampled reasons include 71 distant contacts, 42
+  in-range firing contacts, and 14 weak-target pursuit contacts. The intended
+  change unquestionably fired; these diagnostics are not score.
 - Verdict: Pending hosted significance. The candidate will remain unsubmitted
   unless it significantly beats exact champion `stierlitz:v1`.
 

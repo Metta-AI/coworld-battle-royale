@@ -1,0 +1,38 @@
+{
+  "idempotency_key": "andre-br-trial48-candidate-ext1-20260828a",
+  "target": {
+    "league_id": "league_b88a269b-0de7-4723-b1c7-06dab50fe61d",
+    "variant_id": "br-12"
+  },
+  "game_config_overrides": {
+    "num_agents": 4
+  },
+  "roster": [
+    {
+      "player": {
+        "policy_ref": "stierlitz:v8"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "aaln-br-hunter:v2"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "sivan-br-ringsurfer:v1"
+      },
+      "slot": -1
+    },
+    {
+      "player": {
+        "policy_ref": "kenshef-my-player:v1"
+      },
+      "slot": -1
+    }
+  ],
+  "num_episodes": 20,
+  "notes": "Trial 48 candidate extension: exact frozen nearest-MRR field."
+}
