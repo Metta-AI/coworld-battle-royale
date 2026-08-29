@@ -2695,7 +2695,8 @@ proc updateGuns*(sim: var SimServer) =
         sim.launcherSpawnTick >= 0 and
         sim.gameTicksElapsed() >= sim.launcherSpawnTick:
       for spawn in sim.launcherSpawns.mitems:
-        spawn.present = true
+        if spawn.respawnAt >= 0:
+          spawn.present = true
 
 
 proc tryPickupMedKits*(sim: var SimServer, playerIndex: int) =
@@ -2778,6 +2779,9 @@ proc tryPickupLaunchers*(sim: var SimServer, playerIndex: int) =
       FfaLootRespawnTicks, true):
     sim.players[playerIndex].hasLauncher = true
     sim.players[playerIndex].launcherAmmo = LauncherAmmoRounds
+    sim.players[playerIndex].fireWindup = 0
+    sim.players[playerIndex].windupBrads = -1
+    spawn.respawnAt = -1
     sim.emitPickup(playerIndex, "launcher", spawn.x, spawn.y)
     sim.logGameEvent(
       playerColorText(sim.players[playerIndex].color) &

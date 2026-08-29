@@ -84,6 +84,48 @@ suite "FFA grenade launcher":
     check not game.players[0].hasLauncher
     check game.players[0].launcherAmmo == 0
 
+  test "launcher pickups are spent permanently after pickup":
+    var game = launcherGame()
+    game.launcherSpawnTick = 0
+    for spawn in game.launcherSpawns.mitems:
+      spawn.present = true
+    game.players[0].placeAtCenter(
+      game.launcherSpawns[0].x, game.launcherSpawns[0].y)
+    game.tryPickupLaunchers(0)
+    check not game.launcherSpawns[0].present
+    check game.launcherSpawns[0].respawnAt == -1
+    check game.launcherSpawns[1].present
+    inc game.tickCount
+    game.updateGuns()
+    check not game.launcherSpawns[0].present
+    check game.launcherSpawns[1].present
+    for _ in 0 ..< FfaLootRespawnTicks:
+      inc game.tickCount
+      game.updateGuns()
+    check not game.launcherSpawns[0].present
+    check game.launcherSpawns[1].present
+
+  test "launcher pickup clears pending gunfire":
+    var game = launcherGame()
+    game.launcherSpawnTick = 0
+    for spawn in game.launcherSpawns.mitems:
+      spawn.present = true
+    game.players[0].placeAtCenter(
+      game.launcherSpawns[0].x, game.launcherSpawns[0].y)
+    game.players[0].weaponTier = FfaWeaponHeavy
+    game.players[0].gunAmmo = FfaHeavyGunMagazine
+    game.players[0].fireWindup = game.config.fireWindupTicks
+    game.players[0].windupBrads = 0
+    game.tryPickupLaunchers(0)
+    check game.players[0].hasLauncher
+    check game.players[0].fireWindup == 0
+    check game.players[0].windupBrads == -1
+    let gunAmmo = game.players[0].gunAmmo
+    let idle = game.none()
+    for _ in 0 ..< game.config.fireWindupTicks + 1:
+      game.step(idle, idle)
+    check game.players[0].gunAmmo == gunAmmo
+
   test "launcher pre-empts gun and excludes spray":
     var game = launcherGame()
     game.players[0].weaponTier = FfaWeaponHeavy
