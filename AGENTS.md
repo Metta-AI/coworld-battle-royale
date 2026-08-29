@@ -211,12 +211,12 @@ timelines) and scanned/seeked by `test_replay_scan.nim`. Current fixtures:
 
 | Fixture | Ticks | Size |
 |---|---:|---:|
-| `wipe-lives1.bitreplay` | 10,001 | 152 KB |
-| `ffa-scorebug.bitreplay` | 4,172 | 70 KB |
-| `gen-small-pits.bitreplay` | 2,506 | 47 KB |
-| `capture-seed6.bitreplay` | 1,434 | 30 KB |
+| `ffa-scorebug.bitreplay` | 4,147 | 69 KB |
+| `gen-small-pits.bitreplay` | 2,334 | 44 KB |
 | `draw-nokill.bitreplay` | 1,700 | 34 KB |
-| `gen-colossal-4team.bitreplay` | 516 | 24 KB |
+| `capture-seed6.bitreplay` | 1,434 | 28 KB |
+| `wipe-lives1.bitreplay` | 1,334 | 23 KB |
+| `gen-colossal-4team.bitreplay` | 532 | 24 KB |
 
 Re-simulating all six is ~11s, so fixture-touching work should run
 `test_broadcast_state.nim` directly rather than the whole suite. Re-RECORDING

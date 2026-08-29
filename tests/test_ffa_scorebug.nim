@@ -16,7 +16,7 @@ import
 
 const
   # Recorded against the CURRENT rules with the ffa demo runner:
-  #   tools/run_ffa_demo.sh 12 13 I
+  #   tools/run_ffa_demo.sh 12 60 I
   # then copied out of demo-artifacts/. Re-record on every GameVersion bump.
   #
   # The recipe is not just "an ffa match": this fixture has to CONTAIN the
