@@ -1,9 +1,23 @@
 import
-  std/[md5, os, sets, unittest],
+  std/[md5, os, sets, strformat, unittest],
+  ctf/arena,
   ctf/map_pool,
   ctf/sim
 
 const BrGen42SpecMd5 = "2be75b1b1e13917ddcb0c2a45e3230b7"
+const SpinBand = 80 ## DiamondSpinBand, arena.nim:1241 (not exported)
+
+proc poolDiamondCensus(gameMap: CtfMap): tuple[
+    spinning, nearestAxis: int] =
+  result.nearestAxis = high(int)
+  for shape in buildArenaObstacles(gameMap):
+    if shape.kind != shapeDiamond:
+      continue
+    result.nearestAxis = min(
+      result.nearestAxis,
+      abs(2 * shape.cx - (gameMap.width - 1)))
+    if gameMap.isSpinningDiamond(shape):
+      inc result.spinning
 
 proc centerData(gameMap: CtfMap): tuple[
     wall, trench, puddle: string, kits: seq[MapPoint]] =
@@ -62,6 +76,28 @@ proc wallHash(gameMap: CtfMap): string =
   $toMD5(bits)
 
 suite "battle-royale rotation pool":
+  test "pool entries stay outside the spinning-diamond band":
+    ## The margin is currently 162 vs 160. This is an OBSERVED property of
+    ## the generated file, not a construction guarantee. A pool regeneration
+    ## that crosses it fails here and names the entry; if diamonds in BR are
+    ## ever wanted, delete this test deliberately.
+    let overrides = brCanonicalOverrides()
+    var minimumDoubledAxis = high(int)
+    for index in 0 ..< BrMapPoolSeeds.len:
+      let
+        seed = BrMapPoolSeeds[index]
+        gameMap = brPoolCtfMap(index, overrides)
+        census = poolDiamondCensus(gameMap)
+      doAssert census.spinning == 0, &"entry index={index} seed={seed} " &
+        &"has {census.spinning} spinning diamonds"
+      minimumDoubledAxis = min(minimumDoubledAxis, census.nearestAxis)
+    check minimumDoubledAxis < high(int)
+    doAssert minimumDoubledAxis >= 2 * SpinBand,
+      &"minimum doubled axis distance={minimumDoubledAxis} is below " &
+      "the spinning threshold"
+    echo &"pool minimum doubled axis distance={minimumDoubledAxis} " &
+      &"(observed 162 vs threshold < {2 * SpinBand})"
+
   test "all entries share the canonical center and remain valid":
     let reference = generateMapAttempt(
       BrCanonicalCenterSeed, brCanonicalOverrides())

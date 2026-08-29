@@ -81,6 +81,7 @@ import
   ctf/sim_types as SimTypes,
   whisky,
   baseline/protocols,
+  baseline/vision,
   baseline/artlog
 
 when defined(taunt):
@@ -396,6 +397,7 @@ type
     navBuilt: bool
     cellWalkable: seq[bool]   # eroded walkability, GridW x GridH
     coverCell: seq[bool]      # walkable cells hugging an obstacle
+    diamondBoxes: seq[DiamondBox] # live streamed bounds; snapshot pixels inside are unknown
     exposure: seq[bool]       # cells a remembered enemy could shoot into
     navDist: seq[int32]       # cost field toward navGoal
     navGoal: int              # goal cell of the current field, -1 = stale
@@ -807,6 +809,15 @@ proc mapPos(client: ProtocolClient, o: tuple[
     float(o.y + o.height div 2 + client.mapCameraY)
   )
 
+proc refreshDiamondBoxes(bot: Bot, client: ProtocolClient) =
+  bot.diamondBoxes.setLen(0)
+  for (o, _) in client.spriteObjectsWithLabelPrefix("diamond"):
+    let center = client.mapPos(o)
+    let x0 = int(center.x) - o.width div 2
+    let y0 = int(center.y) - o.height div 2
+    bot.diamondBoxes.add(DiamondBox(
+      x0: x0, y0: y0, x1: x0 + o.width, y1: y0 + o.height))
+
 proc ownAimBrads(client: ProtocolClient): int =
   ## The engine-stated own-aim angle from the `own aim <brads>` HUD marker,
   ## or -1 when the marker is absent (pre-marker engines) or unparsable.
@@ -979,22 +990,17 @@ proc cellCenter(cell: int): Vec =
     float((cell div GridW) * NavCell + NavCell div 2)
   )
 
-proc pixelRayClear(client: ProtocolClient, a, b: Vec): bool =
+proc pixelRayClear(client: ProtocolClient, bot: Bot, a, b: Vec): bool =
   ## True when no wall pixel blocks the segment; mirrors lineOfSightClear in
-  ## the sim (walls are exactly the non-walkable pixels).
-  let
-    ax = int(a.x)
-    ay = int(a.y)
-    bx = int(b.x)
-    by = int(b.y)
-    steps = max(abs(bx - ax), abs(by - ay))
-  if steps == 0:
-    return true
-  for s in 1 .. steps:
-    if not client.walkableAt(ax + (bx - ax) * s div steps,
-                             ay + (by - ay) * s div steps):
-      return false
-  true
+  ## the sim (walls are exactly the non-walkable pixels). Diamond bounds are
+  ## unknown geometry, so their stale snapshot pixels do not block this ray.
+  maskRayClear(
+    client.walkabilityMask,
+    client.walkabilityWidth,
+    client.walkabilityHeight,
+    bot.diamondBoxes,
+    VisionPoint(x: a.x, y: a.y),
+    VisionPoint(x: b.x, y: b.y))
 
 proc rayClearCoarse(client: ProtocolClient, a, b: Vec, step: float): bool =
   ## Coarsely-sampled walkability raycast for cover scoring and exposure
@@ -1376,8 +1382,12 @@ proc buildNavGrid(bot: Bot, client: ProtocolClient) {.measure.} =
   bot.cellWalkable = newSeq[bool](GridW * GridH)
   for cy in 0 ..< GridH:
     for cx in 0 ..< GridW:
-      bot.cellWalkable[cy * GridW + cx] = client.footprintFits(
-        cx * NavCell + NavCell div 2, cy * NavCell + NavCell div 2)
+      let
+        c = cy * GridW + cx
+        center = cellCenter(c)
+      bot.cellWalkable[c] =
+        pointInAnyDiamond(bot.diamondBoxes, int(center.x), int(center.y)) or
+        client.footprintFits(int(center.x), int(center.y))
   bot.coverCell = newSeq[bool](GridW * GridH)
   for cy in 0 ..< GridH:
     for cx in 0 ..< GridW:
@@ -1394,7 +1404,14 @@ proc buildNavGrid(bot: Bot, client: ProtocolClient) {.measure.} =
               ny = cy + dy
             if nx < 0 or ny < 0 or nx >= GridW or ny >= GridH:
               continue
-            if not bot.cellWalkable[ny * GridW + nx]:
+            let
+              neighbor = ny * GridW + nx
+              neighborCenter = cellCenter(neighbor)
+            if not bot.cellWalkable[neighbor] and
+                not pointInAnyDiamond(
+                  bot.diamondBoxes,
+                  int(neighborCenter.x),
+                  int(neighborCenter.y)):
               bot.coverCell[c] = true
               break adjacency
   bot.exposure = newSeq[bool](GridW * GridH)
@@ -1567,7 +1584,7 @@ proc findDuckCell(bot: Bot, client: ProtocolClient, me, threat: Vec): int =
       let p = cellCenter(nc)
       if not bot.gridRayClear(me, p):
         continue
-      if client.pixelRayClear(p, threat):
+      if client.pixelRayClear(bot, p, threat):
         continue                          # the threat can still see this cell
       let d = dist(p, me)
       if d < bestD:
@@ -1596,7 +1613,7 @@ proc findPeekCell(bot: Bot, client: ProtocolClient, me, aim: Vec): int =
       let p = cellCenter(nc)
       if dist(p, aim) > FireRange or not bot.gridRayClear(me, p):
         continue
-      if not client.pixelRayClear(p, aim):
+      if not client.pixelRayClear(bot, p, aim):
         continue
       let d = dist(p, me)
       if d < bestD:
@@ -2510,7 +2527,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         FfaHunterFireRange and
         not unarmed and targetDist < fireRange
     if (engage or fireWhileHurt or hunterRangeGate) and targetDist < fireRange:
-      rayClear = client.pixelRayClear(me, target.pos)
+      # The ray is truthful outside diamond stamps, and pixelRayClear already
+      # treats diamond-box pixels as unknown, so the only vetoes this drops
+      # are the ones a stale snapshot got wrong.
+      rayClear = client.pixelRayClear(bot, me, target.pos)
       wantFire = rayClear and
         (if unarmed:
           abs(bradsErr(desiredAim, bot.estAim)) <= FfaFistAimHalfBrads
@@ -3615,7 +3635,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
           # This track IS (or shadows) the enemy running our flag: shoot it
           # before anything else — a dead carrier returns the flag instantly.
           prio -= ThiefFocusBonus
-    if client.pixelRayClear(me, predicted):
+    if client.pixelRayClear(bot, me, predicted):
       if bot.friendlyBlocked(me, predicted, d):
         continue                        # prefer a target with an empty corridor
       if engage < 0 or prio < engagePrio:
@@ -3705,7 +3725,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       let d = dist(p, me)
       if d < NadeMinRange or d > NadeMaxRange or d >= bestD:
         continue
-      let blocked = not client.pixelRayClear(me, p)
+      let blocked = not client.pixelRayClear(bot, me, p)
       var paired = false
       if not blocked:
         for j in 0 ..< bot.enemies.len:
@@ -4098,7 +4118,7 @@ proc decide(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
               continue
             let d = dist(t.pos, me)
             if d >= SerpentineNear and d <= SerpentineFar and
-                client.pixelRayClear(me, t.pos):
+                client.pixelRayClear(bot, me, t.pos):
               weave = true
               break
         if weave:
@@ -4241,6 +4261,7 @@ proc policyReplies(component: var BaselineComponent): seq[string] =
   if not component.client.mapCameraReady:
     component.bot.resetTransient()
     return
+  component.bot.refreshDiamondBoxes(component.client)
   if not component.bot.navBuilt and component.client.walkabilityReady:
     component.bot.buildNavGrid(component.client)
   let mask = component.bot.decide(component.client)
