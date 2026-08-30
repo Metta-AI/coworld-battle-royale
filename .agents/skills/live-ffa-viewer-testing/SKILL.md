@@ -316,8 +316,11 @@ by that board scale** — cropping with unscaled coords (or passing `scale = 1` 
 An item that appears at a death site and vanishes when someone walks over it lives for only
 a few dozen ticks, so the live board is the wrong place to judge it. What works:
 
-1. Record one match headlessly (`tools/run_ffa_demo.sh <n> <seed> DEFAULT`, `DEMO_BUILD=0`
-   to reuse the binaries you already built, `DEMO_DIR=/tmp/demoN` to keep the artifacts).
+1. Record one match headlessly
+   (`DEMO_CONFIG_OVERRIDES='{"dropWeaponOnDeath":true}' tools/run_ffa_demo.sh <n> <seed> DEFAULT`,
+   `DEMO_BUILD=0` to reuse the binaries you already built, `DEMO_DIR=/tmp/demoN` to keep
+   the artifacts). The harness inherits `config.br.json`, so the explicit override makes the
+   recipe independent of whether the shipped config sets the knob.
    The harness writes the server's own events JSONL next to the replay.
 2. Pair the rows in that ledger: a `death` row and the later `item_pickup` row whose `item`
    string carries the drop wording (e.g. `dropped heavy gun`) at the SAME `x`/`y`. That pair
