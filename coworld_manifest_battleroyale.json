@@ -414,7 +414,7 @@
           "default": 0
         },
         "dropWeaponOnDeath": {
-          "description": "FFA only: dormant by default. When enabled, a non-unarmed victim leaves a one-use weapon pickup at the death site; activation is a gameplay rule change requiring a future GameVersion bump.",
+          "description": "FFA only: off by default. When enabled, a non-unarmed victim leaves a one-use weapon pickup at the death site; activation is a gameplay rule change (armed for the hosted variants under GV46).",
           "type": "boolean",
           "default": false
         },
@@ -849,7 +849,7 @@
     {
       "id": "br-12",
       "name": "Battle Royale (12)",
-      "description": "Twelve-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color. Last player standing wins; scoring is per player (kills, assists, survival, podium).",
+      "description": "Twelve-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color. A player who dies while armed leaves their weapon as a one-use pickup at the death site, taken by the first living player of a strictly lower tier to touch it. Last player standing wins; scoring is per player (kills, assists, survival, podium).",
       "game_config": {
         "players": [
           {
@@ -911,13 +911,14 @@
         "killPoints": 10,
         "assistPoints": 4,
         "podiumPoints": [100, 40, 15],
-        "assistWindowTicks": 240
+        "assistWindowTicks": 240,
+        "dropWeaponOnDeath": true
       }
     },
     {
       "id": "br-16",
       "name": "Battle Royale (16)",
-      "description": "Sixteen-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color; last player standing wins and scoring is per player.",
+      "description": "Sixteen-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color; a player who dies while armed leaves their weapon as a one-use pickup at the death site, taken by the first living player of a strictly lower tier to touch it. Last player standing wins and scoring is per player.",
       "game_config": {
         "players": [
           {
@@ -991,7 +992,8 @@
         "killPoints": 10,
         "assistPoints": 4,
         "podiumPoints": [100, 40, 15],
-        "assistWindowTicks": 240
+        "assistWindowTicks": 240,
+        "dropWeaponOnDeath": true
       }
     }
   ],
