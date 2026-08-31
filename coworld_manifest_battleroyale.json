@@ -418,6 +418,16 @@
           "type": "boolean",
           "default": false
         },
+        "finiteAmmo": {
+          "description": "FFA only: dormant by default. When enabled, weapon instances carry finite ammunition and spray cans consume active ticks.",
+          "type": "boolean",
+          "default": false
+        },
+        "grenadeLauncher": {
+          "description": "FFA only: dormant by default. When enabled, two centre-map grenade launchers spawn on a deterministic private-stream tick.",
+          "type": "boolean",
+          "default": false
+        },
         "barrageMaxPerSec": {
           "description": "Grenade-barrage endgame: the launch rate the bombardment ramps up to, in grenades/second across the whole board. 0 disables the mode; requires maxTicks > 0 when set. With the barrage on, the time limit no longer ends the game \u2014 it plays past 0:00 under full bombardment until one team is wiped.",
           "type": "integer",

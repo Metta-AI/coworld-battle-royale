@@ -192,6 +192,16 @@ for curved/organic terrain. Trenches are also `ArenaShape` (the generator emits
 | Med kits | 2 (sides) / up to 4 (4-team) | `MedKitPickupRange`=12, `MedKitRespawnTicks`=720 |
 | Shields | 1 per team endzone | `ShieldRespawnTicks`=720, `ShieldLayerHp`=3, `ShieldFireSlowdown`=3 |
 | Plasma arcs (spray) | 1 per team endzone | `PlasmaArcRespawnTicks`=720 (`30 * ReplayFps`), `PlasmaArcPickupRange`=12, `PlasmaArcSpawnInset`=`GrenadeSpawnInset`, `PlasmaArcSquare`=`SoldierBodyPx`=34, `PlasmaArcReach`=170 (5 squares), `PlasmaArcMaxWidth`=85 (cone width at max reach), `PlasmaArcBodyRadius`=17, `PlasmaArcDamage`=3 (ffa: `ffaSprayDamage`=4), `PlasmaArcActiveTicks`=5 / `PlasmaArcResetTicks`=20 (one burst every 25 ticks; the can is never consumed), fx-only `PlasmaArcFxReach`=136 / `PlasmaArcFxMaxWidth`=68 / `PlasmaArcFxTicks`=4 |
+| `FfaLowGunMagazine` | 60 rounds | FFA finite-ammo low-tier magazine ([sim_types.nim:546](../src/ctf/sim_types.nim)). |
+| `FfaMidGunMagazine` | 40 rounds | FFA finite-ammo mid-tier magazine ([sim_types.nim:547](../src/ctf/sim_types.nim)). |
+| `FfaHeavyGunMagazine` | 15 rounds | FFA finite-ammo heavy-tier magazine ([sim_types.nim:548](../src/ctf/sim_types.nim)). |
+| `FfaSprayActiveBudget` | 100 active ticks | FFA finite-ammo spray budget, consumed only during active arc ticks ([sim_types.nim:549](../src/ctf/sim_types.nim)). |
+| `LauncherBlastRadius` | 96 px | FFA grenade-launcher blast radius ([sim_types.nim:550](../src/ctf/sim_types.nim)). |
+| `LauncherDamage` | 4 hp | FFA grenade-launcher direct blast damage ([sim_types.nim:551](../src/ctf/sim_types.nim)). |
+| `LauncherAmmoRounds` | 3 rounds | FFA grenade-launcher magazine size ([sim_types.nim:552](../src/ctf/sim_types.nim)). |
+| `LauncherSpawnCount` | 2 pickups | Number of centre-map launcher pickups ([sim_types.nim:553](../src/ctf/sim_types.nim)). |
+| `LauncherCooldownTicks` | 36 ticks | FFA grenade-launcher fire cooldown ([sim_types.nim:554](../src/ctf/sim_types.nim)). |
+| `LauncherSpawnSeedSalt` | 13579 | Odd salt for the private launcher spawn stream ([sim_types.nim:555](../src/ctf/sim_types.nim)). |
 | Trenches | via `mapGen.pits`/`pitDensity` | `TrenchSize`=56, `TrenchSpeedDivisor`=5, `TrenchFireSlowdown`=3, `TrenchMissPct`=70 |
 | Paint puddles | via `mapGen.puddles` (`mapPuddles`) | `PuddleSize`=64, `PuddleRollTicks`=24, `DefaultPuddleDamagePct`=20 (config `puddleDamagePct`), `MaxPuddles`=64 |
 | Cardboard barriers | via `barrierPickups` (per team) | `BarrierHp`=10, `BarrierRadius`=24, `BarrierHalfThick`=2, `BarrierRespawnTicks`=720, `MaxBarriersPlaced`=16 ([sim_types.nim](../src/ctf/sim_types.nim)) |

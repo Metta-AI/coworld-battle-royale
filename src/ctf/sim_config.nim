@@ -50,6 +50,8 @@ proc defaultGameConfig*(): GameConfig =
     puddleDamagePct: DefaultPuddleDamagePct,
     barrierPickups: 0,
     dropWeaponOnDeath: false,
+    finiteAmmo: false,
+    grenadeLauncher: false,
     barrageMaxPerSec: 0,
     barrageStartPerSec: BarrageStartPerSec,
     barrageStartSec: BarrageStartSec,
@@ -873,6 +875,8 @@ proc update*(config: var GameConfig, jsonText: string) =
   node.readConfigInt("ffaLowGunSpawns", config.ffaLowGunSpawns)
   node.readConfigInt("ffaMidGunSpawns", config.ffaMidGunSpawns)
   node.readConfigInt("ffaHeavyGunSpawns", config.ffaHeavyGunSpawns)
+  node.readConfigBool("finiteAmmo", config.finiteAmmo)
+  node.readConfigBool("grenadeLauncher", config.grenadeLauncher)
   if config.isFfa() and not node.hasKey("numPlayers"):
     # Platform seat resizing changes the authored players roster but does not
     # rewrite game-specific fields. Let that roster select the FFA seat count.
@@ -1114,6 +1118,10 @@ proc configJson*(config: GameConfig): string =
     node["ringDamageMax"] = %config.ringDamageMax
     if config.dropWeaponOnDeath:
       node["dropWeaponOnDeath"] = %config.dropWeaponOnDeath
+    if config.finiteAmmo:
+      node["finiteAmmo"] = %config.finiteAmmo
+    if config.grenadeLauncher:
+      node["grenadeLauncher"] = %config.grenadeLauncher
     node["passivityRadius"] = %config.passivityRadius
     node["passivityGraceTicks"] = %config.passivityGraceTicks
     node["passivityDamageTicks"] = %config.passivityDamageTicks

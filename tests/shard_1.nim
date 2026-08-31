@@ -12,6 +12,8 @@ import
   test_lobby_join_timeout,
   test_manifest_schema,
   test_weapon_drops,
+  test_weapon_ammo,
+  test_grenade_launcher,
   test_ffa_roster_seat_count,
   test_human_seat_client,
   test_map_editor,

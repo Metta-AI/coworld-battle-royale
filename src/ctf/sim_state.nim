@@ -218,6 +218,12 @@ proc gameHash*(sim: SimServer): uint64 =
     result.mixHashInt(player.kills)
     result.mixHashInt(player.deaths)
     result.mixHashInt(player.captures)
+    if sim.config.isFfa() and sim.config.finiteAmmo:
+      result.mixHashInt(player.gunAmmo)
+      result.mixHashInt(player.sprayTicks)
+    if sim.config.isFfa() and sim.config.grenadeLauncher:
+      result.mixHashBool(player.hasLauncher)
+      result.mixHashInt(player.launcherAmmo)
   for spawn in sim.grenadeSpawns:
     result.mixHashBool(spawn.present)
     result.mixHashInt(spawn.respawnAt)
@@ -238,6 +244,8 @@ proc gameHash*(sim: SimServer): uint64 =
       result.mixHashInt(drop.y)
       result.mixHashInt(drop.tier)
       result.mixHashBool(drop.present)
+      if sim.config.finiteAmmo:
+        result.mixHashInt(drop.ammo)
   for spawn in sim.medKitSpawns:
     result.mixHashBool(spawn.present)
     result.mixHashInt(spawn.respawnAt)
@@ -266,6 +274,11 @@ proc gameHash*(sim: SimServer): uint64 =
     result.mixHashInt(shout.tick)
     result.mixHashInt(shout.x)
     result.mixHashInt(shout.y)
+  if sim.config.isFfa() and sim.config.grenadeLauncher:
+    result.mixHashInt(sim.launcherSpawnTick)
+    for spawn in sim.launcherSpawns:
+      result.mixHashBool(spawn.present)
+      result.mixHashInt(spawn.respawnAt)
 
 proc isWalkable*(sim: SimServer, x, y: int): bool =
   if x < 0 or y < 0 or x >= MapWidth or y >= MapHeight:
