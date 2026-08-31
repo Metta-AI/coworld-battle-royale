@@ -18,7 +18,17 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "45"  ## GV45 (fist sentinel, cone fold, death credit):
+  GameVersion* = "46"  ## GV46 (drop-on-death armed): AN ARMED FFA VICTIM
+    ## LEAVES THEIR WEAPON AS A ONE-USE PICKUP AT THE DEATH SITE. No sim code
+    ## changes: this bump arms the existing dormant `dropWeaponOnDeath` knob
+    ## (merged dormant under GV45) in the shipped configs — config.br.json and
+    ## the hosted br-12/br-16 manifest variants. When on, dropped guns join the
+    ## game hash and the first living player of a strictly lower tier within
+    ## pickup range consumes the drop; equal or lower drops are ignored and
+    ## stay. Off remains byte-identical to the pre-drop path. Fixtures
+    ## re-recorded.
+    ##
+    ## Previously GV45 (fist sentinel, cone fold, death credit):
     ## FIST MISSES ARE EMPTY, THE AIM CONE FOLDS AT 256 BRADS, AND ONLY
     ## APPLIED DEATHS RECEIVE KILL CREDIT. A fist with no living opponent in
     ## its cone does nothing, including across the 0-brad seam. Kill counters

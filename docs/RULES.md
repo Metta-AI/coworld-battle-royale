@@ -444,9 +444,14 @@ differently and are the only "supply" in the mode:
   It is not consumed by spraying: each burst runs 5 active ticks and then
   repressurizes for 20, i.e. one burst every 25 ticks, indefinitely.
 
-The FFA `dropWeaponOnDeath` rule is currently dormant and off. While it remains
-off, the game is exactly as documented here: a death removes the player's gun
-without leaving a pickup. A future activation will be a GameVersion change.
+The FFA `dropWeaponOnDeath` rule is armed in the shipped battle-royale configs
+as of GV46 (`config.br.json` and the hosted `br-12`/`br-16` manifest variants).
+When it is on, a non-unarmed victim leaves their gun as a one-use pickup at the
+death site: it never expires, is visible only inside field of view, and is
+consumed by the first living player within pickup range whose tier is strictly
+lower than the drop — equal-or-lower drops are ignored and stay. Grenades and
+spray cans still drop nothing. With the knob off, a death removes the player's
+gun without leaving a pickup, exactly as before GV46.
 
 **Aim jitter is calibrated once, against `config.gunRange` — not per tier.**
 The GV34 contract ("a fully visible body at max range is hit exactly 80% of the

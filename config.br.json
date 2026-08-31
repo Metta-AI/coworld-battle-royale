@@ -15,5 +15,6 @@
   "mapEndzone": "disc",
   "mapPits": 18,
   "ringShrinkSec": 150,
-  "ringFloorAreaPct": 3
+  "ringFloorAreaPct": 3,
+  "dropWeaponOnDeath": true
 }
