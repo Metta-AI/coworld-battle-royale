@@ -95,6 +95,16 @@ previous version. A completed proof should include the round ID, episode
 count, episode ID when available, replay URL, last tick, survivors, total
 kills, and whether the match ended by elimination or at the `8640`-tick cap.
 
+`coworld_version` only proves the *package* changed. Then prove the *rules*
+changed: read the `GameVersion` stamped in that round's replay headers and
+run the ledger cross-check, per
+`.agents/skills/verifying-hosted-league-version/SKILL.md`. Round and episode
+records carry no GameVersion; the replay header is the only authority. Only
+after both agree is the change live — and only then is it announced to
+submitters, at that round boundary, never at the merge. (The 0.1.15 package
+was published five hours before the GV46 commit; `main` said 46 and the board
+served 45 for six days before anyone read a header.)
+
 ## Handle known deployment traps
 
 - A first upload can fail with
