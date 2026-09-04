@@ -54,8 +54,15 @@ import json,sys
 for e in json.load(sys.stdin)["entries"]:
     print(e["coworld_version"], e["status"], e["replay_url"]); break'
 
-# 3. one replay, header only
-curl -s -o /tmp/one.replay "<replay_url>"
+# 3. every replay of that round, into a fresh directory (files are named by
+#    job_request_id, so they cannot collide; any failed download aborts)
+rm -rf /tmp/replays && mkdir -p /tmp/replays
+curl -s "$B/v2/rounds/<round_id>/episodes?limit=1000" | python3 -c '
+import json,sys
+for e in json.load(sys.stdin)["entries"]:
+    if e["status"]=="completed" and e.get("replay_url"): print(e["replay_url"])' \
+  | xargs -n1 -P8 sh -c 'curl -sfS -o "/tmp/replays/$(basename "$0")" "$0"' || exit 1
+ls /tmp/replays | wc -l     # must equal the completed-episode count
 ```
 
 Round records carry **no version field** at all (`id`, `round_number`,
@@ -65,17 +72,19 @@ that says which rules ran is the replay header, so the header is the
 authority:
 
 ```python
+# python3 header.py /tmp/replays/*.replay
 import gzip, struct, sys
-b = open(sys.argv[1], "rb").read()
-if b[:2] == b"\x1f\x8b": b = gzip.decompress(b)     # hosted replays are gzip
-assert b[:8] == b"COWLDCTF", b[:8]
-off = 10                                             # magic + u16 format
-n = struct.unpack_from("<H", b, off)[0]; off += 2 + n          # game name
-n = struct.unpack_from("<H", b, off)[0]; off += 2
-gv = b[off:off+n].decode(); off += n + 8                       # version, u64 seed
-n = struct.unpack_from("<H", b, off)[0]; off += 2
-cfg = b[off:off+n].decode()                                    # config JSON
-print("GameVersion", gv); print(cfg)
+for path in sys.argv[1:]:
+  b = open(path, "rb").read()
+  if b[:2] == b"\x1f\x8b": b = gzip.decompress(b)   # hosted replays are gzip
+  assert b[:8] == b"COWLDCTF", b[:8]
+  off = 10                                           # magic + u16 format
+  n = struct.unpack_from("<H", b, off)[0]; off += 2 + n        # game name
+  n = struct.unpack_from("<H", b, off)[0]; off += 2
+  gv = b[off:off+n].decode(); off += n + 8                     # version, u64 seed
+  n = struct.unpack_from("<H", b, off)[0]; off += 2
+  cfg = b[off:off+n].decode()                                  # config JSON
+  print(path.rsplit("/",1)[-1], "GameVersion", gv, "dropWeaponOnDeath" in cfg)
 ```
 
 Layout is `src/ctf/replays.nim` / the codec's `readHeader`: magic, `u16`
@@ -106,29 +115,49 @@ git worktree add /tmp/wt45 <last-GV45-sha>
 ( cd /tmp/wt45 && nim c -d:release -o:/tmp/extract_events45 tools/extract_events.nim \
                 && nim c -d:release -o:/tmp/loot_economy45  tools/loot_economy.nim )
 
-mkdir -p /tmp/led
-for f in /tmp/replays/*.replay; do
+rm -rf /tmp/led && mkdir -p /tmp/led      # fresh: stale ledgers verify the wrong round
+for f in /tmp/replays/*.replay; do          # /tmp/replays from the recipe above
   j=$(basename "$f" .replay)
-  /tmp/extract_events45 "$f" --out /tmp/led/$j.jsonl --results /tmp/led/$j.results.json
+  /tmp/extract_events45 "$f" --out /tmp/led/$j.jsonl --results /tmp/led/$j.results.json || exit 1
 done
 /tmp/loot_economy45 /tmp/led --label "round 2066 (newest completed, GV45)"
 ```
 
-For a drop-on-death arm the signal is **gains by origin**: before the arm every
-tier gain is `spawn`; after it, `corpse`-origin gains appear and the "drops per
-episode" line is non-zero. Round 2066 read:
+For a drop-on-death arm the **direct** signal is drop *creation*: every
+`death` row's `amount` carries the dropped weapon tier (`sim.nim`,
+`emitEvent(Death, …, amount = droppedTier)`), 0 when nothing dropped. With the
+arm off it is 0 on every death; with it on, any armed victim's death is > 0.
+Count it over the whole round:
 
-```
-episodes: clean 26 / total 26 (excluded 0: none)
-seat-episodes: 312
-credited kills 261   with a tier gain in window 25 (0.096 per kill)
-gains by origin: spawn 25
-no corpse-origin gains in this arm: dropWeaponOnDeath was off
+```bash
+python3 - /tmp/led/*.jsonl <<'EOF'
+import json, sys
+deaths = drops = dropped_pickups = 0
+for p in sys.argv[1:]:
+    for line in open(p):
+        r = json.loads(line)
+        if r.get("kind") == "death":
+            deaths += 1; drops += r["amount"] > 0
+        elif r.get("kind") == "item_pickup" and r["item"].startswith("dropped "):
+            dropped_pickups += 1
+print(f"deaths {deaths}  deaths that dropped a weapon {drops}  dropped-gun pickups {dropped_pickups}")
+EOF
 ```
 
-Zero corpse-origin, zero drop rows — behavior agrees with the GV45 stamp. Had
-the header said 46 and the ledger still shown `spawn` only, the arm did not
-reach the manifest the package was built from; that is a different bug and
+Round 2066: `deaths 285  deaths that dropped a weapon 0  dropped-gun pickups 0`.
+With armed victims dying 285 times, zero drops is only possible with the knob
+off — behavior agrees with the GV45 stamp.
+
+`loot_economy`'s `gains by origin` line (`spawn 25`, no `corpse`) is
+**supporting** evidence only: it counts a credited *killer's* tier gain within
+a window after the kill, so a live arm whose drops happen to be picked up late,
+by someone else, or by a same-or-higher tier player can legitimately show zero
+corpse-origin gains. Its "dropWeaponOnDeath was off" footer is a guess from
+that count, not a reading of the config. Never reject a deployment on the
+origin line alone; the `death.amount` count is the test.
+
+Had the header said 46 and the death rows still shown zero drops, the arm did
+not reach the manifest the package was built from; that is a different bug and
 worth saying precisely.
 
 Trap: an extractor built from `main` (GV46) refuses GV45 replays with
@@ -143,15 +172,19 @@ To find *when* something went live, walk the round listings, find the package
 version transitions, and read headers at each boundary.
 
 ```bash
-# rounds page newest-first; page with cursor=<next_cursor>, NOT offset
-curl -s "$B/v2/rounds?league_id=$L&limit=100"
-curl -s "$B/v2/rounds?league_id=$L&limit=100&cursor=2026-09-04T08:31:06.178787+00:00,3a436d81-7e38-4547-9622-1be846c5fb85"
+# rounds page newest-first; page with cursor=<next_cursor>, NOT offset.
+# The cursor contains "+00:00" — it MUST be URL-encoded or the server reads
+# the + as a space and answers 422. Let curl encode it:
+curl -sG "$B/v2/rounds" --data-urlencode "league_id=$L" --data-urlencode "limit=100"
+curl -sG "$B/v2/rounds" --data-urlencode "league_id=$L" --data-urlencode "limit=100" \
+  --data-urlencode "cursor=2026-09-04T08:31:06.178787+00:00,3a436d81-7e38-4547-9622-1be846c5fb85"
 ```
 
 `offset=` is silently ignored — you get the same first page forever (this
 cost the better part of an hour). Use the `next_cursor` from the response
-verbatim (`<created_at>,<uuid>`); `after=`/`before=`/`next_cursor=` are
-accepted and ignored, and a malformed `cursor=` is a 422. Fetch
+verbatim (`<created_at>,<uuid>`, encoded as above); `after=`/`before=`/
+`next_cursor=` are accepted and ignored, and a malformed or unencoded
+`cursor=` is a 422. Fetch
 `/v2/rounds/<id>/episodes?limit=1000` per round concurrently (8 workers is
 fine) and record each round's `coworld_version` set. A transition is the first
 round whose episodes all carry the new version; download one replay from that
