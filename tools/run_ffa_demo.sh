@@ -155,6 +155,7 @@ BOT_ENV=(
   CTF_BOT_TRACE_MAX_TICKS=8640
   CTF_BOT_FFA_DOCTRINE="${CTF_BOT_FFA_DOCTRINE:-legacy}"
 )
+PLAYER_BIN="${DEMO_PLAYER_BIN:-$PWD/players/baseline/baseline.out}"
 case "$ARM" in
   E1|E2)
     BOT_ENV+=(CTF_BOT_FFA_RETREAT_HP=12 CTF_BOT_FFA_FIRE_WHILE_HURT=0)
@@ -170,7 +171,7 @@ esac
 for slot in $(seq 0 $((N - 1))); do
   env "${BOT_ENV[@]}" \
     "COWORLD_PLAYER_WS_URL=ws://127.0.0.1:$PORT/player?name=Bot_$slot&slot=$slot&token=0xBADA55_$slot" \
-    "$PWD/players/baseline/baseline.out" >>"$BOT_LOG" 2>&1 &
+    "$PLAYER_BIN" >>"$BOT_LOG" 2>&1 &
   BOT_PIDS+=("$!")
 done
 
