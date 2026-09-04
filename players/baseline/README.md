@@ -279,6 +279,14 @@ COWORLD_PLAYER_WS_URL="ws://localhost:8080/player?slot=0&token=0xBADA55_0" \
 
 Container build uses `players/baseline/Dockerfile` (produces `/bin/baseline`).
 
+## FFA doctrine
+
+The baseline policy's compiled FFA default is now `hunter`. Set
+`CTF_BOT_FFA_DOCTRINE=legacy` to explicitly opt out; `hybrid`, `passive`,
+`rush`, `shade`, and `hunter` remain selectable by name. These process
+environment controls change baseline policy behavior only — they do not change
+the Coworld manifest, `GameConfig`, or `GameVersion`.
+
 ## Artifact telemetry (always on)
 
 `baseline/artlog.nim` records structured decision telemetry every episode
