@@ -154,13 +154,15 @@ print(f"deaths {deaths}  armed at death {armed}  dropped a weapon {drops}  dropp
 EOF
 ```
 
-Read it as: `armed > 0 and drops == 0` → knob off; `drops > 0` → knob on;
-`armed == 0` → inconclusive, check another round. (Under a `finiteAmmo` arm
-a seat also disarms when its ammo runs out, which this proxy does not see — it
-overcounts armed deaths slightly in that world, never undercounts.)
+Read it as: `drops > 0` → knob on. With `finiteAmmo` off (the key is absent
+from the replay config JSON), `armed > 0 and drops == 0` → knob off, and
+`armed == 0` → inconclusive, check another round. With `finiteAmmo` on, zero
+drops is also inconclusive: a seat disarms when its ammo runs out without any
+ledger event, so the `armed` count above overstates who could have dropped.
 
 Round 2066: `deaths 285  armed at death 188  dropped a weapon 0  dropped-gun pickups 0`.
-188 armed victims died and none dropped anything — only possible with the knob
+188 armed victims died and none dropped anything (config has no `finiteAmmo`) —
+only possible with the knob
 off; behavior agrees with the GV45 stamp.
 
 `loot_economy`'s `gains by origin` line (`spawn 25`, no `corpse`) is
