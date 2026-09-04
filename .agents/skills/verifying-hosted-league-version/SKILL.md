@@ -127,26 +127,41 @@ For a drop-on-death arm the **direct** signal is drop *creation*: every
 `death` row's `amount` carries the dropped weapon tier (`sim.nim`,
 `emitEvent(Death, …, amount = droppedTier)`), 0 when nothing dropped. With the
 arm off it is 0 on every death; with it on, any armed victim's death is > 0.
-Count it over the whole round:
+Zero drops only means something if victims were *armed* when they died — an
+unarmed death drops nothing on either arm. So also count armed deaths: a seat
+is armed from its first gun pickup (`item_pickup` with a `low/mid/heavy gun`
+token, dropped or not) until its next death (respawn is unarmed).
 
 ```bash
 python3 - /tmp/led/*.jsonl <<'EOF'
 import json, sys
-deaths = drops = dropped_pickups = 0
+GUNS = ("low gun", "mid gun", "heavy gun")
+deaths = armed = drops = dropped_pickups = 0
 for p in sys.argv[1:]:
+    tier = {}                                   # seat -> tier held, per episode
     for line in open(p):
-        r = json.loads(line)
-        if r.get("kind") == "death":
-            deaths += 1; drops += r["amount"] > 0
-        elif r.get("kind") == "item_pickup" and r["item"].startswith("dropped "):
-            dropped_pickups += 1
-print(f"deaths {deaths}  deaths that dropped a weapon {drops}  dropped-gun pickups {dropped_pickups}")
+        r = json.loads(line); k = r.get("kind")
+        if k == "item_pickup":
+            item = r["item"].removeprefix("dropped ")
+            if item in GUNS: tier[r["source"]] = GUNS.index(item) + 1
+            if r["item"].startswith("dropped "): dropped_pickups += 1
+        elif k == "death":
+            deaths += 1
+            armed += tier.get(r["source"], 0) > 0
+            drops += r["amount"] > 0
+            tier[r["source"]] = 0
+print(f"deaths {deaths}  armed at death {armed}  dropped a weapon {drops}  dropped-gun pickups {dropped_pickups}")
 EOF
 ```
 
-Round 2066: `deaths 285  deaths that dropped a weapon 0  dropped-gun pickups 0`.
-With armed victims dying 285 times, zero drops is only possible with the knob
-off — behavior agrees with the GV45 stamp.
+Read it as: `armed > 0 and drops == 0` → knob off; `drops > 0` → knob on;
+`armed == 0` → inconclusive, check another round. (Under a `finiteAmmo` arm
+a seat also disarms when its ammo runs out, which this proxy does not see — it
+overcounts armed deaths slightly in that world, never undercounts.)
+
+Round 2066: `deaths 285  armed at death 188  dropped a weapon 0  dropped-gun pickups 0`.
+188 armed victims died and none dropped anything — only possible with the knob
+off; behavior agrees with the GV45 stamp.
 
 `loot_economy`'s `gains by origin` line (`spawn 25`, no `corpse`) is
 **supporting** evidence only: it counts a credited *killer's* tier gain within
@@ -156,9 +171,9 @@ corpse-origin gains. Its "dropWeaponOnDeath was off" footer is a guess from
 that count, not a reading of the config. Never reject a deployment on the
 origin line alone; the `death.amount` count is the test.
 
-Had the header said 46 and the death rows still shown zero drops, the arm did
-not reach the manifest the package was built from; that is a different bug and
-worth saying precisely.
+Had the header said 46 and the death rows still shown zero drops from armed
+victims, the arm did not reach the manifest the package was built from; that
+is a different bug and worth saying precisely.
 
 Trap: an extractor built from `main` (GV46) refuses GV45 replays with
 `Replay game version "45" is not compatible` (the codec gates on an exact
