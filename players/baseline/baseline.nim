@@ -265,6 +265,7 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
+  FfaOrbitLeadDegDefault = 0.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -548,6 +549,7 @@ var
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
+  FfaOrbitLeadDeg = FfaOrbitLeadDegDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
   FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
@@ -686,13 +688,26 @@ proc ffaSeatBearing(slot: int): Vec =
   of 6: vec(0.0, -1.0)
   else: vec(1.0, -1.0)
 
+proc ffaOrbitBearing(bot: Bot, bearing: Vec): Vec =
+  if FfaOrbitLeadDeg == 0.0:
+    return bearing
+  let
+    angle = float(FfaOrbitLeadDeg) * PI / 180.0 *
+      (if bot.slot mod 2 == 0: 1.0 else: -1.0)
+    cosAngle = cos(angle)
+    sinAngle = sin(angle)
+  vec(
+    bearing.x * cosAngle - bearing.y * sinAngle,
+    bearing.x * sinAngle + bearing.y * cosAngle)
+
 proc ffaBandTarget(bot: Bot, me, center: Vec, safeRadius: int,
     fraction: float): Vec =
   let
     fromCenter = me - center
-    bearing =
+    rawBearing =
       if fromCenter.len() >= FfaBearingEpsilon: norm(fromCenter)
       else: norm(ffaSeatBearing(bot.slot))
+    bearing = ffaOrbitBearing(bot, rawBearing)
     radius = float(max(1, safeRadius)) * fraction
   center + bearing * radius
 
@@ -700,9 +715,10 @@ proc ffaBandTargetAtRadius(bot: Bot, me, center: Vec,
     radius: float): Vec =
   let
     fromCenter = me - center
-    bearing =
+    rawBearing =
       if fromCenter.len() >= FfaBearingEpsilon: norm(fromCenter)
       else: norm(ffaSeatBearing(bot.slot))
+    bearing = ffaOrbitBearing(bot, rawBearing)
   center + bearing * radius
 
 proc ffaBandRadiusWithRingMargin(bandRadius: float, ringRadius: int,
@@ -4313,6 +4329,8 @@ proc runBot(url: string) =
     FfaHoldBandDefault), 0.0, 1.0)
   FfaPassiveBand = clamp(parseEnvFloat("CTF_BOT_FFA_PASSIVE_BAND",
     FfaPassiveBandDefault), 0.0, 1.0)
+  FfaOrbitLeadDeg = clamp(parseEnvFloat("CTF_BOT_FFA_ORBIT_LEAD_DEG",
+    FfaOrbitLeadDegDefault), 0.0, 90.0)
   FfaShadeRingMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_SHADE_MARGIN", FfaShadeRingMarginDefault, strict = true))
   FfaHunterRingMargin = max(0.0, parseEnvFloat(
@@ -4397,6 +4415,7 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
+    " ffaOrbitLeadDeg=", FfaOrbitLeadDeg,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
   artInit(slot, $bot.team, $bot.role, "", FfaGameTicksPerFrame)
