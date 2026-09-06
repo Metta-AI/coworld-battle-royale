@@ -2184,13 +2184,7 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
   if upgradeTrip and targetIndex >= 0 and
       targetDist < (if FfaHunterFireRange:
         ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
-    bot.ffaLootTrip = false
-    bot.ffaLootTargetValid = false
-    bot.ffaLootTargetTier = 0
-    bot.ffaLootStartedTick = 0
-    bot.ffaLootUpgradeTrip = false
     result.engageReason = "fire_range"
-    return
   if not upgradeTrip and not FfaHunterArm:
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false

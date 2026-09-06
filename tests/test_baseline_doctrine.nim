@@ -124,7 +124,7 @@ suite "baseline FFA doctrine":
     check baseline.contains(
       "maxDetour = if bot.ffaLootUpgradeTrip:\n      FfaHunterUpgradeDetour")
 
-  test "hunter upgrade keeps trip bounds and doctrine precedence":
+  test "hunter upgrade keeps trip bounds and fire-range telemetry":
     check baseline.contains(
       "maxTripSec = if bot.ffaLootUpgradeTrip:\n      FfaHunterUpgradeTripMaxSec")
     check baseline.contains(
@@ -135,6 +135,18 @@ suite "baseline FFA doctrine":
       "if upgradeTrip and targetIndex >= 0 and")
     check baseline.contains(
       "result.engageReason = \"fire_range\"")
+    let
+      fireRangeStart = baseline.find(
+        "if upgradeTrip and targetIndex >= 0 and")
+      fireRangeEnd = baseline.find(
+        "if not upgradeTrip and not FfaHunterArm:", fireRangeStart)
+      fireRangeBlock = baseline[fireRangeStart ..< fireRangeEnd]
+    check fireRangeStart >= 0
+    check fireRangeEnd > fireRangeStart
+    check fireRangeBlock.contains(
+      "result.engageReason = \"fire_range\"")
+    check not fireRangeBlock.contains("bot.ffaLootTrip = false")
+    check not fireRangeBlock.contains("return")
     check baseline.contains(
       "let upgradeTrip = not unarmed")
     check baseline.contains(
