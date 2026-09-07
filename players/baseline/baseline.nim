@@ -481,6 +481,7 @@ type
     ffaLootStartedTick: int
     ffaSeekLoot: bool
     ffaSeekStartedTick: int
+    ffaSeekDone: bool
     ffaPactTargetPos: Vec
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
@@ -1762,6 +1763,7 @@ proc resetTransient(bot: Bot) =
   bot.ffaLootStartedTick = 0
   bot.ffaSeekLoot = false
   bot.ffaSeekStartedTick = 0
+  bot.ffaSeekDone = false
   bot.ffaPactTargetPos = vec(0, 0)
   bot.ffaPactTargetSeen = -1
   bot.ffaPactPartnerPos = vec(0, 0)
@@ -2175,6 +2177,7 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootStartedTick = 0
     bot.ffaSeekLoot = false
     bot.ffaSeekStartedTick = 0
+    bot.ffaSeekDone = false
     if targetIndex >= 0 and
         targetDist < (if FfaHunterFireRange:
           ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
@@ -2197,6 +2200,7 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaSeekLoot = false
     bot.ffaSeekStartedTick = 0
     seekAborted = true
+    bot.ffaSeekDone = true
   if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
       "LOOT", "loot_trip", "move_gun")
@@ -2224,6 +2228,7 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     result.lootTripStarted = true
     return
   if FfaHunterSeekLoot and not seekAborted and
+      not bot.ffaSeekDone and
       dist(me, center) > FfaHunterSeekLootStopRadius:
     if not bot.ffaSeekLoot:
       bot.ffaSeekLoot = true

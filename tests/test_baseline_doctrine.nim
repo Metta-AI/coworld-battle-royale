@@ -132,6 +132,26 @@ suite "baseline FFA doctrine":
     check baseline.contains("var seekAborted = false")
     check baseline.contains("seekAborted = true")
 
+  test "hunter loot seek timeout abort latches for the life":
+    let abortBlock = baseline[
+      baseline.find("var seekAborted = false") ..
+      baseline.find("if ffaHunterGunStillValid")]
+    check baseline.contains("ffaSeekDone: bool")
+    check abortBlock.contains("bot.ffaSeekDone = true")
+    check abortBlock.contains("FfaHunterSeekLootMaxSec * TargetFps")
+    check baseline.contains(
+      "not bot.ffaSeekDone and\n      dist(me, center) > FfaHunterSeekLootStopRadius")
+
+  test "hunter loot seek stop-radius abort latches for the life":
+    let abortBlock = baseline[
+      baseline.find("var seekAborted = false") ..
+      baseline.find("if ffaHunterGunStillValid")]
+    check abortBlock.contains(
+      "dist(me, center) <= FfaHunterSeekLootStopRadius")
+    check abortBlock.contains("bot.ffaSeekDone = true")
+    check baseline.contains(
+      "not bot.ffaSeekDone and\n      dist(me, center) > FfaHunterSeekLootStopRadius")
+
   test "hunter loot seek preserves hunter precedence":
     check baseline.contains("if pursue:")
     check baseline.contains("if not unarmed:")
