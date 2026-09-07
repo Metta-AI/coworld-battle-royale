@@ -265,6 +265,10 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
+  FfaHunterSeekLootDefault = false
+  FfaHunterSeekLootMaxSecDefault = 60
+  FfaHunterSeekLootStopRadiusDefault = 200.0
+  FfaHunterSeekLootVisionRadiusDefault = 1200.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -475,6 +479,8 @@ type
     ffaLootTargetValid: bool
     ffaLootTargetTier: int
     ffaLootStartedTick: int
+    ffaSeekLoot: bool
+    ffaSeekStartedTick: int
     ffaPactTargetPos: Vec
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
@@ -548,6 +554,10 @@ var
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
+  FfaHunterSeekLoot = FfaHunterSeekLootDefault
+  FfaHunterSeekLootMaxSec = FfaHunterSeekLootMaxSecDefault
+  FfaHunterSeekLootStopRadius = FfaHunterSeekLootStopRadiusDefault
+  FfaHunterSeekLootVisionRadius = FfaHunterSeekLootVisionRadiusDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
   FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
@@ -1750,6 +1760,8 @@ proc resetTransient(bot: Bot) =
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
+  bot.ffaSeekLoot = false
+  bot.ffaSeekStartedTick = 0
   bot.ffaPactTargetPos = vec(0, 0)
   bot.ffaPactTargetSeen = -1
   bot.ffaPactPartnerPos = vec(0, 0)
@@ -2161,6 +2173,8 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
+    bot.ffaSeekLoot = false
+    bot.ffaSeekStartedTick = 0
     if targetIndex >= 0 and
         targetDist < (if FfaHunterFireRange:
           ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
@@ -2171,7 +2185,18 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
+    bot.ffaSeekLoot = false
+    bot.ffaSeekStartedTick = 0
     return
+  var seekAborted = false
+  if bot.ffaSeekLoot and
+      ((bot.ffaSeekStartedTick > 0 and
+        ffaGameTicksSince(bot.tick, bot.ffaSeekStartedTick) >
+          FfaHunterSeekLootMaxSec * TargetFps) or
+        dist(me, center) <= FfaHunterSeekLootStopRadius):
+    bot.ffaSeekLoot = false
+    bot.ffaSeekStartedTick = 0
+    seekAborted = true
   if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
       "LOOT", "loot_trip", "move_gun")
@@ -2182,8 +2207,12 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
   let gun = bestFfaGun(client, me, center, ringRadius, weaponTier,
-    FfaHunterArmSafeMargin, FfaHunterArmTripMaxDetourRadius, actors)
+    FfaHunterArmSafeMargin,
+    (if FfaHunterSeekLoot: FfaHunterSeekLootVisionRadius
+     else: FfaHunterArmTripMaxDetourRadius), actors)
   if gun.found:
+    bot.ffaSeekLoot = false
+    bot.ffaSeekStartedTick = 0
     bot.ffaLootTrip = true
     bot.ffaLootTarget = gun.pos
     bot.ffaLootTargetValid = true
@@ -2193,6 +2222,15 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       "LOOT", "loot_trip", "move_gun")
     result.moveTarget = gun.pos
     result.lootTripStarted = true
+    return
+  if FfaHunterSeekLoot and not seekAborted and
+      dist(me, center) > FfaHunterSeekLootStopRadius:
+    if not bot.ffaSeekLoot:
+      bot.ffaSeekLoot = true
+      bot.ffaSeekStartedTick = bot.tick
+    result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
+      "SEEK", "seek_loot", "move_center_loot")
+    result.moveTarget = center
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
@@ -2202,7 +2240,8 @@ proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     targetIndex, targetDist, weaponTier, unarmed, pursue)
   if not pactActive or not pactMemoryFresh:
     return
-  if unarmed and (result.lootTripStarted or result.objective == "loot_trip"):
+  if unarmed and (result.lootTripStarted or result.objective == "loot_trip" or
+      result.objective == "seek_loot"):
     return
   result.phase = "PACT"
   result.objective = "pact_converge"
@@ -4350,6 +4389,17 @@ proc runBot(url: string) =
   FfaHunterArmSafeMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN",
     FfaHunterArmSafeMarginDefault, strict = true))
+  FfaHunterSeekLoot = parseEnvBool("CTF_BOT_FFA_HUNTER_SEEK_LOOT",
+    FfaHunterSeekLootDefault)
+  FfaHunterSeekLootMaxSec = clamp(parseEnvInt(
+    "CTF_BOT_FFA_HUNTER_SEEK_LOOT_MAX_SEC",
+    FfaHunterSeekLootMaxSecDefault), 1, 300)
+  FfaHunterSeekLootStopRadius = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_SEEK_LOOT_STOP_RADIUS",
+    FfaHunterSeekLootStopRadiusDefault), 0.0, 2000.0)
+  FfaHunterSeekLootVisionRadius = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_SEEK_LOOT_VISION_RADIUS",
+    FfaHunterSeekLootVisionRadiusDefault), 240.0, 8000.0)
   FfaPactWindowFraction = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_PACT_WINDOW_FRACTION", FfaPactWindowFractionDefault))
   FfaPactWindowSec = max(0, parseEnvInt(
@@ -4396,6 +4446,10 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
+    " ffaHunterSeekLoot=", FfaHunterSeekLoot,
+    " ffaHunterSeekLootMaxSec=", FfaHunterSeekLootMaxSec,
+    " ffaHunterSeekLootStopRadius=", FfaHunterSeekLootStopRadius,
+    " ffaHunterSeekLootVisionRadius=", FfaHunterSeekLootVisionRadius,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
