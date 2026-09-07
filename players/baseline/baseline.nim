@@ -269,6 +269,7 @@ const
   FfaHunterHealHpDefault = 12
   FfaHunterHealDetourDefault = 700.0
   FfaHunterHealTripMaxSecDefault = 45
+  FfaHunterHealSearchDefault = false
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -561,6 +562,7 @@ var
   FfaHunterHealHp = FfaHunterHealHpDefault
   FfaHunterHealDetour = FfaHunterHealDetourDefault
   FfaHunterHealTripMaxSec = FfaHunterHealTripMaxSecDefault
+  FfaHunterHealSearch = FfaHunterHealSearchDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
   FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
@@ -1778,8 +1780,10 @@ proc ffaHealTripStillValid(bot: Bot, me, center: Vec, ringRadius: int,
         FfaHunterHealTripMaxSec * TargetFps:
     return false
   let targetIndex = bot.ffaHealTargetIndex()
-  targetIndex >= 0 and bot.ffaKitAvailable(targetIndex) and
-    dist(bot.ffaHealTarget, center) <= float(max(1, ringRadius))
+  if targetIndex >= 0:
+    return bot.ffaKitAvailable(targetIndex) and
+      dist(bot.ffaHealTarget, center) <= float(max(1, ringRadius))
+  FfaHunterHealSearch and dist(bot.ffaHealTarget, center) < 24.0
 
 proc bestKitDetour(bot: Bot, me, dest: Vec, budget: float): int =
   ## The stocked kit spot whose me->kit->dest detour costs the fewest extra
@@ -2229,13 +2233,27 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
       result.bandRadius)
   if FfaHunterHeal:
-    if bot.ffaHealTrip and bot.ffaHealTripStillValid(
-        me, center, ringRadius, hp):
-      result.phase = "HEAL"
-      result.objective = "heal_trip"
-      result.action = "move_kit"
-      result.moveTarget = bot.ffaHealTarget
-      return
+    if bot.ffaHealTrip:
+      let kit = bot.nearestFfaKit(me, center, ringRadius)
+      if kit >= 0:
+        bot.ffaHealTarget = bot.ffaKitPos[kit]
+        result.phase = "HEAL"
+        result.objective = "heal_trip"
+        result.action = "move_kit"
+        result.moveTarget = bot.ffaHealTarget
+        return
+      if bot.ffaHealTripStillValid(me, center, ringRadius, hp):
+        result.phase = "HEAL"
+        if bot.ffaHealTargetIndex() >= 0:
+          result.objective = "heal_trip"
+          result.action = "move_kit"
+        else:
+          result.objective = "heal_search"
+          result.action = "move_center_kit"
+          result.moveTarget = center
+          return
+        result.moveTarget = bot.ffaHealTarget
+        return
     bot.ffaHealTrip = false
     bot.ffaHealTarget = vec(0, 0)
     bot.ffaHealStartedTick = 0
@@ -2249,6 +2267,15 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
         result.objective = "heal_trip"
         result.action = "move_kit"
         result.moveTarget = bot.ffaHealTarget
+        return
+      if FfaHunterHealSearch:
+        bot.ffaHealTrip = true
+        bot.ffaHealTarget = center
+        bot.ffaHealStartedTick = bot.tick
+        result.phase = "HEAL"
+        result.objective = "heal_search"
+        result.action = "move_center_kit"
+        result.moveTarget = center
         return
   if pursue:
     result.moveTarget = actors[targetIndex].pos
@@ -4464,6 +4491,8 @@ proc runBot(url: string) =
   FfaHunterHealTripMaxSec = clamp(parseEnvInt(
     "CTF_BOT_FFA_HUNTER_HEAL_TRIP_MAX_SEC",
     FfaHunterHealTripMaxSecDefault), 0, 300)
+  FfaHunterHealSearch = parseEnvBool("CTF_BOT_FFA_HUNTER_HEAL_SEARCH",
+    FfaHunterHealSearchDefault)
   FfaPactWindowFraction = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_PACT_WINDOW_FRACTION", FfaPactWindowFractionDefault))
   FfaPactWindowSec = max(0, parseEnvInt(
@@ -4514,6 +4543,7 @@ proc runBot(url: string) =
     " ffaHunterHealHp=", FfaHunterHealHp,
     " ffaHunterHealDetour=", FfaHunterHealDetour,
     " ffaHunterHealTripMaxSec=", FfaHunterHealTripMaxSec,
+    " ffaHunterHealSearch=", FfaHunterHealSearch,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
