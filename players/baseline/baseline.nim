@@ -265,6 +265,10 @@ const
   FfaHunterArmTripMaxSecDefault = 30
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
+  FfaHunterHealDefault = false
+  FfaHunterHealHpDefault = 12
+  FfaHunterHealDetourDefault = 700.0
+  FfaHunterHealTripMaxSecDefault = 45
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -475,6 +479,11 @@ type
     ffaLootTargetValid: bool
     ffaLootTargetTier: int
     ffaLootStartedTick: int
+    ffaKitPos: seq[Vec]
+    ffaKitAbsentAt: seq[int]
+    ffaHealTrip: bool
+    ffaHealTarget: Vec
+    ffaHealStartedTick: int
     ffaPactTargetPos: Vec
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
@@ -548,6 +557,10 @@ var
   FfaHunterArmTripMaxSec = FfaHunterArmTripMaxSecDefault
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
+  FfaHunterHeal = FfaHunterHealDefault
+  FfaHunterHealHp = FfaHunterHealHpDefault
+  FfaHunterHealDetour = FfaHunterHealDetourDefault
+  FfaHunterHealTripMaxSec = FfaHunterHealTripMaxSecDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
   FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
@@ -1703,10 +1716,70 @@ proc trackPickups(
 proc pickupAvailable(absentAt: seq[int], i, tick: int): bool =
   absentAt[i] < 0 or tick - absentAt[i] > PickupRespawn + 48
 
+proc ffaGameTicksSince(nowTick, startTick: int): int
+
 proc kitAvailable(bot: Bot, i: int): bool =
   ## Whether a discovered med kit spot is believed stocked right now: never
   ## seen empty, or its 30s respawn has elapsed since we saw it taken.
   bot.kitAbsentAt[i] < 0 or bot.tick - bot.kitAbsentAt[i] > MedKitRespawn + 48
+
+proc trackFfaMedKits(bot: Bot, client: ProtocolClient, me: Vec) =
+  ## FFA med-kit memory is opt-in because the normal path never scans kits.
+  var seen: seq[Vec]
+  for o in client.spriteObjectsWithLabel(LabelMedKit):
+    seen.add(client.mapPos(o))
+  for p in seen:
+    var known = false
+    for i in 0 ..< bot.ffaKitPos.len:
+      if dist(bot.ffaKitPos[i], p) < 24.0:
+        known = true
+        bot.ffaKitAbsentAt[i] = -1
+    if not known:
+      bot.ffaKitPos.add(p)
+      bot.ffaKitAbsentAt.add(-1)
+  for i in 0 ..< bot.ffaKitPos.len:
+    if dist(bot.ffaKitPos[i], me) <= MedKitSeenClear and
+        bot.ffaKitAbsentAt[i] < 0:
+      var present = false
+      for p in seen:
+        if dist(bot.ffaKitPos[i], p) < 24.0:
+          present = true
+      if not present:
+        bot.ffaKitAbsentAt[i] = bot.tick
+
+proc ffaKitAvailable(bot: Bot, i: int): bool =
+  bot.ffaKitAbsentAt[i] < 0 or
+    bot.tick - bot.ffaKitAbsentAt[i] > MedKitRespawn + 48
+
+proc nearestFfaKit(bot: Bot, me, center: Vec, ringRadius: int): int =
+  result = -1
+  var bestDist = 1e18
+  for i in 0 ..< bot.ffaKitPos.len:
+    if not bot.ffaKitAvailable(i) or
+        dist(bot.ffaKitPos[i], center) > float(max(1, ringRadius)):
+      continue
+    let d = dist(me, bot.ffaKitPos[i])
+    if d <= FfaHunterHealDetour and d < bestDist:
+      bestDist = d
+      result = i
+
+proc ffaHealTargetIndex(bot: Bot): int =
+  for i in 0 ..< bot.ffaKitPos.len:
+    if dist(bot.ffaKitPos[i], bot.ffaHealTarget) < 24.0:
+      return i
+  -1
+
+proc ffaHealTripStillValid(bot: Bot, me, center: Vec, ringRadius: int,
+    hp: int): bool =
+  if not bot.ffaHealTrip or hp > FfaHunterHealHp:
+    return false
+  if bot.ffaHealStartedTick > 0 and
+      ffaGameTicksSince(bot.tick, bot.ffaHealStartedTick) >
+        FfaHunterHealTripMaxSec * TargetFps:
+    return false
+  let targetIndex = bot.ffaHealTargetIndex()
+  targetIndex >= 0 and bot.ffaKitAvailable(targetIndex) and
+    dist(bot.ffaHealTarget, center) <= float(max(1, ringRadius))
 
 proc bestKitDetour(bot: Bot, me, dest: Vec, budget: float): int =
   ## The stocked kit spot whose me->kit->dest detour costs the fewest extra
@@ -1750,6 +1823,11 @@ proc resetTransient(bot: Bot) =
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
+  bot.ffaKitPos.setLen(0)
+  bot.ffaKitAbsentAt.setLen(0)
+  bot.ffaHealTrip = false
+  bot.ffaHealTarget = vec(0, 0)
+  bot.ffaHealStartedTick = 0
   bot.ffaPactTargetPos = vec(0, 0)
   bot.ffaPactTargetSeen = -1
   bot.ffaPactPartnerPos = vec(0, 0)
@@ -2142,7 +2220,7 @@ proc shadeFfaIntent(bot: Bot, actors: seq[Actor], me, center: Vec,
 
 proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, unarmed: bool, pursue: bool): FfaIntent =
+    weaponTier: int, unarmed: bool, hp: int, pursue: bool): FfaIntent =
   result = passiveFfaIntent(bot, actors, me, center, ringRadius, targetIndex,
     false)
   if FfaHunterRingMargin > 0.0:
@@ -2150,6 +2228,28 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       ringRadius, FfaHunterRingMargin)
     result.moveTarget = ffaBandTargetAtRadius(bot, me, center,
       result.bandRadius)
+  if FfaHunterHeal:
+    if bot.ffaHealTrip and bot.ffaHealTripStillValid(
+        me, center, ringRadius, hp):
+      result.phase = "HEAL"
+      result.objective = "heal_trip"
+      result.action = "move_kit"
+      result.moveTarget = bot.ffaHealTarget
+      return
+    bot.ffaHealTrip = false
+    bot.ffaHealTarget = vec(0, 0)
+    bot.ffaHealStartedTick = 0
+    if hp <= FfaHunterHealHp:
+      let kit = bot.nearestFfaKit(me, center, ringRadius)
+      if kit >= 0:
+        bot.ffaHealTrip = true
+        bot.ffaHealTarget = bot.ffaKitPos[kit]
+        bot.ffaHealStartedTick = bot.tick
+        result.phase = "HEAL"
+        result.objective = "heal_trip"
+        result.action = "move_kit"
+        result.moveTarget = bot.ffaHealTarget
+        return
   if pursue:
     result.moveTarget = actors[targetIndex].pos
     result.objective = "fight"
@@ -2196,10 +2296,12 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
-    weaponTier: int, unarmed: bool, pursue, pactActive,
+    weaponTier: int, unarmed: bool, hp: int, pursue, pactActive,
     pactMemoryFresh: bool): FfaIntent =
   result = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-    targetIndex, targetDist, weaponTier, unarmed, pursue)
+    targetIndex, targetDist, weaponTier, unarmed, hp, pursue)
+  if result.objective == "heal_trip":
+    return
   if not pactActive or not pactMemoryFresh:
     return
   if unarmed and (result.lootTripStarted or result.objective == "loot_trip"):
@@ -2314,6 +2416,8 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
     ringRadius = ffaRingRadiusAt(elapsedTicks)
     ringDist = dist(me, center)
     elapsedSec = elapsedTicks div TargetFps
+  if FfaHunterHeal:
+    trackFfaMedKits(bot, client, me)
   let pactActive = FfaDoctrine == FfaPact and
     elapsedSec < ffaPactWindowSeconds()
   updateTracks(bot, bot.ffaAimTracks, actors)
@@ -2490,10 +2594,10 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
         targetIndex, engage)
     of FfaHunter:
       intent = hunterFfaIntent(bot, client, actors, me, center, ringRadius,
-        targetIndex, targetDist, weaponTier, unarmed, hunterPursue)
+        targetIndex, targetDist, weaponTier, unarmed, hp, hunterPursue)
     of FfaPact:
       intent = pactFfaIntent(bot, client, actors, me, center, ringRadius,
-        targetIndex, targetDist, weaponTier, unarmed, hunterPursue,
+        targetIndex, targetDist, weaponTier, unarmed, hp, hunterPursue,
         pactActive, pactMemoryFresh)
     of FfaHybrid:
       intent = hybridFfaIntent(bot, client, me, center, ringRadius,
@@ -4350,6 +4454,16 @@ proc runBot(url: string) =
   FfaHunterArmSafeMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN",
     FfaHunterArmSafeMarginDefault, strict = true))
+  FfaHunterHeal = parseEnvBool("CTF_BOT_FFA_HUNTER_HEAL",
+    FfaHunterHealDefault)
+  FfaHunterHealHp = clamp(parseEnvInt(
+    "CTF_BOT_FFA_HUNTER_HEAL_HP", FfaHunterHealHpDefault), 1, 20)
+  FfaHunterHealDetour = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_HEAL_DETOUR", FfaHunterHealDetourDefault),
+    0.0, 4000.0)
+  FfaHunterHealTripMaxSec = clamp(parseEnvInt(
+    "CTF_BOT_FFA_HUNTER_HEAL_TRIP_MAX_SEC",
+    FfaHunterHealTripMaxSecDefault), 0, 300)
   FfaPactWindowFraction = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_PACT_WINDOW_FRACTION", FfaPactWindowFractionDefault))
   FfaPactWindowSec = max(0, parseEnvInt(
@@ -4396,6 +4510,10 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
+    " ffaHunterHeal=", FfaHunterHeal,
+    " ffaHunterHealHp=", FfaHunterHealHp,
+    " ffaHunterHealDetour=", FfaHunterHealDetour,
+    " ffaHunterHealTripMaxSec=", FfaHunterHealTripMaxSec,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
