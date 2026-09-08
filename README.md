@@ -40,8 +40,9 @@ logs or replay links, and the smallest repro.
 - **Weapon tiers are a permanent upgrade ladder.** Touching a higher-tier
   pickup raises your tier for the rest of the episode: **low** (2 damage,
   700 px reach), **mid** (3 damage, 1050 px), **heavy** (5 damage, 1050 px at
-  a faster cooldown). No weapon has ammo, durability, or a magazine — the only
-  way to lose a gun is to die.
+  a faster cooldown). With the shipped config, no weapon has ammo, durability,
+  or a magazine (`finiteAmmo` is a dormant knob) — the only way to lose a gun
+  is to die.
 - **Drop on death (GV46).** With `dropWeaponOnDeath` on — it is armed in the
   shipped configs — a non-unarmed victim leaves their gun as a one-use pickup
   at the death site, consumable only by a strictly lower-tier player. Grenades
