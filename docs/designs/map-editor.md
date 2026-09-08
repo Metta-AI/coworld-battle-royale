@@ -1,6 +1,6 @@
 # Map Editor Design
 
-A visual editor for CTF / Paintbot maps that reads and writes the existing
+A visual editor for Battle Royale / CTF maps that reads and writes the existing
 `mapSpec` JSON format, with the Nim sim as the single source of truth for all
 geometry, derivation, and validation.
 

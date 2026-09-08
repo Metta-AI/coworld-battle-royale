@@ -1,5 +1,5 @@
 {
-  description = "Coworld CTF — Nim capture-the-flag game server, bots, and tooling";
+  description = "Coworld Battle Royale — Nim free-for-all shooter game server, bots, and tooling";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -62,7 +62,7 @@
           '';
 
           meta = {
-            description = "Nim package manager used by coworld-ctf (nimby.lock)";
+            description = "Nim package manager used by coworld-battle-royale (nimby.lock)";
             homepage = "https://github.com/treeform/nimby";
             license = pkgs.lib.licenses.mit;
             mainProgram = "nimby";
@@ -135,7 +135,7 @@
         in
         {
           default = pkgs.mkShell {
-            name = "coworld-ctf";
+            name = "coworld-battle-royale";
 
             packages = [
               # Nim toolchain. nixpkgs-unstable ships 2.2.10, the version the
@@ -174,7 +174,7 @@
             # real interactive terminal.
             shellHook = ''
               if [ -t 1 ]; then
-                echo "coworld-ctf dev shell — nim $(nim --version | head -1 | cut -d' ' -f4), node $(node --version), python $(python3 --version | cut -d' ' -f2)"
+                echo "coworld-battle-royale dev shell — nim $(nim --version | head -1 | cut -d' ' -f4), node $(node --version), python $(python3 --version | cut -d' ' -f2)"
                 if [ ! -f nim.cfg ]; then
                   echo
                   echo "  nim.cfg is missing — sync the pinned Nim deps first:"

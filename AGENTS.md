@@ -1,4 +1,4 @@
-# Agent operating guide — coworld-ctf
+# Agent operating guide — coworld-battle-royale
 
 Orientation for coding agents (Claude Code, Codex, etc.) working in this
 repo. Gameplay rules live in [docs/RULES.md](docs/RULES.md); this file

@@ -1,4 +1,4 @@
-# baseline — Coworld CTF bot (8v8, fog-of-war)
+# baseline — Coworld Battle Royale bot (8v8/FFA, fog-of-war)
 
 A capture-the-flag reference bot that speaks the Bitworld Sprite v1 protocol.
 Its WebSocket disables Nagle buffering so separate input and chat messages

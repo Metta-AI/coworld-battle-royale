@@ -1,31 +1,65 @@
-# Coworld CTF — AI Capture-the-Flag Shooter
+# Coworld Battle Royale — AI Free-for-All Shooter
 
-Coworld CTF is a two-team capture-the-flag shooter for the Coworld platform. Two
-teams (Red and Blue) start on opposite edges of a symmetric arena, each with its
-own flag on a home pedestal. Players move, take cover behind obstacles, and
-shoot. Steal the enemy flag and carry it home — or wipe the enemy team — to win.
+Coworld Battle Royale is a free-for-all shooter for the Coworld platform. The
+shipped config (`config.br.json`, `mode: "ffa"`) seats **12 players**
+(`numPlayers: 12`); the Coworld manifest
+(`coworld_manifest_battleroyale.json`) ships the `br-12` and `br-16` variants.
+Every seat is its own team and receives its own identity color, and each player
+has a **single life**. Players spawn unarmed on an evenly spaced ring and fight
+with their fists until they pick up a weapon — gun pickups form a permanent
+upgrade ladder of tiers. A **shrinking ring** (`ringShrinkSec` 150 s, closing
+to a floor of 3% of the arena) forces the survivors together, and an armed
+victim drops their gun as a one-use pickup at the death site
+(`dropWeaponOnDeath`, armed as of GV46). **Placements** decide the results.
 Vision is fog-of-war: you observe the full map, but enemies only appear inside
 your forward vision cone (walls block it) or your small omnidirectional bubble.
 
 It is a fork of [Crewrift](https://github.com/Metta-AI/coworld-crewrift). It keeps
 Crewrift's continuous 2D movement, line-of-sight, Sprite v1 protocol, websocket
 server, and replay infrastructure, and replaces the social-deduction game layer
-(roles, tasks, voting) with teams, guns, flags, and fog-of-war vision.
+(roles, tasks, voting) with teams, guns, and fog-of-war vision.
 
 The **full, authoritative ruleset lives in [`docs/RULES.md`](docs/RULES.md)**. The
 summary below is just an orientation.
 
-This repo publishes one `battleroyale` Coworld manifest with the `br-12` and
-`br-16` variants. The battle-royale league is a free-for-all: every seat is its
-own team and receives its own identity color. CTF compatibility remains in the
-engine and tests, but is not the artifact published by this repository.
-
 If docs, commands, runtime behavior, logs, or replays disagree while you are
-building or submitting a CTF policy, preserve the evidence and file a GitHub issue
+building or submitting a policy, preserve the evidence and file a GitHub issue
 instead of silently working around it. Include the command, league/Coworld ids,
 logs or replay links, and the smallest repro.
 
-## Rules at a glance
+## Battle Royale at a glance
+
+- **Free-for-all, single life.** Every seat is its own team with its own
+  identity color. There is no respawn — death ends your episode, and
+  **placements** decide the result.
+- **Unarmed start.** Everyone spawns on an evenly spaced ring with no gun; the
+  fallback attack is a **fist** — 70 px reach, 2 damage, twice the normal fire
+  cooldown, hitting the nearest living player inside the ±67.5° aim cone. A
+  punch always connects inside reach, cone, and line of sight, and is only
+  available while you hold no gun or spray can.
+- **Weapon tiers are a permanent upgrade ladder.** Touching a higher-tier
+  pickup raises your tier for the rest of the episode: **low** (2 damage,
+  700 px reach), **mid** (3 damage, 1050 px), **heavy** (5 damage, 1050 px at
+  a faster cooldown). No weapon has ammo, durability, or a magazine — the only
+  way to lose a gun is to die.
+- **Drop on death (GV46).** With `dropWeaponOnDeath` on — it is armed in the
+  shipped configs — a non-unarmed victim leaves their gun as a one-use pickup
+  at the death site, consumable only by a strictly lower-tier player. Grenades
+  and spray cans drop nothing.
+- **The ring shrinks.** The safe zone closes over the match
+  (`ringShrinkSec` 150 s in `config.br.json`) down to a final floor of 3% of
+  the arena (`ringFloorAreaPct`).
+- **Vision is fog-of-war**, as in the legacy mode: the map is always visible,
+  but enemies only appear inside your forward vision cone or your small
+  omnidirectional bubble.
+
+See [`docs/RULES.md`](docs/RULES.md) for exact mechanics and tuning defaults.
+
+## Legacy CTF mode — rules at a glance
+
+The bullets below describe the two-team capture-the-heart mode that remains in
+the engine and tests (`config.json`, `mode: "ctf"`); it is not the Coworld this
+repo publishes. "Flag" below is the heart: the mode reskinned flags as hearts.
 
 - **8 vs 8.** Red spawns on the **left** edge, Blue on the **right**. Each team's
   flag sits on a pedestal inside its spawn pocket.
@@ -72,8 +106,8 @@ See [`docs/RULES.md`](docs/RULES.md) for exact mechanics and tuning defaults.
 
 ## Campaign mode (territory leagues)
 
-Ctf and Paintbot also run **campaign leagues** (e.g. "CTF Campaign", "Paintbot
-Campaign"): territory wars on a cell grid where an LLM strategist issues
+The Coworld platform also runs **campaign leagues** (e.g. "CTF Campaign",
+"Paintbot Campaign" — those are platform league names): territory wars on a cell grid where an LLM strategist issues
 invasion orders for your player each round, guided by a standing **strategy
 prompt** you control. Each contested cell is settled by the policies playing a
 normal match on the cell's variant (which sets the battle mode — 1v1 duel,
@@ -161,7 +195,7 @@ docker run --rm -d \
 
 ## Policy starting points
 
-CTF policies speak the shared Bitworld Sprite v1 protocol:
+Policies speak the shared Bitworld Sprite v1 protocol:
 <https://github.com/Metta-AI/bitworld/blob/master/docs/sprite_v1.md>
 
 The runner starts every policy with a `COWORLD_PLAYER_WS_URL` environment
