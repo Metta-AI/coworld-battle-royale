@@ -100,7 +100,6 @@ suite "baseline FFA doctrine":
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n      ringRadius, FfaHunterRingMargin)") == 1
     check baseline.count(
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n    ringRadius, FfaShadeRingMargin)") == 1
-
   test "hunter weapon upgrade is dormant by default":
     check baseline.contains("FfaHunterUpgradeDefault = false")
     check baseline.contains(
@@ -198,3 +197,98 @@ suite "baseline FFA doctrine":
       "if not unarmed and\n      (not FfaHunterUpgrade")
     check baseline.contains(
       "if unarmed and (result.lootTripStarted or result.objective == \"loot_trip\"):")
+  test "hunter healing is dormant and preserves the gate-off path":
+    check baseline.contains("FfaHunterHealDefault = false")
+    check baseline.contains("FfaHunterHealSearchDefault = false")
+    check baseline.contains("FfaHunterHeal = FfaHunterHealDefault")
+    check baseline.contains("FfaHunterHealSearch = FfaHunterHealSearchDefault")
+    check baseline.contains("ffaKitPos: seq[Vec]")
+    check baseline.contains("ffaKitAbsentAt: seq[int]")
+    check baseline.contains("ffaHealTrip: bool")
+    check baseline.contains("ffaHealTarget: Vec")
+    check baseline.contains("ffaHealStartedTick: int")
+    check baseline.contains("if FfaHunterHeal:\n    trackFfaMedKits")
+    check baseline.contains("if FfaHunterHeal:\n    if bot.ffaHealTrip")
+    check baseline.find("if FfaHunterHeal:") < baseline.find("if pursue:")
+
+  test "hunter healing knobs are clamped and logged":
+    check baseline.contains("CTF_BOT_FFA_HUNTER_HEAL")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_HEAL_HP")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_HEAL_DETOUR")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_HEAL_TRIP_MAX_SEC")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_HEAL_SEARCH")
+    check baseline.contains("FfaHunterHealHpDefault = 12")
+    check baseline.contains("FfaHunterHealDetourDefault = 700.0")
+    check baseline.contains("FfaHunterHealTripMaxSecDefault = 45")
+    check baseline.contains("FfaHunterHealSearchDefault = false")
+    check baseline.contains(
+      "FfaHunterHealHpDefault), 1, 20)")
+    check baseline.contains(
+      "FfaHunterHealDetourDefault),\n    0.0, 4000.0)")
+    check baseline.contains(
+      "FfaHunterHealTripMaxSecDefault), 0, 300)")
+    check baseline.contains("ffaHunterHeal=")
+    check baseline.contains("ffaHunterHealHp=")
+    check baseline.contains("ffaHunterHealDetour=")
+    check baseline.contains("ffaHunterHealTripMaxSec=")
+    check baseline.contains("ffaHunterHealSearch=")
+
+  test "hunter healing remembers kits and selects the nearest valid target":
+    check baseline.contains("proc trackFfaMedKits")
+    check baseline.contains("LabelMedKit")
+    check baseline.contains("dist(bot.ffaKitPos[i], p) < 24.0")
+    check baseline.contains("dist(bot.ffaKitPos[i], me) <= MedKitSeenClear")
+    check baseline.contains("bot.ffaKitAbsentAt[i] = bot.tick")
+    check baseline.contains("proc nearestFfaKit")
+    check baseline.contains("d <= FfaHunterHealDetour and d < bestDist")
+    check baseline.contains(
+      "dist(bot.ffaKitPos[i], center) > float(max(1, ringRadius))")
+    check baseline.contains("proc ffaKitAvailable")
+    check baseline.contains(
+      "bot.tick - bot.ffaKitAbsentAt[i] > MedKitRespawn + 48")
+
+  test "hunter healing trips expire, skip absent kits, and clear after healing":
+    check baseline.contains("proc ffaHealTripStillValid")
+    check baseline.contains("if not bot.ffaHealTrip or hp > FfaHunterHealHp:")
+    check baseline.contains(
+      "ffaGameTicksSince(bot.tick, bot.ffaHealStartedTick) >")
+    check baseline.contains("bot.ffaKitAvailable(targetIndex)")
+    check baseline.contains(
+      "dist(bot.ffaHealTarget, center) <= float(max(1, ringRadius))")
+    check baseline.contains("bot.ffaHealTrip = false")
+    check baseline.contains("bot.ffaHealStartedTick = 0")
+    check baseline.contains("result.phase = \"HEAL\"")
+    check baseline.contains("result.objective = \"heal_trip\"")
+    check baseline.contains("result.action = \"move_kit\"")
+    check baseline.contains("bot.ffaHealTarget = bot.ffaKitPos[kit]")
+    check baseline.contains("bot.ffaHealStartedTick = bot.tick")
+
+  test "hunter healing search targets the center until a kit is remembered":
+    check baseline.contains(
+      "if FfaHunterHealSearch:\n        bot.ffaHealTrip = true")
+    check baseline.contains("bot.ffaHealTarget = center")
+    check baseline.contains("result.objective = \"heal_search\"")
+    check baseline.contains("result.action = \"move_center_kit\"")
+    check baseline.contains(
+      "if bot.ffaHealTargetIndex() >= 0:\n          result.objective = \"heal_trip\"")
+    check baseline.contains(
+      "FfaHunterHealSearch and dist(bot.ffaHealTarget, center) < 24.0")
+    check baseline.contains(
+      "let kit = bot.nearestFfaKit(me, center, ringRadius)")
+
+  test "hunter healing outranks pursuit and pact convergence":
+    check baseline.find("if FfaHunterHeal:") < baseline.find("if pursue:")
+    check baseline.contains(
+      "if result.objective == \"heal_trip\":\n    return")
+    check baseline.contains(
+      "hunterFfaIntent(bot, client, actors, me, center, ringRadius,\n    targetIndex, targetDist, weaponTier, unarmed, hp, pursue)")
+
+  test "hunter fire gate is independent of heal intent":
+    check baseline.contains(
+      "hunterRangeGate = FfaDoctrine in {FfaHunter, FfaPact} and")
+    check baseline.contains(
+      "if (engage or fireWhileHurt or hunterRangeGate) and targetDist < fireRange:")
+    check baseline.contains(
+      "desiredAim = bradsOf(aimTarget - me)")
+    check not baseline.contains(
+      "if objective == \"heal_trip\" and hunterRangeGate")
