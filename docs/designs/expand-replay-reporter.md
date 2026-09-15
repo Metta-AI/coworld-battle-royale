@@ -39,7 +39,7 @@ document gives the reasoning behind each.
    `report_output` (an empty `[]` when there are no events); a missing /
    unfetchable / undecodable replay, or a hash-validation failure, →
    `report_failed`. (§5.4)
-7. **Manifest: defer + document.** Leave `coworld_manifest_paintbot.json` untouched;
+7. **Manifest: defer + document.** Leave `coworld_manifest_battleroyale.json` untouched;
    document the intended `reporter[]` entry in the reporter README and wire it
    when the platform runtime and the new manifest schema land here. (§5.5)
 8. **Testing: unit tests + mock WS client.** The platform reporter runtime is

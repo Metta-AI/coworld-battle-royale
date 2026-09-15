@@ -1,16 +1,16 @@
-# CTF wire protocol — Sprite v1 plus CTF extensions
+# Coworld Battle Royale wire protocol — Sprite v1 plus game extensions
 
 Both the player endpoints (`/player`, POV observation streams) and the
 global/spectator endpoint speak
 [Sprite v1](https://github.com/Metta-AI/bitworld/blob/master/docs/sprite_v1.md).
-This document lists everything CTF adds or changes relative to that base
+This document lists everything the game adds or changes relative to that base
 document; anything not mentioned here matches Sprite v1 exactly. Game
 semantics — mechanics, sprite labels, tuning defaults — live in
 [`RULES.md`](RULES.md).
 
 ## Player input: bit 7 is the C button
 
-Sprite v1 reserves player-input bit `7` ("must be sent as 0"). CTF assigns it:
+Sprite v1 reserves player-input bit `7` ("must be sent as 0"). The game assigns it:
 
 | Bit | Value | Meaning |
 | ---: | ---: | --- |

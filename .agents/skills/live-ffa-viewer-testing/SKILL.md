@@ -1,9 +1,9 @@
 ---
 name: live-ffa-viewer-testing
-description: Boot a live CTF/FFA (battle-royale) server with bots and inspect the board visually in the browser viewer — for testing rendering/presentation changes (map art, palettes, HUD) end-to-end instead of only via unit tests.
+description: Boot a live Battle Royale (FFA) or legacy CTF server with bots and inspect the board visually in the browser viewer — for testing rendering/presentation changes (map art, palettes, HUD) end-to-end instead of only via unit tests.
 ---
 
-# Live FFA/CTF board testing in the browser viewer
+# Live Battle Royale / CTF board testing in the browser viewer
 
 ## Build
 

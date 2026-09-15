@@ -1,6 +1,10 @@
 # Ladder assessment tools
 
-Judge a submitted policy on the LIVE Elo ladder. Run everything with the
+Judge a submitted policy on the LIVE Elo ladder. **This tooling is
+CTF-league-only** (`ctfapi.py` hardcodes the CTF league id, and the named
+tenures/rounds below are CTF league history); the Battle Royale league is a
+separate league, so point these scripts at it only by passing its id
+explicitly. Run everything with the
 cogherence player's venv, which holds the working login:
 
 ```sh
