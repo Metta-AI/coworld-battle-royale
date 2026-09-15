@@ -42,6 +42,22 @@ suite "baseline FFA doctrine":
     check baseline.contains(
       "CTF_BOT_FFA_DOCTRINE must be hybrid, legacy, passive, rush, shade, hunter, or pact")
 
+  test "FFA orbit lead preserves the default and rotates the band target":
+    check baseline.contains("FfaOrbitLeadDegDefault = 0.0")
+    check baseline.contains(
+      "FfaOrbitLeadDeg = clamp(parseEnvFloat(\"CTF_BOT_FFA_ORBIT_LEAD_DEG\",")
+    check baseline.contains("FfaOrbitLeadDegDefault), 0.0, 90.0)")
+    check baseline.contains("angle = float(FfaOrbitLeadDeg) * PI / 180.0")
+    check baseline.contains(
+      "(if bot.slot mod 2 == 0: 1.0 else: -1.0)")
+    check baseline.contains("if FfaOrbitLeadDeg == 0.0:")
+    check baseline.contains("bearing.x * cosAngle - bearing.y * sinAngle")
+    check baseline.contains("bearing.x * sinAngle + bearing.y * cosAngle")
+    check baseline.contains("bearing = ffaOrbitBearing(bot, rawBearing)")
+    check baseline.count("bearing = ffaOrbitBearing(bot, rawBearing)") == 2
+    check baseline.contains("else: norm(ffaSeatBearing(bot.slot))")
+    check baseline.contains("ffaOrbitLeadDeg=\", FfaOrbitLeadDeg")
+
   test "pact doctrine is selectable":
     check baseline.count("requestedDoctrine == \"pact\"") == 1
     check baseline.count("of FfaPact: \"pact\"") == 1
