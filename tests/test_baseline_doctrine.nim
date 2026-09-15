@@ -8,14 +8,19 @@ suite "baseline FFA doctrine":
     baseline = readFile(RepoRoot / "players" / "baseline" / "baseline.nim")
     demo = readFile(RepoRoot / "tools" / "run_ffa_demo.sh")
 
-  test "unset doctrine defaults to legacy":
-    check baseline.count("FfaDoctrine = FfaLegacy") == 1
-    check baseline.count("if requestedDoctrine.len == 0: FfaLegacy") == 1
+  test "unset doctrine defaults to hunter":
+    check baseline.count("FfaDoctrine = FfaHunter") == 1
+    check baseline.count("if requestedDoctrine.len == 0: FfaHunter") == 1
+    check baseline.count("if requestedDoctrine.len == 0: FfaLegacy") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaPassive") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaHybrid") == 0
     check demo.count(
-      "CTF_BOT_FFA_DOCTRINE=\"${CTF_BOT_FFA_DOCTRINE:-legacy}\"") == 1
+      "CTF_BOT_FFA_DOCTRINE=\"${CTF_BOT_FFA_DOCTRINE:-hunter}\"") == 1
+
+  test "legacy doctrine remains an explicit opt-out":
+    check baseline.count("requestedDoctrine == \"legacy\"") == 1
+    check baseline.count("elif requestedDoctrine == \"legacy\": FfaLegacy") == 1
 
   test "hunter doctrine is selectable":
     check baseline.count("FfaHunter") >= 4
@@ -67,7 +72,7 @@ suite "baseline FFA doctrine":
 
   test "pact is never the default":
     check baseline.contains("FfaDoctrineKind = enum\n    FfaHybrid")
-    check baseline.count("FfaDoctrine = FfaLegacy") == 1
+    check baseline.count("FfaDoctrine = FfaPact") == 0
     check baseline.count("if requestedDoctrine.len == 0: FfaPact") == 0
 
   test "per-seat doctrine override is opt-in":

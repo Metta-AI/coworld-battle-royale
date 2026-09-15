@@ -491,7 +491,7 @@ proc ffaDoctrineName(doctrine: FfaDoctrineKind): string =
   of FfaPact: "pact"
 
 proc ffaDoctrineFor(requestedDoctrine: string): FfaDoctrineKind =
-  if requestedDoctrine.len == 0: FfaLegacy
+  if requestedDoctrine.len == 0: FfaHunter
   elif requestedDoctrine == "hybrid": FfaHybrid
   elif requestedDoctrine == "legacy": FfaLegacy
   elif requestedDoctrine == "passive": FfaPassive
@@ -528,7 +528,7 @@ var
   FfaTraceTickScale = 1
   FfaTraceMaxTick = 0
   FfaLateClose = false
-  FfaDoctrine = FfaLegacy
+  FfaDoctrine = FfaHunter
   FfaPerimeterBand = FfaPerimeterBandDefault
   FfaLootBand = FfaLootBandDefault
   FfaHoldBand = FfaHoldBandDefault

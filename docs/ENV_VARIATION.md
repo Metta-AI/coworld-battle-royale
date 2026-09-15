@@ -281,12 +281,13 @@ victims, preserving damage dealt as the placement tiebreak under kills.
 ### Baseline policy doctrine (process environment)
 
 These are reference-policy controls rather than `GameConfig` fields: they do
-not change the Coworld manifest or simulation `GameVersion`. The league
-baseline remains legacy unless a runner explicitly opts into another arm.
+not change the Coworld manifest or simulation `GameVersion`. Hunter is now the
+baseline default; `legacy` is the explicit opt-out for the previous behavior.
+The existing selector semantics and all other doctrine arms remain unchanged.
 
 | Environment variable | Values / default | Effect |
 |---|---|---|
-| `CTF_BOT_FFA_DOCTRINE` | `hybrid`, `legacy`, `passive`, `rush`, `shade`, `hunter`, `pact` / `legacy` | Selects the baseline FFA doctrine. |
+| `CTF_BOT_FFA_DOCTRINE` | `hybrid`, `legacy`, `passive`, `rush`, `shade`, `hunter`, `pact` / `hunter` | Selects the baseline FFA doctrine; set `legacy` explicitly to opt out of hunter. |
 | `CTF_BOT_FFA_DOCTRINE_SLOTS` | comma-separated `slot=doctrine` pairs / unset | Opt-in per-seat doctrine overrides; an unset value is a no-op. |
 | `CTF_BOT_FFA_HUNTER_RING_MARGIN` | float `>=0` / `0.0` | Extra safety margin used by the hunter ring gate. |
 | `CTF_BOT_FFA_HUNTER_ARM` | bool / `true` | Allows hunter trips to arm a weapon. |
@@ -306,11 +307,11 @@ baseline remains legacy unless a runner explicitly opts into another arm.
 | `CTF_BOT_FFA_PACT_PARTNER_MATCH_RADIUS` | float `>=1` / `60.0` | Matching radius for remembered partner and common-target positions. |
 
 The hunter-only and pact-only controls are ignored by the other doctrines. Pact
-is opt-in, and an unset doctrine still means legacy. The parser in
-[`players/baseline/baseline.nim`](../players/baseline/baseline.nim#L4264)
-keeps an unset `CTF_BOT_FFA_DOCTRINE` at `legacy`; the defaults and bounds for
-the doctrine controls are declared at
-[`baseline.nim:267`](../players/baseline/baseline.nim#L267).
+is opt-in. `ffaDoctrineFor` in
+[`players/baseline/baseline.nim`](../players/baseline/baseline.nim#L491)
+resolves an unset `CTF_BOT_FFA_DOCTRINE` to `hunter`; set it to `legacy` for the
+explicit opt-out. The defaults and bounds for the doctrine controls are declared
+at [`baseline.nim:267`](../players/baseline/baseline.nim#L267).
 
 **Pact needs encounter density, and degrades silently without it.** A pact seat
 can only form a pact from what it can see: it needs a second and a third living
