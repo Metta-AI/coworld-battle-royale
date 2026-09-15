@@ -16,14 +16,16 @@ import
 
 const
   # Recorded against the CURRENT rules with the ffa demo runner:
-  #   tools/run_ffa_demo.sh 12 60 I
+  #   tools/run_ffa_demo.sh 12 67 I
   # then copied out of demo-artifacts/. Re-record on every GameVersion bump.
   #
   # The recipe is not just "an ffa match": this fixture has to CONTAIN the
   # awards it is here to check, and the scarce one is a SHARED assist. The
-  # seed moved to 60 because the rules changed and drop-on-death is armed.
-  # It ends on a wipe after 10 credited kills whose assist pools run 0..4
-  # damagers, so the +4 pot is split 2, 3 and 4 ways as well as taken whole —
+  # seed moved to 67 because seed 60's GV47 recordings no longer pooled four
+  # damagers on a victim, and the nearer seeds either missed a shared-assist
+  # split or ended before the ring floor cue this file also checks. It ends
+  # on a wipe after 10 credited kills whose assist pools run 0..4 damagers,
+  # so the +25 pot is split 2, 3 and 4 ways as well as taken whole —
   # an integer-division bug in the split cannot pass here. A seed whose kills
   # are all solo (seed 42 at 8 players was one) passes a weaker test silently,
   # so re-scan the assist pools after re-recording, not just the kill count.
@@ -69,7 +71,7 @@ proc ledgerScores(
   seats, upToTick, gameStart, playingEnd: int
 ): seq[SeatScore] =
   ## Replays the ledger up to `upToTick` and pays the scoring rules by hand:
-  ## +1/sec alive, +10 to the credited killer, the +4 assist pot split among
+  ## +1/sec alive, +50 to the credited killer, the +25 assist pot split among
   ## the victim's other damagers in the window. Podium is added by the caller
   ## at game over — before that it is not earned, so it is not shown.
   result = newSeq[SeatScore](seats)
