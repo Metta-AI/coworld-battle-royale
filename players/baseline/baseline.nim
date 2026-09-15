@@ -266,6 +266,11 @@ const
   FfaHunterArmTripMaxDetourRadiusDefault = 240.0
   FfaHunterArmSafeMarginDefault = 80.0
   FfaOrbitLeadDegDefault = 0.0
+  FfaHunterUpgradeDefault = false
+  FfaHunterUpgradeDetourDefault = 240.0
+  FfaHunterUpgradeTripMaxSecDefault = 30
+  FfaLootContestMarginDefault = 0.0
+  FfaLootContestIgnoreDefault = false
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -476,6 +481,7 @@ type
     ffaLootTargetValid: bool
     ffaLootTargetTier: int
     ffaLootStartedTick: int
+    ffaLootUpgradeTrip: bool
     ffaPactTargetPos: Vec
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
@@ -550,6 +556,11 @@ var
   FfaHunterArmTripMaxDetourRadius = FfaHunterArmTripMaxDetourRadiusDefault
   FfaHunterArmSafeMargin = FfaHunterArmSafeMarginDefault
   FfaOrbitLeadDeg = FfaOrbitLeadDegDefault
+  FfaHunterUpgrade = FfaHunterUpgradeDefault
+  FfaHunterUpgradeDetour = FfaHunterUpgradeDetourDefault
+  FfaHunterUpgradeTripMaxSec = FfaHunterUpgradeTripMaxSecDefault
+  FfaLootContestMargin = FfaLootContestMarginDefault
+  FfaLootContestIgnore = FfaLootContestIgnoreDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
   FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
@@ -1766,6 +1777,7 @@ proc resetTransient(bot: Bot) =
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
+  bot.ffaLootUpgradeTrip = false
   bot.ffaPactTargetPos = vec(0, 0)
   bot.ffaPactTargetSeen = -1
   bot.ffaPactPartnerPos = vec(0, 0)
@@ -1975,10 +1987,11 @@ proc bestFfaGun(client: ProtocolClient, me, center: Vec,
       if dist(gun, center) > safeLimit or d > maxDistance:
         continue
       var opponentCloser = false
-      for actor in avoidActors:
-        if dist(actor.pos, gun) < d:
-          opponentCloser = true
-          break
+      if not FfaLootContestIgnore:
+        for actor in avoidActors:
+          if dist(actor.pos, gun) < d - FfaLootContestMargin:
+            opponentCloser = true
+            break
       if opponentCloser:
         continue
       let sameDistance = abs(d - bestDist) < 1e-6
@@ -2027,13 +2040,17 @@ proc ffaHunterGunStillValid(bot: Bot, client: ProtocolClient,
   let
     target = bot.ffaLootTarget
     d = dist(me, target)
+    maxTripSec = if bot.ffaLootUpgradeTrip:
+      FfaHunterUpgradeTripMaxSec else: FfaHunterArmTripMaxSec
+    maxDetour = if bot.ffaLootUpgradeTrip:
+      FfaHunterUpgradeDetour else: FfaHunterArmTripMaxDetourRadius
     safeLimit = max(0.0, float(max(1, ringRadius)) -
       FfaHunterArmSafeMargin)
   if bot.ffaLootStartedTick > 0 and
       ffaGameTicksSince(bot.tick, bot.ffaLootStartedTick) >
-        FfaHunterArmTripMaxSec * TargetFps:
+        maxTripSec * TargetFps:
     return false
-  if d > FfaHunterArmTripMaxDetourRadius or
+  if d > maxDetour or
       dist(target, center) > safeLimit or
       not ffaGunStillPresent(client, target, bot.ffaLootTargetTier):
     return false
@@ -2172,41 +2189,60 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     result.action = "engage"
     result.engageReason = "pursue_weak"
     return
-  if not unarmed:
+  if not unarmed and
+      (not FfaHunterUpgrade or weaponTier >= FfaWeaponHeavy):
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
+    bot.ffaLootUpgradeTrip = false
     if targetIndex >= 0 and
         targetDist < (if FfaHunterFireRange:
           ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
       result.engageReason = "fire_range"
     return
-  if not FfaHunterArm:
+  let upgradeTrip = not unarmed
+  if upgradeTrip and targetIndex >= 0 and
+      targetDist < (if FfaHunterFireRange:
+        ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
+    result.engageReason = "fire_range"
+  if not upgradeTrip and not FfaHunterArm:
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
+    bot.ffaLootUpgradeTrip = false
     return
   if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):
+    let
+      objective = if upgradeTrip: "upgrade_trip" else: "loot_trip"
+      action = if upgradeTrip: "move_upgrade" else: "move_gun"
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-      "LOOT", "loot_trip", "move_gun")
+      "LOOT", objective, action)
     result.moveTarget = bot.ffaLootTarget
     return
   bot.ffaLootTrip = false
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
-  let gun = bestFfaGun(client, me, center, ringRadius, weaponTier,
-    FfaHunterArmSafeMargin, FfaHunterArmTripMaxDetourRadius, actors)
+  bot.ffaLootUpgradeTrip = false
+  let
+    maxDetour = if upgradeTrip: FfaHunterUpgradeDetour else:
+      FfaHunterArmTripMaxDetourRadius
+    gun = bestFfaGun(client, me, center, ringRadius, weaponTier,
+      FfaHunterArmSafeMargin, maxDetour, actors)
   if gun.found:
     bot.ffaLootTrip = true
     bot.ffaLootTarget = gun.pos
     bot.ffaLootTargetValid = true
     bot.ffaLootTargetTier = gun.tier
     bot.ffaLootStartedTick = bot.tick
+    bot.ffaLootUpgradeTrip = upgradeTrip
+    let
+      objective = if upgradeTrip: "upgrade_trip" else: "loot_trip"
+      action = if upgradeTrip: "move_upgrade" else: "move_gun"
     result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
-      "LOOT", "loot_trip", "move_gun")
+      "LOOT", objective, action)
     result.moveTarget = gun.pos
     result.lootTripStarted = true
 
@@ -2253,6 +2289,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
+    bot.ffaLootUpgradeTrip = false
     let gun = bestFfaGun(client, me, center, ringRadius, weaponTier)
     if gun.found:
       bot.ffaLootTrip = true
@@ -2270,6 +2307,7 @@ proc hybridFfaIntent(bot: Bot, client: ProtocolClient, me, center: Vec,
   bot.ffaLootTargetValid = false
   bot.ffaLootTargetTier = 0
   bot.ffaLootStartedTick = 0
+  bot.ffaLootUpgradeTrip = false
   ffaBandIntent(bot, me, center, ringRadius, FfaHoldBand, "HOLD",
     "band_hold", "hold_band")
 
@@ -2457,6 +2495,7 @@ proc decideFfa(bot: Bot, client: ProtocolClient): uint8 {.measure.} =
       bot.ffaLootTargetValid = false
       bot.ffaLootTargetTier = 0
       bot.ffaLootStartedTick = 0
+      bot.ffaLootUpgradeTrip = false
     intent.phase = "RING_SAFETY"
     intent.bandFraction = 0.0
     intent.bandRadius = 0.0
@@ -4368,6 +4407,19 @@ proc runBot(url: string) =
   FfaHunterArmSafeMargin = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_HUNTER_ARM_SAFE_MARGIN",
     FfaHunterArmSafeMarginDefault, strict = true))
+  FfaHunterUpgrade = parseEnvBool("CTF_BOT_FFA_HUNTER_UPGRADE",
+    FfaHunterUpgradeDefault)
+  FfaHunterUpgradeDetour = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_UPGRADE_DETOUR",
+    FfaHunterUpgradeDetourDefault), 0.0, 1200.0)
+  FfaHunterUpgradeTripMaxSec = clamp(parseEnvInt(
+    "CTF_BOT_FFA_HUNTER_UPGRADE_TRIP_MAX_SEC",
+    FfaHunterUpgradeTripMaxSecDefault), 0, 300)
+  FfaLootContestMargin = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_LOOT_CONTEST_MARGIN", FfaLootContestMarginDefault),
+    0.0, 2000.0)
+  FfaLootContestIgnore = parseEnvBool(
+    "CTF_BOT_FFA_LOOT_CONTEST_IGNORE", FfaLootContestIgnoreDefault)
   FfaPactWindowFraction = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_PACT_WINDOW_FRACTION", FfaPactWindowFractionDefault))
   FfaPactWindowSec = max(0, parseEnvInt(
@@ -4414,6 +4466,11 @@ proc runBot(url: string) =
     " ffaHunterArmTripMaxSec=", FfaHunterArmTripMaxSec,
     " ffaHunterArmTripMaxDetourRadius=", FfaHunterArmTripMaxDetourRadius,
     " ffaHunterArmSafeMargin=", FfaHunterArmSafeMargin,
+    " ffaHunterUpgrade=", FfaHunterUpgrade,
+    " ffaHunterUpgradeDetour=", FfaHunterUpgradeDetour,
+    " ffaHunterUpgradeTripMaxSec=", FfaHunterUpgradeTripMaxSec,
+    " ffaLootContestMargin=", FfaLootContestMargin,
+    " ffaLootContestIgnore=", FfaLootContestIgnore,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaOrbitLeadDeg=", FfaOrbitLeadDeg,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,

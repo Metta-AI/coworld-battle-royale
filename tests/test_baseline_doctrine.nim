@@ -100,3 +100,101 @@ suite "baseline FFA doctrine":
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n      ringRadius, FfaHunterRingMargin)") == 1
     check baseline.count(
       "ffaBandRadiusWithRingMargin(result.bandRadius,\n    ringRadius, FfaShadeRingMargin)") == 1
+
+  test "hunter weapon upgrade is dormant by default":
+    check baseline.contains("FfaHunterUpgradeDefault = false")
+    check baseline.contains(
+      "if not unarmed and\n      (not FfaHunterUpgrade or weaponTier >= FfaWeaponHeavy):")
+    check baseline.contains(
+      "bot.ffaLootUpgradeTrip = false\n    if targetIndex >= 0")
+    check baseline.contains("FfaHunterUpgrade = parseEnvBool")
+
+  test "hunter upgrade knobs are clamped and logged":
+    check baseline.contains("CTF_BOT_FFA_HUNTER_UPGRADE")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_UPGRADE_DETOUR")
+    check baseline.contains("CTF_BOT_FFA_HUNTER_UPGRADE_TRIP_MAX_SEC")
+    check baseline.contains(
+      "FfaHunterUpgradeDetourDefault = 240.0")
+    check baseline.contains(
+      "FfaHunterUpgradeTripMaxSecDefault = 30")
+    check baseline.contains(
+      "FfaHunterUpgradeDetourDefault), 0.0, 1200.0")
+    check baseline.contains(
+      "FfaHunterUpgradeTripMaxSecDefault), 0, 300)")
+    check baseline.contains("ffaHunterUpgrade=",)
+    check baseline.contains("ffaHunterUpgradeDetour=",)
+    check baseline.contains("ffaHunterUpgradeTripMaxSec=",)
+
+  test "loot contest knobs preserve the default veto":
+    check baseline.contains("FfaLootContestMarginDefault = 0.0")
+    check baseline.contains("FfaLootContestIgnoreDefault = false")
+    check baseline.contains(
+      "FfaLootContestMargin = FfaLootContestMarginDefault")
+    check baseline.contains(
+      "FfaLootContestIgnore = FfaLootContestIgnoreDefault")
+    check baseline.contains("CTF_BOT_FFA_LOOT_CONTEST_MARGIN")
+    check baseline.contains("CTF_BOT_FFA_LOOT_CONTEST_IGNORE")
+    check baseline.contains(
+      "FfaLootContestMarginDefault),\n    0.0, 2000.0")
+    check baseline.contains(
+      "CTF_BOT_FFA_LOOT_CONTEST_IGNORE\", FfaLootContestIgnoreDefault)")
+    check baseline.contains(
+      "ffaLootContestMargin=",)
+    check baseline.contains(
+      "ffaLootContestIgnore=",)
+    let
+      contestStart = baseline.find("var opponentCloser = false")
+      contestEnd = baseline.find("if opponentCloser:", contestStart)
+      contestBlock = baseline[contestStart ..< contestEnd]
+    check contestStart >= 0
+    check contestEnd > contestStart
+    check contestBlock.contains("if not FfaLootContestIgnore:")
+    check contestBlock.contains(
+      "dist(actor.pos, gun) < d - FfaLootContestMargin")
+
+  test "hunter upgrade trips select better guns and expose telemetry":
+    check baseline.contains(
+      "maxDetour = if upgradeTrip: FfaHunterUpgradeDetour else:")
+    check baseline.contains("FfaHunterArmTripMaxDetourRadius")
+    check baseline.contains(
+      "FfaHunterArmSafeMargin, maxDetour, actors)")
+    check baseline.contains(
+      "objective = if upgradeTrip: \"upgrade_trip\" else: \"loot_trip\"")
+    check baseline.contains(
+      "action = if upgradeTrip: \"move_upgrade\" else: \"move_gun\"")
+    check baseline.contains(
+      "bot.ffaLootUpgradeTrip = upgradeTrip")
+    check baseline.contains(
+      "maxDetour = if bot.ffaLootUpgradeTrip:\n      FfaHunterUpgradeDetour")
+
+  test "hunter upgrade keeps trip bounds and fire-range telemetry":
+    check baseline.contains(
+      "maxTripSec = if bot.ffaLootUpgradeTrip:\n      FfaHunterUpgradeTripMaxSec")
+    check baseline.contains(
+      "ffaGameTicksSince(bot.tick, bot.ffaLootStartedTick) >\n        maxTripSec * TargetFps")
+    check baseline.contains(
+      "if d > maxDetour or")
+    check baseline.contains(
+      "if upgradeTrip and targetIndex >= 0 and")
+    check baseline.contains(
+      "result.engageReason = \"fire_range\"")
+    let
+      fireRangeStart = baseline.find(
+        "if upgradeTrip and targetIndex >= 0 and")
+      fireRangeEnd = baseline.find(
+        "if not upgradeTrip and not FfaHunterArm:", fireRangeStart)
+      fireRangeBlock = baseline[fireRangeStart ..< fireRangeEnd]
+    check fireRangeStart >= 0
+    check fireRangeEnd > fireRangeStart
+    check fireRangeBlock.contains(
+      "result.engageReason = \"fire_range\"")
+    check not fireRangeBlock.contains("bot.ffaLootTrip = false")
+    check not fireRangeBlock.contains("return")
+    check baseline.contains(
+      "let upgradeTrip = not unarmed")
+    check baseline.contains(
+      "if not upgradeTrip and not FfaHunterArm:")
+    check baseline.find("if pursue:") < baseline.find(
+      "if not unarmed and\n      (not FfaHunterUpgrade")
+    check baseline.contains(
+      "if unarmed and (result.lootTripStarted or result.objective == \"loot_trip\"):")
