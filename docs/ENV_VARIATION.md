@@ -223,11 +223,11 @@ pits (trenches), or edit the per-map spawn lists / consts in code.
 | `barrageStartPerSec` | int / `4` | | `1..barrageMaxPerSec` | Launch rate at the latch, targeting a 40px band inside every edge. |
 | `barrageStartSec` | int / `30` | | `>=1` | Clock seconds remaining that latch the barrage (4:30 elapsed on the default 5:00 clock). |
 | `barrageSaturateSec` | int / `30` | | `>=1` | Seconds from latch to full saturation (whole board at `barrageMaxPerSec`); defaults land it exactly at the scheduled end. |
-| `survivalPointsPerSec` | int / `1` (`FfaSurvivalPointsPerSec`) | `survivalPointsPerSec` | `>=0` (ffa only) | ffa scoreboard/training-signal reward per whole second alive; this shapes the signal only, never placement or Elo. |
-| `killPoints` | int / `10` (`FfaKillPoints`) | `killPoints` | `>=0` (ffa only) | ffa scoreboard/training-signal reward to the LAST damager of a kill; this shapes the signal only, never placement or Elo. Environmental deaths credit nobody. |
-| `assistPoints` | int / `4` (`FfaAssistPoints`) | `assistPoints` | `>=0` (ffa only) | ffa scoreboard/training-signal assist pot; this shapes the signal only, never placement or Elo. |
-| `assistWindowTicks` | int / `240` (`FfaAssistWindowTicks`) | `assistWindowTicks` | `>=0` (ffa only) | ffa scoreboard/training-signal assist window; this shapes the signal only, never placement or Elo. |
-| `podiumPoints` | `seq[int]` / `@[100, 40, 15]` (`FfaPodiumPoints`) | `podiumPoints` | each `>=0` (ffa only) | ffa scoreboard/training-signal reward by final placement; this shapes the signal only, never placement or Elo. |
+| `survivalPointsPerSec` | int / `1` (`FfaSurvivalPointsPerSec`) | `survivalPointsPerSec` | `>=0` (ffa only) | ffa only: reward per whole second alive. Reward is the episode score the platform rates on (Elo is the mean of results.scores), so this weight moves Elo; it never changes placementSlots. |
+| `killPoints` | int / `10` (`FfaKillPoints`) | `killPoints` | `>=0` (ffa only) | ffa only: reward to the last damager of a kill; environmental deaths credit nobody. Part of the rated episode score (see survivalPointsPerSec); does not change placementSlots. Hosted br-12/br-16 and config.br.json ship 50 / 25 (GV47). |
+| `assistPoints` | int / `4` (`FfaAssistPoints`) | `assistPoints` | `>=0` (ffa only) | ffa only: assist pot split evenly (integer, remainder dropped) among the victim's other damagers inside assistWindowTicks. Part of the rated episode score; does not change placementSlots. Hosted br-12/br-16 and config.br.json ship 50 / 25 (GV47). |
+| `assistWindowTicks` | int / `240` (`FfaAssistWindowTicks`) | `assistWindowTicks` | `>=0` (ffa only) | ffa only: how far back a damager still counts for the assist pot. Affects the rated episode score through assistPoints only. |
+| `podiumPoints` | `seq[int]` / `@[100, 40, 15]` (`FfaPodiumPoints`) | `podiumPoints` | each `>=0` (ffa only) | ffa only: reward by final placement, best first; places past the list pay nothing. The only path by which placement reaches the rated episode score. |
 
 ffa consts: `FfaHitPoints`=20 (spawn pool), weapon ladder
 `FfaFistDamage`=2 / `FfaLowGunDamage`=2 / `FfaMidGunDamage`=3 /

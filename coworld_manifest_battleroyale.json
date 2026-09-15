@@ -471,25 +471,25 @@
           "default": 0
         },
         "survivalPointsPerSec": {
-          "description": "FFA only: scoreboard and training-signal reward per whole second alive; this shapes the signal only, never placement or Elo.",
+          "description": "FFA only: reward per whole second alive. Reward is the episode score the platform rates on (Elo is the mean of results.scores), so this weight moves Elo; it never changes placementSlots.",
           "type": "integer",
           "minimum": 0,
           "default": 1
         },
         "killPoints": {
-          "description": "FFA only: scoreboard and training-signal reward for the last damager of a kill; this shapes the signal only, never placement or Elo.",
+          "description": "FFA only: reward to the last damager of a kill; environmental deaths credit nobody. Part of the rated episode score (see survivalPointsPerSec); does not change placementSlots.",
           "type": "integer",
           "minimum": 0,
           "default": 10
         },
         "assistPoints": {
-          "description": "FFA only: scoreboard and training-signal assist pot; this shapes the signal only, never placement or Elo.",
+          "description": "FFA only: assist pot split evenly (integer, remainder dropped) among the victim's other damagers inside assistWindowTicks. Part of the rated episode score; does not change placementSlots.",
           "type": "integer",
           "minimum": 0,
           "default": 4
         },
         "podiumPoints": {
-          "description": "FFA only: scoreboard and training-signal reward by final placement; this shapes the signal only, never placement or Elo.",
+          "description": "FFA only: reward by final placement, best first; places past the list pay nothing. The only path by which placement reaches the rated episode score.",
           "type": "array",
           "items": {
             "type": "integer",
@@ -502,7 +502,7 @@
           ]
         },
         "assistWindowTicks": {
-          "description": "FFA only: scoreboard and training-signal assist window in ticks; this shapes the signal only, never placement or Elo.",
+          "description": "FFA only: how far back a damager still counts for the assist pot. Affects the rated episode score through assistPoints only.",
           "type": "integer",
           "minimum": 0,
           "default": 240
@@ -850,7 +850,7 @@
     {
       "id": "br-12",
       "name": "Battle Royale (12)",
-      "description": "Twelve-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color. A player who dies while armed leaves their weapon as a one-use pickup at the death site, taken by the first living player of a strictly lower tier to touch it. Last player standing wins; scoring is per player (kills, assists, survival, podium).",
+      "description": "Twelve-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color. A player who dies while armed leaves their weapon as a one-use pickup at the death site, taken by the first living player of a strictly lower tier to touch it. Last player standing wins; scoring is per player (kills, assists, survival, podium): a kill pays 50, the assist pot is 25 split among other recent damagers, survival pays 1 per second alive, podium 100/40/15.",
       "game_config": {
         "players": [
           {
@@ -909,8 +909,8 @@
         "ringShrinkSec": 150,
         "ringFloorAreaPct": 3,
         "survivalPointsPerSec": 1,
-        "killPoints": 10,
-        "assistPoints": 4,
+        "killPoints": 50,
+        "assistPoints": 25,
         "podiumPoints": [100, 40, 15],
         "assistWindowTicks": 240,
         "dropWeaponOnDeath": true
@@ -919,7 +919,7 @@
     {
       "id": "br-16",
       "name": "Battle Royale (16)",
-      "description": "Sixteen-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color; a player who dies while armed leaves their weapon as a one-use pickup at the death site, taken by the first living player of a strictly lower tier to touch it. Last player standing wins and scoring is per player.",
+      "description": "Sixteen-player free-for-all on random generated huge terrain: one life and 20 hit points each, arena-anchored low/mid/heavy loot bands, a compact center cluster, and a safe zone that shrinks to a 3% floor over 150 seconds. Players use an evenly spaced spawn ring whose fixed pad set is assigned to seats by a deterministic seed-derived rotation each episode. When three or fewer players remain, baseline bots close on the nearest living enemy while respecting ring safety and normal aim/fire gates. Every seat is its own team with its own color; a player who dies while armed leaves their weapon as a one-use pickup at the death site, taken by the first living player of a strictly lower tier to touch it. Last player standing wins and scoring is per player: a kill pays 50, the assist pot is 25 split among other recent damagers, survival pays 1 per second alive, podium 100/40/15.",
       "game_config": {
         "players": [
           {
@@ -990,8 +990,8 @@
         "ringShrinkSec": 150,
         "ringFloorAreaPct": 3,
         "survivalPointsPerSec": 1,
-        "killPoints": 10,
-        "assistPoints": 4,
+        "killPoints": 50,
+        "assistPoints": 25,
         "podiumPoints": [100, 40, 15],
         "assistWindowTicks": 240,
         "dropWeaponOnDeath": true
