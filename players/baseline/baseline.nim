@@ -2345,13 +2345,14 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
           ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
       result.engageReason = "fire_range"
     return
-  # An armed bot only reaches here on an upgrade trip; unarmed bots take the
-  # arming path below.
+  # The continuation below is entered after the `if not unarmed:` hunter
+  # branch has either returned or selected an upgrade trip.
   let upgradeTrip = not unarmed
   if upgradeTrip and targetIndex >= 0 and
       targetDist < (if FfaHunterFireRange:
         ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
     result.engageReason = "fire_range"
+  # The arm-off path is the unarmed `if not FfaHunterArm:` guard.
   if not upgradeTrip and not FfaHunterArm:
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
