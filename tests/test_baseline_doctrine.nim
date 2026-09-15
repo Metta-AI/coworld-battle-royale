@@ -292,3 +292,83 @@ suite "baseline FFA doctrine":
       "desiredAim = bradsOf(aimTarget - me)")
     check not baseline.contains(
       "if objective == \"heal_trip\" and hunterRangeGate")
+
+  test "hunter loot seek is dormant by default":
+    check baseline.contains("FfaHunterSeekLootDefault = false")
+    check baseline.contains("ffaSeekLoot: bool")
+    check baseline.contains("ffaSeekStartedTick: int")
+    check baseline.contains("bot.ffaSeekLoot = false")
+    check baseline.contains("bot.ffaSeekStartedTick = 0")
+    check baseline.contains("if FfaHunterSeekLoot and not seekAborted")
+
+  test "hunter loot seek knobs are clamped":
+    check baseline.contains("CTF_BOT_FFA_HUNTER_SEEK_LOOT")
+    check baseline.contains("FfaHunterSeekLootMaxSecDefault = 60")
+    check baseline.contains("FfaHunterSeekLootStopRadiusDefault = 200.0")
+    check baseline.contains("FfaHunterSeekLootVisionRadiusDefault = 1200.0")
+    check baseline.contains(
+      "FfaHunterSeekLootMaxSecDefault), 1, 300)")
+    check baseline.contains(
+      "FfaHunterSeekLootStopRadiusDefault), 0.0, 2000.0)")
+    check baseline.contains(
+      "FfaHunterSeekLootVisionRadiusDefault), 240.0, 8000.0)")
+
+  test "hunter loot seek startup telemetry is explicit":
+    check baseline.contains("\" ffaHunterSeekLoot=\", FfaHunterSeekLoot")
+    check baseline.contains(
+      "\" ffaHunterSeekLootMaxSec=\", FfaHunterSeekLootMaxSec")
+    check baseline.contains(
+      "\" ffaHunterSeekLootStopRadius=\", FfaHunterSeekLootStopRadius")
+    check baseline.contains(
+      "\" ffaHunterSeekLootVisionRadius=\", FfaHunterSeekLootVisionRadius")
+
+  test "hunter loot seek widens only its visible-gun search":
+    check baseline.contains(
+      "(if FfaHunterSeekLoot: FfaHunterSeekLootVisionRadius")
+    check baseline.contains(
+      "else: FfaHunterArmTripMaxDetourRadius), actors)")
+    check baseline.contains("FfaHunterArmSafeMargin,")
+    check baseline.contains("\"SEEK\", \"seek_loot\", \"move_center_loot\"")
+
+  test "hunter loot seek aborts on timeout and center arrival":
+    check baseline.contains(
+      "ffaGameTicksSince(bot.tick, bot.ffaSeekStartedTick)")
+    check baseline.contains(
+      "FfaHunterSeekLootMaxSec * TargetFps")
+    check baseline.contains(
+      "dist(me, center) <= FfaHunterSeekLootStopRadius")
+    check baseline.contains("var seekAborted = false")
+    check baseline.contains("seekAborted = true")
+
+  test "hunter loot seek timeout abort latches for the life":
+    let abortBlock = baseline[
+      baseline.find("var seekAborted = false") ..
+      baseline.find("if ffaHunterGunStillValid")]
+    check baseline.contains("ffaSeekDone: bool")
+    check abortBlock.contains("bot.ffaSeekDone = true")
+    check abortBlock.contains("FfaHunterSeekLootMaxSec * TargetFps")
+    check baseline.contains(
+      "not bot.ffaSeekDone and\n      dist(me, center) > FfaHunterSeekLootStopRadius")
+
+  test "hunter loot seek stop-radius abort latches for the life":
+    let abortBlock = baseline[
+      baseline.find("var seekAborted = false") ..
+      baseline.find("if ffaHunterGunStillValid")]
+    check abortBlock.contains(
+      "dist(me, center) <= FfaHunterSeekLootStopRadius")
+    check abortBlock.contains("bot.ffaSeekDone = true")
+    check baseline.contains(
+      "not bot.ffaSeekDone and\n      dist(me, center) > FfaHunterSeekLootStopRadius")
+
+  test "hunter loot seek preserves hunter precedence":
+    check baseline.contains("if pursue:")
+    check baseline.contains("if not unarmed:")
+    check baseline.contains("if not FfaHunterArm:")
+    check baseline.contains(
+      "if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):")
+    check baseline.contains(
+      "if FfaHunterSeekLoot and not seekAborted")
+
+  test "pact does not hijack hunter loot seek":
+    check baseline.contains(
+      "result.objective == \"seek_loot\")")

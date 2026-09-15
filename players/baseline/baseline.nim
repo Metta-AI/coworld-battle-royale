@@ -276,6 +276,10 @@ const
   FfaHunterHealDetourDefault = 700.0
   FfaHunterHealTripMaxSecDefault = 45
   FfaHunterHealSearchDefault = false
+  FfaHunterSeekLootDefault = false
+  FfaHunterSeekLootMaxSecDefault = 60
+  FfaHunterSeekLootStopRadiusDefault = 200.0
+  FfaHunterSeekLootVisionRadiusDefault = 1200.0
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -492,6 +496,9 @@ type
     ffaHealTrip: bool
     ffaHealTarget: Vec
     ffaHealStartedTick: int
+    ffaSeekLoot: bool
+    ffaSeekStartedTick: int
+    ffaSeekDone: bool
     ffaPactTargetPos: Vec
     ffaPactTargetSeen: int
     ffaPactPartnerPos: Vec
@@ -576,6 +583,10 @@ var
   FfaHunterHealDetour = FfaHunterHealDetourDefault
   FfaHunterHealTripMaxSec = FfaHunterHealTripMaxSecDefault
   FfaHunterHealSearch = FfaHunterHealSearchDefault
+  FfaHunterSeekLoot = FfaHunterSeekLootDefault
+  FfaHunterSeekLootMaxSec = FfaHunterSeekLootMaxSecDefault
+  FfaHunterSeekLootStopRadius = FfaHunterSeekLootStopRadiusDefault
+  FfaHunterSeekLootVisionRadius = FfaHunterSeekLootVisionRadiusDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
   FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
@@ -1860,6 +1871,9 @@ proc resetTransient(bot: Bot) =
   bot.ffaHealTrip = false
   bot.ffaHealTarget = vec(0, 0)
   bot.ffaHealStartedTick = 0
+  bot.ffaSeekLoot = false
+  bot.ffaSeekStartedTick = 0
+  bot.ffaSeekDone = false
   bot.ffaPactTargetPos = vec(0, 0)
   bot.ffaPactTargetSeen = -1
   bot.ffaPactPartnerPos = vec(0, 0)
@@ -2322,24 +2336,42 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
+    bot.ffaSeekLoot = false
+    bot.ffaSeekStartedTick = 0
+    bot.ffaSeekDone = false
     bot.ffaLootUpgradeTrip = false
     if targetIndex >= 0 and
         targetDist < (if FfaHunterFireRange:
           ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
       result.engageReason = "fire_range"
     return
+  # The continuation below is entered after the `if not unarmed:` hunter
+  # branch has either returned or selected an upgrade trip.
   let upgradeTrip = not unarmed
   if upgradeTrip and targetIndex >= 0 and
       targetDist < (if FfaHunterFireRange:
         ffaWeaponFireRange(weaponTier) else: FfaPassiveEngageRange):
     result.engageReason = "fire_range"
+  # The arm-off path is the unarmed `if not FfaHunterArm:` guard.
   if not upgradeTrip and not FfaHunterArm:
     bot.ffaLootTrip = false
     bot.ffaLootTargetValid = false
     bot.ffaLootTargetTier = 0
     bot.ffaLootStartedTick = 0
     bot.ffaLootUpgradeTrip = false
+    bot.ffaSeekLoot = false
+    bot.ffaSeekStartedTick = 0
     return
+  var seekAborted = false
+  if bot.ffaSeekLoot and
+      ((bot.ffaSeekStartedTick > 0 and
+        ffaGameTicksSince(bot.tick, bot.ffaSeekStartedTick) >
+          FfaHunterSeekLootMaxSec * TargetFps) or
+        dist(me, center) <= FfaHunterSeekLootStopRadius):
+    bot.ffaSeekLoot = false
+    bot.ffaSeekStartedTick = 0
+    seekAborted = true
+    bot.ffaSeekDone = true
   if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):
     let
       objective = if upgradeTrip: "upgrade_trip" else: "loot_trip"
@@ -2356,9 +2388,17 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
   let
     maxDetour = if upgradeTrip: FfaHunterUpgradeDetour else:
       FfaHunterArmTripMaxDetourRadius
-    gun = bestFfaGun(client, me, center, ringRadius, weaponTier,
-      FfaHunterArmSafeMargin, maxDetour, actors)
+    gun = if upgradeTrip:
+      bestFfaGun(client, me, center, ringRadius, weaponTier,
+        FfaHunterArmSafeMargin, maxDetour, actors)
+    else:
+      bestFfaGun(client, me, center, ringRadius, weaponTier,
+        FfaHunterArmSafeMargin,
+        (if FfaHunterSeekLoot: FfaHunterSeekLootVisionRadius
+         else: FfaHunterArmTripMaxDetourRadius), actors)
   if gun.found:
+    bot.ffaSeekLoot = false
+    bot.ffaSeekStartedTick = 0
     bot.ffaLootTrip = true
     bot.ffaLootTarget = gun.pos
     bot.ffaLootTargetValid = true
@@ -2372,6 +2412,16 @@ proc hunterFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
       "LOOT", objective, action)
     result.moveTarget = gun.pos
     result.lootTripStarted = true
+    return
+  if FfaHunterSeekLoot and not seekAborted and
+      not bot.ffaSeekDone and
+      dist(me, center) > FfaHunterSeekLootStopRadius:
+    if not bot.ffaSeekLoot:
+      bot.ffaSeekLoot = true
+      bot.ffaSeekStartedTick = bot.tick
+    result = ffaBandIntent(bot, me, center, ringRadius, FfaPassiveBand,
+      "SEEK", "seek_loot", "move_center_loot")
+    result.moveTarget = center
 
 proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
     me, center: Vec, ringRadius: int, targetIndex: int, targetDist: float,
@@ -2384,6 +2434,8 @@ proc pactFfaIntent(bot: Bot, client: ProtocolClient, actors: seq[Actor],
   if not pactActive or not pactMemoryFresh:
     return
   if unarmed and (result.lootTripStarted or result.objective == "loot_trip"):
+    return
+  if unarmed and (result.objective == "seek_loot"):
     return
   result.phase = "PACT"
   result.objective = "pact_converge"
@@ -4563,6 +4615,17 @@ proc runBot(url: string) =
     FfaHunterHealTripMaxSecDefault), 0, 300)
   FfaHunterHealSearch = parseEnvBool("CTF_BOT_FFA_HUNTER_HEAL_SEARCH",
     FfaHunterHealSearchDefault)
+  FfaHunterSeekLoot = parseEnvBool("CTF_BOT_FFA_HUNTER_SEEK_LOOT",
+    FfaHunterSeekLootDefault)
+  FfaHunterSeekLootMaxSec = clamp(parseEnvInt(
+    "CTF_BOT_FFA_HUNTER_SEEK_LOOT_MAX_SEC",
+    FfaHunterSeekLootMaxSecDefault), 1, 300)
+  FfaHunterSeekLootStopRadius = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_SEEK_LOOT_STOP_RADIUS",
+    FfaHunterSeekLootStopRadiusDefault), 0.0, 2000.0)
+  FfaHunterSeekLootVisionRadius = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_HUNTER_SEEK_LOOT_VISION_RADIUS",
+    FfaHunterSeekLootVisionRadiusDefault), 240.0, 8000.0)
   FfaPactWindowFraction = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_PACT_WINDOW_FRACTION", FfaPactWindowFractionDefault))
   FfaPactWindowSec = max(0, parseEnvInt(
@@ -4619,6 +4682,10 @@ proc runBot(url: string) =
     " ffaHunterHealDetour=", FfaHunterHealDetour,
     " ffaHunterHealTripMaxSec=", FfaHunterHealTripMaxSec,
     " ffaHunterHealSearch=", FfaHunterHealSearch,
+    " ffaHunterSeekLoot=", FfaHunterSeekLoot,
+    " ffaHunterSeekLootMaxSec=", FfaHunterSeekLootMaxSec,
+    " ffaHunterSeekLootStopRadius=", FfaHunterSeekLootStopRadius,
+    " ffaHunterSeekLootVisionRadius=", FfaHunterSeekLootVisionRadius,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaOrbitLeadDeg=", FfaOrbitLeadDeg,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
