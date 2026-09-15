@@ -362,8 +362,9 @@ suite "baseline FFA doctrine":
 
   test "hunter loot seek preserves hunter precedence":
     check baseline.contains("if pursue:")
-    check baseline.contains("if not unarmed:")
-    check baseline.contains("if not FfaHunterArm:")
+    check baseline.contains(
+      "if not unarmed and\n      (not FfaHunterUpgrade or weaponTier >= FfaWeaponHeavy):")
+    check baseline.contains("if not upgradeTrip and not FfaHunterArm:")
     check baseline.contains(
       "if ffaHunterGunStillValid(bot, client, actors, me, center, ringRadius):")
     check baseline.contains(
