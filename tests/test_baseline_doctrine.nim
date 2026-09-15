@@ -109,6 +109,33 @@ suite "baseline FFA doctrine":
     check baseline.contains("ffaHunterUpgradeDetour=",)
     check baseline.contains("ffaHunterUpgradeTripMaxSec=",)
 
+  test "loot contest knobs preserve the default veto":
+    check baseline.contains("FfaLootContestMarginDefault = 0.0")
+    check baseline.contains("FfaLootContestIgnoreDefault = false")
+    check baseline.contains(
+      "FfaLootContestMargin = FfaLootContestMarginDefault")
+    check baseline.contains(
+      "FfaLootContestIgnore = FfaLootContestIgnoreDefault")
+    check baseline.contains("CTF_BOT_FFA_LOOT_CONTEST_MARGIN")
+    check baseline.contains("CTF_BOT_FFA_LOOT_CONTEST_IGNORE")
+    check baseline.contains(
+      "FfaLootContestMarginDefault),\n    0.0, 2000.0")
+    check baseline.contains(
+      "CTF_BOT_FFA_LOOT_CONTEST_IGNORE\", FfaLootContestIgnoreDefault)")
+    check baseline.contains(
+      "ffaLootContestMargin=",)
+    check baseline.contains(
+      "ffaLootContestIgnore=",)
+    let
+      contestStart = baseline.find("var opponentCloser = false")
+      contestEnd = baseline.find("if opponentCloser:", contestStart)
+      contestBlock = baseline[contestStart ..< contestEnd]
+    check contestStart >= 0
+    check contestEnd > contestStart
+    check contestBlock.contains("if not FfaLootContestIgnore:")
+    check contestBlock.contains(
+      "dist(actor.pos, gun) < d - FfaLootContestMargin")
+
   test "hunter upgrade trips select better guns and expose telemetry":
     check baseline.contains(
       "maxDetour = if upgradeTrip: FfaHunterUpgradeDetour else:")

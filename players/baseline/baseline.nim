@@ -268,6 +268,8 @@ const
   FfaHunterUpgradeDefault = false
   FfaHunterUpgradeDetourDefault = 240.0
   FfaHunterUpgradeTripMaxSecDefault = 30
+  FfaLootContestMarginDefault = 0.0
+  FfaLootContestIgnoreDefault = false
   FfaPactWindowFractionDefault = 0.35
   FfaPactWindowSecDefault = 0
   FfaPactBrawlRadiusDefault = 220.0
@@ -555,6 +557,8 @@ var
   FfaHunterUpgrade = FfaHunterUpgradeDefault
   FfaHunterUpgradeDetour = FfaHunterUpgradeDetourDefault
   FfaHunterUpgradeTripMaxSec = FfaHunterUpgradeTripMaxSecDefault
+  FfaLootContestMargin = FfaLootContestMarginDefault
+  FfaLootContestIgnore = FfaLootContestIgnoreDefault
   FfaPactWindowFraction = FfaPactWindowFractionDefault
   FfaPactWindowSec = FfaPactWindowSecDefault
   FfaPactBrawlRadius = FfaPactBrawlRadiusDefault
@@ -1967,10 +1971,11 @@ proc bestFfaGun(client: ProtocolClient, me, center: Vec,
       if dist(gun, center) > safeLimit or d > maxDistance:
         continue
       var opponentCloser = false
-      for actor in avoidActors:
-        if dist(actor.pos, gun) < d:
-          opponentCloser = true
-          break
+      if not FfaLootContestIgnore:
+        for actor in avoidActors:
+          if dist(actor.pos, gun) < d - FfaLootContestMargin:
+            opponentCloser = true
+            break
       if opponentCloser:
         continue
       let sameDistance = abs(d - bestDist) < 1e-6
@@ -4392,6 +4397,11 @@ proc runBot(url: string) =
   FfaHunterUpgradeTripMaxSec = clamp(parseEnvInt(
     "CTF_BOT_FFA_HUNTER_UPGRADE_TRIP_MAX_SEC",
     FfaHunterUpgradeTripMaxSecDefault), 0, 300)
+  FfaLootContestMargin = clamp(parseEnvFloat(
+    "CTF_BOT_FFA_LOOT_CONTEST_MARGIN", FfaLootContestMarginDefault),
+    0.0, 2000.0)
+  FfaLootContestIgnore = parseEnvBool(
+    "CTF_BOT_FFA_LOOT_CONTEST_IGNORE", FfaLootContestIgnoreDefault)
   FfaPactWindowFraction = max(0.0, parseEnvFloat(
     "CTF_BOT_FFA_PACT_WINDOW_FRACTION", FfaPactWindowFractionDefault))
   FfaPactWindowSec = max(0, parseEnvInt(
@@ -4441,6 +4451,8 @@ proc runBot(url: string) =
     " ffaHunterUpgrade=", FfaHunterUpgrade,
     " ffaHunterUpgradeDetour=", FfaHunterUpgradeDetour,
     " ffaHunterUpgradeTripMaxSec=", FfaHunterUpgradeTripMaxSec,
+    " ffaLootContestMargin=", FfaLootContestMargin,
+    " ffaLootContestIgnore=", FfaLootContestIgnore,
     " ffaHunterRingMargin=", FfaHunterRingMargin,
     " ffaGameTicksPerFrame=", FfaGameTicksPerFrame,
     " ffaLateClose=", FfaLateClose, " -> ", endpoint
