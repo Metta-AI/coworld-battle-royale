@@ -1,11 +1,18 @@
-# Coworld CTF — Game Rules
+# Coworld Battle Royale — Game Rules
 
-Coworld CTF is a two-team capture-the-heart shooter for the Coworld platform. Two
-teams start on opposite edges of a symmetric arena, each with its own heart on a
-home pedestal. Players move, take cover behind obstacles, and shoot. Steal the
-enemy heart and carry it home — or eliminate the enemy team — to win. Vision is
+Coworld Battle Royale is a free-for-all shooter for the Coworld platform
+(`config.br.json`, `mode: "ffa"`, 12 seats; the manifest ships the `br-12` and
+`br-16` variants). Every seat is its own team and receives its own identity
+color. Each player has a single life, spawns unarmed on an evenly spaced ring,
+and fights with fists until they pick up a weapon tier. A shrinking ring
+(`ringShrinkSec` 150 s, to a 3%-of-the-arena floor) forces the survivors
+together, an armed victim drops a one-use gun at the death site
+(`dropWeaponOnDeath`, GV46), and placements decide the results. Vision is
 fog-of-war: the map is always visible, but enemies only appear inside your
-forward vision cone or your small omnidirectional bubble.
+forward vision cone or your small omnidirectional bubble. The engine also
+retains the original two-team capture-the-heart (CTF) mode; sections below
+that describe teams, hearts, and captures apply to that mode, and
+Battle-Royale-specific rules are called out where they differ.
 
 It is a fork of [Crewrift](https://github.com/Metta-AI/coworld-crewrift): it keeps
 Crewrift's continuous 2D movement, line-of-sight, sprite protocol, server, and
@@ -15,6 +22,8 @@ tasks, voting) with teams, guns, hearts, and fog-of-war vision.
 ---
 
 ## Overview
+
+The bullets below describe the legacy CTF mode.
 
 - **16 players, 8 vs 8.** Red team spawns along the **left edge**, Blue along the
   **right edge**.
@@ -1276,13 +1285,13 @@ This section is a build plan, not player-facing rules.
   image with walk/wall layers. Red/Blue spawn strips on the left/right edges,
   heart pedestal at center, obstacles mirrored across the vertical axis, home-edge
   capture zones at the leftmost/rightmost columns.
-- New team-based `config.json` and `coworld_manifest_paintbot.json` (slots carry `team`
+- New team-based `config.json` and `coworld_manifest_battleroyale.json` (slots carry `team`
   instead of `role`; results schema reports team/kills/deaths/captures).
 - A **baseline bot** (Crewrift's `notsus` equivalent) speaking Sprite v1.
 - A **CTF grader** scoring episodes from wins.
 
 **Resolved:** CTF needed team-based seating and win/loss ranking rather than
-Crewrift's social-deduction scheme. This is no longer a per-game concern — both
-the Ctf and Paintbot leagues run on the platform ladder service
+Crewrift's social-deduction scheme. This is no longer a per-game concern —
+the Battle Royale league runs on the platform ladder service
 (`commissioner_key=platform`), which owns seating and ranking. This repo ships
 the game and baseline player only; it declares no commissioner runnable.

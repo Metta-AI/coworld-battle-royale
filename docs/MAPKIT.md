@@ -1,6 +1,6 @@
-# mapkit — LLM-authored, interesting-but-fair CTF maps
+# mapkit — LLM-authored, interesting-but-fair maps
 
-`tools/mapkit.nim` is a CLI for generating and hand-editing CTF maps in the
+`tools/mapkit.nim` is a CLI for generating and hand-editing maps in the
 native `mapSpec` format. It is a peer to the [map editor](designs/map-editor.md)
 service: it never reimplements geometry, it drives the same sim procs
 (`generateMapAttempt`, `mapSpecJson`/`mapFromSpecJson`, `validateGeneratedMap`,
