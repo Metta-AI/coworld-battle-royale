@@ -16,5 +16,7 @@
   "mapPits": 18,
   "ringShrinkSec": 150,
   "ringFloorAreaPct": 3,
-  "dropWeaponOnDeath": true
+  "dropWeaponOnDeath": true,
+  "killPoints": 50,
+  "assistPoints": 25
 }

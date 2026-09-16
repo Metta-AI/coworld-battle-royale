@@ -929,6 +929,16 @@ Kills, deaths, heart pickups, carry time, and captures are still **recorded** in
 the episode results for leaderboards and analysis — they just do not award
 points. This keeps the training objective tied purely to winning.
 
+**FFA (battle-royale) scoring is different.** In FFA the episode score —
+`results.scores`, the per-player reward — is the quantity the platform rates
+on: Elo is each policy's mean episode score; `placementSlots` and `win` are
+not read. The score is **survival 1 point per whole second alive + kill 50
+to the last damager (environmental deaths credit nobody) + assist pot 25
+split evenly (integer, remainder dropped) among the victim's other damagers
+within 240 ticks + podium 100/40/15 by final placement**. These are the
+hosted br-12/br-16 and `config.br.json` values under GV47; the repo default
+constants are 10/4.
+
 ## Controls
 
 | Button | Action |

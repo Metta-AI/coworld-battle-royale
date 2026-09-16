@@ -1107,7 +1107,8 @@ proc weaponDamage*(sim: SimServer, ctfAmount, ffaAmount: int): int {.inline.} =
 proc recordFfaDamage*(sim: var SimServer, attackerIndex, victimIndex,
     amount: int) =
   ## Books one ffa hit: the attacker's running damageDealt (the placement
-  ## tiebreak under kills, which reaches Elo) and a windowed credit entry
+  ## tiebreak under kills, which reaches the rated score only through
+  ## podiumPoints) and a windowed credit entry
   ## (the assist split). A posthumous victim is an invariant violation:
   ## corpses must never receive damage credit.
   ## Self-damage and environmental damage credit nobody. ctf never calls

@@ -18,7 +18,13 @@ import
 
 const
   GameName* = "ctf"
-  GameVersion* = "46"  ## GV46 (drop-on-death armed): AN ARMED FFA VICTIM
+  GameVersion* = "47"  ## GV47 (scoring weights armed): killPoints 50, assistPoints 25 on the hosted variants; no sim code change.
+    ## Arms the existing config knobs in the shipped configs — the br-12/br-16 manifest
+    ## variants and config.br.json. Reward is hashed (sim_state.nim gameHash
+    ## mixes player.reward), so scores and hashes move from the first paid
+    ## kill; the repo defaults stay 10/4. Fixtures re-recorded.
+    ##
+    ## Previously GV46 (drop-on-death armed): AN ARMED FFA VICTIM
     ## LEAVES THEIR WEAPON AS A ONE-USE PICKUP AT THE DEATH SITE. No sim code
     ## changes: this bump arms the existing dormant `dropWeaponOnDeath` knob
     ## (merged dormant under GV45) in the shipped configs — config.br.json and
